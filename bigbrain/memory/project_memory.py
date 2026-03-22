@@ -11,22 +11,41 @@ from typing import Any, Dict, List, Optional, Set
 class MockEmbedding:
     """Mock embedding system for semantic search simulation."""
     
-    @staticmethod
-    def embed_text(text: str) -> List[float]:
+    # Shared word→dimension map so embeddings are consistent across calls
+    _word_dims: Dict[str, int] = {}
+    _dim_size: int = 128
+    
+    @classmethod
+    def embed_text(cls, text: str) -> List[float]:
         """
-        Generate mock embeddings for text.
+        Generate mock embeddings for text using bag-of-words.
         
         In production, this would use Google text-embedding-004 or similar.
-        For preview, we create deterministic pseudo-embeddings based on text.
+        For preview, each unique word gets a stable dimension so texts
+        sharing words produce similar vectors (high cosine similarity).
         """
-        # Simple hash-based pseudo-embedding
-        hash_val = hash(text.lower()) % 1000000
+        import math
         
-        # Create 128-dim embedding with some randomness based on content
-        embedding = []
-        for i in range(128):
-            val = (hash_val + i * 37) % 200 - 100  # Range -100 to 100
-            embedding.append(val / 100.0)  # Normalize to -1 to 1
+        words = text.lower().split()
+        embedding = [0.0] * cls._dim_size
+        
+        for word in words:
+            # Strip punctuation
+            word = ''.join(c for c in word if c.isalnum())
+            if not word:
+                continue
+            
+            # Assign a stable dimension to each word
+            if word not in cls._word_dims:
+                cls._word_dims[word] = hash(word) % cls._dim_size
+            
+            dim = cls._word_dims[word]
+            embedding[dim] += 1.0
+        
+        # L2-normalize so cosine similarity works properly
+        norm = math.sqrt(sum(v * v for v in embedding))
+        if norm > 0:
+            embedding = [v / norm for v in embedding]
         
         return embedding
     
