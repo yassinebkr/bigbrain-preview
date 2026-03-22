@@ -1,0 +1,631 @@
+"""Tests for BigBrain orchestrator system."""
+
+import asyncio
+import time
+from unittest.mock import AsyncMock, Mock
+
+import pytest
+
+from bigbrain.bus.message import BusMessage, MessageType, Priority
+from bigbrain.bus.bus import MessageBus
+from bigbrain.orchestrator.orchestrator import (
+    WorkspaceOrchestrator, TaskStatus, SubTask, TaskPlan
+)
+
+
+class TestSubTask:
+    """Test SubTask functionality."""
+    
+    def test_create_subtask(self):
+        """Test creating a SubTask."""
+        subtask = SubTask(
+            id="test_subtask",
+            description="Test subtask",
+            brain_target="python_brain",
+            payload={"action": "test"}
+        )
+        
+        assert subtask.id == "test_subtask"
+        assert subtask.description == "Test subtask"
+        assert subtask.brain_target == "python_brain"
+        assert subtask.payload == {"action": "test"}
+        assert subtask.status == TaskStatus.PENDING
+        assert subtask.dependencies == set()
+        assert subtask.result is None
+        assert subtask.error is None
+    
+    def test_subtask_with_dependencies(self):
+        """Test SubTask with dependencies."""
+        subtask = SubTask(
+            id="dependent_task",
+            description="Depends on others",
+            brain_target="worker",
+            payload={},
+            dependencies={"task1", "task2"}
+        )
+        
+        assert subtask.dependencies == {"task1", "task2"}
+
+
+class TestTaskPlan:
+    """Test TaskPlan functionality."""
+    
+    def test_create_empty_plan(self):
+        """Test creating an empty TaskPlan."""
+        original_msg = BusMessage(
+            type=MessageType.TASK,
+            source="user",
+            target="orchestrator"
+        )
+        
+        plan = TaskPlan(id="test_plan", original_task=original_msg)
+        
+        assert plan.id == "test_plan"
+        assert plan.original_task == original_msg
+        assert plan.subtasks == []
+        assert plan.status == TaskStatus.PENDING
+        assert plan.result is None
+        assert plan.error is None
+    
+    def test_get_ready_subtasks(self):
+        """Test getting ready subtasks based on dependencies."""
+        original_msg = BusMessage(type=MessageType.TASK, source="user", target="orch")
+        plan = TaskPlan(id="plan", original_task=original_msg)
+        
+        # Create subtasks with dependencies
+        task1 = SubTask(id="task1", description="First", brain_target="brain1", payload={})
+        task2 = SubTask(id="task2", description="Second", brain_target="brain2", 
+                       payload={}, dependencies={"task1"})
+        task3 = SubTask(id="task3", description="Third", brain_target="brain3",
+                       payload={}, dependencies={"task1", "task2"})
+        task4 = SubTask(id="task4", description="Independent", brain_target="brain4",
+                       payload={})
+        
+        plan.subtasks = [task1, task2, task3, task4]
+        
+        # Initially, only tasks without dependencies are ready
+        ready = plan.get_ready_subtasks()
+        ready_ids = {task.id for task in ready}
+        assert ready_ids == {"task1", "task4"}
+        
+        # Simulate dispatching task4 and completing task1
+        task4.status = TaskStatus.RUNNING  # task4 was dispatched
+        task1.status = TaskStatus.COMPLETE
+        ready = plan.get_ready_subtasks()
+        ready_ids = {task.id for task in ready}
+        assert ready_ids == {"task2"}  # Only task2 is newly ready
+        
+        # Complete task2
+        task2.status = TaskStatus.COMPLETE
+        ready = plan.get_ready_subtasks()
+        ready_ids = {task.id for task in ready}
+        assert ready_ids == {"task3"}  # Only task3 is ready
+    
+    def test_is_complete(self):
+        """Test checking if plan is complete."""
+        original_msg = BusMessage(type=MessageType.TASK, source="user", target="orch")
+        plan = TaskPlan(id="plan", original_task=original_msg)
+        
+        task1 = SubTask(id="task1", description="First", brain_target="brain", payload={})
+        task2 = SubTask(id="task2", description="Second", brain_target="brain", payload={})
+        plan.subtasks = [task1, task2]
+        
+        # Not complete initially
+        assert not plan.is_complete()
+        
+        # Not complete with only one done
+        task1.status = TaskStatus.COMPLETE
+        assert not plan.is_complete()
+        
+        # Complete when all are done
+        task2.status = TaskStatus.COMPLETE
+        assert plan.is_complete()
+        
+        # Also complete if some are cancelled
+        task2.status = TaskStatus.CANCELLED
+        assert plan.is_complete()
+    
+    def test_is_failed(self):
+        """Test checking if plan failed."""
+        original_msg = BusMessage(type=MessageType.TASK, source="user", target="orch")
+        plan = TaskPlan(id="plan", original_task=original_msg)
+        
+        task1 = SubTask(id="task1", description="First", brain_target="brain", payload={})
+        task2 = SubTask(id="task2", description="Second", brain_target="brain", payload={})
+        plan.subtasks = [task1, task2]
+        
+        # Not failed initially
+        assert not plan.is_failed()
+        
+        # Not failed with completed tasks
+        task1.status = TaskStatus.COMPLETE
+        assert not plan.is_failed()
+        
+        # Failed when any task fails
+        task2.status = TaskStatus.FAILED
+        assert plan.is_failed()
+    
+    def test_get_subtask(self):
+        """Test finding subtask by ID."""
+        original_msg = BusMessage(type=MessageType.TASK, source="user", target="orch")
+        plan = TaskPlan(id="plan", original_task=original_msg)
+        
+        task1 = SubTask(id="find_me", description="Target", brain_target="brain", payload={})
+        task2 = SubTask(id="other", description="Other", brain_target="brain", payload={})
+        plan.subtasks = [task1, task2]
+        
+        found = plan.get_subtask("find_me")
+        assert found == task1
+        
+        not_found = plan.get_subtask("nonexistent")
+        assert not_found is None
+    
+    def test_get_results(self):
+        """Test getting results from completed subtasks."""
+        original_msg = BusMessage(type=MessageType.TASK, source="user", target="orch")
+        plan = TaskPlan(id="plan", original_task=original_msg)
+        
+        task1 = SubTask(id="task1", description="First", brain_target="brain", payload={})
+        task2 = SubTask(id="task2", description="Second", brain_target="brain", payload={})
+        task3 = SubTask(id="task3", description="Third", brain_target="brain", payload={})
+        
+        # Set up results
+        task1.status = TaskStatus.COMPLETE
+        task1.result = {"output": "result1"}
+        
+        task2.status = TaskStatus.COMPLETE
+        task2.result = {"output": "result2"}
+        
+        task3.status = TaskStatus.FAILED
+        # No result for failed task
+        
+        plan.subtasks = [task1, task2, task3]
+        
+        results = plan.get_results()
+        assert results == {
+            "task1": {"output": "result1"},
+            "task2": {"output": "result2"}
+        }
+        assert "task3" not in results
+
+
+class TestWorkspaceOrchestrator:
+    """Test WorkspaceOrchestrator functionality."""
+    
+    @pytest.fixture
+    def mock_bus(self):
+        """Create a mock message bus."""
+        bus = Mock()
+        bus.send = AsyncMock()
+        bus.send_result = AsyncMock()
+        bus.broadcast_event = AsyncMock()
+        bus.subscribe = Mock()
+        bus.unsubscribe = Mock()
+        return bus
+    
+    @pytest.fixture
+    async def orchestrator(self, mock_bus):
+        """Create a WorkspaceOrchestrator for testing."""
+        orch = WorkspaceOrchestrator("test_workspace", mock_bus)
+        yield orch
+        if orch._running:
+            await orch.stop()
+    
+    @pytest.mark.asyncio
+    async def test_orchestrator_lifecycle(self, orchestrator, mock_bus):
+        """Test orchestrator start/stop lifecycle."""
+        # Initial state
+        assert not orchestrator._running
+        assert orchestrator.workspace == "test_workspace"
+        assert orchestrator.name == "orchestrator_test_workspace"
+        
+        # Start orchestrator
+        await orchestrator.start()
+        assert orchestrator._running
+        
+        # Check bus subscription
+        mock_bus.subscribe.assert_called_once_with(
+            "orchestrator_test_workspace",
+            orchestrator.handle_message
+        )
+        
+        # Check startup event
+        mock_bus.broadcast_event.assert_called_with(
+            source="orchestrator_test_workspace",
+            event_type="orchestrator.started",
+            payload={"workspace": "test_workspace"},
+            workspace="test_workspace",
+            priority=Priority.LOW
+        )
+        
+        # Stop orchestrator
+        await orchestrator.stop()
+        assert not orchestrator._running
+    
+    @pytest.mark.asyncio
+    async def test_brain_registration(self, orchestrator):
+        """Test registering and unregistering brains."""
+        # Register brains
+        orchestrator.register_brain("python_brain", {"type": "PythonBrain"})
+        orchestrator.register_brain("researcher", {"type": "ResearchBrain"})
+        
+        assert "python_brain" in orchestrator.registered_brains
+        assert "researcher" in orchestrator.registered_brains
+        assert orchestrator.brain_load["python_brain"] == 0
+        assert orchestrator.brain_load["researcher"] == 0
+        
+        # Unregister brain
+        orchestrator.unregister_brain("python_brain")
+        assert "python_brain" not in orchestrator.registered_brains
+        assert "python_brain" not in orchestrator.brain_load
+    
+    @pytest.mark.asyncio
+    async def test_simple_task_creation(self, orchestrator, mock_bus):
+        """Test creating task plan for simple code execution."""
+        await orchestrator.start()
+        orchestrator.register_brain("python_brain", {"type": "PythonBrain"})
+        
+        task_message = BusMessage(
+            type=MessageType.TASK,
+            source="front_brain",
+            target="orchestrator_test_workspace",
+            payload={
+                "type": "execute_code",
+                "code": "print('hello world')"
+            }
+        )
+        
+        plan = await orchestrator._create_task_plan(task_message)
+        
+        assert plan.original_task == task_message
+        assert len(plan.subtasks) == 1
+        
+        subtask = plan.subtasks[0]
+        assert subtask.brain_target == "python_brain"
+        assert subtask.payload == task_message.payload
+        assert subtask.dependencies == set()
+    
+    @pytest.mark.asyncio
+    async def test_research_task_decomposition(self, orchestrator, mock_bus):
+        """Test creating task plan for research with dependencies."""
+        await orchestrator.start()
+        orchestrator.register_brain("researcher", {"type": "ResearchBrain"})
+        
+        task_message = BusMessage(
+            type=MessageType.TASK,
+            source="front_brain",
+            target="orchestrator_test_workspace",
+            payload={
+                "type": "research",
+                "query": "quantum computing basics",
+                "scope": "educational"
+            }
+        )
+        
+        plan = await orchestrator._create_task_plan(task_message)
+        
+        assert len(plan.subtasks) == 3
+        
+        # Check subtask names and dependencies
+        plan_subtask = plan.subtasks[0]
+        search_subtask = plan.subtasks[1]
+        summary_subtask = plan.subtasks[2]
+        
+        assert plan_subtask.brain_target == "researcher"
+        assert search_subtask.brain_target == "researcher"
+        assert summary_subtask.brain_target == "researcher"
+        
+        # Check dependency chain
+        assert plan_subtask.dependencies == set()
+        assert search_subtask.dependencies == {plan_subtask.id}
+        assert summary_subtask.dependencies == {search_subtask.id}
+    
+    @pytest.mark.asyncio
+    async def test_choose_brain_for_task(self, orchestrator):
+        """Test brain selection logic."""
+        # Register multiple brains
+        orchestrator.register_brain("python_brain", {"type": "PythonBrain"})
+        orchestrator.register_brain("researcher", {"type": "ResearchBrain"})
+        
+        # Test specific task type routing
+        python_brain = orchestrator._choose_brain_for_task("execute_code")
+        assert python_brain == "python_brain"
+        
+        research_brain = orchestrator._choose_brain_for_task("research")
+        assert research_brain == "researcher"
+        
+        # Test load balancing (when multiple brains could handle task)
+        orchestrator.brain_load["python_brain"] = 5
+        # Should still choose python_brain for code execution even if loaded
+        brain = orchestrator._choose_brain_for_task("execute_code")
+        assert brain == "python_brain"
+        
+        # Test fallback for unknown task type
+        default_brain = orchestrator._choose_brain_for_task("unknown_task")
+        assert default_brain in ["python_brain"]  # Falls back to default preference
+    
+    @pytest.mark.asyncio
+    async def test_task_request_handling(self, orchestrator, mock_bus):
+        """Test handling incoming task requests."""
+        await orchestrator.start()
+        orchestrator.register_brain("python_brain", {"type": "PythonBrain"})
+        
+        task_message = BusMessage(
+            type=MessageType.TASK,
+            source="front_brain",
+            target="orchestrator_test_workspace",
+            payload={
+                "type": "execute_code",
+                "code": "print('test')"
+            }
+        )
+        
+        await orchestrator._handle_task_request(task_message)
+        
+        # Check that task plan was created
+        assert len(orchestrator.task_plans) == 1
+        plan = list(orchestrator.task_plans.values())[0]
+        
+        # Check task received event was broadcast
+        received_calls = [call for call in mock_bus.broadcast_event.call_args_list
+                         if call[1]["event_type"] == "task.received"]
+        assert len(received_calls) == 1
+        
+        # Check subtask was dispatched
+        dispatched_calls = [call for call in mock_bus.send.call_args_list
+                           if call[0][0].type == MessageType.TASK]
+        assert len(dispatched_calls) == 1
+        
+        subtask_msg = dispatched_calls[0][0][0]
+        assert subtask_msg.target == "python_brain"
+        assert subtask_msg.source == "orchestrator_test_workspace"
+    
+    @pytest.mark.asyncio
+    async def test_task_result_handling(self, orchestrator, mock_bus):
+        """Test handling task results from brains."""
+        await orchestrator.start()
+        orchestrator.register_brain("python_brain", {"type": "PythonBrain"})
+        
+        # Create a task plan manually for testing
+        original_task = BusMessage(type=MessageType.TASK, source="user", target="orch")
+        plan = TaskPlan(id="test_plan", original_task=original_task)
+        
+        subtask = SubTask(
+            id="test_subtask",
+            description="Test",
+            brain_target="python_brain",
+            payload={}
+        )
+        subtask.status = TaskStatus.RUNNING
+        subtask.assigned_brain = "python_brain"
+        
+        plan.subtasks = [subtask]
+        orchestrator.task_plans[plan.id] = plan
+        orchestrator.active_subtasks[subtask.id] = plan.id
+        orchestrator.brain_load["python_brain"] = 1
+        
+        # Send result message
+        result_message = BusMessage(
+            type=MessageType.RESULT,
+            source="python_brain",
+            target="orchestrator_test_workspace",
+            reply_to=subtask.id,
+            payload={
+                "success": True,
+                "output": "task completed"
+            }
+        )
+        
+        await orchestrator._handle_task_result(result_message)
+        
+        # Check subtask was updated
+        assert subtask.status == TaskStatus.COMPLETE
+        assert subtask.result == {"success": True, "output": "task completed"}
+        assert orchestrator.brain_load["python_brain"] == 0
+        assert subtask.id not in orchestrator.active_subtasks
+        
+        # Check completion event was broadcast
+        complete_calls = [call for call in mock_bus.broadcast_event.call_args_list
+                         if call[1]["event_type"] == "subtask.complete"]
+        assert len(complete_calls) >= 1
+    
+    @pytest.mark.asyncio
+    async def test_plan_completion(self, orchestrator, mock_bus):
+        """Test complete task plan finishing."""
+        await orchestrator.start()
+        
+        # Create completed task plan
+        original_task = BusMessage(
+            id="original_task_id",
+            type=MessageType.TASK, 
+            source="user", 
+            target="orch"
+        )
+        plan = TaskPlan(id="test_plan", original_task=original_task)
+        
+        subtask = SubTask(
+            id="test_subtask",
+            description="Test",
+            brain_target="python_brain", 
+            payload={}
+        )
+        subtask.status = TaskStatus.COMPLETE
+        subtask.result = {"success": True, "data": "result"}
+        
+        plan.subtasks = [subtask]
+        orchestrator.task_plans[plan.id] = plan
+        
+        await orchestrator._check_plan_completion(plan)
+        
+        # Check final result was sent
+        mock_bus.send_result.assert_called_once()
+        call_args = mock_bus.send_result.call_args
+        
+        assert call_args[1]["source"] == "orchestrator_test_workspace"
+        assert call_args[1]["reply_to"] == "original_task_id"
+        
+        result_data = call_args[1]["result_data"]
+        assert result_data["success"] is True
+        assert "results" in result_data
+    
+    @pytest.mark.asyncio
+    async def test_plan_failure(self, orchestrator, mock_bus):
+        """Test handling task plan with failed subtask."""
+        await orchestrator.start()
+        
+        # Create failed task plan
+        original_task = BusMessage(id="original", type=MessageType.TASK, source="user", target="orch")
+        plan = TaskPlan(id="test_plan", original_task=original_task)
+        
+        failed_subtask = SubTask(
+            id="failed_subtask",
+            description="This fails",
+            brain_target="python_brain",
+            payload={}
+        )
+        failed_subtask.status = TaskStatus.FAILED
+        failed_subtask.error = "Something went wrong"
+        
+        successful_subtask = SubTask(
+            id="success_subtask", 
+            description="This works",
+            brain_target="python_brain",
+            payload={}
+        )
+        successful_subtask.status = TaskStatus.COMPLETE
+        
+        plan.subtasks = [failed_subtask, successful_subtask]
+        orchestrator.task_plans[plan.id] = plan
+        
+        await orchestrator._check_plan_completion(plan)
+        
+        # Check failure result was sent
+        mock_bus.send_result.assert_called_once()
+        result_data = mock_bus.send_result.call_args[1]["result_data"]
+        
+        assert result_data["success"] is False
+        assert "failed_subtasks" in result_data
+        assert len(result_data["failed_subtasks"]) == 1
+    
+    @pytest.mark.asyncio
+    async def test_cancellation(self, orchestrator, mock_bus):
+        """Test task cancellation."""
+        await orchestrator.start()
+        
+        # Create running task plan
+        original_task = BusMessage(type=MessageType.TASK, source="user", target="orch")
+        plan = TaskPlan(id="cancel_plan", original_task=original_task)
+        plan.status = TaskStatus.RUNNING
+        
+        subtask = SubTask(
+            id="cancel_subtask",
+            description="To be cancelled",
+            brain_target="python_brain",
+            payload={}
+        )
+        subtask.status = TaskStatus.RUNNING
+        subtask.assigned_brain = "python_brain"
+        
+        plan.subtasks = [subtask]
+        orchestrator.task_plans[plan.id] = plan
+        orchestrator.active_subtasks[subtask.id] = plan.id
+        
+        # Send cancellation
+        cancel_message = BusMessage(
+            type=MessageType.CANCEL,
+            source="user",
+            target="orchestrator_test_workspace", 
+            payload={
+                "task_id": plan.id,
+                "mode": "soft"
+            }
+        )
+        
+        await orchestrator._handle_cancel_request(cancel_message)
+        
+        # Check cancellation was sent to brain
+        cancel_calls = [call for call in mock_bus.send.call_args_list
+                       if call[0][0].type == MessageType.CANCEL]
+        assert len(cancel_calls) >= 1
+        
+        cancel_msg = cancel_calls[0][0][0]
+        assert cancel_msg.target == "python_brain"
+        assert cancel_msg.payload["mode"] == "soft"
+    
+    @pytest.mark.asyncio
+    async def test_status_query(self, orchestrator, mock_bus):
+        """Test handling status queries."""
+        await orchestrator.start()
+        orchestrator.register_brain("python_brain", {"type": "PythonBrain"})
+        
+        query_message = BusMessage(
+            type=MessageType.QUERY,
+            source="requester",
+            target="orchestrator_test_workspace",
+            payload={"type": "status"}
+        )
+        
+        await orchestrator._handle_query(query_message)
+        
+        # Check status response was sent
+        mock_bus.send_result.assert_called_once()
+        result_data = mock_bus.send_result.call_args[1]["result_data"]
+        
+        assert "workspace" in result_data
+        assert "running" in result_data
+        assert "registered_brains" in result_data
+        assert result_data["workspace"] == "test_workspace"
+        assert result_data["running"] is True
+    
+    def test_get_status(self, orchestrator):
+        """Test getting orchestrator status."""
+        orchestrator.register_brain("brain1", {})
+        orchestrator.register_brain("brain2", {})
+        
+        status = orchestrator.get_status()
+        
+        assert status["workspace"] == "test_workspace"
+        assert status["name"] == "orchestrator_test_workspace"
+        assert status["running"] is False
+        assert status["active_tasks"] == 0
+        assert status["total_tasks"] == 0
+        assert set(status["registered_brains"]) == {"brain1", "brain2"}
+    
+    @pytest.mark.asyncio
+    async def test_resolve_payload_references(self, orchestrator):
+        """Test resolving ReWOO-style variable references."""
+        original_task = BusMessage(type=MessageType.TASK, source="user", target="orch")
+        plan = TaskPlan(id="ref_plan", original_task=original_task)
+        
+        # Create subtasks with results
+        task1 = SubTask(id="E1", description="First", brain_target="brain", payload={})
+        task1.status = TaskStatus.COMPLETE
+        task1.result = {"search_results": ["result1", "result2"]}
+        
+        task2 = SubTask(id="E2", description="Second", brain_target="brain", payload={})
+        task2.status = TaskStatus.COMPLETE
+        task2.result = {"analysis": "important findings"}
+        
+        plan.subtasks = [task1, task2]
+        
+        # Test payload with references
+        payload_with_refs = {
+            "action": "summarize",
+            "data_source": "#E1",
+            "context": "#E2",
+            "static_param": "no_reference"
+        }
+        
+        resolved = await orchestrator._resolve_payload_references(payload_with_refs, plan)
+        
+        assert resolved["action"] == "summarize"
+        assert resolved["data_source"] == {"search_results": ["result1", "result2"]}
+        assert resolved["context"] == {"analysis": "important findings"}
+        assert resolved["static_param"] == "no_reference"
+        
+        # Test unresolved reference
+        payload_unresolved = {"data": "#E3"}  # E3 doesn't exist
+        resolved_unresolved = await orchestrator._resolve_payload_references(
+            payload_unresolved, plan
+        )
+        assert resolved_unresolved["data"] == "#E3"  # Should remain unchanged

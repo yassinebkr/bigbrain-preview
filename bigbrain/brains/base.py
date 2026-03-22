@@ -1,0 +1,319 @@
+"""BaseBrain - Abstract base class for BigBrain execution workers."""
+
+import asyncio
+from abc import ABC, abstractmethod
+from typing import Any, Dict, Optional
+
+from ..bus.bus import MessageBus
+from ..bus.message import BusMessage, MessageType, Priority
+
+
+class BaseBrain(ABC):
+    """
+    Abstract base class for BigBrain execution workers.
+    
+    Provides common bus integration and lifecycle management for all brains.
+    Each brain is an independent worker that receives tasks, executes them,
+    and returns results via the message bus.
+    
+    Brain Lifecycle:
+    1. Initialize with bus connection and brain name
+    2. Start - registers with bus and begins message processing
+    3. Handle messages - implement handle_task for brain-specific logic
+    4. Stop - cleanup and unregister from bus
+    
+    Message Flow:
+    - Receives TASK messages via handle_message
+    - Processes via handle_task (implemented by subclass)
+    - Sends RESULT messages back via send_result
+    - Publishes STATE/PROGRESS events via send_event
+    """
+    
+    def __init__(self, name: str, bus: MessageBus, workspace: str = None):
+        """
+        Initialize brain with bus connection.
+        
+        Args:
+            name: Unique identifier for this brain instance
+            bus: MessageBus instance for communication
+            workspace: Optional workspace this brain belongs to
+        """
+        self.name = name
+        self.bus = bus
+        self.workspace = workspace
+        self._running = False
+        self._current_task: Optional[BusMessage] = None
+        self._cancelled = False
+        
+        # Bind message handler to this instance
+        self._message_handler = self._handle_message_wrapper
+    
+    async def start(self) -> None:
+        """
+        Start the brain and register with the message bus.
+        
+        After starting, the brain will receive task messages and
+        begin processing them asynchronously.
+        """
+        if self._running:
+            raise RuntimeError(f"Brain {self.name} is already running")
+        
+        self._running = True
+        self._cancelled = False
+        
+        # Subscribe to messages targeted at this brain
+        self.bus.subscribe(self.name, self._message_handler)
+        
+        # Announce brain availability
+        await self.send_event("brain.started", {
+            "brain": self.name,
+            "workspace": self.workspace
+        }, priority=Priority.LOW)
+    
+    async def stop(self) -> None:
+        """
+        Stop the brain and cleanup resources.
+        
+        Unregisters from the bus and performs any brain-specific cleanup.
+        """
+        if not self._running:
+            return
+        
+        self._running = False
+        
+        # Cancel current task gracefully
+        if self._current_task:
+            await self._cancel_current_task()
+        
+        # Unregister from bus
+        self.bus.unsubscribe(self.name, self._message_handler)
+        
+        # Announce brain shutdown
+        await self.send_event("brain.stopped", {
+            "brain": self.name,
+            "workspace": self.workspace
+        }, priority=Priority.LOW)
+        
+        # Subclass cleanup
+        await self.cleanup()
+    
+    async def _handle_message_wrapper(self, message: BusMessage) -> None:
+        """
+        Internal message handler that wraps subclass logic.
+        
+        Handles common message types and delegates task processing
+        to the subclass handle_task method.
+        """
+        try:
+            if message.type == MessageType.TASK:
+                await self._handle_task_message(message)
+            elif message.type == MessageType.CANCEL:
+                await self._handle_cancel_message(message)
+            else:
+                # Let subclass handle other message types
+                await self.handle_message(message)
+        
+        except Exception as e:
+            # Send error result if we were processing a task
+            if self._current_task:
+                await self.send_result({
+                    "success": False,
+                    "error": str(e),
+                    "error_type": type(e).__name__
+                }, self._current_task.id)
+                self._current_task = None
+            
+            # Also broadcast the error event
+            await self.send_event("brain.error", {
+                "brain": self.name,
+                "error": str(e),
+                "message_id": message.id
+            }, priority=Priority.HIGH)
+    
+    async def _handle_task_message(self, message: BusMessage) -> None:
+        """Handle incoming task messages."""
+        if self._current_task:
+            # Brain is busy - could queue or reject
+            # For now, reject with busy status
+            await self.send_result({
+                "success": False,
+                "error": "Brain is busy with another task",
+                "busy": True
+            }, message.id)
+            return
+        
+        self._current_task = message
+        self._cancelled = False
+        
+        # Announce task start
+        await self.send_event("brain.started", {
+            "brain": self.name,
+            "task_id": message.id,
+            "task_type": message.payload.get("type", "unknown")
+        })
+        
+        try:
+            # Delegate to subclass
+            result = await self.handle_task(message)
+            
+            if not self._cancelled:
+                # Send successful result
+                await self.send_result({
+                    "success": True,
+                    "data": result
+                }, message.id)
+                
+                await self.send_event("brain.complete", {
+                    "brain": self.name,
+                    "task_id": message.id
+                })
+        
+        finally:
+            self._current_task = None
+    
+    async def _handle_cancel_message(self, message: BusMessage) -> None:
+        """Handle task cancellation requests."""
+        cancel_mode = message.payload.get("mode", "soft")
+        task_id = message.payload.get("task_id")
+        
+        # Check if we have a matching task to cancel
+        if not self._current_task or (task_id and self._current_task.id != task_id):
+            return  # Not our task to cancel
+        
+        if cancel_mode == "hard":
+            # Hard cancel - immediate stop
+            self._cancelled = True
+            await self.send_result({
+                "success": False,
+                "cancelled": True,
+                "mode": "hard"
+            }, self._current_task.id)
+            self._current_task = None
+            
+            await self.send_event("brain.cancelled", {
+                "brain": self.name,
+                "mode": "hard"
+            })
+        
+        else:
+            # Soft cancel - set flag for graceful exit
+            self._cancelled = True
+            await self.send_event("brain.cancelling", {
+                "brain": self.name,
+                "mode": "soft"
+            })
+    
+    async def _cancel_current_task(self) -> None:
+        """Cancel the currently running task gracefully."""
+        if self._current_task:
+            self._cancelled = True
+            await self.send_result({
+                "success": False,
+                "cancelled": True,
+                "mode": "shutdown"
+            }, self._current_task.id)
+            self._current_task = None
+    
+    async def send_result(self, result_data: Dict[str, Any], reply_to: str) -> None:
+        """
+        Send a task result back to the requester.
+        
+        Args:
+            result_data: Result payload - should include 'success' boolean
+            reply_to: Message ID this is a response to
+        """
+        await self.bus.send_result(
+            source=self.name,
+            result_data=result_data,
+            reply_to=reply_to,
+            workspace=self.workspace
+        )
+    
+    async def send_event(self, event_type: str, payload: Dict[str, Any] = None,
+                        priority: Priority = Priority.NORMAL) -> None:
+        """
+        Send an event broadcast to inform other components of state changes.
+        
+        Args:
+            event_type: Type of event (e.g. 'brain.progress', 'brain.error')
+            payload: Event-specific data
+            priority: Event priority for focus filtering
+        """
+        await self.bus.broadcast_event(
+            source=self.name,
+            event_type=event_type,
+            payload=payload or {},
+            workspace=self.workspace,
+            priority=priority
+        )
+    
+    async def send_progress(self, progress_data: Dict[str, Any]) -> None:
+        """
+        Send progress update for long-running tasks.
+        
+        Args:
+            progress_data: Progress information (e.g. percentage, current step)
+        """
+        message = BusMessage(
+            type=MessageType.PROGRESS,
+            source=self.name,
+            target="*",  # Broadcast progress
+            workspace=self.workspace,
+            payload=progress_data,
+            reply_to=self._current_task.id if self._current_task else None,
+            priority=Priority.LOW
+        )
+        await self.bus.send(message)
+    
+    @abstractmethod
+    async def handle_task(self, message: BusMessage) -> Any:
+        """
+        Process a task message and return the result.
+        
+        This is the main brain logic that subclasses must implement.
+        Should check self._cancelled periodically for graceful cancellation.
+        
+        Args:
+            message: Task message containing work to do
+            
+        Returns:
+            Task result data that will be sent back to requester
+        """
+        pass
+    
+    async def handle_message(self, message: BusMessage) -> None:
+        """
+        Handle non-task messages.
+        
+        Override in subclasses to handle brain-specific message types.
+        Base implementation does nothing.
+        """
+        pass
+    
+    async def cleanup(self) -> None:
+        """
+        Perform brain-specific cleanup when stopping.
+        
+        Override in subclasses to cleanup resources like temp files,
+        subprocess connections, etc.
+        """
+        pass
+    
+    def is_running(self) -> bool:
+        """Check if the brain is currently running."""
+        return self._running
+    
+    def is_busy(self) -> bool:
+        """Check if the brain is currently processing a task."""
+        return self._current_task is not None
+    
+    def get_status(self) -> Dict[str, Any]:
+        """Get current brain status for monitoring."""
+        return {
+            "name": self.name,
+            "workspace": self.workspace,
+            "running": self._running,
+            "busy": self.is_busy(),
+            "current_task": self._current_task.id if self._current_task else None,
+            "cancelled": self._cancelled
+        }
