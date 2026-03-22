@@ -3,6 +3,7 @@
 import asyncio
 import sys
 import signal
+import time
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -13,6 +14,15 @@ from .brains.python_brain import PythonBrain
 from .brains.researcher import ResearcherBrain
 from .front.front_brain import FrontBrain
 from .ui.rich_adapter import RichAdapter
+from .llm.mock_provider import MockLLMProvider
+from .voice.voice_manager import VoiceManager
+
+# Try to import TUI, fall back to Rich if unavailable
+try:
+    from .tui.app import BigBrainApp
+    TEXTUAL_AVAILABLE = True
+except ImportError:
+    TEXTUAL_AVAILABLE = False
 
 
 class BigBrainSystem:
@@ -23,22 +33,29 @@ class BigBrainSystem:
     Creates the bus, registers brains, starts orchestrator, and launches TUI.
     """
     
-    def __init__(self, workspace: str = "demo", log_dir: Path = None):
+    def __init__(self, workspace: str = "demo", log_dir: Path = None, ui_mode: str = "tui"):
         """
         Initialize BigBrain system.
         
         Args:
             workspace: Name of the primary workspace
             log_dir: Directory for message logs (defaults to ./logs)
+            ui_mode: UI mode ("tui" or "simple")
         """
         self.workspace = workspace
         self.log_dir = log_dir or Path("logs")
+        self.ui_mode = ui_mode
         
         # Core components
         self.bus: Optional[MessageBus] = None
         self.orchestrator: Optional[WorkspaceOrchestrator] = None
         self.front_brain: Optional[FrontBrain] = None
         self.ui: Optional[RichAdapter] = None
+        self.tui_app: Optional['BigBrainApp'] = None
+        
+        # New components
+        self.llm_provider: Optional[MockLLMProvider] = None
+        self.voice_manager: Optional[VoiceManager] = None
         
         # Brain registry
         self.brains: Dict[str, Any] = {}
@@ -46,6 +63,14 @@ class BigBrainSystem:
         # System state
         self._running = False
         self._shutdown_event = asyncio.Event()
+    
+    async def _ui_msg(self, message: str, msg_type: str = "info") -> None:
+        """Safe UI message — prints to console if UI not available."""
+        if self.ui:
+            await self.ui.render_message(message, msg_type)
+        else:
+            icons = {"info": "ℹ️", "success": "✅", "error": "❌", "warning": "⚠️"}
+            print(f"{icons.get(msg_type, '📝')} {message}")
     
     async def initialize(self) -> None:
         """Initialize all BigBrain components."""
@@ -57,14 +82,26 @@ class BigBrainSystem:
         # Create orchestrator
         self.orchestrator = WorkspaceOrchestrator(self.workspace, self.bus)
         
-        # Create brains
+        # Create LLM provider
+        self.llm_provider = MockLLMProvider(
+            token_delay_ms=50,
+            realistic_responses=True
+        )
+        
+        # Create voice manager
+        self.voice_manager = VoiceManager(auto_listen=True)
+        
+        # Create brains (now with LLM support)
         await self._create_brains()
         
-        # Create front brain
-        self.front_brain = FrontBrain(self.bus)
+        # Create front brain (now with LLM and voice support)
+        self.front_brain = FrontBrain(self.bus, llm_provider=self.llm_provider)
         
-        # Create UI
-        self.ui = RichAdapter()
+        # Wire voice manager callbacks
+        self._setup_voice_integration()
+        
+        # Create UI based on mode
+        await self._create_ui()
         
         print("✅ BigBrain system initialized successfully!")
     
@@ -94,6 +131,63 @@ class BigBrainSystem:
         
         print(f"📋 Registered {len(self.brains)} brains: {list(self.brains.keys())}")
     
+    async def _create_ui(self) -> None:
+        """Create UI based on mode."""
+        if self.ui_mode == "tui" and TEXTUAL_AVAILABLE:
+            print("🖥️  Starting Textual TUI...")
+            self.tui_app = BigBrainApp(bigbrain_system=self)
+        else:
+            if self.ui_mode == "tui" and not TEXTUAL_AVAILABLE:
+                print("⚠️  Textual not available, falling back to simple mode")
+            self.ui = RichAdapter()
+    
+    def _setup_voice_integration(self) -> None:
+        """Set up voice manager integration with Front Brain."""
+        async def on_transcription(text: str, is_final: bool) -> None:
+            if is_final and self.front_brain:
+                # Send transcribed text to front brain
+                message = BusMessage(
+                    type=MessageType.TASK,
+                    source="voice_manager",
+                    target="front_brain",
+                    workspace=self.workspace,
+                    payload={
+                        "type": "voice_input",
+                        "text": text,
+                        "timestamp": time.time()
+                    }
+                )
+                await self.bus.send(message)
+        
+        async def on_response_needed(user_input: str) -> str:
+            if self.front_brain:
+                # This would integrate with actual front brain response generation
+                return await self.llm_provider.complete(
+                    f"User said: {user_input}. Respond conversationally.",
+                    stream=False
+                )
+            return "I heard you, but I'm not connected to the brain system yet."
+        
+        async def on_state_change(new_state, extra_data) -> None:
+            # Update UI with voice state changes
+            if self.tui_app and hasattr(self.tui_app, 'brain_panel'):
+                voice_status = {
+                    "listening": "busy",
+                    "thinking": "busy", 
+                    "speaking": "busy",
+                    "idle": "idle"
+                }.get(str(new_state), "offline")
+                
+                self.tui_app.brain_panel.update_brain_status(
+                    "voice_brain", 
+                    voice_status, 
+                    self.voice_manager.is_enabled
+                )
+        
+        self.voice_manager.set_transcription_callback(on_transcription)
+        self.voice_manager.set_response_callback(on_response_needed)
+        self.voice_manager.set_state_change_callback(on_state_change)
+    
     async def start(self) -> None:
         """Start the BigBrain system."""
         if self._running:
@@ -103,8 +197,13 @@ class BigBrainSystem:
         
         try:
             # Start UI
-            await self.ui.start()
-            await self.ui.render_message("🧠 Starting BigBrain system...", "info")
+            if self.tui_app:
+                # TUI mode will be started separately
+                pass
+            else:
+                if self.ui:
+                    await self.ui.start()
+                await self._ui_msg("🧠 Starting BigBrain system...", "info")
             
             # Start orchestrator
             await self.orchestrator.start()
@@ -116,7 +215,9 @@ class BigBrainSystem:
             # Start all brains
             for brain_name, brain in self.brains.items():
                 await brain.start()
-                await self.ui.render_brain_status(brain_name, brain.get_status())
+                if self.ui:
+                    if self.ui:
+                        await self.ui.render_brain_status(brain_name, brain.get_status())
             
             # Start front brain
             await self.front_brain.start()
@@ -134,10 +235,14 @@ class BigBrainSystem:
                 priority=Priority.HIGH
             )
             
-            await self.ui.render_message("✅ BigBrain system started! Type 'help' for assistance.", "success")
+            if self.ui:
+                await self._ui_msg("✅ BigBrain system started! Type 'help' for assistance.", "success")
             
         except Exception as e:
-            await self.ui.render_message(f"❌ Failed to start BigBrain: {e}", "error")
+            if self.ui:
+                await self._ui_msg(f"❌ Failed to start BigBrain: {e}", "error")
+            else:
+                print(f"❌ Failed to start BigBrain: {e}")
             await self.stop()
             raise
     
@@ -164,7 +269,8 @@ class BigBrainSystem:
             
             # Stop UI
             if self.ui:
-                await self.ui.stop()
+                if self.ui:
+                    await self.ui.stop()
             
             # Close message bus
             if self.bus:
@@ -177,7 +283,7 @@ class BigBrainSystem:
     
     async def run_demo(self) -> None:
         """Run the interactive demo mode."""
-        await self.ui.render_message("🎮 Entering demo mode - showing system capabilities...", "info")
+        await self._ui_msg("🎮 Entering demo mode - showing system capabilities...", "info")
         
         # Demo tasks to showcase functionality
         demo_tasks = [
@@ -253,8 +359,8 @@ print(f"✓ Files in directory: {python_files}")
         ]
         
         for i, demo in enumerate(demo_tasks, 1):
-            await self.ui.render_message(f"🎯 Demo {i}/{len(demo_tasks)}: {demo['name']}", "info")
-            await self.ui.render_message(f"   {demo['description']}", "info")
+            await self._ui_msg(f"🎯 Demo {i}/{len(demo_tasks)}: {demo['name']}", "info")
+            await self._ui_msg(f"   {demo['description']}", "info")
             
             # Send task through the system
             task_message = BusMessage(
@@ -267,25 +373,28 @@ print(f"✓ Files in directory: {python_files}")
             )
             
             await self.bus.send(task_message)
-            await self.ui.render_progress(f"demo_{i}", status="Running...")
+            if self.ui:
+                await self.ui.render_progress(f"demo_{i}", status="Running...")
             
             # Wait for completion (simplified for demo)
             await asyncio.sleep(3)
-            await self.ui.render_progress(f"demo_{i}", progress=1.0, status="Complete")
+            if self.ui:
+                await self.ui.render_progress(f"demo_{i}", progress=1.0, status="Complete")
             
             # Small delay between demos
             await asyncio.sleep(1)
         
-        await self.ui.render_message("🎉 Demo completed! The system is ready for your tasks.", "success")
+        await self._ui_msg("🎉 Demo completed! The system is ready for your tasks.", "success")
     
     async def run_interactive(self) -> None:
         """Run interactive mode where user can enter tasks."""
-        await self.ui.render_message("💬 Interactive mode started. Type your tasks naturally!", "info")
+        await self._ui_msg("💬 Interactive mode started. Type your tasks naturally!", "info")
         
         while self._running:
             try:
                 # Get user input
-                user_input = await self.ui.get_user_input("BigBrain")
+                if self.ui:
+                    user_input = await self.ui.get_user_input("BigBrain")
                 
                 if not user_input or user_input.strip() == "":
                     continue
@@ -297,7 +406,8 @@ print(f"✓ Files in directory: {python_files}")
                     self._shutdown_event.set()
                     break
                 elif command == "help":
-                    await self.ui.show_help()
+                    if self.ui:
+                        await self.ui.show_help()
                     continue
                 elif command == "status":
                     await self._show_system_status()
@@ -320,7 +430,7 @@ print(f"✓ Files in directory: {python_files}")
                 )
                 
                 await self.bus.send(user_message)
-                await self.ui.render_message(f"📤 Sent: {user_input}", "info")
+                await self._ui_msg(f"📤 Sent: {user_input}", "info")
                 
             except KeyboardInterrupt:
                 self._shutdown_event.set()
@@ -329,7 +439,7 @@ print(f"✓ Files in directory: {python_files}")
                 self._shutdown_event.set()
                 break
             except Exception as e:
-                await self.ui.show_error(f"Input error: {e}")
+                await self._ui_msg(f"Input error: {e}", "error")
     
     async def _show_system_status(self) -> None:
         """Show current system status."""
@@ -344,7 +454,8 @@ print(f"✓ Files in directory: {python_files}")
         # Get bus stats
         bus_stats = self.bus.get_stats()
         
-        await self.ui.render_workspace_overview({
+        if self.ui:
+            await self.ui.render_workspace_overview({
             self.workspace: {
                 "state": "active" if self._running else "stopped",
                 "orchestrator": orchestrator_status,
@@ -362,6 +473,17 @@ print(f"✓ Files in directory: {python_files}")
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
     
+    async def run_tui(self) -> None:
+        """Run the Textual TUI interface."""
+        if not self.tui_app:
+            raise RuntimeError("TUI app not initialized")
+        
+        # Start the TUI app (this blocks until app exits)
+        await self.tui_app.run_async()
+        
+        # When TUI exits, signal shutdown
+        self._shutdown_event.set()
+    
     async def run(self, mode: str = "interactive") -> None:
         """
         Run BigBrain in the specified mode.
@@ -375,15 +497,20 @@ print(f"✓ Files in directory: {python_files}")
             await self.initialize()
             await self.start()
             
-            if mode == "demo":
-                await self.run_demo()
-                # After demo, switch to interactive
-                await self.run_interactive()
+            if self.tui_app:
+                # TUI mode - run the Textual app
+                await self.run_tui()
             else:
-                await self.run_interactive()
-            
-            # Wait for shutdown signal
-            await self._shutdown_event.wait()
+                # Simple mode - run console interface
+                if mode == "demo":
+                    await self.run_demo()
+                    # After demo, switch to interactive
+                    await self.run_interactive()
+                else:
+                    await self.run_interactive()
+                
+                # Wait for shutdown signal
+                await self._shutdown_event.wait()
             
         finally:
             await self.stop()
@@ -399,8 +526,18 @@ async def main() -> None:
     parser.add_argument("--mode", choices=["interactive", "demo"], default="demo", 
                        help="Run mode (default: demo)")
     parser.add_argument("--log-dir", default="logs", help="Log directory (default: logs)")
+    parser.add_argument("--tui", action="store_true", default=True,
+                       help="Use Textual TUI interface (default)")
+    parser.add_argument("--simple", action="store_true", default=False,
+                       help="Use simple Rich console interface")
     
     args = parser.parse_args()
+    
+    # Determine UI mode
+    ui_mode = "simple" if args.simple else "tui"
+    if ui_mode == "tui" and not TEXTUAL_AVAILABLE:
+        print("⚠️  Textual not available, using simple mode")
+        ui_mode = "simple"
     
     print(f"""
 🧠 BigBrain - Multi-Brain AI Agent System
@@ -408,6 +545,7 @@ async def main() -> None:
 Version: 0.1.0 (Preview Implementation)
 Workspace: {args.workspace}
 Mode: {args.mode}
+UI: {ui_mode.upper()}
 Logs: {args.log_dir}
 Time: {time.strftime('%Y-%m-%d %H:%M:%S')}
 
@@ -418,7 +556,8 @@ architecture with message bus communication and workspace orchestration.
     # Create and run the system
     system = BigBrainSystem(
         workspace=args.workspace,
-        log_dir=Path(args.log_dir)
+        log_dir=Path(args.log_dir),
+        ui_mode=ui_mode
     )
     
     try:

@@ -1,0 +1,20 @@
+{
+  "user_name": {
+    "value": "User",
+    "description": null,
+    "timestamp": 1774223897.1991916,
+    "updated_count": 4
+  },
+  "focus_mode": {
+    "value": "FocusMode.NORMAL",
+    "description": null,
+    "timestamp": 1774223897.199668,
+    "updated_count": 4
+  },
+  "auto_focus_switch": {
+    "value": true,
+    "description": null,
+    "timestamp": 1774223897.2014961,
+    "updated_count": 4
+  }
+}

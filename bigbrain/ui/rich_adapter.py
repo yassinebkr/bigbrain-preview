@@ -38,8 +38,13 @@ class RichAdapter(UIAdapter):
     Falls back to simple text output if Rich is not available.
     """
     
-    def __init__(self):
-        """Initialize Rich adapter."""
+    def __init__(self, live_mode: bool = False):
+        """Initialize Rich adapter.
+        
+        Args:
+            live_mode: If True, use Rich Live display (interactive terminals only).
+                      If False, use simple print output (safe for all environments).
+        """
         if not RICH_AVAILABLE:
             print("Warning: Rich library not available. Using simple text output.")
         
@@ -47,6 +52,7 @@ class RichAdapter(UIAdapter):
         self._running = False
         self._live_display = None
         self._layout = None
+        self._live_mode = live_mode and RICH_AVAILABLE
         
         # State tracking
         self._messages: List[Dict[str, Any]] = []
@@ -67,13 +73,12 @@ class RichAdapter(UIAdapter):
         
         self._running = True
         
-        if RICH_AVAILABLE:
+        if self._live_mode:
             self._setup_layout()
             self._live_display = Live(self._layout, console=self.console, refresh_per_second=2)
             self._live_display.start()
         
         await self.render_message("🧠 BigBrain UI Started", "success")
-        await self.show_help()
     
     async def stop(self) -> None:
         """Stop the UI system."""

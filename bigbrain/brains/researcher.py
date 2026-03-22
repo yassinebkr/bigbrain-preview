@@ -452,7 +452,7 @@ Generate a comprehensive summary with key findings, insights, and conclusions.
     
     async def handle_message(self, message: BusMessage) -> None:
         """Handle non-task messages specific to researcher brain."""
-        if message.type.value == "query" and message.payload.get("type") == "capabilities":
+        if str(message.type) == "query" and message.payload.get("type") == "capabilities":
             await self.send_result({
                 "brain_type": "researcher",
                 "search_provider": "mock",

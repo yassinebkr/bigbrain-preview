@@ -179,6 +179,10 @@ class WorkspaceOrchestrator:
         Processes different message types and updates task state accordingly.
         Never blocks - all operations are async and return quickly.
         """
+        # Skip our own messages to prevent infinite broadcast loops
+        if message.source == self.name:
+            return
+        
         try:
             if message.type == MessageType.TASK:
                 await self._handle_task_request(message)
@@ -588,21 +592,15 @@ class WorkspaceOrchestrator:
             )
     
     async def _forward_brain_event(self, message: BusMessage) -> None:
-        """Forward brain events to interested parties (like Front Brain)."""
-        # Add orchestrator context and forward
-        enhanced_payload = {
-            **message.payload,
-            "workspace": self.workspace,
-            "orchestrator": self.name
-        }
+        """Forward brain events to interested parties (like Front Brain).
         
-        await self.bus.broadcast_event(
-            source=self.name,
-            event_type=f"brain.{message.payload.get('event', 'update')}",
-            payload=enhanced_payload,
-            workspace=self.workspace,
-            priority=message.priority
-        )
+        Note: Disabled in preview to prevent broadcast loops.
+        In production, use targeted sends instead of re-broadcasting.
+        """
+        # Don't re-broadcast — causes infinite loops when multiple
+        # components all listen on wildcard and forward events.
+        # The original event is already visible to all subscribers.
+        pass
     
     def register_brain(self, brain_name: str, capabilities: Dict[str, Any] = None) -> None:
         """Register a brain with this orchestrator."""

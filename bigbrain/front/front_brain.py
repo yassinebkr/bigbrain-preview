@@ -32,17 +32,19 @@ class FrontBrain:
     - Makes intelligent decisions about what to surface
     """
     
-    def __init__(self, bus: MessageBus, user_name: str = "User"):
+    def __init__(self, bus: MessageBus, user_name: str = "User", llm_provider=None):
         """
         Initialize Front Brain.
         
         Args:
             bus: MessageBus for communication
             user_name: Name of the user for personalization
+            llm_provider: LLM provider for intelligent responses
         """
         self.bus = bus
         self.user_name = user_name
         self.name = "front_brain"
+        self.llm_provider = llm_provider
         
         # Focus and attention management
         self.focus_manager = FocusManager()
@@ -159,6 +161,10 @@ class FrontBrain:
         if not self._running or event.source == self.name:
             return  # Don't process our own events
         
+        # Only process EVENT type messages in the wildcard handler
+        if event.type not in (MessageType.EVENT, "event"):
+            return
+        
         # Filter through focus system
         filtered_event = self.focus_manager.filter_event(event)
         
@@ -183,7 +189,7 @@ class FrontBrain:
         
         Decides whether and how to surface the event to the user.
         """
-        event_type = event.payload.get("event", event.type.value)
+        event_type = event.payload.get("event", str(event.type))
         workspace = event.workspace or "system"
         
         # Check if we should interrupt the user
@@ -205,7 +211,7 @@ class FrontBrain:
                 "event_type": event_type,
                 "source": event.source,
                 "workspace": workspace,
-                "priority": event.priority.value,
+                "priority": str(event.priority),
                 "interrupted_user": should_interrupt
             }
         )
@@ -485,7 +491,7 @@ class FrontBrain:
     
     async def _generate_notification(self, event: BusMessage) -> str:
         """Generate natural language notification for an event."""
-        event_type = event.payload.get("event", event.type.value)
+        event_type = event.payload.get("event", str(event.type))
         source = event.source
         workspace = event.workspace or "system"
         
@@ -537,11 +543,13 @@ class FrontBrain:
     async def _save_user_context(self) -> None:
         """Save current user context and preferences."""
         self.memory.store_user_preference("user_name", self.user_name)
-        self.memory.store_user_preference("focus_mode", self.focus_manager.focus_rules.current_mode.value)
+        self.memory.store_user_preference("focus_mode", str(self.focus_manager.focus_rules.current_mode))
         self.memory.store_user_preference("auto_focus_switch", self.focus_manager.focus_rules.auto_switch_enabled)
         
         # Consolidate memories before shutdown
-        await asyncio.create_task(asyncio.coroutine(lambda: self.memory.consolidate_memories())())
+        # Consolidate memories (sync call, run in executor to not block)
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self.memory.consolidate_memories)
     
     def get_status(self) -> Dict[str, Any]:
         """Get Front Brain status."""

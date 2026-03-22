@@ -104,6 +104,10 @@ class BaseBrain(ABC):
         Handles common message types and delegates task processing
         to the subclass handle_task method.
         """
+        # Skip our own messages to prevent broadcast loops
+        if message.source == self.name:
+            return
+        
         try:
             if message.type == MessageType.TASK:
                 await self._handle_task_message(message)

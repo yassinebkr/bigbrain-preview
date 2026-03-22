@@ -4,13 +4,17 @@ version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.0",
-    "rich>=13.0"
+    "rich>=13.0",
+    "textual>=0.50"
 ]
 description = "BigBrain - A Multi-Brain AI Agent System (Preview Implementation)"
 authors = [
     {name = "BigBrain Team"}
 ]
 readme = "README.md"
+
+[project.optional-dependencies]
+voice = ["deepgram-sdk", "cartesia"]
 
 [build-system]
 requires = ["setuptools>=61.0"]
