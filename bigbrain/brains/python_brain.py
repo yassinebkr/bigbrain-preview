@@ -184,6 +184,12 @@ class PythonBrain(BaseBrain):
                 attempt_history.append(error_info)
 
                 if attempt < max_retries:
+                    await self.send_event("brain.retry", {
+                        "brain": self.name,
+                        "attempt": attempt,
+                        "max_attempts": max_retries,
+                        "error": error_info["stderr"][:100],
+                    })
                     await self.send_progress({
                         "stage": "retrying",
                         "attempt": attempt,

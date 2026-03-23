@@ -97,7 +97,7 @@ class SchemaValidator(BaseVerifier):
             # Validate against specific schema
             try:
                 # Parse and validate using Pydantic
-                validated_instance = schema_class.parse_obj(data)
+                validated_instance = schema_class.model_validate(data)
                 
                 end_time = time.time()
                 return VerificationResult(
@@ -107,7 +107,7 @@ class SchemaValidator(BaseVerifier):
                     message=f"Valid {schema_class.__name__}",
                     details={
                         "schema": schema_class.__name__,
-                        "validated_fields": list(validated_instance.dict().keys()),
+                        "validated_fields": list(validated_instance.model_dump().keys()),
                         "extra_fields": self._get_extra_fields(data, validated_instance)
                     },
                     execution_time=end_time - start_time
@@ -233,7 +233,7 @@ class SchemaValidator(BaseVerifier):
         if not isinstance(original_data, dict):
             return []
         
-        validated_fields = set(validated_instance.dict().keys())
+        validated_fields = set(validated_instance.model_dump().keys())
         original_fields = set(original_data.keys())
         
         return list(original_fields - validated_fields)

@@ -127,35 +127,54 @@ class BigBrainApp(App):
         system = self.bigbrain_system
         if not system or not system.front_brain:
             self.chat_panel.add_message("system", "System not ready.")
+            self._refocus_input()
             return
 
         front = system.front_brain
         front._conversation_history.append({"role": "user", "content": message})
 
-        # Built-in commands
-        cmd = message.lower().strip()
-        if cmd == "help":
-            self.chat_panel.add_message("assistant", front._get_help_text())
-            return
-        if cmd == "status":
-            resp = await front._handle_status_query({"target": "general"})
-            self.chat_panel.add_message("assistant", resp)
-            return
+        try:
+            # Built-in commands
+            cmd = message.lower().strip()
+            if cmd == "help":
+                self.chat_panel.add_message("assistant", front._get_help_text())
+                return
+            if cmd == "status":
+                resp = await front._handle_status_query({"target": "general"})
+                self.chat_panel.add_message("assistant", resp)
+                return
 
-        # Detect intent
-        text_lower = message.lower()
-        is_code = any(kw in text_lower for kw in [
-            "run", "execute", "code", "python", "script", "write a",
-            "calculate", "fibonacci", "simulate", "plot", "generate",
-            "create a function", "create a class", "create a program",
-        ])
+            # Detect intent
+            text_lower = message.lower()
+            is_code = any(kw in text_lower for kw in [
+                "run", "execute", "code", "python", "script", "write a program",
+                "write a script", "write code",
+                "calculate", "fibonacci", "simulate", "plot",
+                "create a function", "create a class", "create a program",
+            ])
 
-        if is_code:
-            # === CODE PATH: Route through PythonBrain via bus ===
-            await self._handle_code_request(message, system, front)
-        else:
-            # === CONVERSATION PATH: FrontBrain streams directly ===
-            await self._handle_conversation(message, system, front)
+            if is_code:
+                # === CODE PATH: Route through PythonBrain via bus ===
+                await self._handle_code_request(message, system, front)
+            else:
+                # === CONVERSATION PATH: FrontBrain streams directly ===
+                await self._handle_conversation(message, system, front)
+        except asyncio.CancelledError:
+            raise  # Let Textual handle worker cancellation
+        except Exception as e:
+            self.chat_panel.add_message("system", f"❌ Error: {e}")
+        finally:
+            # ALWAYS refocus input so user can keep typing
+            self._refocus_input()
+
+    def _refocus_input(self) -> None:
+        """Restore focus to the message input field.
+        
+        Called after every message processing to prevent focus loss
+        when widgets are mounted/updated during the worker.
+        """
+        if self.message_input:
+            self.call_after_refresh(lambda: self.set_focus(self.message_input))
 
     async def _handle_conversation(self, message, system, front):
         """Stream a conversational response from FrontBrain LLM."""
@@ -174,11 +193,10 @@ class BigBrainApp(App):
             self.chat_panel.finish_streaming_message()
             response_text = "".join(full)
             if not response_text.strip():
-                # Stream returned nothing — remove blank box, show fallback
                 self.chat_panel.add_message("system", "⚠️ LLM returned empty response. Check model config.")
-            front._conversation_history.append({"role": "assistant", "content": response_text})
+            else:
+                front._conversation_history.append({"role": "assistant", "content": response_text})
         except Exception as e:
-            # Remove the empty streaming box, show actual error
             self.chat_panel.finish_streaming_message()
             self.chat_panel.add_message("system", f"❌ LLM error: {e}")
 
@@ -207,7 +225,7 @@ class BigBrainApp(App):
             priority=Priority.NORMAL,
         )
 
-        result_future = asyncio.get_event_loop().create_future()
+        result_future = asyncio.get_running_loop().create_future()
 
         async def _capture_result(result_msg: BusMessage):
             if result_msg.source == "python_brain" and result_msg.type == MessageType.RESULT:
@@ -248,13 +266,16 @@ class BigBrainApp(App):
                 voice_brain = getattr(system, "voice_brain", None)
                 if voice_brain:
                     try:
-                        summary = await voice_brain.vocalize_result(
-                            message,
-                            {"success": True, "data": data},
+                        summary = await asyncio.wait_for(
+                            voice_brain.vocalize_result(
+                                message,
+                                {"success": True, "data": data},
+                            ),
+                            timeout=15,  # Don't hang on LLM summarization
                         )
                         self.chat_panel.add_message("assistant", summary)
-                    except Exception as e:
-                        # Voice Brain failed — show raw output
+                    except (asyncio.TimeoutError, Exception) as e:
+                        # Voice Brain failed or timed out — show raw output
                         summary = f"Done! Output:\n{stdout[:300]}" if stdout else "Code ran successfully."
                         if stderr:
                             summary += f"\n⚠️ {stderr[:200]}"
@@ -368,6 +389,9 @@ This provides a solid foundation for your data processing needs. Would you like 
         # Set initial focus
         if self.focus_panel:
             self.focus_panel.update_focus("normal", system.workspace, 0.0)
+
+        # Ensure input has focus after system boots
+        self._refocus_input()
     
     async def _on_bus_message(self, message) -> None:
         """Handle real bus messages and route to TUI widgets."""

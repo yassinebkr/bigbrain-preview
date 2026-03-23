@@ -170,20 +170,9 @@ class FrontBrain:
             "plot", "generate", "```"
         ])
         
-        if is_code_request and "```" in input_text:
-            # User provided code directly — extract and execute
-            code = self._extract_code_blocks(input_text)
-            if code:
-                exec_result = await self._execute_code_direct(code)
-                return f"Running your code...\n\n```\n{exec_result}\n```"
-        
         # Build system prompt with current context
         focus_status = self.focus_manager.get_focus_status()
         system_prompt = self._build_system_prompt(focus_status)
-        
-        # For code requests, tell Claude to include runnable code
-        if is_code_request:
-            system_prompt += "\n\nIMPORTANT: When the user asks for code, include a complete, runnable Python script in a ```python code block. The code WILL be auto-executed, so make sure it's self-contained and prints output."
         
         messages = [{"role": "system", "content": system_prompt}]
         
@@ -196,13 +185,6 @@ class FrontBrain:
                 messages=messages,
                 stream=False
             )
-            
-            # Auto-execute code blocks if this was a code request
-            if is_code_request and response and "```python" in response:
-                code = self._extract_code_blocks(response)
-                if code:
-                    exec_result = await self._execute_code_direct(code)
-                    response += f"\n\n📍 **Execution Output:**\n```\n{exec_result}\n```"
             
             return response
         except Exception as e:
