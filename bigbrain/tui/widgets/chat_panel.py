@@ -3,7 +3,7 @@
 from datetime import datetime
 
 from textual.widgets import Static
-from textual.containers import Vertical, VerticalScroll
+from textual.containers import VerticalScroll
 from rich.markdown import Markdown
 from rich.text import Text
 
@@ -21,7 +21,7 @@ class ChatMessage(Static):
         self.timestamp = timestamp or datetime.now()
 
         # Render content
-        if role == "assistant" and "```" in message_text:
+        if role == "assistant" and ("```" in message_text or "**" in message_text):
             try:
                 rendered = Markdown(message_text)
             except Exception:
@@ -64,7 +64,7 @@ class StreamingMessage(Static):
     def _refresh_display(self) -> None:
         text = self.message_text
         if self.is_streaming:
-            text += "█"
+            text += " █"
 
         if self.role == "assistant" and "```" in text:
             try:
@@ -78,7 +78,12 @@ class StreamingMessage(Static):
 
 
 class ChatPanel(VerticalScroll):
-    """Chat panel with scrolling message history and streaming support."""
+    """Chat panel with scrolling message history and streaming support.
+    
+    Messages are mounted directly as children of VerticalScroll (no inner
+    container) so Textual's scroll system works correctly. The VerticalScroll
+    needs to see multiple children to compute scroll height properly.
+    """
 
     BORDER_TITLE = "💬 Chat"
 
@@ -88,26 +93,23 @@ class ChatPanel(VerticalScroll):
         super().__init__(**kwargs)
 
     def compose(self):
-        with Vertical(id="chat-messages"):
-            yield ChatMessage(
-                "system",
-                "Welcome to BigBrain! 🧠\nType a message below to get started.",
-            )
+        yield ChatMessage(
+            "system",
+            "Welcome to BigBrain! 🧠\nType a message below to get started.",
+        )
 
     def add_message(self, role: str, text: str) -> None:
         message = ChatMessage(role, text)
         self.messages.append(message)
-        container = self.query_one("#chat-messages")
-        container.mount(message)
+        self.mount(message)
         self.call_after_refresh(self._do_scroll)
 
     def start_streaming_message(self, role: str) -> None:
         if self.current_streaming_message:
             self.finish_streaming_message()
         self.current_streaming_message = StreamingMessage(role)
-        container = self.query_one("#chat-messages")
-        container.mount(self.current_streaming_message)
-        self.scroll_end(animate=True)
+        self.mount(self.current_streaming_message)
+        self.call_after_refresh(self._do_scroll)
 
     def append_to_streaming(self, chunk: str) -> None:
         if self.current_streaming_message:
@@ -123,23 +125,19 @@ class ChatPanel(VerticalScroll):
             self.current_streaming_message.finish_streaming()
             self.messages.append(self.current_streaming_message)
             self.current_streaming_message = None
+            self.call_after_refresh(self._do_scroll)
 
     def discard_streaming_message(self) -> None:
-        """Remove the current streaming message without keeping it in history.
-        
-        Use when interim display should be replaced entirely (e.g., STT interim
-        text replaced by a clean final transcription message).
-        """
+        """Remove the current streaming message without keeping it in history."""
         if self.current_streaming_message:
             if self.current_streaming_message.parent:
                 self.current_streaming_message.remove()
             self.current_streaming_message = None
 
     def clear(self) -> None:
-        container = self.query_one("#chat-messages")
         for msg in self.messages:
             if msg.parent:
                 msg.remove()
         self.messages.clear()
         self.current_streaming_message = None
-        container.mount(ChatMessage("system", "Chat cleared. Ready! 🔄"))
+        self.mount(ChatMessage("system", "Chat cleared. Ready! 🔄"))

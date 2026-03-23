@@ -23,6 +23,7 @@ App {
 #chat-container {
     width: 70%;
     margin-right: 1;
+    height: 100%;
 }
 
 #right-column {
@@ -40,12 +41,14 @@ App {
 }
 
 #chat-panel {
-    height: 90%;
+    height: 1fr;
+    min-height: 10;
 }
 
 #input-container {
     layout: horizontal;
-    height: 10%;
+    height: auto;
+    max-height: 3;
 }
 
 #message-input {
