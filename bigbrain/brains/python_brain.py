@@ -238,7 +238,7 @@ class PythonBrain(BaseBrain):
 Rules:
 - Output ONLY the Python code, no explanation before or after
 - The code must be self-contained and runnable as a script
-- Use print() to show results
+- IMPORTANT: The script MUST produce printed output. Always include a main section that runs the code and prints interesting results, statistics, or insights using print()
 - No external dependencies beyond the standard library (no numpy, scipy, matplotlib, etc.)
 - Include error handling where appropriate
 - For f-strings with dict access, use double quotes outside and bracket notation: f"{{d['key']}}" or use variables: val = d['key']; f"{{val}}"
