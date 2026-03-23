@@ -123,9 +123,13 @@ class BigBrainApp(App):
         else:
             self.chat_panel.add_message("assistant", f"Echo: {message}")
     
-    @work(exclusive=True, group="chat")
+    @work(group="chat")
     async def process_user_message(self, message: str) -> None:
-        """Process user message through the full brain pipeline."""
+        """Process user message through the full brain pipeline.
+        
+        NOT exclusive — each message runs independently so one slow
+        response never blocks subsequent user input.
+        """
         system = self.bigbrain_system
         if not system or not system.front_brain:
             self.chat_panel.add_message("system", "System not ready.")
@@ -146,21 +150,9 @@ class BigBrainApp(App):
                 self.chat_panel.add_message("assistant", resp)
                 return
 
-            # Detect intent
-            text_lower = message.lower()
-            is_code = any(kw in text_lower for kw in [
-                "run", "execute", "code", "python", "script", "write a program",
-                "write a script", "write code",
-                "calculate", "fibonacci", "simulate", "plot",
-                "create a function", "create a class", "create a program",
-            ])
-
-            if is_code:
-                # === CODE PATH: Route through PythonBrain via bus ===
-                await self._handle_code_request(message, system, front)
-            else:
-                # === CONVERSATION PATH: FrontBrain streams directly ===
-                await self._handle_conversation(message, system, front)
+            # All messages go through conversation path (LLM decides actions)
+            # The FrontBrain's system prompt tells it when/how to delegate code tasks
+            await self._handle_conversation(message, system, front)
         except asyncio.CancelledError:
             raise  # Let Textual handle worker cancellation
         except Exception as e:
@@ -187,33 +179,43 @@ class BigBrainApp(App):
 
         response_text = ""
 
-        # Try streaming first
+        # Try streaming first (with 60s overall timeout)
         try:
             self.chat_panel.start_streaming_message("assistant")
-            stream = await system.llm_provider.chat_complete(messages=messages, stream=True)
-            full = []
-            async for chunk in stream:
-                full.append(chunk)
-                self.chat_panel.append_to_streaming(chunk)
+            async with asyncio.timeout(60):
+                stream = await system.llm_provider.chat_complete(messages=messages, stream=True)
+                full = []
+                async for chunk in stream:
+                    full.append(chunk)
+                    self.chat_panel.append_to_streaming(chunk)
             self.chat_panel.finish_streaming_message()
             response_text = "".join(full)
+        except asyncio.TimeoutError:
+            self.chat_panel.discard_streaming_message()
+            self.chat_panel.add_message("system", "⚠️ Response timed out (60s). Try again.")
+            return
         except Exception as e:
-            self.chat_panel.finish_streaming_message()
-            # Streaming failed — fall through to non-streaming fallback
+            self.chat_panel.discard_streaming_message()
+            # Show error and fall through to non-streaming
+            self.chat_panel.add_message("system", f"⚠️ Streaming error: {e}")
             response_text = ""
 
         # Fallback: if streaming yielded nothing, try non-streaming
         if not response_text.strip():
             try:
-                response_text = await system.llm_provider.chat_complete(
-                    messages=messages, stream=False
-                )
+                async with asyncio.timeout(30):
+                    response_text = await system.llm_provider.chat_complete(
+                        messages=messages, stream=False
+                    )
+            except asyncio.TimeoutError:
+                self.chat_panel.add_message("system", "⚠️ LLM timed out. Check your connection.")
+                return
             except Exception as e:
                 self.chat_panel.add_message("system", f"❌ LLM error: {e}")
                 return
 
         if response_text and response_text.strip():
-            # If we got text from fallback (not streaming), show it now
+            # If we got text from fallback (not streaming), show it
             if not self.chat_panel.current_streaming_message:
                 self.chat_panel.add_message("assistant", response_text)
             front._conversation_history.append({"role": "assistant", "content": response_text})

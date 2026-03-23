@@ -188,53 +188,60 @@ class AnthropicOAuthProvider(LLMProvider):
         return "\n".join(texts)
 
     async def _stream_chat(self, body: dict) -> AsyncIterator[str]:
-        """Streaming chat completion using SSE."""
+        """Streaming chat completion using SSE.
+        
+        Uses a fresh httpx client per stream to avoid connection pool
+        issues when the main client is reused for multiple concurrent or
+        sequential streaming calls.
+        """
         body["stream"] = True
 
-        async with self._client.stream(
-            "POST",
-            ANTHROPIC_API_URL,
-            headers=self._headers,
-            json=body,
-        ) as resp:
-            if resp.status_code != 200:
-                raw = await resp.aread()
-                try:
-                    error = json.loads(raw)
-                    msg = error.get("error", {}).get("message", raw.decode())
-                except Exception:
-                    msg = raw.decode(errors="replace")
-                raise RuntimeError(f"Anthropic API error ({resp.status_code}): {msg}")
+        # Fresh client per stream — avoids connection reuse issues
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            async with client.stream(
+                "POST",
+                ANTHROPIC_API_URL,
+                headers=self._headers,
+                json=body,
+            ) as resp:
+                if resp.status_code != 200:
+                    raw = await resp.aread()
+                    try:
+                        error = json.loads(raw)
+                        msg = error.get("error", {}).get("message", raw.decode())
+                    except Exception:
+                        msg = raw.decode(errors="replace")
+                    raise RuntimeError(f"Anthropic API error ({resp.status_code}): {msg}")
 
-            async for line in resp.aiter_lines():
-                if not line.startswith("data: "):
-                    continue
-                payload = line[6:]
-                if payload == "[DONE]":
-                    break
-                try:
-                    event = json.loads(payload)
-                except json.JSONDecodeError:
-                    continue
+                async for line in resp.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    payload = line[6:]
+                    if payload == "[DONE]":
+                        break
+                    try:
+                        event = json.loads(payload)
+                    except json.JSONDecodeError:
+                        continue
 
-                event_type = event.get("type", "")
+                    event_type = event.get("type", "")
 
-                # Handle error events inside the stream
-                if event_type == "error":
-                    err = event.get("error", {})
-                    raise RuntimeError(
-                        f"Stream error: {err.get('type', 'unknown')}: "
-                        f"{err.get('message', str(err))}"
-                    )
+                    # Handle error events inside the stream
+                    if event_type == "error":
+                        err = event.get("error", {})
+                        raise RuntimeError(
+                            f"Stream error: {err.get('type', 'unknown')}: "
+                            f"{err.get('message', str(err))}"
+                        )
 
-                # Anthropic signals stream end with message_stop
-                if event_type == "message_stop":
-                    break
+                    # Anthropic signals stream end with message_stop
+                    if event_type == "message_stop":
+                        break
 
-                if event_type == "content_block_delta":
-                    delta = event.get("delta", {})
-                    if delta.get("type") == "text_delta":
-                        yield delta["text"]
+                    if event_type == "content_block_delta":
+                        delta = event.get("delta", {})
+                        if delta.get("type") == "text_delta":
+                            yield delta["text"]
 
     def get_available_models(self) -> list[str]:
         """Models available via OAuth."""
