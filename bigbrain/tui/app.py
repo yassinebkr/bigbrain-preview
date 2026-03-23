@@ -322,29 +322,46 @@ class BigBrainApp(App):
         parts = [f"**{brain}** completed:"]
 
         if isinstance(results, dict):
-            # Code execution results
+            # Code execution results — may be nested via orchestrator plan
             for key, subtask_result in results.items():
                 if isinstance(subtask_result, dict):
+                    # Unwrap orchestrator/brain layers:
+                    # subtask_result = {"success": True, "data": {inner_result}}
                     sr = subtask_result.get("data", subtask_result)
+                    
+                    # sr might still have another "data" layer from BaseBrain wrapping
+                    if isinstance(sr, dict) and "data" in sr and isinstance(sr["data"], dict):
+                        inner = sr["data"]
+                        # Check if the inner dict has execution fields
+                        if any(k in inner for k in ("generated_code", "stdout", "exit_code")):
+                            sr = inner
+
                     code = sr.get("generated_code", "")
                     stdout = sr.get("stdout", "").strip()
                     stderr = sr.get("stderr", "").strip()
                     exit_code = sr.get("exit_code", -1)
+                    error = sr.get("error", "")
+                    attempts = sr.get("total_attempts", 1)
 
                     if code:
-                        preview = code[:600]
-                        if len(code) > 600:
+                        preview = code[:800]
+                        if len(code) > 800:
                             preview += "\n# ... (truncated)"
                         parts.append(f"```python\n{preview}\n```")
 
                     if exit_code == 0 and stdout:
-                        parts.append(f"**Output:**\n```\n{stdout[:500]}\n```")
+                        parts.append(f"**Output:**\n```\n{stdout[:800]}\n```")
                     elif exit_code == 0:
                         parts.append("✅ Ran successfully (no output)")
                     else:
-                        parts.append(f"⚠️ Exit code: {exit_code}")
+                        if error:
+                            parts.append(f"⚠️ {error}")
+                        else:
+                            parts.append(f"⚠️ Exit code: {exit_code}")
                         if stderr:
-                            parts.append(f"```\n{stderr[:300]}\n```")
+                            parts.append(f"**Error:**\n```\n{stderr[:500]}\n```")
+                        if attempts > 1:
+                            parts.append(f"(tried {attempts} times)")
                 else:
                     parts.append(str(subtask_result)[:500])
         else:
