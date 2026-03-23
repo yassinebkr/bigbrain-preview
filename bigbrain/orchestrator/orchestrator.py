@@ -1,6 +1,8 @@
 """WorkspaceOrchestrator - Event-driven task management for BigBrain."""
 
 import asyncio
+import json
+import logging
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
@@ -10,6 +12,8 @@ from ..bus.bus import MessageBus
 from ..bus.message import BusMessage, MessageType, Priority
 from ..bus.participant import BusParticipant
 from .execution_modes import BrainExecutionConfig, ExecutionMode
+
+logger = logging.getLogger(__name__)
 
 
 class TaskStatus(str, Enum):
@@ -116,16 +120,45 @@ class WorkspaceOrchestrator(BusParticipant):
     - Sends RESULT back when complete
     """
     
-    def __init__(self, workspace: str, bus: MessageBus):
+    # System prompt for the planner LLM
+    PLANNER_SYSTEM_PROMPT = """You are a task planner for a multi-brain AI system.
+
+Your job: decompose a user's request into concrete subtasks, each assigned to the right brain.
+
+Available brains (use exactly these names as brain_target):
+{brain_list}
+
+Rules:
+- Each subtask has: id, description, brain_target, dependencies (list of subtask ids it depends on)
+- Use dependencies to enforce ordering when one subtask needs another's output
+- Keep subtasks atomic — one clear action each
+- For simple requests (greetings, questions, single actions), return just ONE subtask
+- For complex requests (multi-step, multi-domain), decompose into 2-5 subtasks with proper dependencies
+- The "type" field in each subtask's payload should describe the action (e.g. "generate_and_execute", "research", "analyze")
+
+Respond with ONLY a JSON array of subtask objects. No explanation, no markdown fences.
+
+Example — simple request "write a fibonacci function":
+[{{"id": "s1", "description": "Generate and execute fibonacci code", "brain_target": "python_brain", "payload": {{"type": "generate_and_execute", "user_request": "write a fibonacci function"}}, "dependencies": []}}]
+
+Example — complex request "research async patterns then build an async web scraper":
+[{{"id": "s1", "description": "Research async programming patterns in Python", "brain_target": "researcher", "payload": {{"type": "research", "query": "async programming patterns Python aiohttp asyncio"}}, "dependencies": []}}, {{"id": "s2", "description": "Build async web scraper using research findings", "brain_target": "python_brain", "payload": {{"type": "generate_and_execute", "user_request": "build an async web scraper", "context_ref": "#s1"}}, "dependencies": ["s1"]}}]"""
+
+    def __init__(self, workspace: str, bus: MessageBus, llm_provider=None,
+                 planner_model: str = None):
         """
         Initialize workspace orchestrator.
         
         Args:
             workspace: Workspace name this orchestrator manages
             bus: MessageBus for communication
+            llm_provider: LLM provider for task planning (Opus-class recommended)
+            planner_model: Model override for planning calls
         """
         super().__init__(f"orchestrator_{workspace}", bus)
         self.workspace = workspace
+        self.llm_provider = llm_provider
+        self.planner_model = planner_model
         
         # Task tracking
         self.task_plans: Dict[str, TaskPlan] = {}
@@ -243,102 +276,171 @@ class WorkspaceOrchestrator(BusParticipant):
     
     async def _create_task_plan(self, message: BusMessage) -> TaskPlan:
         """
-        Decompose a task into executable subtasks.
+        Decompose a task into executable subtasks using LLM planning.
         
-        For this preview implementation, we use simple task mapping.
-        A production system would use LLM-based planning.
+        Uses the planner LLM (Opus-class) to analyze the user's request and
+        break it into subtasks with correct brain targets and dependencies.
+        Falls back to simple routing if no LLM is available.
         """
-        task_data = message.payload
-        task_type = task_data.get("type", "unknown")
-        
         plan_id = str(uuid.uuid4())
         plan = TaskPlan(id=plan_id, original_task=message)
         
-        # Simple task decomposition based on type
-        if task_type == "execute_code":
-            # Single subtask - execute code
-            subtask = SubTask(
-                id=f"{plan_id}_code",
-                description="Execute Python code",
-                brain_target="python_brain",
-                payload=task_data
-            )
-            plan.subtasks.append(subtask)
+        task_data = message.payload
+        user_request = (
+            task_data.get("user_request")
+            or task_data.get("query")
+            or task_data.get("description")
+            or str(task_data)
+        )
         
-        elif task_type == "research":
-            # Multi-step research task (ReWOO pattern)
-            # Step 1: Plan research
-            plan_subtask = SubTask(
-                id=f"{plan_id}_plan",
-                description="Plan research approach",
-                brain_target="researcher",
-                payload={
-                    "type": "plan_research",
-                    "query": task_data.get("query", ""),
-                    "scope": task_data.get("scope", "general")
-                }
-            )
-            
-            # Step 2: Execute research (depends on plan)
-            research_subtask = SubTask(
-                id=f"{plan_id}_search",
-                description="Execute research searches",
-                brain_target="researcher", 
-                payload={
-                    "type": "execute_research",
-                    "plan_ref": f"#{plan_subtask.id}"  # ReWOO-style reference
-                },
-                dependencies={plan_subtask.id}
-            )
-            
-            # Step 3: Summarize results
-            summary_subtask = SubTask(
-                id=f"{plan_id}_summary",
-                description="Summarize research findings",
-                brain_target="researcher",
-                payload={
-                    "type": "summarize_research",
-                    "results_ref": f"#{research_subtask.id}"
-                },
-                dependencies={research_subtask.id}
-            )
-            
-            plan.subtasks.extend([plan_subtask, research_subtask, summary_subtask])
+        # Try LLM-powered planning
+        if self.llm_provider:
+            try:
+                subtasks = await self._llm_decompose(plan_id, user_request, task_data)
+                if subtasks:
+                    plan.subtasks = subtasks
+                    return plan
+            except Exception as e:
+                logger.warning("LLM planning failed, falling back to simple routing: %s", e)
         
-        else:
-            # Default: single subtask to best available brain
-            subtask = SubTask(
-                id=f"{plan_id}_default",
-                description=f"Execute {task_type} task",
-                brain_target=self._choose_brain_for_task(task_type),
-                payload=task_data
-            )
-            plan.subtasks.append(subtask)
-        
+        # Fallback: simple deterministic routing
+        plan.subtasks = self._simple_decompose(plan_id, task_data)
         return plan
     
-    def _choose_brain_for_task(self, task_type: str) -> str:
-        """Choose the best brain for a task type based on load balancing."""
-        # Map task types to brain types
-        brain_preferences = {
-            "execute_code": ["python_brain"],
-            "research": ["researcher"],
-            "web_search": ["researcher"],
-            "default": ["python_brain"]  # Fallback
+    async def _llm_decompose(self, plan_id: str, user_request: str,
+                             task_data: dict) -> List[SubTask]:
+        """Use LLM to decompose a task into subtasks with dependencies."""
+        # Build brain list for the system prompt
+        brain_descriptions = []
+        for name, caps in self.registered_brains.items():
+            desc = caps.get("description", name)
+            brain_descriptions.append(f"- {name}: {desc}")
+        
+        if not brain_descriptions:
+            brain_descriptions = [
+                "- python_brain: Generates and executes Python code",
+                "- researcher: Researches topics, gathers information, analyzes data",
+            ]
+        
+        brain_list = "\n".join(brain_descriptions)
+        system = self.PLANNER_SYSTEM_PROMPT.format(brain_list=brain_list)
+        
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_request},
+        ]
+        
+        # Call planner LLM (non-streaming — we need the full JSON)
+        raw = await self.llm_provider.chat_complete(
+            messages=messages,
+            model=self.planner_model,
+            stream=False,
+            max_tokens=1024,
+            temperature=0.3,  # Low temp for structured planning
+        )
+        
+        # Parse JSON response
+        subtask_defs = self._parse_plan_json(raw)
+        
+        # Convert to SubTask objects
+        subtasks = []
+        for sd in subtask_defs:
+            sid = sd.get("id", f"{plan_id}_{len(subtasks)}")
+            # Prefix subtask IDs with plan_id for global uniqueness
+            full_id = f"{plan_id}_{sid}"
+            
+            deps = set()
+            for dep in sd.get("dependencies", []):
+                deps.add(f"{plan_id}_{dep}")
+            
+            subtask = SubTask(
+                id=full_id,
+                description=sd.get("description", ""),
+                brain_target=sd.get("brain_target", "python_brain"),
+                payload=sd.get("payload", task_data),
+                dependencies=deps,
+            )
+            subtasks.append(subtask)
+        
+        if not subtasks:
+            raise ValueError("LLM returned empty plan")
+        
+        logger.info("LLM planned %d subtasks for: %s", len(subtasks), user_request[:80])
+        return subtasks
+
+    def _parse_plan_json(self, raw: str) -> list:
+        """Parse LLM planning output into a list of subtask definitions.
+        
+        Handles:
+        - Clean JSON arrays
+        - JSON wrapped in markdown code fences
+        - Trailing text after the JSON
+        """
+        text = raw.strip()
+        
+        # Strip markdown code fences if present
+        if text.startswith("```"):
+            # Remove opening fence (possibly with language tag)
+            first_newline = text.index("\n")
+            text = text[first_newline + 1:]
+            # Remove closing fence
+            if "```" in text:
+                text = text[:text.rindex("```")]
+            text = text.strip()
+        
+        # Try direct parse
+        try:
+            result = json.loads(text)
+            if isinstance(result, list):
+                return result
+        except json.JSONDecodeError:
+            pass
+        
+        # Try to find JSON array in the text
+        start = text.find("[")
+        if start >= 0:
+            # Find matching closing bracket
+            depth = 0
+            for i in range(start, len(text)):
+                if text[i] == "[":
+                    depth += 1
+                elif text[i] == "]":
+                    depth -= 1
+                    if depth == 0:
+                        try:
+                            return json.loads(text[start:i + 1])
+                        except json.JSONDecodeError:
+                            break
+        
+        raise ValueError(f"Could not parse plan JSON from LLM output: {text[:200]}")
+
+    def _simple_decompose(self, plan_id: str, task_data: dict) -> List[SubTask]:
+        """Fallback: simple deterministic task routing (no LLM needed)."""
+        task_type = task_data.get("type", "unknown")
+        
+        brain_map = {
+            "execute_code": "python_brain",
+            "generate_and_execute": "python_brain",
+            "research": "researcher",
+            "web_search": "researcher",
         }
         
-        preferred_brains = brain_preferences.get(task_type, brain_preferences["default"])
+        target = brain_map.get(task_type, self._choose_brain_for_task(task_type))
         
-        # Find least loaded available brain
-        available_brains = [brain for brain in preferred_brains 
-                           if brain in self.registered_brains]
-        
-        if not available_brains:
-            # Return first preference as fallback
-            return preferred_brains[0]
-        
-        # Return brain with lowest load
-        return min(available_brains, key=lambda b: self.brain_load.get(b, 0))
+        return [SubTask(
+            id=f"{plan_id}_s0",
+            description=f"Execute {task_type} task",
+            brain_target=target,
+            payload=task_data,
+        )]
+
+    def _choose_brain_for_task(self, task_type: str) -> str:
+        """Choose the best brain for a task type based on load balancing."""
+        # Find least loaded registered brain
+        if self.registered_brains:
+            available = list(self.registered_brains.keys())
+            return min(available, key=lambda b: self.brain_load.get(b, 0))
+        return "python_brain"  # Last resort fallback
     
     async def _execute_ready_subtasks(self, plan: TaskPlan) -> None:
         """Execute all subtasks that are ready (dependencies satisfied)."""

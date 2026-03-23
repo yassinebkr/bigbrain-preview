@@ -42,6 +42,7 @@ class BigBrainConfig:
     default_model: str = field(default_factory=lambda: os.getenv("BIGBRAIN_MODEL", "gpt-4o-mini"))
     front_brain_model: str = field(default_factory=lambda: os.getenv("BIGBRAIN_FRONT_MODEL", ""))
     code_model: str = field(default_factory=lambda: os.getenv("BIGBRAIN_CODE_MODEL", ""))
+    planner_model: str = field(default_factory=lambda: os.getenv("BIGBRAIN_PLANNER_MODEL", ""))
 
     # --- Workspace ---
     workspace: str = field(default_factory=lambda: os.getenv("BIGBRAIN_WORKSPACE", "demo"))
@@ -83,6 +84,11 @@ class BigBrainConfig:
     def effective_code_model(self) -> str:
         """Model for code generation (falls back to default)."""
         return self.code_model or self.default_model
+
+    @property
+    def effective_planner_model(self) -> str:
+        """Model for orchestrator task planning (falls back to front brain model)."""
+        return self.planner_model or self.effective_front_model
 
     def summary(self) -> str:
         """Human-readable config summary (no secrets)."""

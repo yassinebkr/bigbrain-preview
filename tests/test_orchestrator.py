@@ -286,8 +286,9 @@ class TestWorkspaceOrchestrator:
         assert subtask.dependencies == set()
     
     @pytest.mark.asyncio
-    async def test_research_task_decomposition(self, orchestrator, mock_bus):
-        """Test creating task plan for research with dependencies."""
+    @pytest.mark.asyncio
+    async def test_simple_fallback_decomposition(self, orchestrator, mock_bus):
+        """Test fallback decomposition without LLM (single subtask routing)."""
         await orchestrator.start()
         orchestrator.register_brain("researcher", {"type": "ResearchBrain"})
         
@@ -302,47 +303,139 @@ class TestWorkspaceOrchestrator:
             }
         )
         
+        # No LLM provider — falls back to simple decompose
         plan = await orchestrator._create_task_plan(task_message)
         
-        assert len(plan.subtasks) == 3
-        
-        # Check subtask names and dependencies
-        plan_subtask = plan.subtasks[0]
-        search_subtask = plan.subtasks[1]
-        summary_subtask = plan.subtasks[2]
-        
-        assert plan_subtask.brain_target == "researcher"
-        assert search_subtask.brain_target == "researcher"
-        assert summary_subtask.brain_target == "researcher"
-        
-        # Check dependency chain
-        assert plan_subtask.dependencies == set()
-        assert search_subtask.dependencies == {plan_subtask.id}
-        assert summary_subtask.dependencies == {search_subtask.id}
+        # Simple fallback returns exactly 1 subtask
+        assert len(plan.subtasks) == 1
+        assert plan.subtasks[0].brain_target == "researcher"
+        assert plan.subtasks[0].dependencies == set()
     
     @pytest.mark.asyncio
+    async def test_llm_powered_decomposition(self, mock_bus):
+        """Test LLM-powered task decomposition with dependencies."""
+        # Create a mock LLM that returns a multi-step plan
+        mock_llm = AsyncMock()
+        mock_llm.chat_complete = AsyncMock(return_value='[{"id": "s1", "description": "Research quantum computing", "brain_target": "researcher", "payload": {"type": "research", "query": "quantum computing"}, "dependencies": []}, {"id": "s2", "description": "Write summary code", "brain_target": "python_brain", "payload": {"type": "generate_and_execute", "user_request": "summarize findings"}, "dependencies": ["s1"]}]')
+        
+        orch = WorkspaceOrchestrator("test_workspace", mock_bus, llm_provider=mock_llm)
+        await orch.start()
+        orch.register_brain("researcher", {"type": "ResearchBrain", "description": "Research topics"})
+        orch.register_brain("python_brain", {"type": "PythonBrain", "description": "Execute Python code"})
+        
+        task_message = BusMessage(
+            type=MessageType.TASK,
+            source="front_brain",
+            target="orchestrator_test_workspace",
+            payload={
+                "type": "research",
+                "query": "quantum computing basics",
+                "user_request": "research quantum computing and write a summary"
+            }
+        )
+        
+        plan = await orch._create_task_plan(task_message)
+        
+        assert len(plan.subtasks) == 2
+        assert plan.subtasks[0].brain_target == "researcher"
+        assert plan.subtasks[1].brain_target == "python_brain"
+        
+        # Check dependency: s2 depends on s1
+        assert plan.subtasks[0].dependencies == set()
+        s1_id = plan.subtasks[0].id
+        assert s1_id in plan.subtasks[1].dependencies
+        
+        # Verify LLM was called with proper system prompt
+        mock_llm.chat_complete.assert_called_once()
+        call_kwargs = mock_llm.chat_complete.call_args
+        messages = call_kwargs.kwargs.get("messages") or call_kwargs[1].get("messages") or call_kwargs[0][0] if call_kwargs[0] else call_kwargs.kwargs["messages"]
+        assert any("task planner" in m["content"].lower() for m in messages if m["role"] == "system")
+        
+        await orch.stop()
+    
+    @pytest.mark.asyncio
+    async def test_llm_decompose_fallback_on_error(self, mock_bus):
+        """Test that LLM planning failure falls back to simple decompose."""
+        mock_llm = AsyncMock()
+        mock_llm.chat_complete = AsyncMock(side_effect=RuntimeError("API error"))
+        
+        orch = WorkspaceOrchestrator("test_workspace", mock_bus, llm_provider=mock_llm)
+        await orch.start()
+        orch.register_brain("python_brain", {"type": "PythonBrain"})
+        
+        task_message = BusMessage(
+            type=MessageType.TASK,
+            source="front_brain",
+            target="orchestrator_test_workspace",
+            payload={"type": "execute_code", "user_request": "print hello"}
+        )
+        
+        plan = await orch._create_task_plan(task_message)
+        
+        # Should fall back to simple decompose (1 subtask)
+        assert len(plan.subtasks) == 1
+        assert plan.subtasks[0].brain_target == "python_brain"
+        
+        await orch.stop()
+    
+    @pytest.mark.asyncio
+    async def test_parse_plan_json_variants(self, orchestrator):
+        """Test JSON parsing handles various LLM output formats."""
+        # Clean JSON
+        result = orchestrator._parse_plan_json('[{"id": "s1", "description": "test"}]')
+        assert len(result) == 1
+        assert result[0]["id"] == "s1"
+        
+        # JSON in markdown code fence
+        result = orchestrator._parse_plan_json('```json\n[{"id": "s1"}]\n```')
+        assert len(result) == 1
+        
+        # JSON with trailing text
+        result = orchestrator._parse_plan_json('[{"id": "s1"}]\n\nThis plan will...')
+        assert len(result) == 1
+        
+        # Invalid JSON raises
+        with pytest.raises(ValueError, match="Could not parse"):
+            orchestrator._parse_plan_json("not json at all")
+
+    @pytest.mark.asyncio
     async def test_choose_brain_for_task(self, orchestrator):
-        """Test brain selection logic."""
+        """Test brain selection picks least loaded brain."""
         # Register multiple brains
         orchestrator.register_brain("python_brain", {"type": "PythonBrain"})
         orchestrator.register_brain("researcher", {"type": "ResearchBrain"})
         
-        # Test specific task type routing
-        python_brain = orchestrator._choose_brain_for_task("execute_code")
-        assert python_brain == "python_brain"
+        # Both at load 0 — picks alphabetically first (dict order)
+        brain = orchestrator._choose_brain_for_task("anything")
+        assert brain in ["python_brain", "researcher"]
         
-        research_brain = orchestrator._choose_brain_for_task("research")
-        assert research_brain == "researcher"
-        
-        # Test load balancing (when multiple brains could handle task)
+        # Load python_brain higher — should pick researcher (least loaded)
         orchestrator.brain_load["python_brain"] = 5
-        # Should still choose python_brain for code execution even if loaded
-        brain = orchestrator._choose_brain_for_task("execute_code")
-        assert brain == "python_brain"
+        brain = orchestrator._choose_brain_for_task("anything")
+        assert brain == "researcher"
         
-        # Test fallback for unknown task type
-        default_brain = orchestrator._choose_brain_for_task("unknown_task")
-        assert default_brain in ["python_brain"]  # Falls back to default preference
+        # Load researcher higher — should pick python_brain
+        orchestrator.brain_load["researcher"] = 10
+        brain = orchestrator._choose_brain_for_task("anything")
+        assert brain == "python_brain"
+    
+    @pytest.mark.asyncio
+    async def test_simple_decompose_routes_by_type(self, orchestrator):
+        """Test simple fallback decomposition routes known types correctly."""
+        orchestrator.register_brain("python_brain", {"type": "PythonBrain"})
+        orchestrator.register_brain("researcher", {"type": "ResearchBrain"})
+        
+        # Code tasks → python_brain
+        plan_id = "test"
+        subtasks = orchestrator._simple_decompose(plan_id, {"type": "execute_code"})
+        assert subtasks[0].brain_target == "python_brain"
+        
+        subtasks = orchestrator._simple_decompose(plan_id, {"type": "generate_and_execute"})
+        assert subtasks[0].brain_target == "python_brain"
+        
+        # Research tasks → researcher
+        subtasks = orchestrator._simple_decompose(plan_id, {"type": "research"})
+        assert subtasks[0].brain_target == "researcher"
     
     @pytest.mark.asyncio
     async def test_task_request_handling(self, orchestrator, mock_bus):

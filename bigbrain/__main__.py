@@ -155,9 +155,17 @@ class BigBrainSystem:
             print(f"⚠️  Memory init failed: {e} — running without persistent memory")
             self.memory_manager = None
         
-        # 7. Orchestrator with execution modes
-        self.orchestrator = WorkspaceOrchestrator(self.workspace, self.bus)
+        # 7. Orchestrator with LLM planner + execution modes
+        from .config import config as app_config
+        self.orchestrator = WorkspaceOrchestrator(
+            self.workspace,
+            self.bus,
+            llm_provider=self.llm_provider,
+            planner_model=app_config.effective_planner_model,
+        )
         self._configure_execution_modes()
+        planner_model = app_config.effective_planner_model
+        print(f"📋 Planner: {planner_model} (task decomposition)")
         
         # 8. Voice manager (auto-detects real APIs, or forced mock)
         if self.mock_voice:
@@ -385,9 +393,16 @@ class BigBrainSystem:
             # Start orchestrator
             await self.orchestrator.start()
             
-            # Register brains with orchestrator
+            # Register brains with orchestrator (descriptions help the planner LLM)
+            brain_descriptions = {
+                "python_brain": "Generates and executes Python code, scripts, calculations, data processing",
+                "researcher": "Researches topics, gathers information, analyzes data, web searches",
+            }
             for brain_name, brain in self.brains.items():
-                self.orchestrator.register_brain(brain_name, {"type": type(brain).__name__})
+                self.orchestrator.register_brain(brain_name, {
+                    "type": type(brain).__name__,
+                    "description": brain_descriptions.get(brain_name, brain_name),
+                })
             
             # Start all brains
             for brain_name, brain in self.brains.items():
