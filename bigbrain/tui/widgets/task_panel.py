@@ -279,7 +279,7 @@ class TaskPanel(Vertical):
         task.update_progress(100 if success else task.progress, status)
         
         # Schedule removal after a delay
-        self.call_later(5.0, lambda: self.remove_task(task_id))
+        self.set_timer(5.0, lambda: self.remove_task(task_id))
         
         self.update_summary()
         return True

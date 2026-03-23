@@ -143,7 +143,7 @@ class BigBrainSystem:
             bus=self.bus,
             workspace=self.workspace,
             timeout=30,
-            work_dir=Path(f"work/{self.workspace}/python"),
+            work_dir=None,  # Uses tempdir (cross-platform safe)
             llm_provider=self.llm_provider
         )
         self.brains["python_brain"] = python_brain

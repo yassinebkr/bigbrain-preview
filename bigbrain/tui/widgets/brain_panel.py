@@ -266,4 +266,4 @@ class BrainPanel(Vertical):
         self.update_brain_status(brain_name, "busy", True, task)
         
         # Schedule completion (in a real app, this would come from actual events)
-        self.call_later(3.0, lambda: self.update_brain_status(brain_name, "idle", True))
+        self.set_timer(3.0, lambda: self.update_brain_status(brain_name, "idle", True))
