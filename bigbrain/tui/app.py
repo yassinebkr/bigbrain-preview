@@ -178,81 +178,108 @@ class BigBrainApp(App):
             self.chat_panel.add_message("system", f"❌ {e}")
 
     async def _handle_code_request(self, message, system, front):
-        """Route code request through the brain pipeline."""
+        """Route code through brain pipeline. FrontBrain decides what to tell user."""
         from ..bus.message import BusMessage, MessageType, Priority
 
-        # 1. FrontBrain announces intent
-        self.chat_panel.add_message("assistant", f"🧠 I'll route this to PythonBrain for execution.")
+        # 1. FrontBrain acknowledges (brief, human-like)
+        self.chat_panel.add_message("assistant", "On it — sending to PythonBrain...")
 
-        # Update brain status
+        # Update brain + task panels
         if self.brain_panel:
             self.brain_panel.update_brain_status("python_brain", "busy", True, message[:30])
+        task_id = None
+        if self.task_panel:
+            task_id = self.task_panel.add_task(message[:50], "code")
+            self.task_panel.update_task_progress("code", 10, "running", "Generating code...")
 
-        # 2. Send TASK to PythonBrain via bus
+        # 2. Send TASK via bus
         task_msg = BusMessage(
             type=MessageType.TASK,
             source="front_brain",
             target="python_brain",
             workspace=system.workspace,
-            payload={
-                "type": "generate_and_execute",
-                "user_request": message,
-            },
+            payload={"type": "generate_and_execute", "user_request": message},
             priority=Priority.NORMAL,
         )
 
-        # 3. Set up a future to capture the result
         result_future = asyncio.get_event_loop().create_future()
 
         async def _capture_result(result_msg: BusMessage):
-            """Capture the result message from PythonBrain."""
             if result_msg.source == "python_brain" and result_msg.type == MessageType.RESULT:
                 if not result_future.done():
                     result_future.set_result(result_msg)
 
-        # Subscribe to results temporarily
         system.bus.subscribe("front_brain", _capture_result)
 
         try:
-            # Send the task
             await system.bus.send(task_msg)
 
-            # 4. Wait for result (with timeout)
+            if self.task_panel:
+                self.task_panel.update_task_progress("code", 40, "running", "PythonBrain working...")
+
+            # 3. Wait for result
             try:
-                result_msg = await asyncio.wait_for(result_future, timeout=60)
+                result_msg = await asyncio.wait_for(result_future, timeout=90)
             except asyncio.TimeoutError:
-                self.chat_panel.add_message("system", "⏱️ PythonBrain timed out (60s)")
+                self.chat_panel.add_message("assistant", "PythonBrain took too long. Want me to try again?")
+                if self.task_panel:
+                    self.task_panel.complete_task("code", False)
                 return
 
-            # 5. Display result
+            if self.task_panel:
+                self.task_panel.update_task_progress("code", 80, "running", "Processing result...")
+
+            # 4. FrontBrain interprets result — decides what to tell user
             data = result_msg.payload.get("data", result_msg.payload)
             success = result_msg.payload.get("success", False)
 
             if success and isinstance(data, dict):
-                code = data.get("generated_code", "")
-                stdout = data.get("stdout", "")
-                stderr = data.get("stderr", "")
+                stdout = data.get("stdout", "").strip()
+                stderr = data.get("stderr", "").strip()
                 exit_code = data.get("exit_code", -1)
+                code_lines = data.get("generated_code", "").count("\n") + 1
 
-                if code:
-                    self.chat_panel.add_message("assistant", f"```python\n{code}\n```")
+                # FrontBrain uses LLM to craft human response
+                summary_prompt = f"""The user asked: "{message}"
 
-                output = stdout if stdout else "(no output)"
-                if stderr:
-                    output += f"\n⚠️ stderr: {stderr}"
-                if exit_code != 0:
-                    output += f"\n❌ Exit code: {exit_code}"
+PythonBrain generated {code_lines} lines of code and executed it.
+Exit code: {exit_code}
+Output: {stdout[:500] if stdout else '(no output)'}
+{f'Errors: {stderr[:300]}' if stderr else ''}
 
-                self.chat_panel.add_message("system", f"📍 Execution result:\n{output}")
+Write a brief, natural response to the user summarizing what was done and the result.
+Do NOT include the code — just explain what happened and show key output.
+If there were errors, explain them simply.
+Be concise (2-4 sentences max)."""
+
+                # Stream the human-layer response
+                self.chat_panel.start_streaming_message("assistant")
+                try:
+                    stream = await system.llm_provider.chat_complete(
+                        messages=[{"role": "user", "content": summary_prompt}],
+                        stream=True, max_tokens=300,
+                    )
+                    full = []
+                    async for chunk in stream:
+                        full.append(chunk)
+                        self.chat_panel.append_to_streaming(chunk)
+                    self.chat_panel.finish_streaming_message()
+                    summary = "".join(full)
+                except Exception:
+                    self.chat_panel.finish_streaming_message()
+                    summary = f"Done! Output:\n{stdout[:200]}" if stdout else "Code ran successfully."
+                    self.chat_panel.add_message("assistant", summary)
+
+                front._conversation_history.append({"role": "assistant", "content": summary})
+
+                if self.task_panel:
+                    self.task_panel.complete_task("code", True)
             else:
-                error = data.get("error", str(data)) if isinstance(data, dict) else str(result_msg.payload)
-                self.chat_panel.add_message("system", f"❌ {error}")
-
-            # Store in conversation
-            front._conversation_history.append({
-                "role": "assistant",
-                "content": f"[Code task executed. Output: {stdout[:200] if success else error[:200]}]"
-            })
+                error = data.get("error", str(data)) if isinstance(data, dict) else str(data)
+                self.chat_panel.add_message("assistant", f"PythonBrain hit an issue: {error}")
+                front._conversation_history.append({"role": "assistant", "content": f"[Error: {error[:200]}]"})
+                if self.task_panel:
+                    self.task_panel.complete_task("code", False)
 
         finally:
             system.bus.unsubscribe("front_brain", _capture_result)
@@ -366,32 +393,38 @@ This provides a solid foundation for your data processing needs. Would you like 
             if self.bus_monitor:
                 self.bus_monitor.add_message(msg_type, route, payload_preview)
             
-            # Update brain panel on brain events
+            # Update brain panel + task panel on brain events
             event_type = message.payload.get("event", "")
-            if "brain.started" in event_type:
-                brain_name = message.payload.get("brain", message.source)
+            brain_name = message.payload.get("brain", message.source)
+            task_id = message.payload.get("task_id", "")[:8] if message.payload.get("task_id") else None
+
+            if "brain.started" in event_type and task_id:
+                # Brain picked up a task
                 if self.brain_panel:
-                    self.brain_panel.update_brain_status(brain_name, "idle", True)
+                    task_type = message.payload.get("task_type", "task")
+                    self.brain_panel.update_brain_status(brain_name, "busy", True, task_type)
+                if self.task_panel and task_id:
+                    self.task_panel.add_task(f"{brain_name}: {message.payload.get('task_type', 'working')}", task_id)
+                    self.task_panel.update_task_progress(task_id, 30, "running", "Processing...")
+
             elif "brain.complete" in event_type:
-                brain_name = message.payload.get("brain", message.source)
                 if self.brain_panel:
                     self.brain_panel.update_brain_status(brain_name, "idle", True)
+                if self.task_panel and task_id:
+                    self.task_panel.update_task_progress(task_id, 100, "complete")
+                    self.task_panel.complete_task(task_id, True)
+
             elif "brain.error" in event_type:
-                brain_name = message.payload.get("brain", message.source)
                 if self.brain_panel:
                     self.brain_panel.update_brain_status(brain_name, "error", True)
-            
-            # Update task panel on task events
-            if "task.received" in event_type and self.task_panel:
-                task_id = message.payload.get("task_id", "")[:8]
-                desc = f"Task in {message.workspace or 'default'}"
-                self.task_panel.add_task(desc, task_id)
-            elif "task.complete" in event_type and self.task_panel:
-                task_id = message.payload.get("task_id", "")[:8]
-                self.task_panel.complete_task(task_id, True)
-            elif "task.failed" in event_type and self.task_panel:
-                task_id = message.payload.get("task_id", "")[:8]
-                self.task_panel.complete_task(task_id, False)
+                if self.task_panel and task_id:
+                    self.task_panel.complete_task(task_id, False)
+
+            elif "progress" in event_type:
+                # Progress updates from brains
+                stage = message.payload.get("stage", "working")
+                if self.task_panel and task_id:
+                    self.task_panel.update_task_progress(task_id, 50, "running", stage)
         except Exception:
             pass  # Don't crash the TUI on bus message errors
     

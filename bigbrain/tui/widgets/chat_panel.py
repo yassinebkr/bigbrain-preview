@@ -94,7 +94,7 @@ class ChatPanel(VerticalScroll):
         self.messages.append(message)
         container = self.query_one("#chat-messages")
         container.mount(message)
-        self.scroll_end(animate=True)
+        self.call_after_refresh(self._do_scroll)
 
     def start_streaming_message(self, role: str) -> None:
         if self.current_streaming_message:
