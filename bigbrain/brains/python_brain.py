@@ -96,7 +96,7 @@ class PythonBrain(BaseBrain):
     
     # --- Honk Pattern: Inner Loop (generate → execute → verify → fix → repeat) ---
 
-    MAX_RETRIES = 3  # Inner loop iterations before giving up
+    MAX_RETRIES = 5  # Inner loop iterations before giving up
 
     async def _generate_and_execute(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Generate code via LLM, execute, and retry on failure (Honk inner loop).
@@ -250,35 +250,60 @@ Rules:
     async def _fix_code(self, user_request: str, attempt_history: list[dict]) -> str:
         """Fix code based on Reflexion memory of previous errors.
 
-        The LLM sees:
-        - The original request
-        - ALL previous attempts and their specific errors
-        - Explicit instruction to NOT repeat the same mistakes
+        Strategy: Give the LLM the LAST failed code + a focused error analysis.
+        Don't dump all attempts — focus on the most recent failure and what to fix.
+        Include a summary of ALL past errors so it doesn't regress.
         """
-        # Build Reflexion context from attempt history
-        history_text = ""
+        last = attempt_history[-1]
+        last_code = last.get("code", "")
+        last_error = last.get("stderr", "") or last.get("error", "")
+
+        # Build concise error summary from ALL attempts (not full code dumps)
+        error_summary = []
         for entry in attempt_history:
-            history_text += f"\n--- Attempt {entry['attempt']} ---\n"
-            if entry.get("code"):
-                history_text += f"Code:\n```python\n{entry['code']}\n```\n"
-            if entry.get("stderr"):
-                history_text += f"Error: {entry['stderr']}\n"
-            elif entry.get("error"):
-                history_text += f"Error: {entry['error']}\n"
+            err = entry.get("stderr", "") or entry.get("error", "")
+            if err:
+                error_summary.append(f"  Attempt {entry['attempt']}: {err[:200]}")
+        errors_text = "\n".join(error_summary)
 
-        prompt = f"""Fix this Python script. The original request was:
+        # Analyze common error patterns to give targeted hints
+        hints = []
+        error_lower = last_error.lower()
+        if "syntaxerror" in error_lower and "f-string" in error_lower:
+            hints.append("- The f-string syntax is broken. Use simple string concatenation or extract dict values to variables BEFORE the f-string. Example: val = d['key']; print(f\"Value: {val:.2f}\")")
+        if "syntaxerror" in error_lower and "unterminated" in error_lower:
+            hints.append("- A string literal is not properly closed. Check all quotes match and multi-line strings use triple quotes.")
+        if "modulenotfounderror" in error_lower or "no module named" in error_lower:
+            hints.append("- An external module is missing. Use ONLY standard library modules (no numpy, scipy, matplotlib, pandas, etc.)")
+        if "indentationerror" in error_lower:
+            hints.append("- Fix indentation. Use consistent 4-space indentation throughout.")
 
-{user_request}
+        hints_text = "\n".join(hints) if hints else "- Carefully analyze the error and fix the root cause."
 
-Previous attempts and their errors:
-{history_text}
+        prompt = f"""Fix this Python script. Here is the code that failed:
 
-IMPORTANT:
-- Do NOT repeat the same mistakes from previous attempts
-- Fix the SPECIFIC errors shown above
+```python
+{last_code}
+```
+
+Error:
+{last_error[:500]}
+
+All errors so far (do NOT repeat ANY of these):
+{errors_text}
+
+Targeted fix instructions:
+{hints_text}
+
+Original request: {user_request}
+
+Rules:
 - Output ONLY the corrected Python code, no explanation
-- The code must be self-contained and runnable
-- Use print() to show results"""
+- The code must be self-contained and runnable as a script
+- Use print() to show results
+- No external dependencies beyond the standard library
+- For dict values in f-strings, extract to a variable first: val = d['key']; f"{{val:.2f}}"
+- Ensure every string is properly closed"""
 
         generated = await self.llm_provider.complete(prompt, stream=False)
         return self._extract_code(generated)

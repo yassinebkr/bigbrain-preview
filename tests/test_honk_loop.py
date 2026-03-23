@@ -109,17 +109,19 @@ class TestHonkRetryLoop:
 
     @pytest.mark.asyncio
     async def test_max_retries_exhausted(self):
-        """All 3 attempts fail → returns failure with history."""
+        """All attempts fail → returns failure with history."""
         brain, llm, _ = make_brain([
             'raise ValueError("fail 1")',
             'raise ValueError("fail 2")',
             'raise ValueError("fail 3")',
+            'raise ValueError("fail 4")',
+            'raise ValueError("fail 5")',
         ])
         result = await brain._generate_and_execute({"user_request": "Broken task"})
 
         assert result.get("success") is not True
         assert result["exit_code"] != 0 or "fail" in result.get("stderr", "")
-        assert len(result.get("attempt_history", [])) >= 2  # At least 2 failed attempts recorded
+        assert len(result.get("attempt_history", [])) >= 4  # At least 4 failed attempts recorded
 
     @pytest.mark.asyncio
     async def test_custom_max_retries(self):
