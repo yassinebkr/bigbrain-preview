@@ -20,6 +20,7 @@ from .front.focus_manager import FocusManager, FocusMode, FocusState
 from .ui.rich_adapter import RichAdapter
 from .llm.mock_provider import MockLLMProvider
 from .voice.voice_manager import create_voice_manager
+from .voice.voice_brain import VoiceBrain
 from .verification.pipeline import VerificationPipeline, VerificationLevel
 from .verification.v1_schema import SchemaValidator
 from .verification.v4_deterministic import DeterministicValidator
@@ -68,6 +69,7 @@ class BigBrainSystem:
         # New components
         self.llm_provider: Optional[MockLLMProvider] = None
         self.voice_manager = None
+        self.voice_brain: Optional[VoiceBrain] = None
         self.verification: Optional[VerificationPipeline] = None
         self.memory_manager: Optional[MemoryManager] = None
         
@@ -157,6 +159,14 @@ class BigBrainSystem:
         
         # 8. Voice manager (auto-detects real APIs)
         self.voice_manager = create_voice_manager(auto_listen=True)
+        
+        # 8b. Voice Brain — fast conversational LLM for natural speech
+        self.voice_brain = VoiceBrain(
+            llm_provider=self.llm_provider,
+            bus=self.bus,
+        )
+        voice_model = self.voice_brain.voice_model
+        print(f"🗣️  Voice Brain: {voice_model} (fast conversational model)")
         
         # 9. Brains (registers HMAC tokens)
         await self._create_brains()
@@ -280,7 +290,7 @@ class BigBrainSystem:
             if self.bus_auth:
                 self.bus_auth.generate_token(brain_name)
         # Also register system components
-        for name in ["orchestrator", f"orchestrator_{self.workspace}", "front_brain", "voice_manager", "bigbrain_system", "demo_system"]:
+        for name in ["orchestrator", f"orchestrator_{self.workspace}", "front_brain", "voice_manager", "voice_brain", "bigbrain_system", "demo_system"]:
             if self.bus_auth:
                 self.bus_auth.generate_token(name)
         
@@ -297,10 +307,17 @@ class BigBrainSystem:
             self.ui = RichAdapter()
     
     def _setup_voice_integration(self) -> None:
-        """Set up voice manager integration with Front Brain."""
+        """Wire Voice Manager → Voice Brain → TTS pipeline.
+        
+        The Voice Brain has its own fast LLM (Sonnet-class) that generates
+        natural spoken responses. It's NOT a TTS wrapper — it decides HOW
+        to say things in a conversational way.
+        
+        Flow: User speaks → STT → Voice Brain (fast LLM) → TTS → User hears
+        """
         async def on_transcription(text: str, is_final: bool) -> None:
             if is_final and self.front_brain:
-                # Send transcribed text to front brain
+                # Notify the bus that voice input arrived
                 message = BusMessage(
                     type=MessageType.TASK,
                     source="voice_manager",
@@ -315,16 +332,12 @@ class BigBrainSystem:
                 await self.bus.send(message)
         
         async def on_response_needed(user_input: str) -> str:
-            if self.front_brain:
-                # This would integrate with actual front brain response generation
-                return await self.llm_provider.complete(
-                    f"User said: {user_input}. Respond conversationally.",
-                    stream=False
-                )
-            return "I heard you, but I'm not connected to the brain system yet."
+            """Voice Brain generates the spoken response — not the main LLM."""
+            if self.voice_brain:
+                return await self.voice_brain.respond_to_voice(user_input)
+            return "I heard you, but my voice brain isn't connected yet."
         
         async def on_state_change(new_state, extra_data) -> None:
-            # Update UI with voice state changes
             if self.tui_app and hasattr(self.tui_app, 'brain_panel'):
                 voice_status = {
                     "listening": "busy",
@@ -377,6 +390,10 @@ class BigBrainSystem:
             # Start front brain
             await self.front_brain.start()
             
+            # Start voice brain
+            if self.voice_brain:
+                await self.voice_brain.start()
+            
             # Announce system ready
             await self.bus.broadcast_event(
                 source="bigbrain_system",
@@ -410,6 +427,10 @@ class BigBrainSystem:
         self._running = False
         
         try:
+            # Stop voice brain
+            if self.voice_brain:
+                await self.voice_brain.stop()
+            
             # Stop front brain
             if self.front_brain:
                 await self.front_brain.stop()
