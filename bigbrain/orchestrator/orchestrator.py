@@ -503,24 +503,48 @@ Example — "research async patterns then build a scraper using what you find":
     async def _resolve_payload_references(self, payload: Dict[str, Any], 
                                         plan: TaskPlan) -> Dict[str, Any]:
         """
-        Resolve ReWOO-style variable references in subtask payloads.
+        Resolve ReWOO-style variable references and inject upstream context.
         
-        Replaces references like "#E1" with actual results from completed subtasks.
+        1. Replaces references like "#s1" with actual results from completed subtasks
+           (handles both raw IDs and plan-prefixed IDs)
+        2. Injects all completed subtask results as `upstream_context` so downstream
+           brains can use prior results even without explicit references
         """
-        resolved = {}
+        resolved = dict(payload)  # shallow copy
         results = plan.get_results()
         
+        # Build a lookup that works with both raw and prefixed IDs
+        # results keys are like "{plan_id}_s1", but references say "#s1"
+        result_lookup = {}
+        for full_id, result in results.items():
+            result_lookup[full_id] = result
+            # Also index by suffix (strip plan_id prefix)
+            if "_" in full_id:
+                suffix = full_id.split("_", 1)[-1]
+                # Handle plan UUIDs: "abc-def_s1" → "s1"
+                # Find the last segment that looks like a subtask ID
+                parts = full_id.rsplit("_", 1)
+                if len(parts) == 2:
+                    result_lookup[parts[1]] = result
+        
+        # Resolve explicit references
         for key, value in payload.items():
             if isinstance(value, str) and value.startswith("#"):
-                # Variable reference - look up result
                 ref_id = value[1:]  # Remove # prefix
-                if ref_id in results:
-                    resolved[key] = results[ref_id]
-                else:
-                    # Reference not resolved yet - keep original
-                    resolved[key] = value
-            else:
-                resolved[key] = value
+                if ref_id in result_lookup:
+                    resolved[key] = result_lookup[ref_id]
+        
+        # Inject upstream context — all completed subtask results
+        # so downstream brains have full picture even without explicit refs
+        if results:
+            upstream = {}
+            for st in plan.subtasks:
+                if st.status == TaskStatus.COMPLETE and st.result:
+                    # Use a human-readable key
+                    brain_name = st.assigned_brain or st.brain_target
+                    upstream[f"{brain_name}:{st.description[:80]}"] = st.result
+            if upstream:
+                resolved["upstream_context"] = upstream
         
         return resolved
     

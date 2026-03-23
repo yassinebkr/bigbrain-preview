@@ -120,6 +120,9 @@ class PythonBrain(BaseBrain):
         if not user_request:
             return {"success": False, "error": "No request provided", "stdout": "", "stderr": "", "exit_code": -1}
 
+        # Upstream context from other brains (e.g., researcher results)
+        upstream_context = payload.get("upstream_context", {})
+
         max_retries = payload.get("max_retries", self.MAX_RETRIES)
         timeout = payload.get("timeout", self.timeout)
 
@@ -137,7 +140,7 @@ class PythonBrain(BaseBrain):
             try:
                 # Generate (or fix) code
                 if attempt == 1:
-                    code = await self._generate_initial_code(user_request)
+                    code = await self._generate_initial_code(user_request, upstream_context)
                 else:
                     code = await self._fix_code(user_request, attempt_history)
 
@@ -229,12 +232,31 @@ class PythonBrain(BaseBrain):
             "attempt_history": attempt_history,
         }
 
-    async def _generate_initial_code(self, user_request: str) -> str:
+    async def _generate_initial_code(self, user_request: str, 
+                                     upstream_context: dict = None) -> str:
         """Generate initial code from natural language (attempt 1)."""
+        # Build context from upstream brain results (e.g., researcher findings)
+        context_section = ""
+        if upstream_context:
+            context_parts = []
+            for source, result in upstream_context.items():
+                if isinstance(result, dict):
+                    data = result.get("data", result)
+                    # Extract useful text from research results
+                    summary = data.get("summary", data.get("answer", ""))
+                    if summary:
+                        context_parts.append(f"From {source}:\n{str(summary)[:500]}")
+                    else:
+                        context_parts.append(f"From {source}:\n{str(data)[:300]}")
+                else:
+                    context_parts.append(f"From {source}:\n{str(result)[:300]}")
+            if context_parts:
+                context_section = "\n\nContext from other brains (use this information):\n" + "\n\n".join(context_parts) + "\n"
+
         prompt = f"""Write a Python script that does the following:
 
 {user_request}
-
+{context_section}
 Rules:
 - Output ONLY the Python code, no explanation before or after
 - The code must be self-contained and runnable as a script

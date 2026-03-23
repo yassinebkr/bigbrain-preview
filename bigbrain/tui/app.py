@@ -294,16 +294,16 @@ class BigBrainApp(App):
                 return
 
             if self.task_panel:
-                self.task_panel.update_task_progress(brain_target, 90, "running", "Processing...")
+                self.task_panel.update_task_progress(brain_target, 90, "running", "Analyzing...")
 
-            # Present result
+            # Extract result data
             data = result_msg.payload
             success = data.get("success", False)
 
             if success:
                 results = data.get("results", data.get("data", data))
-                # Format results for display
-                self._show_task_result(brain_target, request, results)
+                # Front Brain analyzes and presents the results intelligently
+                await self._analyze_and_present(system, brain_target, request, results, original_message)
                 if self.task_panel:
                     self.task_panel.complete_task(brain_target, True)
             else:
@@ -317,57 +317,110 @@ class BigBrainApp(App):
             if self.brain_panel:
                 self.brain_panel.update_brain_status(brain_target, "idle", True)
 
-    def _show_task_result(self, brain: str, request: str, results) -> None:
-        """Format and display task results in chat."""
-        parts = [f"**{brain}** completed:"]
+    def _extract_execution_data(self, results) -> dict:
+        """Extract code, stdout, stderr, exit_code from nested orchestrator results."""
+        if not isinstance(results, dict):
+            return {"raw": str(results)[:1000]}
+        
+        for key, subtask_result in results.items():
+            if not isinstance(subtask_result, dict):
+                continue
+            sr = subtask_result.get("data", subtask_result)
+            if isinstance(sr, dict) and "data" in sr and isinstance(sr["data"], dict):
+                inner = sr["data"]
+                if any(k in inner for k in ("generated_code", "stdout", "exit_code")):
+                    sr = inner
+            
+            if any(k in sr for k in ("generated_code", "stdout", "exit_code")):
+                return sr
+        
+        # No execution data found — return flattened results
+        return {"raw": str(results)[:1000]}
 
-        if isinstance(results, dict):
-            # Code execution results — may be nested via orchestrator plan
-            for key, subtask_result in results.items():
-                if isinstance(subtask_result, dict):
-                    # Unwrap orchestrator/brain layers:
-                    # subtask_result = {"success": True, "data": {inner_result}}
-                    sr = subtask_result.get("data", subtask_result)
-                    
-                    # sr might still have another "data" layer from BaseBrain wrapping
-                    if isinstance(sr, dict) and "data" in sr and isinstance(sr["data"], dict):
-                        inner = sr["data"]
-                        # Check if the inner dict has execution fields
-                        if any(k in inner for k in ("generated_code", "stdout", "exit_code")):
-                            sr = inner
+    async def _analyze_and_present(self, system, brain: str, request: str,
+                                    results, original_message: str) -> None:
+        """Front Brain analyzes sub-brain results and presents intelligent insights.
+        
+        Instead of dumping raw JSON, the Front Brain uses its LLM to:
+        - Summarize what was done
+        - Show the code (if any)
+        - Analyze the output and provide insights
+        - Suggest follow-ups
+        """
+        exec_data = self._extract_execution_data(results)
+        
+        code = exec_data.get("generated_code", "")
+        stdout = exec_data.get("stdout", "").strip()
+        stderr = exec_data.get("stderr", "").strip()
+        exit_code = exec_data.get("exit_code", -1)
+        raw = exec_data.get("raw", "")
+        
+        # Always show the code first (if any)
+        if code:
+            preview = code[:1200]
+            if len(code) > 1200:
+                preview += "\n# ... (truncated)"
+            self.chat_panel.add_message("assistant", f"```python\n{preview}\n```")
+        
+        # Show execution output
+        if exit_code == 0 and stdout:
+            self.chat_panel.add_message("system", f"**Output:**\n```\n{stdout[:1000]}\n```")
+        elif exit_code != 0:
+            error_msg = exec_data.get("error", f"Exit code: {exit_code}")
+            self.chat_panel.add_message("system", f"⚠️ {error_msg}")
+            if stderr:
+                self.chat_panel.add_message("system", f"```\n{stderr[:500]}\n```")
 
-                    code = sr.get("generated_code", "")
-                    stdout = sr.get("stdout", "").strip()
-                    stderr = sr.get("stderr", "").strip()
-                    exit_code = sr.get("exit_code", -1)
-                    error = sr.get("error", "")
-                    attempts = sr.get("total_attempts", 1)
-
-                    if code:
-                        preview = code[:800]
-                        if len(code) > 800:
-                            preview += "\n# ... (truncated)"
-                        parts.append(f"```python\n{preview}\n```")
-
-                    if exit_code == 0 and stdout:
-                        parts.append(f"**Output:**\n```\n{stdout[:800]}\n```")
-                    elif exit_code == 0:
-                        parts.append("✅ Ran successfully (no output)")
-                    else:
-                        if error:
-                            parts.append(f"⚠️ {error}")
-                        else:
-                            parts.append(f"⚠️ Exit code: {exit_code}")
-                        if stderr:
-                            parts.append(f"**Error:**\n```\n{stderr[:500]}\n```")
-                        if attempts > 1:
-                            parts.append(f"(tried {attempts} times)")
-                else:
-                    parts.append(str(subtask_result)[:500])
-        else:
-            parts.append(str(results)[:500])
-
-        self.chat_panel.add_message("assistant", "\n\n".join(parts))
+        # Now have Front Brain analyze the results intelligently
+        if not system.front_brain or not system.llm_provider:
+            return  # No LLM available for analysis
+        
+        # Build analysis context
+        analysis_parts = [f"User asked: {original_message}"]
+        analysis_parts.append(f"Brain '{brain}' was tasked with: {request}")
+        
+        if code:
+            # Truncate code for analysis context (save tokens)
+            analysis_parts.append(f"Generated code ({len(code)} chars, {'succeeded' if exit_code == 0 else 'failed'}):")
+            analysis_parts.append(code[:800])
+        
+        if stdout:
+            analysis_parts.append(f"Program output:\n{stdout[:1500]}")
+        if stderr:
+            analysis_parts.append(f"Errors:\n{stderr[:500]}")
+        if raw and not code:
+            analysis_parts.append(f"Raw result:\n{raw}")
+        
+        analysis_context = "\n\n".join(analysis_parts)
+        
+        analysis_prompt = [
+            {"role": "system", "content": (
+                "You are the Front Brain — the user's intelligent interface to a multi-brain AI system. "
+                "A sub-brain just completed a task. Analyze the results and provide a helpful response.\n\n"
+                "Guidelines:\n"
+                "- If code ran successfully: explain what it does, highlight interesting results from the output, provide insights\n"
+                "- If code failed: explain why briefly, suggest what to try next\n"
+                "- Be concise but insightful — don't just repeat the output, ADD VALUE\n"
+                "- If the output contains data/statistics, highlight the most interesting findings\n"
+                "- Suggest natural follow-ups the user might want to try\n"
+                "- Keep it under 200 words — dense and useful, not verbose"
+            )},
+            {"role": "user", "content": analysis_context},
+        ]
+        
+        try:
+            async with asyncio.timeout(20):
+                analysis = await system.llm_provider.chat_complete(
+                    messages=analysis_prompt, stream=False, max_tokens=400,
+                )
+            if analysis and analysis.strip():
+                self.chat_panel.add_message("assistant", analysis.strip())
+                # Add to conversation history so Front Brain remembers
+                system.front_brain._conversation_history.append(
+                    {"role": "assistant", "content": analysis.strip()}
+                )
+        except Exception:
+            pass  # Analysis is optional — if LLM fails, raw results are already shown
 
     async def _handle_code_request(self, message, system, front):
         """Route code through brain pipeline. FrontBrain decides what to tell user."""
