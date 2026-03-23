@@ -506,7 +506,17 @@ This provides a solid foundation for your data processing needs. Would you like 
 
             self.message_input.placeholder = "🎤 Listening... (F2 to stop, or type)"
             self.notify("🎤 Voice ON — listening for speech")
-            self.chat_panel.add_message("system", "🎤 Voice mode activated. Speak naturally — I'm listening.")
+
+            # Show what's connected
+            stt_name = type(system.voice_manager.stt).__name__
+            tts_name = type(system.voice_manager.tts).__name__
+            tts_note = ""
+            if tts_name == "MockTTS":
+                tts_note = " (text only — set CARTESIA_API_KEY for audio)"
+            self.chat_panel.add_message(
+                "system",
+                f"🎤 Voice ON — {stt_name} → VoiceBrain → {tts_name}{tts_note}"
+            )
 
             # Update brain panel
             if self.brain_panel:
@@ -733,41 +743,43 @@ This provides a solid foundation for your data processing needs. Would you like 
             return
 
         # --- Phase 3: Speaking (TTS) ---
-        if self.brain_panel:
-            self.brain_panel.update_brain_status("voice_brain", "busy", True, "speaking")
-        self.message_input.placeholder = "🔊 Speaking..."
-        self._voice_tts_playing = True
+        tts = vm.tts
+        is_real_tts = type(tts).__name__ != "MockTTS"
 
-        try:
-            tts = vm.tts
-            has_audio_playback = self._has_audio_playback()
+        if not is_real_tts:
+            # No real TTS configured — skip audio playback silently
+            # (response already shown as text in chat)
+            pass
+        else:
+            if self.brain_panel:
+                self.brain_panel.update_brain_status("voice_brain", "busy", True, "speaking")
+            self.message_input.placeholder = "🔊 Speaking..."
+            self._voice_tts_playing = True
 
-            async with asyncio.timeout(30):
-                async for chunk in tts.stream(response_text):
-                    if not self.voice_enabled:
-                        break
+            try:
+                has_audio_playback = self._has_audio_playback()
 
-                    audio = chunk.get("audio", b"")
-                    is_final = chunk.get("is_final", False)
+                async with asyncio.timeout(30):
+                    async for chunk in tts.stream(response_text):
+                        if not self.voice_enabled:
+                            break
 
-                    if has_audio_playback and audio:
-                        # Real audio playback via sounddevice
-                        await self._play_audio_chunk(audio)
-                    elif not has_audio_playback:
-                        # Mock mode: simulate timing
-                        duration = chunk.get("duration", 0.1)
-                        await asyncio.sleep(duration)
+                        audio = chunk.get("audio", b"")
+                        is_final = chunk.get("is_final", False)
 
-                    if is_final:
-                        break
-        except TimeoutError:
-            self.chat_panel.add_message("system", "🔊 TTS timed out (30s)")
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            self.chat_panel.add_message("system", f"🔊 TTS error: {e}")
-        finally:
-            self._voice_tts_playing = False
+                        if has_audio_playback and audio:
+                            await self._play_audio_chunk(audio)
+
+                        if is_final:
+                            break
+            except TimeoutError:
+                self.chat_panel.add_message("system", "🔊 TTS timed out (30s)")
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                self.chat_panel.add_message("system", f"🔊 TTS error: {e}")
+            finally:
+                self._voice_tts_playing = False
 
         # Back to listening (auto-listen loop continues)
         if self.brain_panel and self.voice_enabled:
