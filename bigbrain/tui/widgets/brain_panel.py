@@ -13,23 +13,22 @@ from rich.table import Table
 class BrainStatus(Static):
     """Individual brain status widget."""
     
-    def __init__(self, name: str, status: str = "offline", enabled: bool = False, **kwargs):
+    def __init__(self, brain_name: str, status: str = "offline", enabled: bool = False, **kwargs):
         """
         Initialize brain status.
         
         Args:
-            name: Brain name
+            brain_name: Brain name (avoid 'name' — conflicts with Widget.name)
             status: Current status
             enabled: Whether brain is enabled
         """
-        self.name = name
+        super().__init__("", **kwargs)
+        self.brain_name = brain_name
         self.status = status
         self.enabled = enabled
         self.last_task = None
         self.last_activity = None
         self.task_count = 0
-        
-        super().__init__(**kwargs)
         self._update_display()
     
     def update_status(self, status: str, enabled: bool = None, task: str = None) -> None:
@@ -68,7 +67,7 @@ class BrainStatus(Static):
             color = "red"
         
         # Format brain name
-        brain_display = self.name.replace("_brain", "").replace("_", " ").title()
+        brain_display = self.brain_name.replace("_brain", "").replace("_", " ").title()
         
         # Build display text
         text = Text()
@@ -232,7 +231,7 @@ class BrainPanel(Vertical):
         
         brain_widget = self.brains[brain_name]
         return {
-            "name": brain_widget.name,
+            "name": brain_widget.brain_name,
             "status": brain_widget.status,
             "enabled": brain_widget.enabled,
             "last_task": brain_widget.last_task,
