@@ -98,18 +98,20 @@ class VoiceBrain:
         self._running = False
 
     def _pick_fast_model(self) -> str:
-        """Pick the fastest available model for voice responses."""
-        # Check what the provider supports
+        """Pick the fastest available model for voice responses.
+        
+        Voice needs LOW LATENCY, not deep reasoning. Always pick a
+        fast model (Sonnet/Haiku/gpt-4o-mini), never Opus.
+        """
         provider_type = type(self.llm_provider).__name__
 
         if provider_type == "AnthropicOAuthProvider":
-            # OAuth → use Sonnet (fast, good at conversation)
+            # OAuth → Haiku is fastest, Sonnet is better quality
+            # Use Sonnet for good voice quality with reasonable speed
             return "claude-sonnet-4-20250514"
         elif provider_type == "LiteLLMProvider":
-            # litellm → use whatever's cheapest/fastest
             return "gpt-4o-mini"
         else:
-            # Mock or unknown → use default
             return "gpt-4o-mini"
 
     async def start(self) -> None:

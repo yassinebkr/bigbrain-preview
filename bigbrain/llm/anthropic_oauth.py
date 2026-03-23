@@ -24,6 +24,40 @@ CC_SYSTEM_PREFIX = "You are Claude Code, Anthropic's official CLI for Claude."
 
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 
+# Map litellm-style model names to Anthropic API model IDs
+_MODEL_ALIASES = {
+    # litellm prefixed format
+    "anthropic/claude-opus-4-6": "claude-opus-4-20250514",
+    "anthropic/claude-sonnet-4-6": "claude-sonnet-4-20250514",
+    "anthropic/claude-haiku-3-5": "claude-haiku-3-5-20241022",
+    "anthropic/claude-opus-4-20250514": "claude-opus-4-20250514",
+    "anthropic/claude-sonnet-4-20250514": "claude-sonnet-4-20250514",
+    # Short aliases without date
+    "claude-opus-4-6": "claude-opus-4-20250514",
+    "claude-sonnet-4-6": "claude-sonnet-4-20250514",
+    "claude-opus-4": "claude-opus-4-20250514",
+    "claude-sonnet-4": "claude-sonnet-4-20250514",
+    "claude-haiku-3-5": "claude-haiku-3-5-20241022",
+}
+
+
+def _normalize_model(model: str) -> str:
+    """Normalize litellm-style model names to Anthropic API model IDs.
+    
+    Handles:
+    - "anthropic/claude-opus-4-6" → "claude-opus-4-20250514"
+    - "claude-opus-4-6" → "claude-opus-4-20250514"  
+    - "claude-opus-4-20250514" → unchanged (already correct)
+    """
+    # Check alias table first
+    if model in _MODEL_ALIASES:
+        return _MODEL_ALIASES[model]
+    # Strip "anthropic/" prefix if present
+    if model.startswith("anthropic/"):
+        stripped = model[len("anthropic/"):]
+        return _MODEL_ALIASES.get(stripped, stripped)
+    return model
+
 
 def _build_headers(token: str) -> dict[str, str]:
     """Build stealth headers for OAuth token."""
@@ -63,7 +97,7 @@ class AnthropicOAuthProvider(LLMProvider):
             default_model: Default model ID
         """
         self.token = token
-        self.default_model = default_model
+        self.default_model = _normalize_model(default_model)
         self._headers = _build_headers(token)
         self._client = httpx.AsyncClient(timeout=120.0)
 
@@ -97,7 +131,7 @@ class AnthropicOAuthProvider(LLMProvider):
         **kwargs,
     ) -> Union[str, AsyncIterator[str]]:
         """Generate chat completion."""
-        model = model or self.default_model
+        model = _normalize_model(model or self.default_model)
 
         # Extract system message if present
         system_text = None

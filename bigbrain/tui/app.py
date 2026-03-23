@@ -172,10 +172,15 @@ class BigBrainApp(App):
                 full.append(chunk)
                 self.chat_panel.append_to_streaming(chunk)
             self.chat_panel.finish_streaming_message()
-            front._conversation_history.append({"role": "assistant", "content": "".join(full)})
+            response_text = "".join(full)
+            if not response_text.strip():
+                # Stream returned nothing — remove blank box, show fallback
+                self.chat_panel.add_message("system", "⚠️ LLM returned empty response. Check model config.")
+            front._conversation_history.append({"role": "assistant", "content": response_text})
         except Exception as e:
+            # Remove the empty streaming box, show actual error
             self.chat_panel.finish_streaming_message()
-            self.chat_panel.add_message("system", f"❌ {e}")
+            self.chat_panel.add_message("system", f"❌ LLM error: {e}")
 
     async def _handle_code_request(self, message, system, front):
         """Route code through brain pipeline. FrontBrain decides what to tell user."""
@@ -239,35 +244,26 @@ class BigBrainApp(App):
                 exit_code = data.get("exit_code", -1)
                 code_lines = data.get("generated_code", "").count("\n") + 1
 
-                # FrontBrain uses LLM to craft human response
-                summary_prompt = f"""The user asked: "{message}"
-
-PythonBrain generated {code_lines} lines of code and executed it.
-Exit code: {exit_code}
-Output: {stdout[:500] if stdout else '(no output)'}
-{f'Errors: {stderr[:300]}' if stderr else ''}
-
-Write a brief, natural response to the user summarizing what was done and the result.
-Do NOT include the code — just explain what happened and show key output.
-If there were errors, explain them simply.
-Be concise (2-4 sentences max)."""
-
-                # Stream the human-layer response
-                self.chat_panel.start_streaming_message("assistant")
-                try:
-                    stream = await system.llm_provider.chat_complete(
-                        messages=[{"role": "user", "content": summary_prompt}],
-                        stream=True, max_tokens=300,
-                    )
-                    full = []
-                    async for chunk in stream:
-                        full.append(chunk)
-                        self.chat_panel.append_to_streaming(chunk)
-                    self.chat_panel.finish_streaming_message()
-                    summary = "".join(full)
-                except Exception:
-                    self.chat_panel.finish_streaming_message()
-                    summary = f"Done! Output:\n{stdout[:200]}" if stdout else "Code ran successfully."
+                # Use Voice Brain for natural summary if available, else direct output
+                voice_brain = getattr(system, "voice_brain", None)
+                if voice_brain:
+                    try:
+                        summary = await voice_brain.vocalize_result(
+                            message,
+                            {"success": True, "data": data},
+                        )
+                        self.chat_panel.add_message("assistant", summary)
+                    except Exception as e:
+                        # Voice Brain failed — show raw output
+                        summary = f"Done! Output:\n{stdout[:300]}" if stdout else "Code ran successfully."
+                        if stderr:
+                            summary += f"\n⚠️ {stderr[:200]}"
+                        self.chat_panel.add_message("assistant", summary)
+                else:
+                    # No Voice Brain — show raw output directly
+                    summary = f"Done! Output:\n{stdout[:300]}" if stdout else "Code ran successfully."
+                    if stderr:
+                        summary += f"\n⚠️ {stderr[:200]}"
                     self.chat_panel.add_message("assistant", summary)
 
                 front._conversation_history.append({"role": "assistant", "content": summary})
