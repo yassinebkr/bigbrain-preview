@@ -128,21 +128,25 @@ Your job: decompose a user's request into concrete subtasks, each assigned to th
 Available brains (use exactly these names as brain_target):
 {brain_list}
 
-Rules:
-- Each subtask has: id, description, brain_target, dependencies (list of subtask ids it depends on)
+CRITICAL RULES:
+- Each subtask has: id, description, brain_target, payload (with "type" and "user_request"), dependencies
 - Use dependencies to enforce ordering when one subtask needs another's output
-- Keep subtasks atomic — one clear action each
-- For simple requests (greetings, questions, single actions), return just ONE subtask
-- For complex requests (multi-step, multi-domain), decompose into 2-5 subtasks with proper dependencies
-- The "type" field in each subtask's payload should describe the action (e.g. "generate_and_execute", "research", "analyze")
+- **PREFER FEWER SUBTASKS.** Most requests need just 1 subtask. Only decompose when the user explicitly asks for multiple distinct actions.
+- If the request is about writing/running code, generating something, or building something → python_brain (1 subtask)
+- Only use researcher when the user explicitly asks to research, look up, or gather information
+- **Do NOT add a "research" step before coding tasks** — python_brain can handle the full request on its own
+- The "type" field in payload should be "generate_and_execute" for code tasks, "research" for research tasks
 
-Respond with ONLY a JSON array of subtask objects. No explanation, no markdown fences.
+Respond with ONLY a JSON array. No explanation, no markdown fences.
 
-Example — simple request "write a fibonacci function":
+Example — "write a fibonacci function":
 [{{"id": "s1", "description": "Generate and execute fibonacci code", "brain_target": "python_brain", "payload": {{"type": "generate_and_execute", "user_request": "write a fibonacci function"}}, "dependencies": []}}]
 
-Example — complex request "research async patterns then build an async web scraper":
-[{{"id": "s1", "description": "Research async programming patterns in Python", "brain_target": "researcher", "payload": {{"type": "research", "query": "async programming patterns Python aiohttp asyncio"}}, "dependencies": []}}, {{"id": "s2", "description": "Build async web scraper using research findings", "brain_target": "python_brain", "payload": {{"type": "generate_and_execute", "user_request": "build an async web scraper", "context_ref": "#s1"}}, "dependencies": ["s1"]}}]"""
+Example — "create a wind simulation in python":
+[{{"id": "s1", "description": "Create wind simulation with physics and logging", "brain_target": "python_brain", "payload": {{"type": "generate_and_execute", "user_request": "create a realistic wind simulation in python with logs and useful results"}}, "dependencies": []}}]
+
+Example — "research async patterns then build a scraper using what you find":
+[{{"id": "s1", "description": "Research async programming patterns", "brain_target": "researcher", "payload": {{"type": "research", "query": "async programming patterns Python aiohttp asyncio"}}, "dependencies": []}}, {{"id": "s2", "description": "Build async web scraper using findings", "brain_target": "python_brain", "payload": {{"type": "generate_and_execute", "user_request": "build an async web scraper", "context_ref": "#s1"}}, "dependencies": ["s1"]}}]"""
 
     def __init__(self, workspace: str, bus: MessageBus, llm_provider=None,
                  planner_model: str = None):

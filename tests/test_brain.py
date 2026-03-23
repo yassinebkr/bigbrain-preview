@@ -190,11 +190,17 @@ class TestBaseBrain:
         
         await test_brain._handle_message_wrapper(task_message)
         
-        # Should NOT send error result because current_task is cleared by finally block
-        # But should broadcast error event instead
-        assert not mock_bus.send_result.called
+        # Should send error result back to the caller (orchestrator)
+        # even though _handle_task_message's finally cleared _current_task,
+        # the wrapper uses the original message as fallback.
+        assert mock_bus.send_result.called
+        result_call = mock_bus.send_result.call_args
+        assert result_call[1]["result_data"]["success"] is False
+        assert result_call[1]["result_data"]["error"] == "Test failure"
+        assert result_call[1]["target"] == "orchestrator"
+        assert result_call[1]["reply_to"] == task_message.id
         
-        # Should broadcast error event
+        # Should also broadcast error event
         error_calls = [call for call in mock_bus.broadcast_event.call_args_list 
                       if call[1]["event_type"] == "brain.error"]
         assert len(error_calls) == 1

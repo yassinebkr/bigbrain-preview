@@ -116,14 +116,34 @@ class BaseBrain(BusParticipant, ABC):
                 await self.handle_message(message)
         
         except Exception as e:
-            # Send error result if we were processing a task
+            # Send error result back to the caller.
+            # NOTE: _current_task may already be None (cleared by _handle_task_message's
+            # finally block). For TASK messages, use the message itself as fallback.
+            error_reply_to = None
+            error_target = None
+            
             if self._current_task:
-                await self.send_result({
-                    "success": False,
-                    "error": str(e),
-                    "error_type": type(e).__name__
-                }, self._current_task.id)
+                error_reply_to = self._current_task.id
+                error_target = self._current_task.source
                 self._current_task = None
+            elif message.type == MessageType.TASK:
+                # _handle_task_message's finally already cleared _current_task,
+                # but we still need to send the error result back.
+                error_reply_to = message.id
+                error_target = message.source
+            
+            if error_reply_to:
+                await self.bus.send_result(
+                    source=self.name,
+                    result_data={
+                        "success": False,
+                        "error": str(e),
+                        "error_type": type(e).__name__
+                    },
+                    reply_to=error_reply_to,
+                    workspace=self.workspace,
+                    target=error_target,
+                )
             
             # Also broadcast the error event
             await self.send_event("brain.error", {
