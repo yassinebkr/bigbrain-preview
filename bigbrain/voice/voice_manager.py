@@ -1,11 +1,59 @@
 """Voice Manager - Coordinates STT→LLM→TTS pipeline for BigBrain."""
 
 import asyncio
+import os
 from enum import Enum
 from typing import AsyncIterator, Callable, Optional
 
 from .stt import MockSTT
 from .tts import MockTTS
+
+
+def create_voice_manager(**kwargs) -> "VoiceManager":
+    """
+    Factory that auto-detects real vs mock voice services.
+    
+    Detection chain:
+      1. DEEPGRAM_API_KEY + CARTESIA_API_KEY both set → real STT + TTS
+      2. Only one key set → that service is real, other is mock
+      3. No keys → full mock (demo mode)
+    
+    Also needs CARTESIA_VOICE_ID for real TTS (get from Cartesia dashboard).
+    
+    Returns:
+        VoiceManager configured with the best available providers
+    """
+    deepgram_key = os.environ.get("DEEPGRAM_API_KEY", "")
+    cartesia_key = os.environ.get("CARTESIA_API_KEY", "")
+    cartesia_voice = os.environ.get("CARTESIA_VOICE_ID", "")
+
+    stt = None
+    tts = None
+
+    if deepgram_key:
+        try:
+            from .deepgram_stt import DeepgramSTT
+            stt = DeepgramSTT(api_key=deepgram_key)
+            print("🎤 Deepgram Nova-3 STT loaded (real)")
+        except Exception as e:
+            print(f"⚠️  Deepgram STT failed to init: {e} — falling back to mock")
+
+    if cartesia_key:
+        try:
+            from .cartesia_tts import CartesiaTTS
+            tts = CartesiaTTS(api_key=cartesia_key, voice_id=cartesia_voice or None)
+            print("🔊 Cartesia Sonic TTS loaded (real)")
+        except Exception as e:
+            print(f"⚠️  Cartesia TTS failed to init: {e} — falling back to mock")
+
+    if stt is None:
+        stt = MockSTT()
+        print("🎤 STT: mock mode (set DEEPGRAM_API_KEY for real)")
+    if tts is None:
+        tts = MockTTS()
+        print("🔊 TTS: mock mode (set CARTESIA_API_KEY for real)")
+
+    return VoiceManager(stt=stt, tts=tts, **kwargs)
 
 
 class VoiceState(str, Enum):
