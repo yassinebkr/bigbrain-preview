@@ -11,3 +11,4 @@ work/
 debug_*.py
 .venv/
 venv/
+.env
