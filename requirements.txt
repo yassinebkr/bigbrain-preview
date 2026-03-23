@@ -10,11 +10,18 @@ textual>=0.40       # For TUI mode (optional — falls back to Rich)
 # LLM (for real AI responses)
 litellm>=1.30       # Unified LLM API (OpenAI, Anthropic, Google, etc.)
 python-dotenv>=1.0  # Load .env config
+anthropic>=0.34     # OAuth login flow
 
 # Memory (persistent storage — optional, falls back to in-memory)
 chromadb>=0.4       # Vector database for persistent memory
 
+# HTTP client (required for Anthropic OAuth provider)
+httpx>=0.27
+
 # Voice (optional — disabled when keys not set)
+websockets>=12.0    # STT/TTS WebSocket transport
+sounddevice>=0.4    # Audio playback (TTS output)
+numpy>=1.24         # Audio data conversion
 # deepgram-sdk>=3.0     # STT (needs DEEPGRAM_API_KEY)
 # cartesia>=1.0         # TTS (needs CARTESIA_API_KEY)
 
