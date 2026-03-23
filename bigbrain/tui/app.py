@@ -250,7 +250,7 @@ class BigBrainApp(App):
         # Update task panel
         if self.task_panel:
             self.task_panel.add_task(request[:50], brain_target)
-            self.task_panel.update_task_progress(brain_target, 10, "running", "Dispatched...")
+            self.task_panel.update_task_progress(brain_target, 0, "running", "Dispatched to orchestrator...")
 
         if self.brain_panel:
             self.brain_panel.update_brain_status(brain_target, "busy", True, request[:30])
@@ -283,7 +283,7 @@ class BigBrainApp(App):
             await system.bus.send(task_msg)
 
             if self.task_panel:
-                self.task_panel.update_task_progress(brain_target, 40, "running", "Working...")
+                self.task_panel.update_task_progress(brain_target, 30, "running", "Brain working...")
 
             # Wait for result (60s timeout)
             try:
@@ -295,7 +295,7 @@ class BigBrainApp(App):
                 return
 
             if self.task_panel:
-                self.task_panel.update_task_progress(brain_target, 90, "running", "Analyzing...")
+                self.task_panel.update_task_progress(brain_target, 80, "running", "Front Brain analyzing...")
 
             # Extract result data
             data = result_msg.payload
@@ -436,7 +436,7 @@ class BigBrainApp(App):
         task_id = None
         if self.task_panel:
             task_id = self.task_panel.add_task(message[:50], "code")
-            self.task_panel.update_task_progress("code", 10, "running", "Generating code...")
+            self.task_panel.update_task_progress("code", 0, "running", "Routing to PythonBrain...")
 
         # 2. Send TASK via bus
         task_msg = BusMessage(
@@ -461,7 +461,7 @@ class BigBrainApp(App):
             await system.bus.send(task_msg)
 
             if self.task_panel:
-                self.task_panel.update_task_progress("code", 40, "running", "PythonBrain working...")
+                self.task_panel.update_task_progress("code", 30, "running", "PythonBrain working...")
 
             # 3. Wait for result
             try:
@@ -473,7 +473,7 @@ class BigBrainApp(App):
                 return
 
             if self.task_panel:
-                self.task_panel.update_task_progress("code", 80, "running", "Processing result...")
+                self.task_panel.update_task_progress("code", 70, "running", "Processing result...")
 
             # 4. FrontBrain interprets result — decides what to tell user
             data = result_msg.payload.get("data", result_msg.payload)
@@ -646,11 +646,14 @@ This provides a solid foundation for your data processing needs. Would you like 
             brain_name = message.payload.get("brain", message.source)
             task_id = message.payload.get("task_id", "")[:8] if message.payload.get("task_id") else None
 
-            if "brain.started" in event_type and task_id:
-                # Brain picked up a task — update brain panel status
+            if "brain.started" in event_type:
+                # Brain picked up a task — update brain panel only (task panel already tracks via _dispatch_task)
                 if self.brain_panel:
                     task_type = message.payload.get("task_type", "task")
                     self.brain_panel.update_brain_status(brain_name, "busy", True, task_type)
+                # Update progress on existing task if tracked
+                if self.task_panel and task_id and task_id in self.task_panel.tasks:
+                    self.task_panel.update_task_progress(task_id, 15, "running", f"{brain_name} started")
 
             elif "brain.complete" in event_type:
                 if self.brain_panel:
@@ -666,10 +669,22 @@ This provides a solid foundation for your data processing needs. Would you like 
                     self.task_panel.complete_task(task_id, False)
 
             elif "progress" in event_type:
-                # Progress updates from brains
+                # Progress updates from brains — map stages to realistic percentages
                 stage = message.payload.get("stage", "working")
-                if self.task_panel and task_id:
-                    self.task_panel.update_task_progress(task_id, 50, "running", stage)
+                stage_progress = {
+                    "generating_code": 25,
+                    "code_generated": 40,
+                    "executing": 55,
+                    "execution_complete": 70,
+                    "retrying": 35,
+                    "verifying": 75,
+                    "researching": 30,
+                    "synthesizing": 60,
+                    "working": 45,
+                }
+                progress_val = stage_progress.get(stage, 50)
+                if self.task_panel and task_id and task_id in self.task_panel.tasks:
+                    self.task_panel.update_task_progress(task_id, progress_val, "running", stage)
         except Exception:
             pass  # Don't crash the TUI on bus message errors
     
@@ -685,7 +700,8 @@ This provides a solid foundation for your data processing needs. Would you like 
         if self.focus_panel:
             current_mode = self.focus_panel.current_mode
             new_mode = "deep_focus" if current_mode == "normal" else "normal"
-            self.focus_panel.update_focus(new_mode, "demo", 0.0)
+            ws = self.bigbrain_system.workspace if self.bigbrain_system else "default"
+            self.focus_panel.update_focus(new_mode, ws, 0.0)
             self.notify(f"Focus mode: {new_mode}")
     
     def action_toggle_voice(self) -> None:

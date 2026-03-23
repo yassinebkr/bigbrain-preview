@@ -273,15 +273,16 @@ Rules:
     async def _fix_code(self, user_request: str, attempt_history: list[dict]) -> str:
         """Fix code based on Reflexion memory of previous errors.
 
-        Strategy: Give the LLM the LAST failed code + a focused error analysis.
-        Don't dump all attempts — focus on the most recent failure and what to fix.
-        Include a summary of ALL past errors so it doesn't regress.
+        Uses diff/patch approach for efficiency:
+        - Small errors (syntax, typos): LLM outputs SEARCH/REPLACE blocks
+        - Large errors (logic, redesign): LLM outputs full corrected code
+        - Falls back to full code if diff application fails
         """
         last = attempt_history[-1]
         last_code = last.get("code", "")
         last_error = last.get("stderr", "") or last.get("error", "")
 
-        # Build concise error summary from ALL attempts (not full code dumps)
+        # Build concise error summary from ALL attempts
         error_summary = []
         for entry in attempt_history:
             err = entry.get("stderr", "") or entry.get("error", "")
@@ -289,25 +290,28 @@ Rules:
                 error_summary.append(f"  Attempt {entry['attempt']}: {err[:200]}")
         errors_text = "\n".join(error_summary)
 
-        # Analyze common error patterns to give targeted hints
+        # Analyze error patterns for targeted hints
         hints = []
         error_lower = last_error.lower()
         if "syntaxerror" in error_lower and "f-string" in error_lower:
-            hints.append("- The f-string syntax is broken. Use simple string concatenation or extract dict values to variables BEFORE the f-string. Example: val = d['key']; print(f\"Value: {val:.2f}\")")
+            hints.append("- The f-string syntax is broken. Extract dict values to variables BEFORE the f-string.")
         if "syntaxerror" in error_lower and "unterminated" in error_lower:
-            hints.append("- A string literal is not properly closed. Check all quotes match and multi-line strings use triple quotes.")
+            hints.append("- A string literal is not properly closed. Check all quotes match.")
         if "modulenotfounderror" in error_lower or "no module named" in error_lower:
-            hints.append("- An external module is missing. Use ONLY standard library modules (no numpy, scipy, matplotlib, pandas, etc.)")
+            hints.append("- External module missing. Use ONLY standard library (no numpy, scipy, matplotlib, pandas).")
         if "indentationerror" in error_lower:
-            hints.append("- Fix indentation. Use consistent 4-space indentation throughout.")
-
+            hints.append("- Fix indentation. Use consistent 4-space indentation.")
         hints_text = "\n".join(hints) if hints else "- Carefully analyze the error and fix the root cause."
 
-        prompt = f"""Fix this Python script. Here is the code that failed:
+        # Number the lines for precise diff references
+        numbered_code = "\n".join(
+            f"{i+1:4d} | {line}" for i, line in enumerate(last_code.split("\n"))
+        )
 
-```python
-{last_code}
-```
+        prompt = f"""Fix this Python script using SEARCH/REPLACE blocks.
+
+The numbered code that failed:
+{numbered_code}
 
 Error:
 {last_error[:500]}
@@ -315,21 +319,87 @@ Error:
 All errors so far (do NOT repeat ANY of these):
 {errors_text}
 
-Targeted fix instructions:
+Fix instructions:
 {hints_text}
 
-Original request: {user_request}
+Output your fix as one or more SEARCH/REPLACE blocks. Each block looks like:
+
+<<<< SEARCH
+exact lines to find (copy from the code above, WITHOUT line numbers)
+====
+replacement lines
+>>>> REPLACE
 
 Rules:
-- Output ONLY the corrected Python code, no explanation
-- The code must be self-contained and runnable as a script
-- Use print() to show results
+- SEARCH text must match the original code EXACTLY (without the line numbers)
+- Only include the lines that need to change (plus enough context to be unique)
+- If the fix requires rewriting most of the file, output the FULL corrected code in a ```python block instead
 - No external dependencies beyond the standard library
-- For dict values in f-strings, extract to a variable first: val = d['key']; f"{{val:.2f}}"
-- Ensure every string is properly closed"""
+- Use print() to show results
+- Original request: {user_request}"""
 
         generated = await self.llm_provider.complete(prompt, stream=False)
+
+        # Try to apply diff/patch first
+        patched = self._apply_search_replace(last_code, generated)
+        if patched is not None:
+            return patched
+
+        # Fallback: extract full code block
         return self._extract_code(generated)
+
+    @staticmethod
+    def _apply_search_replace(original: str, llm_output: str) -> str | None:
+        """Apply SEARCH/REPLACE blocks to original code.
+        
+        Returns patched code, or None if no valid blocks found or application fails.
+        """
+        import re
+        
+        # Find all SEARCH/REPLACE blocks
+        pattern = r'<{4}\s*SEARCH\n(.*?)\n={4}\n(.*?)\n>{4}\s*REPLACE'
+        matches = re.findall(pattern, llm_output, re.DOTALL)
+        
+        if not matches:
+            return None
+        
+        result = original
+        applied = 0
+        
+        for search_text, replace_text in matches:
+            search_text = search_text.strip('\n')
+            replace_text = replace_text.strip('\n')
+            
+            if search_text in result:
+                result = result.replace(search_text, replace_text, 1)
+                applied += 1
+            else:
+                # Try fuzzy match — strip leading whitespace differences
+                search_stripped = "\n".join(l.strip() for l in search_text.split("\n"))
+                lines = result.split("\n")
+                
+                # Sliding window search
+                search_lines = search_stripped.split("\n")
+                found = False
+                for i in range(len(lines) - len(search_lines) + 1):
+                    window = "\n".join(l.strip() for l in lines[i:i+len(search_lines)])
+                    if window == search_stripped:
+                        # Preserve original indentation of first line
+                        indent = len(lines[i]) - len(lines[i].lstrip())
+                        indent_str = " " * indent
+                        replace_lines = replace_text.split("\n")
+                        indented_replace = [indent_str + l if l.strip() else l for l in replace_lines]
+                        lines[i:i+len(search_lines)] = indented_replace
+                        result = "\n".join(lines)
+                        applied += 1
+                        found = True
+                        break
+                
+                if not found:
+                    # This block failed to apply — bail to full regeneration
+                    return None
+        
+        return result if applied > 0 else None
     
     @staticmethod
     def _extract_code(text: str) -> str:
