@@ -187,8 +187,11 @@ class AnthropicOAuthProvider(LLMProvider):
         ) as resp:
             if resp.status_code != 200:
                 raw = await resp.aread()
-                error = json.loads(raw)
-                msg = error.get("error", {}).get("message", raw.decode())
+                try:
+                    error = json.loads(raw)
+                    msg = error.get("error", {}).get("message", raw.decode())
+                except Exception:
+                    msg = raw.decode(errors="replace")
                 raise RuntimeError(f"Anthropic API error ({resp.status_code}): {msg}")
 
             async for line in resp.aiter_lines():
@@ -202,7 +205,17 @@ class AnthropicOAuthProvider(LLMProvider):
                 except json.JSONDecodeError:
                     continue
 
-                if event.get("type") == "content_block_delta":
+                event_type = event.get("type", "")
+
+                # Handle error events inside the stream
+                if event_type == "error":
+                    err = event.get("error", {})
+                    raise RuntimeError(
+                        f"Stream error: {err.get('type', 'unknown')}: "
+                        f"{err.get('message', str(err))}"
+                    )
+
+                if event_type == "content_block_delta":
                     delta = event.get("delta", {})
                     if delta.get("type") == "text_delta":
                         yield delta["text"]

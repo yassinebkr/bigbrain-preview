@@ -183,6 +183,9 @@ class BigBrainApp(App):
         messages = [{"role": "system", "content": system_prompt}]
         messages.extend(front._conversation_history[-20:])
 
+        response_text = ""
+
+        # Try streaming first
         try:
             self.chat_panel.start_streaming_message("assistant")
             stream = await system.llm_provider.chat_complete(messages=messages, stream=True)
@@ -192,13 +195,28 @@ class BigBrainApp(App):
                 self.chat_panel.append_to_streaming(chunk)
             self.chat_panel.finish_streaming_message()
             response_text = "".join(full)
-            if not response_text.strip():
-                self.chat_panel.add_message("system", "⚠️ LLM returned empty response. Check model config.")
-            else:
-                front._conversation_history.append({"role": "assistant", "content": response_text})
         except Exception as e:
             self.chat_panel.finish_streaming_message()
-            self.chat_panel.add_message("system", f"❌ LLM error: {e}")
+            # Streaming failed — fall through to non-streaming fallback
+            response_text = ""
+
+        # Fallback: if streaming yielded nothing, try non-streaming
+        if not response_text.strip():
+            try:
+                response_text = await system.llm_provider.chat_complete(
+                    messages=messages, stream=False
+                )
+            except Exception as e:
+                self.chat_panel.add_message("system", f"❌ LLM error: {e}")
+                return
+
+        if response_text and response_text.strip():
+            # If we got text from fallback (not streaming), show it now
+            if not self.chat_panel.current_streaming_message:
+                self.chat_panel.add_message("assistant", response_text)
+            front._conversation_history.append({"role": "assistant", "content": response_text})
+        else:
+            self.chat_panel.add_message("system", "⚠️ LLM returned empty response. Check model config.")
 
     async def _handle_code_request(self, message, system, front):
         """Route code through brain pipeline. FrontBrain decides what to tell user."""
@@ -260,33 +278,38 @@ class BigBrainApp(App):
                 stdout = data.get("stdout", "").strip()
                 stderr = data.get("stderr", "").strip()
                 exit_code = data.get("exit_code", -1)
-                code_lines = data.get("generated_code", "").count("\n") + 1
+                generated_code = data.get("generated_code", "").strip()
+                attempts = data.get("total_attempts", 1)
 
-                # Use Voice Brain for natural summary if available, else direct output
-                voice_brain = getattr(system, "voice_brain", None)
-                if voice_brain:
-                    try:
-                        summary = await asyncio.wait_for(
-                            voice_brain.vocalize_result(
-                                message,
-                                {"success": True, "data": data},
-                            ),
-                            timeout=15,  # Don't hang on LLM summarization
-                        )
-                        self.chat_panel.add_message("assistant", summary)
-                    except (asyncio.TimeoutError, Exception) as e:
-                        # Voice Brain failed or timed out — show raw output
-                        summary = f"Done! Output:\n{stdout[:300]}" if stdout else "Code ran successfully."
-                        if stderr:
-                            summary += f"\n⚠️ {stderr[:200]}"
-                        self.chat_panel.add_message("assistant", summary)
+                # Build rich result message with code + output
+                parts = []
+
+                # Show generated code (collapsed if long)
+                if generated_code:
+                    code_preview = generated_code[:800]
+                    if len(generated_code) > 800:
+                        code_preview += "\n# ... (truncated)"
+                    parts.append(f"```python\n{code_preview}\n```")
+
+                # Show execution result
+                if exit_code == 0:
+                    if stdout:
+                        parts.append(f"**Output:**\n```\n{stdout[:500]}\n```")
+                    else:
+                        parts.append("✅ Code ran successfully (no output)")
                 else:
-                    # No Voice Brain — show raw output directly
-                    summary = f"Done! Output:\n{stdout[:300]}" if stdout else "Code ran successfully."
+                    parts.append(f"⚠️ Exit code: {exit_code}")
                     if stderr:
-                        summary += f"\n⚠️ {stderr[:200]}"
-                    self.chat_panel.add_message("assistant", summary)
+                        parts.append(f"**Errors:**\n```\n{stderr[:300]}\n```")
 
+                if attempts > 1:
+                    parts.append(f"_(took {attempts} attempts via Honk loop)_")
+
+                result_text = "\n\n".join(parts)
+                self.chat_panel.add_message("assistant", result_text)
+
+                # Store in conversation history (compact version)
+                summary = f"[Code executed: exit={exit_code}, output={stdout[:100]}]"
                 front._conversation_history.append({"role": "assistant", "content": summary})
 
                 if self.task_panel:
