@@ -115,40 +115,36 @@ class BigBrainApp(App):
         # Add user message to chat
         self.chat_panel.add_message("user", message)
         
-        # Process with BigBrain system
+        # Process in background worker (doesn't block TUI)
         if self.bigbrain_system:
-            await self.process_user_message(message)
+            self.process_user_message(message)
         else:
-            # Fallback response for demo
             self.chat_panel.add_message("assistant", f"Echo: {message}")
     
+    @work(exclusive=True, group="chat")
     async def process_user_message(self, message: str) -> None:
-        """
-        Process user message through BigBrain system.
+        """Process user message in background worker (non-blocking)."""
+        # Show thinking indicator
+        self.chat_panel.add_message("system", "⏳ Thinking...")
         
-        Args:
-            message: User input message
-        """
         try:
-            # Route through the real Front Brain when available
             if self.bigbrain_system and self.bigbrain_system.front_brain:
                 response = await self.bigbrain_system.front_brain.handle_user_input(message)
             else:
-                response = await self.simulate_bigbrain_response(message)
+                response = "System not ready."
             
-            # Stream response to chat
-            if hasattr(response, '__aiter__'):
-                # Streaming response
-                self.chat_panel.start_streaming_message("assistant")
-                async for chunk in response:
-                    self.chat_panel.append_to_streaming(chunk)
-                self.chat_panel.finish_streaming_message()
-            else:
-                # Static response
-                self.chat_panel.add_message("assistant", str(response))
+            # Remove thinking indicator (last system message)
+            if self.chat_panel.messages:
+                last = self.chat_panel.messages[-1]
+                if hasattr(last, 'message_text') and '⏳' in last.message_text:
+                    last.remove()
+                    self.chat_panel.messages.pop()
+            
+            # Show response
+            self.chat_panel.add_message("assistant", str(response))
         
         except Exception as e:
-            self.chat_panel.add_message("system", f"Error: {e}")
+            self.chat_panel.add_message("system", f"❌ Error: {e}")
     
     async def simulate_bigbrain_response(self, message: str) -> str:
         """
@@ -205,6 +201,9 @@ This provides a solid foundation for your data processing needs. Would you like 
 
         system = self.bigbrain_system
 
+        # Give widgets time to fully mount
+        await asyncio.sleep(0.3)
+
         # Start the system (orchestrator, brains, front brain)
         try:
             await system.start()
@@ -217,8 +216,13 @@ This provides a solid foundation for your data processing needs. Would you like 
         if system.bus:
             system.bus.subscribe("*", self._on_bus_message)
 
-        # Sync brain status
+        # Wait for brain panel refs to be set up
+        await asyncio.sleep(0.2)
+
+        # Sync brain status — directly update widgets if refs aren't ready
         if self.brain_panel:
+            # Force setup refs
+            self.brain_panel._setup_brain_refs()
             for brain_name, brain in system.brains.items():
                 status = brain.get_status()
                 state = "idle" if status.get("running") else "offline"
