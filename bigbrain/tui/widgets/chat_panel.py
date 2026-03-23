@@ -107,7 +107,11 @@ class ChatPanel(VerticalScroll):
     def append_to_streaming(self, chunk: str) -> None:
         if self.current_streaming_message:
             self.current_streaming_message.append_content(chunk)
-            self.scroll_end(animate=False)
+            self.call_after_refresh(self._do_scroll)
+
+    def _do_scroll(self) -> None:
+        """Scroll to bottom after refresh."""
+        self.scroll_end(animate=False)
 
     def finish_streaming_message(self) -> None:
         if self.current_streaming_message:

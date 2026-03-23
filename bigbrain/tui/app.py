@@ -123,18 +123,16 @@ class BigBrainApp(App):
     
     @work(exclusive=True, group="chat")
     async def process_user_message(self, message: str) -> None:
-        """Process user message with streaming response."""
+        """Process user message through the full brain pipeline."""
         system = self.bigbrain_system
         if not system or not system.front_brain:
             self.chat_panel.add_message("system", "System not ready.")
             return
 
         front = system.front_brain
-
-        # Record in conversation history
         front._conversation_history.append({"role": "user", "content": message})
 
-        # Handle built-in commands
+        # Built-in commands
         cmd = message.lower().strip()
         if cmd == "help":
             self.chat_panel.add_message("assistant", front._get_help_text())
@@ -144,51 +142,122 @@ class BigBrainApp(App):
             self.chat_panel.add_message("assistant", resp)
             return
 
-        # Build messages for LLM
-        focus_status = front.focus_manager.get_focus_status()
-        system_prompt = front._build_system_prompt(focus_status)
-
-        # Check if code request
+        # Detect intent
         text_lower = message.lower()
         is_code = any(kw in text_lower for kw in [
-            "run", "execute", "code", "python", "script", "write",
+            "run", "execute", "code", "python", "script", "write a",
             "calculate", "fibonacci", "simulate", "plot", "generate",
+            "create a function", "create a class", "create a program",
         ])
-        if is_code:
-            system_prompt += "\n\nInclude a complete, runnable Python script in a ```python block. Keep it concise."
 
+        if is_code:
+            # === CODE PATH: Route through PythonBrain via bus ===
+            await self._handle_code_request(message, system, front)
+        else:
+            # === CONVERSATION PATH: FrontBrain streams directly ===
+            await self._handle_conversation(message, system, front)
+
+    async def _handle_conversation(self, message, system, front):
+        """Stream a conversational response from FrontBrain LLM."""
+        focus_status = front.focus_manager.get_focus_status()
+        system_prompt = front._build_system_prompt(focus_status)
         messages = [{"role": "system", "content": system_prompt}]
         messages.extend(front._conversation_history[-20:])
 
-        # Stream response
         try:
             self.chat_panel.start_streaming_message("assistant")
-
-            stream = await system.llm_provider.chat_complete(
-                messages=messages, stream=True
-            )
-            full_response = []
+            stream = await system.llm_provider.chat_complete(messages=messages, stream=True)
+            full = []
             async for chunk in stream:
-                full_response.append(chunk)
+                full.append(chunk)
                 self.chat_panel.append_to_streaming(chunk)
-
             self.chat_panel.finish_streaming_message()
-            response_text = "".join(full_response)
-
-            # Store in conversation history
-            front._conversation_history.append({"role": "assistant", "content": response_text})
-
-            # Auto-execute code if present
-            if is_code and "```python" in response_text:
-                code = front._extract_code_blocks(response_text)
-                if code:
-                    self.chat_panel.add_message("system", "⚡ Running code...")
-                    result = await front._execute_code_direct(code)
-                    self.chat_panel.add_message("system", f"📍 Output:\n{result}")
-
+            front._conversation_history.append({"role": "assistant", "content": "".join(full)})
         except Exception as e:
             self.chat_panel.finish_streaming_message()
-            self.chat_panel.add_message("system", f"❌ Error: {e}")
+            self.chat_panel.add_message("system", f"❌ {e}")
+
+    async def _handle_code_request(self, message, system, front):
+        """Route code request through the brain pipeline."""
+        from ..bus.message import BusMessage, MessageType, Priority
+
+        # 1. FrontBrain announces intent
+        self.chat_panel.add_message("assistant", f"🧠 I'll route this to PythonBrain for execution.")
+
+        # Update brain status
+        if self.brain_panel:
+            self.brain_panel.update_brain_status("python_brain", "busy", True, message[:30])
+
+        # 2. Send TASK to PythonBrain via bus
+        task_msg = BusMessage(
+            type=MessageType.TASK,
+            source="front_brain",
+            target="python_brain",
+            workspace=system.workspace,
+            payload={
+                "type": "generate_and_execute",
+                "user_request": message,
+            },
+            priority=Priority.NORMAL,
+        )
+
+        # 3. Set up a future to capture the result
+        result_future = asyncio.get_event_loop().create_future()
+
+        async def _capture_result(result_msg: BusMessage):
+            """Capture the result message from PythonBrain."""
+            if result_msg.source == "python_brain" and result_msg.type == MessageType.RESULT:
+                if not result_future.done():
+                    result_future.set_result(result_msg)
+
+        # Subscribe to results temporarily
+        system.bus.subscribe("front_brain", _capture_result)
+
+        try:
+            # Send the task
+            await system.bus.send(task_msg)
+
+            # 4. Wait for result (with timeout)
+            try:
+                result_msg = await asyncio.wait_for(result_future, timeout=60)
+            except asyncio.TimeoutError:
+                self.chat_panel.add_message("system", "⏱️ PythonBrain timed out (60s)")
+                return
+
+            # 5. Display result
+            data = result_msg.payload.get("data", result_msg.payload)
+            success = result_msg.payload.get("success", False)
+
+            if success and isinstance(data, dict):
+                code = data.get("generated_code", "")
+                stdout = data.get("stdout", "")
+                stderr = data.get("stderr", "")
+                exit_code = data.get("exit_code", -1)
+
+                if code:
+                    self.chat_panel.add_message("assistant", f"```python\n{code}\n```")
+
+                output = stdout if stdout else "(no output)"
+                if stderr:
+                    output += f"\n⚠️ stderr: {stderr}"
+                if exit_code != 0:
+                    output += f"\n❌ Exit code: {exit_code}"
+
+                self.chat_panel.add_message("system", f"📍 Execution result:\n{output}")
+            else:
+                error = data.get("error", str(data)) if isinstance(data, dict) else str(result_msg.payload)
+                self.chat_panel.add_message("system", f"❌ {error}")
+
+            # Store in conversation
+            front._conversation_history.append({
+                "role": "assistant",
+                "content": f"[Code task executed. Output: {stdout[:200] if success else error[:200]}]"
+            })
+
+        finally:
+            system.bus.unsubscribe("front_brain", _capture_result)
+            if self.brain_panel:
+                self.brain_panel.update_brain_status("python_brain", "idle", True)
     
     async def simulate_bigbrain_response(self, message: str) -> str:
         """
