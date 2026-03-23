@@ -239,8 +239,10 @@ Rules:
 - Output ONLY the Python code, no explanation before or after
 - The code must be self-contained and runnable as a script
 - Use print() to show results
-- No external dependencies beyond the standard library
-- Include error handling where appropriate"""
+- No external dependencies beyond the standard library (no numpy, scipy, matplotlib, etc.)
+- Include error handling where appropriate
+- For f-strings with dict access, use double quotes outside and bracket notation: f"{{d['key']}}" or use variables: val = d['key']; f"{{val}}"
+- Ensure all strings are properly closed on the same line"""
 
         generated = await self.llm_provider.complete(prompt, stream=False)
         return self._extract_code(generated)
