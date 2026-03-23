@@ -73,6 +73,43 @@ class BigBrainSystem:
             icons = {"info": "ℹ️", "success": "✅", "error": "❌", "warning": "⚠️"}
             print(f"{icons.get(msg_type, '📝')} {message}")
     
+    def _create_llm_provider(self):
+        """Create the best available LLM provider."""
+        # Check for OAuth token first (Claude Pro/Max)
+        oauth_key = config.resolve_anthropic_key()
+        if oauth_key and not config.anthropic_api_key:
+            # OAuth token available — set it for litellm
+            import os
+            os.environ["ANTHROPIC_API_KEY"] = oauth_key
+            try:
+                from .llm.litellm_provider import LiteLLMProvider
+                model = config.front_brain_model or "claude-sonnet-4-20250514"
+                provider = LiteLLMProvider(default_model=model)
+                print(f"🔑 LLM: Claude via OAuth ({model})")
+                return provider
+            except ImportError:
+                print("⚠️  OAuth token found but litellm not installed. Run: pip install litellm")
+
+        # Check for env var API keys
+        if config.has_api_key:
+            try:
+                from .llm.litellm_provider import LiteLLMProvider
+                # If we have an OAuth-resolved Anthropic key, set it
+                if oauth_key:
+                    import os
+                    os.environ["ANTHROPIC_API_KEY"] = oauth_key
+                provider = LiteLLMProvider(default_model=config.effective_front_model)
+                print(f"🔑 LLM: {config.summary()}")
+                return provider
+            except ImportError:
+                print("⚠️  API key found but litellm not installed. Run: pip install litellm")
+                print("    Falling back to mock LLM.")
+
+        print("ℹ️  No API key found — using mock LLM.")
+        print("    Run: python -m bigbrain --login    (Claude Pro/Max OAuth)")
+        print("    Or set OPENAI_API_KEY / ANTHROPIC_API_KEY in .env")
+        return MockLLMProvider(token_delay_ms=50, realistic_responses=True)
+    
     async def initialize(self) -> None:
         """Initialize all BigBrain components."""
         print(f"🧠 Initializing BigBrain system (workspace: {self.workspace})...")
@@ -83,19 +120,8 @@ class BigBrainSystem:
         # Create orchestrator
         self.orchestrator = WorkspaceOrchestrator(self.workspace, self.bus)
         
-        # Create LLM provider — real if API key available, mock otherwise
-        if config.has_api_key:
-            try:
-                from .llm.litellm_provider import LiteLLMProvider
-                self.llm_provider = LiteLLMProvider(default_model=config.effective_front_model)
-                print(f"🔑 LLM: {config.summary()}")
-            except ImportError:
-                print("⚠️  API key found but litellm not installed. Run: pip install litellm")
-                print("    Falling back to mock LLM.")
-                self.llm_provider = MockLLMProvider(token_delay_ms=50, realistic_responses=True)
-        else:
-            print("ℹ️  No API key found — using mock LLM. Set OPENAI_API_KEY or ANTHROPIC_API_KEY in .env")
-            self.llm_provider = MockLLMProvider(token_delay_ms=50, realistic_responses=True)
+        # Create LLM provider
+        self.llm_provider = self._create_llm_provider()
         
         # Create voice manager
         self.voice_manager = VoiceManager(auto_listen=True)
@@ -528,8 +554,41 @@ async def main() -> None:
                        help="Use Textual TUI interface (default)")
     parser.add_argument("--simple", action="store_true", default=False,
                        help="Use simple Rich console interface")
+    parser.add_argument("--login", action="store_true", default=False,
+                       help="Login with Claude Pro/Max OAuth (free API access)")
+    parser.add_argument("--logout", action="store_true", default=False,
+                       help="Remove stored OAuth credentials")
+    parser.add_argument("--auth-status", action="store_true", default=False,
+                       help="Check authentication status")
     
     args = parser.parse_args()
+    
+    # Handle auth commands first
+    if args.login:
+        from .auth.oauth import login
+        login()
+        return
+    
+    if args.logout:
+        from .auth.oauth import delete_credentials
+        delete_credentials()
+        print("✅ OAuth credentials removed.")
+        return
+    
+    if args.auth_status:
+        from .auth.oauth import load_credentials
+        creds = load_credentials()
+        if creds is None:
+            print("❌ No OAuth credentials stored.")
+            print("   Run: python -m bigbrain --login")
+        elif creds.is_expired:
+            print(f"⚠️  OAuth token expired (was valid until {time.strftime('%Y-%m-%d %H:%M', time.localtime(creds.expires_at))})")
+            print("   Will auto-refresh on next run, or re-login: python -m bigbrain --login")
+        else:
+            remaining = (creds.expires_at - time.time()) / 3600
+            print(f"✅ OAuth active — {remaining:.1f}h remaining")
+            print(f"   Token stored at: ~/.bigbrain/auth/")
+        return
     
     # Determine UI mode
     ui_mode = "simple" if args.simple else "tui"

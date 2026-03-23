@@ -54,8 +54,25 @@ class BigBrainConfig:
 
     @property
     def has_api_key(self) -> bool:
-        """Check if any LLM API key is configured."""
-        return bool(self.openai_api_key or self.anthropic_api_key or self.google_api_key)
+        """Check if any LLM API key is configured (includes OAuth tokens)."""
+        if self.openai_api_key or self.anthropic_api_key or self.google_api_key:
+            return True
+        # Check for stored OAuth credentials
+        try:
+            from .auth.oauth import get_api_key
+            return get_api_key() is not None
+        except Exception:
+            return False
+
+    def resolve_anthropic_key(self) -> str | None:
+        """Get Anthropic API key from env var OR OAuth token."""
+        if self.anthropic_api_key:
+            return self.anthropic_api_key
+        try:
+            from .auth.oauth import get_api_key
+            return get_api_key()
+        except Exception:
+            return None
 
     @property
     def effective_front_model(self) -> str:
