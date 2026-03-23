@@ -52,6 +52,11 @@ class StreamingMessage(Static):
         self._chunks.append(chunk)
         self._refresh_display()
 
+    def replace_content(self, text: str) -> None:
+        """Replace all streaming content (for interim STT updates)."""
+        self._chunks = [text]
+        self._refresh_display()
+
     def finish_streaming(self) -> None:
         self.is_streaming = False
         self._refresh_display()

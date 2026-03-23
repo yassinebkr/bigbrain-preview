@@ -52,6 +52,8 @@ class BigBrainApp(App):
         self.voice_enabled = False
         self.mic_enabled = False
         self.speaker_enabled = False
+        self._voice_listen_task: Optional[asyncio.Task] = None
+        self._voice_tts_playing = False
         
         # Widget references
         self.chat_panel: Optional[ChatPanel] = None
@@ -487,22 +489,257 @@ This provides a solid foundation for your data processing needs. Would you like 
             self.notify(f"Focus mode: {new_mode}")
     
     def action_toggle_voice(self) -> None:
-        """Toggle voice interaction."""
+        """Toggle voice interaction — starts/stops the full STT→VoiceBrain→TTS pipeline."""
+        system = self.bigbrain_system
+        if not system:
+            self.notify("No BigBrain system connected", severity="warning")
+            return
+
         self.voice_enabled = not self.voice_enabled
         self.mic_enabled = self.voice_enabled
         self.speaker_enabled = self.voice_enabled
-        
-        # Update input placeholder
+
         if self.voice_enabled:
-            self.message_input.placeholder = "Type your message... 💬 🎤 🔊"
-            self.notify("Voice interaction enabled")
+            # Enable voice on the manager
+            if system.voice_manager:
+                system.voice_manager.enable_voice()
+
+            self.message_input.placeholder = "🎤 Listening... (F2 to stop, or type)"
+            self.notify("🎤 Voice ON — listening for speech")
+            self.chat_panel.add_message("system", "🎤 Voice mode activated. Speak naturally — I'm listening.")
+
+            # Update brain panel
+            if self.brain_panel:
+                self.brain_panel.update_brain_status("voice_brain", "idle", True)
+
+            # Start the voice listen loop in background
+            self._start_voice_loop()
         else:
+            # Stop listening
+            if system.voice_manager:
+                system.voice_manager.disable_voice()
+
+            # Cancel background listener
+            if self._voice_listen_task and not self._voice_listen_task.done():
+                self._voice_listen_task.cancel()
+                self._voice_listen_task = None
+
             self.message_input.placeholder = "Type your message... 💬"
-            self.notify("Voice interaction disabled")
-        
-        # Update brain panel
+            self.notify("🔇 Voice OFF")
+            self.chat_panel.add_message("system", "🔇 Voice mode deactivated.")
+
+            if self.brain_panel:
+                self.brain_panel.update_brain_status("voice_brain", "disabled", False)
+
+    @work(thread=False)
+    async def _start_voice_loop(self) -> None:
+        """Background worker: continuously listen → transcribe → respond → speak."""
+        system = self.bigbrain_system
+        if not system or not system.voice_manager:
+            return
+
+        vm = system.voice_manager
+        vb = system.voice_brain
+
+        while self.voice_enabled and vm.is_enabled:
+            try:
+                await self._voice_listen_once(vm, vb, system)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                self.chat_panel.add_message("system", f"🎤 Voice error: {e}")
+                if self.brain_panel:
+                    self.brain_panel.update_brain_status("voice_brain", "error", True)
+                # Brief pause before retrying
+                await asyncio.sleep(1.0)
+
+        # Clean exit
         if self.brain_panel:
-            self.brain_panel.update_brain_status("voice_brain", "enabled" if self.voice_enabled else "disabled", self.voice_enabled)
+            state = "idle" if self.voice_enabled else "disabled"
+            self.brain_panel.update_brain_status("voice_brain", state, self.voice_enabled)
+
+    async def _voice_listen_once(self, vm, vb, system) -> None:
+        """Run one listen→transcribe→respond→speak cycle.
+
+        Flow:
+          1. STT streams interim + final transcripts (shown in chat)
+          2. Final transcript → VoiceBrain (fast LLM) for spoken response
+          3. Response text shown in chat
+          4. TTS streams audio chunks (plays via sounddevice or simulated)
+        """
+        stt = vm.stt
+
+        # --- Phase 1: Listening (STT) ---
+        if self.brain_panel:
+            self.brain_panel.update_brain_status("voice_brain", "busy", True, "listening")
+        self.message_input.placeholder = "🎤 Listening..."
+
+        final_text = ""
+        self.chat_panel.start_streaming_message("user")
+
+        try:
+            async for result in stt.stream():
+                if not self.voice_enabled:
+                    break
+
+                text = result.get("text", "").strip()
+                is_final = result.get("is_final", False)
+
+                if is_final:
+                    final_text = text
+                    # Replace streaming content with final clean text
+                    self.chat_panel.finish_streaming_message()
+                    if final_text:
+                        self.chat_panel.add_message("user", f"🎤 {final_text}")
+                    break
+                else:
+                    # Show interim transcription — REPLACE (not append)
+                    # so we see the evolving transcript, not duplicated words
+                    if self.chat_panel.current_streaming_message:
+                        self.chat_panel.current_streaming_message.replace_content(f"🎤 {text}")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            self.chat_panel.finish_streaming_message()
+            self.chat_panel.add_message("system", f"🎤 STT error: {e}")
+            return
+
+        # Make sure streaming is finished even if we got no results
+        if self.chat_panel.current_streaming_message:
+            self.chat_panel.finish_streaming_message()
+
+        if not final_text or not self.voice_enabled:
+            # Nothing transcribed or voice was toggled off — go back to idle
+            if self.brain_panel and self.voice_enabled:
+                self.brain_panel.update_brain_status("voice_brain", "idle", True)
+            return
+
+        # Check for stop commands
+        if any(w in final_text.lower() for w in vm.stop_words):
+            self.chat_panel.add_message("system", "🛑 Voice stopped by command.")
+            self.action_toggle_voice()
+            return
+
+        # --- Phase 2: Thinking (VoiceBrain LLM) ---
+        if self.brain_panel:
+            self.brain_panel.update_brain_status("voice_brain", "busy", True, "thinking")
+        self.message_input.placeholder = "🧠 Thinking..."
+
+        response_text = ""
+        try:
+            if vb and vb._running:
+                # Stream response for lower perceived latency
+                self.chat_panel.start_streaming_message("assistant")
+                chunks = []
+                async for sentence in vb.stream_response(final_text):
+                    chunks.append(sentence)
+                    self.chat_panel.append_to_streaming(sentence)
+                self.chat_panel.finish_streaming_message()
+                response_text = "".join(chunks)
+            else:
+                # Fallback: use Front Brain conversation path
+                if system.front_brain:
+                    system.front_brain._conversation_history.append(
+                        {"role": "user", "content": final_text}
+                    )
+                    focus_status = system.front_brain.focus_manager.get_focus_status()
+                    system_prompt = system.front_brain._build_system_prompt(focus_status)
+                    messages = [{"role": "system", "content": system_prompt}]
+                    messages.extend(system.front_brain._conversation_history[-20:])
+
+                    response_text = await system.llm_provider.chat_complete(
+                        messages=messages, stream=False
+                    )
+                    self.chat_panel.add_message("assistant", response_text)
+                    system.front_brain._conversation_history.append(
+                        {"role": "assistant", "content": response_text}
+                    )
+                else:
+                    response_text = f"I heard: {final_text}"
+                    self.chat_panel.add_message("assistant", response_text)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            if self.chat_panel.current_streaming_message:
+                self.chat_panel.finish_streaming_message()
+            response_text = f"Sorry, hit a snag — {e}"
+            self.chat_panel.add_message("assistant", response_text)
+
+        if not response_text or not self.voice_enabled:
+            if self.brain_panel and self.voice_enabled:
+                self.brain_panel.update_brain_status("voice_brain", "idle", True)
+            return
+
+        # --- Phase 3: Speaking (TTS) ---
+        if self.brain_panel:
+            self.brain_panel.update_brain_status("voice_brain", "busy", True, "speaking")
+        self.message_input.placeholder = "🔊 Speaking..."
+        self._voice_tts_playing = True
+
+        try:
+            tts = vm.tts
+            has_audio_playback = self._has_audio_playback()
+
+            async for chunk in tts.stream(response_text):
+                if not self.voice_enabled:
+                    break
+
+                audio = chunk.get("audio", b"")
+                word = chunk.get("word", "")
+                is_final = chunk.get("is_final", False)
+
+                if has_audio_playback and audio:
+                    # Real audio playback via sounddevice
+                    await self._play_audio_chunk(audio)
+                elif not has_audio_playback:
+                    # Mock mode: simulate timing
+                    duration = chunk.get("duration", 0.1)
+                    await asyncio.sleep(duration)
+
+                if is_final:
+                    break
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            self.chat_panel.add_message("system", f"🔊 TTS error: {e}")
+        finally:
+            self._voice_tts_playing = False
+
+        # Back to listening (auto-listen loop continues)
+        if self.brain_panel and self.voice_enabled:
+            self.brain_panel.update_brain_status("voice_brain", "idle", True)
+        if self.voice_enabled:
+            self.message_input.placeholder = "🎤 Listening..."
+            # Small pause between turns
+            await asyncio.sleep(0.5)
+
+    def _has_audio_playback(self) -> bool:
+        """Check if real audio playback is available (sounddevice installed)."""
+        try:
+            import sounddevice  # noqa: F401
+            return True
+        except ImportError:
+            return False
+
+    async def _play_audio_chunk(self, audio_data: bytes) -> None:
+        """Play a raw PCM audio chunk via sounddevice.
+
+        Audio format: 16-bit signed little-endian, 16kHz, mono.
+        Non-blocking — uses sounddevice's async-compatible play.
+        """
+        try:
+            import sounddevice as sd
+            import numpy as np
+
+            # Convert bytes → numpy int16 → float32 for playback
+            samples = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32767.0
+            sd.play(samples, samplerate=16000, blocking=False)
+            # Wait roughly the duration of the chunk
+            duration = len(samples) / 16000
+            await asyncio.sleep(duration)
+        except Exception:
+            # If playback fails, just skip — don't crash the voice loop
+            pass
     
     def action_show_help(self) -> None:
         """Show help information."""
@@ -512,7 +749,7 @@ This provides a solid foundation for your data processing needs. Would you like 
 • `Ctrl+C` - Quit application  
 • `Ctrl+R` - Refresh all panels
 • `F1` - Toggle focus mode (normal ↔ deep_focus)
-• `F2` - Toggle voice interaction
+• `F2` - Toggle voice (mic → STT → VoiceBrain → TTS → speaker)
 • `F3` - Show this help
 • `Ctrl+L` - Clear chat history
 • `Ctrl+B` - Clear bus monitor
@@ -524,6 +761,14 @@ This provides a solid foundation for your data processing needs. Would you like 
 • **Tasks** - Active task progress
 • **Bus Monitor** - Real-time message flow
 • **Focus** - Attention management
+
+**Voice Mode (F2):**
+Press F2 to toggle voice. When active:
+• 🎤 Mic captures audio → Deepgram Nova-3 transcribes
+• 🧠 VoiceBrain (fast Sonnet LLM) generates spoken-style response
+• 🔊 Cartesia Sonic TTS plays audio back
+• Say "stop" or "cancel" to deactivate voice
+• You can still type while voice is active
 
 **Usage:**
 Type messages in the input field to interact with BigBrain.
