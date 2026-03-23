@@ -124,6 +124,17 @@ class ChatPanel(VerticalScroll):
             self.messages.append(self.current_streaming_message)
             self.current_streaming_message = None
 
+    def discard_streaming_message(self) -> None:
+        """Remove the current streaming message without keeping it in history.
+        
+        Use when interim display should be replaced entirely (e.g., STT interim
+        text replaced by a clean final transcription message).
+        """
+        if self.current_streaming_message:
+            if self.current_streaming_message.parent:
+                self.current_streaming_message.remove()
+            self.current_streaming_message = None
+
     def clear(self) -> None:
         container = self.query_one("#chat-messages")
         for msg in self.messages:

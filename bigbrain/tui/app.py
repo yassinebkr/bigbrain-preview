@@ -625,10 +625,6 @@ This provides a solid foundation for your data processing needs. Would you like 
 
                 if is_final:
                     final_text = text
-                    # Replace streaming content with final clean text
-                    self.chat_panel.finish_streaming_message()
-                    if final_text:
-                        self.chat_panel.add_message("user", f"🎤 {final_text}")
                     break
                 else:
                     # Show interim transcription — REPLACE (not append)
@@ -639,8 +635,7 @@ This provides a solid foundation for your data processing needs. Would you like 
             raise
         except Exception as e:
             # Clean up orphaned streaming message
-            if self.chat_panel.current_streaming_message:
-                self.chat_panel.finish_streaming_message()
+            self.chat_panel.discard_streaming_message()
             # Re-raise auth errors so the loop handles them (stops retrying)
             err_str = str(e)
             if "401" in err_str or "403" in err_str or "Unauthorized" in err_str:
@@ -648,9 +643,10 @@ This provides a solid foundation for your data processing needs. Would you like 
             self.chat_panel.add_message("system", f"🎤 STT error: {e}")
             return
 
-        # Make sure streaming is finished even if we got no results
-        if self.chat_panel.current_streaming_message:
-            self.chat_panel.finish_streaming_message()
+        # Discard the interim streaming widget — replace with clean final message
+        self.chat_panel.discard_streaming_message()
+        if final_text:
+            self.chat_panel.add_message("user", f"🎤 {final_text}")
 
         if not final_text or not self.voice_enabled:
             # Nothing transcribed or voice was toggled off — go back to idle
@@ -680,6 +676,12 @@ This provides a solid foundation for your data processing needs. Would you like 
                     self.chat_panel.append_to_streaming(sentence)
                 self.chat_panel.finish_streaming_message()
                 response_text = "".join(chunks)
+
+                # If streaming produced nothing, try non-streaming fallback
+                if not response_text.strip():
+                    response_text = await vb.respond_to_voice(final_text)
+                    if response_text:
+                        self.chat_panel.add_message("assistant", response_text)
             else:
                 # Fallback: use Front Brain conversation path
                 if system.front_brain:
@@ -704,13 +706,19 @@ This provides a solid foundation for your data processing needs. Would you like 
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            if self.chat_panel.current_streaming_message:
-                self.chat_panel.finish_streaming_message()
+            # Clean up any orphaned streaming message
+            self.chat_panel.discard_streaming_message()
             response_text = f"Sorry, hit a snag — {e}"
-            self.chat_panel.add_message("assistant", response_text)
+            self.chat_panel.add_message("system", f"🧠 Voice response error: {e}")
 
-        if not response_text or not self.voice_enabled:
-            if self.brain_panel and self.voice_enabled:
+        if not self.voice_enabled:
+            if self.brain_panel:
+                self.brain_panel.update_brain_status("voice_brain", "disabled", False)
+            return
+
+        if not response_text.strip():
+            self.chat_panel.add_message("system", "⚠️ Voice: LLM returned empty response")
+            if self.brain_panel:
                 self.brain_panel.update_brain_status("voice_brain", "idle", True)
             return
 
