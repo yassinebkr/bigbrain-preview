@@ -94,22 +94,137 @@ class PythonBrain(BaseBrain):
         else:
             raise ValueError(f"Unknown task type: {task_type}")
     
+    # --- Honk Pattern: Inner Loop (generate → execute → verify → fix → repeat) ---
+
+    MAX_RETRIES = 3  # Inner loop iterations before giving up
+
     async def _generate_and_execute(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate code via LLM from natural language request, then execute it."""
+        """Generate code via LLM, execute, and retry on failure (Honk inner loop).
+
+        Spotify Honk pattern:
+        1. Generate code from natural language request
+        2. Execute in subprocess
+        3. If it fails → feed errors back to LLM with Reflexion memory
+        4. LLM fixes the code (seeing previous errors, NOT repeating them)
+        5. Repeat up to MAX_RETRIES times
+        6. Return final result with full attempt history
+        """
         if not self.llm_provider:
             return {
                 "success": False,
                 "error": "No LLM provider configured — cannot generate code. Provide code directly.",
-                "stdout": "", "stderr": "", "exit_code": -1
+                "stdout": "", "stderr": "", "exit_code": -1,
             }
-        
+
         user_request = payload.get("user_request", payload.get("query", ""))
         if not user_request:
             return {"success": False, "error": "No request provided", "stdout": "", "stderr": "", "exit_code": -1}
-        
-        await self.send_progress({"stage": "generating_code", "request": user_request[:100]})
-        
-        # Ask LLM to generate executable Python code
+
+        max_retries = payload.get("max_retries", self.MAX_RETRIES)
+        timeout = payload.get("timeout", self.timeout)
+
+        # Reflexion memory — tracks errors across attempts so LLM doesn't repeat them
+        attempt_history: list[dict] = []
+
+        for attempt in range(1, max_retries + 1):
+            await self.send_progress({
+                "stage": "generating_code",
+                "attempt": attempt,
+                "max_attempts": max_retries,
+                "request": user_request[:100],
+            })
+
+            try:
+                # Generate (or fix) code
+                if attempt == 1:
+                    code = await self._generate_initial_code(user_request)
+                else:
+                    code = await self._fix_code(user_request, attempt_history)
+
+                if not code.strip():
+                    attempt_history.append({
+                        "attempt": attempt,
+                        "error": "LLM returned empty code",
+                        "code": "",
+                    })
+                    continue
+
+                await self.send_progress({
+                    "stage": "executing",
+                    "attempt": attempt,
+                    "code_lines": code.count("\n") + 1,
+                })
+
+                # Execute
+                result = await self._execute_code(code, timeout)
+                result["generated_code"] = code
+                result["attempt"] = attempt
+                result["total_attempts"] = attempt
+                result["attempt_history"] = attempt_history
+
+                # Check if execution succeeded
+                if result.get("exit_code") == 0 and not result.get("stderr", "").strip():
+                    # Clean success
+                    result["success"] = True
+                    await self.send_progress({
+                        "stage": "succeeded",
+                        "attempt": attempt,
+                        "success": True,
+                    })
+                    return result
+
+                # Execution failed — record for Reflexion and retry
+                error_info = {
+                    "attempt": attempt,
+                    "code": code,
+                    "exit_code": result.get("exit_code"),
+                    "stderr": result.get("stderr", "")[:500],
+                    "stdout": result.get("stdout", "")[:200],
+                }
+                attempt_history.append(error_info)
+
+                if attempt < max_retries:
+                    await self.send_progress({
+                        "stage": "retrying",
+                        "attempt": attempt,
+                        "error": error_info["stderr"][:100],
+                        "next_attempt": attempt + 1,
+                    })
+                else:
+                    # Final attempt failed — return the best result we have
+                    result["total_attempts"] = attempt
+                    result["attempt_history"] = attempt_history
+                    await self.send_progress({
+                        "stage": "failed_after_retries",
+                        "attempts": attempt,
+                    })
+                    return result
+
+            except Exception as e:
+                attempt_history.append({
+                    "attempt": attempt,
+                    "error": str(e),
+                    "code": "",
+                })
+                if attempt == max_retries:
+                    return {
+                        "success": False,
+                        "error": f"Code generation failed after {attempt} attempts: {e}",
+                        "stdout": "", "stderr": str(e), "exit_code": -1,
+                        "total_attempts": attempt,
+                        "attempt_history": attempt_history,
+                    }
+
+        # Should not reach here, but safety return
+        return {
+            "success": False,
+            "error": f"All {max_retries} attempts failed",
+            "stdout": "", "stderr": "", "exit_code": -1,
+            "attempt_history": attempt_history,
+        }
+
+    async def _generate_initial_code(self, user_request: str) -> str:
+        """Generate initial code from natural language (attempt 1)."""
         prompt = f"""Write a Python script that does the following:
 
 {user_request}
@@ -120,26 +235,45 @@ Rules:
 - Use print() to show results
 - No external dependencies beyond the standard library
 - Include error handling where appropriate"""
-        
-        try:
-            generated = await self.llm_provider.complete(prompt, stream=False)
-            
-            # Extract code from response (strip markdown fences if present)
-            code = self._extract_code(generated)
-            
-            if not code.strip():
-                return {"success": False, "error": "LLM returned empty code", "stdout": "", "stderr": "", "exit_code": -1}
-            
-            await self.send_progress({"stage": "executing_generated_code", "code_lines": code.count("\n") + 1})
-            
-            # Execute the generated code
-            timeout = payload.get("timeout", self.timeout)
-            result = await self._execute_code(code, timeout)
-            result["generated_code"] = code
-            return result
-            
-        except Exception as e:
-            return {"success": False, "error": f"Code generation failed: {e}", "stdout": "", "stderr": "", "exit_code": -1}
+
+        generated = await self.llm_provider.complete(prompt, stream=False)
+        return self._extract_code(generated)
+
+    async def _fix_code(self, user_request: str, attempt_history: list[dict]) -> str:
+        """Fix code based on Reflexion memory of previous errors.
+
+        The LLM sees:
+        - The original request
+        - ALL previous attempts and their specific errors
+        - Explicit instruction to NOT repeat the same mistakes
+        """
+        # Build Reflexion context from attempt history
+        history_text = ""
+        for entry in attempt_history:
+            history_text += f"\n--- Attempt {entry['attempt']} ---\n"
+            if entry.get("code"):
+                history_text += f"Code:\n```python\n{entry['code']}\n```\n"
+            if entry.get("stderr"):
+                history_text += f"Error: {entry['stderr']}\n"
+            elif entry.get("error"):
+                history_text += f"Error: {entry['error']}\n"
+
+        prompt = f"""Fix this Python script. The original request was:
+
+{user_request}
+
+Previous attempts and their errors:
+{history_text}
+
+IMPORTANT:
+- Do NOT repeat the same mistakes from previous attempts
+- Fix the SPECIFIC errors shown above
+- Output ONLY the corrected Python code, no explanation
+- The code must be self-contained and runnable
+- Use print() to show results"""
+
+        generated = await self.llm_provider.complete(prompt, stream=False)
+        return self._extract_code(generated)
     
     @staticmethod
     def _extract_code(text: str) -> str:
