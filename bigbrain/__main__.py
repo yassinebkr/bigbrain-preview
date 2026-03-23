@@ -520,13 +520,8 @@ print(f"✓ Files in directory: {python_files}")
                 # TUI mode - run the Textual app
                 await self.run_tui()
             else:
-                # Simple mode - run console interface
-                if mode == "demo":
-                    await self.run_demo()
-                    # After demo, switch to interactive
-                    await self.run_interactive()
-                else:
-                    await self.run_interactive()
+                # Simple mode - interactive REPL
+                await self.run_interactive()
                 
                 # Wait for shutdown signal
                 await self._shutdown_event.wait()
@@ -541,14 +536,10 @@ async def main() -> None:
     import time
     
     parser = argparse.ArgumentParser(description="BigBrain - Multi-Brain AI Agent System")
-    parser.add_argument("--workspace", default="demo", help="Workspace name (default: demo)")
-    parser.add_argument("--mode", choices=["interactive", "demo"], default="demo", 
-                       help="Run mode (default: demo)")
+    parser.add_argument("--workspace", default="default", help="Workspace name (default: default)")
     parser.add_argument("--log-dir", default="logs", help="Log directory (default: logs)")
-    parser.add_argument("--tui", action="store_true", default=True,
-                       help="Use Textual TUI interface (default)")
     parser.add_argument("--simple", action="store_true", default=False,
-                       help="Use simple Rich console interface")
+                       help="Use simple Rich console interface instead of TUI")
     parser.add_argument("--login", action="store_true", default=False,
                        help="Login with Claude Pro/Max OAuth (free API access)")
     parser.add_argument("--logout", action="store_true", default=False,
@@ -591,19 +582,8 @@ async def main() -> None:
         print("⚠️  Textual not available, using simple mode")
         ui_mode = "simple"
     
-    print(f"""
-🧠 BigBrain - Multi-Brain AI Agent System
-====================================
-Version: 0.1.0 (Preview Implementation)
-Workspace: {args.workspace}
-Mode: {args.mode}
-UI: {ui_mode.upper()}
-Logs: {args.log_dir}
-Time: {time.strftime('%Y-%m-%d %H:%M:%S')}
-
-This is a reference implementation demonstrating multi-brain AI
-architecture with message bus communication and workspace orchestration.
-""")
+    if not args.simple:
+        print(f"🧠 Starting BigBrain (workspace: {args.workspace})...")
     
     # Create and run the system
     system = BigBrainSystem(
@@ -613,7 +593,7 @@ architecture with message bus communication and workspace orchestration.
     )
     
     try:
-        await system.run(mode=args.mode)
+        await system.run(mode="interactive")
     except KeyboardInterrupt:
         print("\\n🛑 Interrupted by user")
     except Exception as e:
