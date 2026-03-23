@@ -113,16 +113,9 @@ class BrainPanel(Vertical):
         """Compose the brain panel."""
         # Initialize default brains
         yield BrainStatus("python_brain", "offline", False, id="python_brain_status")
-        yield BrainStatus("researcher_brain", "offline", False, id="researcher_brain_status") 
+        yield BrainStatus("researcher", "offline", False, id="researcher_status") 
         yield BrainStatus("voice_brain", "disabled", False, id="voice_brain_status")
         yield Static("", id="brain_summary")
-        
-        # Track brain widgets
-        self.brains = {
-            "python_brain": self.query_one("#python_brain_status"),
-            "researcher_brain": self.query_one("#researcher_brain_status"),
-            "voice_brain": self.query_one("#voice_brain_status")
-        }
     
     def on_mount(self) -> None:
         """Handle mounting."""
@@ -135,7 +128,7 @@ class BrainPanel(Vertical):
         try:
             self.brains = {
                 "python_brain": self.query_one("#python_brain_status"),
-                "researcher_brain": self.query_one("#researcher_brain_status"),
+                "researcher": self.query_one("#researcher_status"),
                 "voice_brain": self.query_one("#voice_brain_status")
             }
         except Exception:

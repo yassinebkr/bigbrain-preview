@@ -4,8 +4,8 @@ import time
 from datetime import datetime
 from typing import Dict, List
 
-from textual.widgets import ScrollView, Static
-from textual.containers import Vertical
+from textual.widgets import Static
+from textual.containers import Vertical, VerticalScroll
 from rich.text import Text
 
 
@@ -65,7 +65,7 @@ class BusMessage(Static):
         self.update(text)
 
 
-class BusMonitor(ScrollView):
+class BusMonitor(VerticalScroll):
     """
     Bus monitor widget showing real-time message flow.
     

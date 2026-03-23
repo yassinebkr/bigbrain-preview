@@ -166,19 +166,24 @@ class FrontBrain:
         text_lower = input_text.lower()
         is_code_request = any(kw in text_lower for kw in [
             "run", "execute", "code", "python", "script", "write a program",
-            "write code", "create a script", "```"
+            "write code", "create a script", "calculate", "fibonacci", "simulate",
+            "plot", "generate", "```"
         ])
         
         if is_code_request and "```" in input_text:
-            # User provided code directly — route to execution
-            return await self._handle_task_request(
-                {"type": "task_request", "task_type": "execute_code", "content": input_text},
-                input_text
-            )
+            # User provided code directly — extract and execute
+            code = self._extract_code_blocks(input_text)
+            if code:
+                exec_result = await self._execute_code_direct(code)
+                return f"Running your code...\n\n```\n{exec_result}\n```"
         
         # Build system prompt with current context
         focus_status = self.focus_manager.get_focus_status()
         system_prompt = self._build_system_prompt(focus_status)
+        
+        # For code requests, tell Claude to include runnable code
+        if is_code_request:
+            system_prompt += "\n\nIMPORTANT: When the user asks for code, include a complete, runnable Python script in a ```python code block. The code WILL be auto-executed, so make sure it's self-contained and prints output."
         
         messages = [{"role": "system", "content": system_prompt}]
         
@@ -192,14 +197,66 @@ class FrontBrain:
                 stream=False
             )
             
-            # If the LLM suggests running code, route it
-            if is_code_request and response:
-                # Let the LLM's response stand — it might include code or explanation
-                pass
+            # Auto-execute code blocks if this was a code request
+            if is_code_request and response and "```python" in response:
+                code = self._extract_code_blocks(response)
+                if code:
+                    exec_result = await self._execute_code_direct(code)
+                    response += f"\n\n📍 **Execution Output:**\n```\n{exec_result}\n```"
             
             return response
         except Exception as e:
             return f"I encountered an error processing your request: {e}"
+    
+    @staticmethod
+    def _extract_code_blocks(text: str) -> str:
+        """Extract Python code from markdown code blocks."""
+        import re
+        # Find all ```python ... ``` blocks
+        pattern = r'```python\s*\n(.*?)```'
+        matches = re.findall(pattern, text, re.DOTALL)
+        if matches:
+            return "\n\n".join(matches)
+        # Try generic ``` blocks
+        pattern = r'```\s*\n(.*?)```'
+        matches = re.findall(pattern, text, re.DOTALL)
+        if matches:
+            return "\n\n".join(matches)
+        return ""
+    
+    async def _execute_code_direct(self, code: str) -> str:
+        """Execute Python code directly via subprocess."""
+        import asyncio
+        import sys
+        import tempfile
+        from pathlib import Path
+        
+        # Write code to temp file
+        work_dir = Path("work/execution")
+        work_dir.mkdir(parents=True, exist_ok=True)
+        
+        script_path = work_dir / "script.py"
+        script_path.write_text(code, encoding="utf-8")
+        
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable, str(script_path),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(work_dir),
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+            
+            output = stdout.decode("utf-8", errors="replace").strip()
+            errors = stderr.decode("utf-8", errors="replace").strip()
+            
+            if proc.returncode != 0:
+                return f"{output}\n⚠️ STDERR:\n{errors}" if output else f"⚠️ Error:\n{errors}"
+            return output if output else "(no output)"
+        except asyncio.TimeoutError:
+            return "⚠️ Execution timed out (30s limit)"
+        except Exception as e:
+            return f"⚠️ Execution error: {e}"
     
     def _build_system_prompt(self, focus_status: dict) -> str:
         """Build the system prompt for the Front Brain LLM."""

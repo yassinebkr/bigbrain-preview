@@ -3,9 +3,9 @@
 import time
 from datetime import datetime
 
-from textual.widgets import ScrollView, Static
+from textual.widgets import Static
 from textual.widget import Widget
-from textual.containers import Vertical
+from textual.containers import Vertical, VerticalScroll
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.text import Text
@@ -93,7 +93,7 @@ class StreamingMessage(Static):
         self.update(rendered)
 
 
-class ChatPanel(ScrollView):
+class ChatPanel(VerticalScroll):
     """
     Chat panel widget for conversation interface.
     

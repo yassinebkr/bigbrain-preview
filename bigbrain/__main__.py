@@ -448,7 +448,9 @@ print(f"✓ Files in directory: {python_files}")
                     continue
                 
                 # Send user input directly to Front Brain for processing
+                print("⏳ Thinking...", end="", flush=True)
                 response = await self.front_brain.handle_user_input(user_input)
+                print("\r" + " " * 20 + "\r", end="", flush=True)  # Clear thinking
                 await self._ui_msg(f"🧠 {response}", "info")
                 
             except KeyboardInterrupt:
