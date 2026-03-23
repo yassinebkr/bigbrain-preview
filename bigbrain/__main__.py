@@ -191,8 +191,8 @@ class BigBrainSystem:
         # 10. Front brain — register available brains so it knows how to delegate
         self.front_brain = FrontBrain(self.bus, llm_provider=self.llm_provider)
         brain_descriptions = {
-            "python_brain": "Generates and executes Python code, scripts, calculations",
-            "researcher": "Researches topics, gathers information, analyzes data",
+            "python_brain": "Generates and executes Python code, scripts, simulations, calculations",
+            "researcher": "Web search via Brave API, parallel queries, source triangulation, LLM-powered summarization. Use for fact-finding, research, data gathering, current events",
         }
         for brain_name in self.brains:
             desc = brain_descriptions.get(brain_name, brain_name)
@@ -291,13 +291,21 @@ class BigBrainSystem:
         )
         self.brains["python_brain"] = python_brain
         
-        # Research brain (if available)
+        # Research brain — real Brave search + shared LLM
         try:
+            import os
+            brave_key = os.environ.get("BRAVE_API_KEY")
             research_brain = ResearcherBrain(
                 name="researcher",
                 bus=self.bus,
-                workspace=self.workspace
+                workspace=self.workspace,
+                llm_provider=self.llm_provider,
+                brave_api_key=brave_key,
             )
+            if brave_key:
+                print("🔍 Researcher brain: Brave Search + LLM")
+            else:
+                print("🔍 Researcher brain: mock search (set BRAVE_API_KEY for real web search)")
             self.brains["researcher"] = research_brain
         except Exception as e:
             print(f"⚠️  Research brain unavailable: {e}")
