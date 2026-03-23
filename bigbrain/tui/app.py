@@ -123,27 +123,71 @@ class BigBrainApp(App):
     
     @work(exclusive=True, group="chat")
     async def process_user_message(self, message: str) -> None:
-        """Process user message in background worker (non-blocking)."""
-        # Show thinking indicator
-        self.chat_panel.add_message("system", "⏳ Thinking...")
-        
+        """Process user message with streaming response."""
+        system = self.bigbrain_system
+        if not system or not system.front_brain:
+            self.chat_panel.add_message("system", "System not ready.")
+            return
+
+        front = system.front_brain
+
+        # Record in conversation history
+        front._conversation_history.append({"role": "user", "content": message})
+
+        # Handle built-in commands
+        cmd = message.lower().strip()
+        if cmd == "help":
+            self.chat_panel.add_message("assistant", front._get_help_text())
+            return
+        if cmd == "status":
+            resp = await front._handle_status_query({"target": "general"})
+            self.chat_panel.add_message("assistant", resp)
+            return
+
+        # Build messages for LLM
+        focus_status = front.focus_manager.get_focus_status()
+        system_prompt = front._build_system_prompt(focus_status)
+
+        # Check if code request
+        text_lower = message.lower()
+        is_code = any(kw in text_lower for kw in [
+            "run", "execute", "code", "python", "script", "write",
+            "calculate", "fibonacci", "simulate", "plot", "generate",
+        ])
+        if is_code:
+            system_prompt += "\n\nInclude a complete, runnable Python script in a ```python block. Keep it concise."
+
+        messages = [{"role": "system", "content": system_prompt}]
+        messages.extend(front._conversation_history[-20:])
+
+        # Stream response
         try:
-            if self.bigbrain_system and self.bigbrain_system.front_brain:
-                response = await self.bigbrain_system.front_brain.handle_user_input(message)
-            else:
-                response = "System not ready."
-            
-            # Remove thinking indicator (last system message)
-            if self.chat_panel.messages:
-                last = self.chat_panel.messages[-1]
-                if hasattr(last, 'message_text') and '⏳' in last.message_text:
-                    last.remove()
-                    self.chat_panel.messages.pop()
-            
-            # Show response
-            self.chat_panel.add_message("assistant", str(response))
-        
+            self.chat_panel.start_streaming_message("assistant")
+
+            stream = await system.llm_provider.chat_complete(
+                messages=messages, stream=True
+            )
+            full_response = []
+            async for chunk in stream:
+                full_response.append(chunk)
+                self.chat_panel.append_to_streaming(chunk)
+
+            self.chat_panel.finish_streaming_message()
+            response_text = "".join(full_response)
+
+            # Store in conversation history
+            front._conversation_history.append({"role": "assistant", "content": response_text})
+
+            # Auto-execute code if present
+            if is_code and "```python" in response_text:
+                code = front._extract_code_blocks(response_text)
+                if code:
+                    self.chat_panel.add_message("system", "⚡ Running code...")
+                    result = await front._execute_code_direct(code)
+                    self.chat_panel.add_message("system", f"📍 Output:\n{result}")
+
         except Exception as e:
+            self.chat_panel.finish_streaming_message()
             self.chat_panel.add_message("system", f"❌ Error: {e}")
     
     async def simulate_bigbrain_response(self, message: str) -> str:
@@ -204,17 +248,17 @@ This provides a solid foundation for your data processing needs. Would you like 
         # Give widgets time to fully mount
         await asyncio.sleep(0.3)
 
+        # Wire bus events BEFORE starting (so we catch startup events)
+        if system.bus:
+            system.bus.subscribe("*", self._on_bus_message)
+
         # Start the system (orchestrator, brains, front brain)
         try:
             await system.start()
-            self.chat_panel.add_message("system", "✅ BigBrain system ready! Type a message to chat with Claude.")
+            self.chat_panel.add_message("system", "✅ Ready! Chat with Claude below.")
         except Exception as e:
             self.chat_panel.add_message("system", f"❌ Failed to start: {e}")
             return
-
-        # Wire bus events to TUI panels
-        if system.bus:
-            system.bus.subscribe("*", self._on_bus_message)
 
         # Wait for brain panel refs to be set up
         await asyncio.sleep(0.2)
