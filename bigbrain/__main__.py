@@ -516,13 +516,13 @@ print(f"✓ Files in directory: {python_files}")
         
         try:
             await self.initialize()
-            await self.start()
             
             if self.tui_app:
-                # TUI mode - run the Textual app
+                # TUI mode — system starts inside TUI's event loop (on_mount)
                 await self.run_tui()
             else:
-                # Simple mode - interactive REPL
+                # Simple mode — start system, then REPL
+                await self.start()
                 await self.run_interactive()
                 
                 # Wait for shutdown signal

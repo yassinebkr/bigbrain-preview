@@ -96,11 +96,11 @@ class BigBrainApp(App):
         self.message_input = self.query_one("#message-input", Input)
         
         # Focus input by default
-        self.message_input.focus()
+        self.set_focus(self.message_input)
         
-        # Start background tasks if BigBrain system is available
+        # Start the BigBrain system inside TUI's event loop
         if self.bigbrain_system:
-            self.start_system_integration()
+            self.start_bigbrain_system()
     
     @on(Input.Submitted, "#message-input")
     async def on_message_submitted(self, event: Input.Submitted) -> None:
@@ -198,29 +198,33 @@ This provides a solid foundation for your data processing needs. Would you like 
             return f"I understand you're asking about '{message}'. Let me process that and provide you with a thoughtful response. This is a demo of the BigBrain system showing real-time conversation capabilities."
     
     @work(exclusive=True)
-    async def start_system_integration(self) -> None:
-        """Start background integration with BigBrain system."""
+    async def start_bigbrain_system(self) -> None:
+        """Start BigBrain system inside the TUI event loop."""
         if not self.bigbrain_system:
             return
-        
+
         system = self.bigbrain_system
-        
-        # Wire real bus events to TUI panels
+
+        # Start the system (orchestrator, brains, front brain)
+        try:
+            await system.start()
+            self.chat_panel.add_message("system", "✅ BigBrain system ready! Type a message to chat with Claude.")
+        except Exception as e:
+            self.chat_panel.add_message("system", f"❌ Failed to start: {e}")
+            return
+
+        # Wire bus events to TUI panels
         if system.bus:
             system.bus.subscribe("*", self._on_bus_message)
-        
-        # Sync initial brain status from live brains
-        await asyncio.sleep(0.5)  # Let widgets mount
-        
+
+        # Sync brain status
         if self.brain_panel:
             for brain_name, brain in system.brains.items():
                 status = brain.get_status()
                 state = "idle" if status.get("running") else "offline"
                 self.brain_panel.update_brain_status(brain_name, state, status.get("running", False))
-            
-            # Voice brain (not a real brain, always disabled in preview)
             self.brain_panel.update_brain_status("voice_brain", "disabled", False)
-        
+
         # Set initial focus
         if self.focus_panel:
             self.focus_panel.update_focus("normal", system.workspace, 0.0)
