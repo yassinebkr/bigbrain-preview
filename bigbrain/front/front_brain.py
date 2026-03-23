@@ -173,6 +173,10 @@ class FrontBrain:
     
     async def _handle_direct_message(self, message: BusMessage) -> None:
         """Handle messages sent directly to the Front Brain."""
+        # Skip broadcasts — already handled by _handle_bus_event wildcard
+        if message.target == "*":
+            return
+        
         if message.type == MessageType.RESULT:
             await self._handle_task_result(message)
         
@@ -381,10 +385,26 @@ class FrontBrain:
         return ". ".join(response_parts) + "."
     
     async def _handle_conversation(self, intent: Dict[str, Any], input_text: str) -> str:
-        """Handle general conversation."""
-        # For this preview, provide simple responses
-        # In production, this would use LLM for natural conversation
+        """Handle general conversation using LLM when available."""
+        # Use LLM for natural conversation when available
+        if self.llm_provider:
+            try:
+                response = await self.llm_provider.chat_complete(
+                    messages=[
+                        {"role": "system", "content": (
+                            f"You are BigBrain, a multi-brain AI assistant. "
+                            f"The user's name is {self.user_name}. Be helpful and conversational. "
+                            f"You can help with coding, research, analysis, and general tasks."
+                        )},
+                        {"role": "user", "content": input_text}
+                    ],
+                    stream=False
+                )
+                return response
+            except Exception:
+                pass  # Fall through to hardcoded responses
         
+        # Fallback: simple pattern matching
         text_lower = input_text.lower()
         
         if any(greeting in text_lower for greeting in ["hello", "hi", "hey"]):
@@ -406,6 +426,18 @@ class FrontBrain:
     
     async def _handle_unknown_input(self, input_text: str) -> str:
         """Handle input that couldn't be classified."""
+        # Try LLM for a natural response
+        if self.llm_provider:
+            try:
+                return await self.llm_provider.chat_complete(
+                    messages=[
+                        {"role": "system", "content": f"You are BigBrain, an AI assistant. The user's name is {self.user_name}."},
+                        {"role": "user", "content": input_text}
+                    ],
+                    stream=False
+                )
+            except Exception:
+                pass
         return "I'm not sure what you want me to do with that. Try asking me to run code, research something, or check status."
     
     async def _handle_task_result(self, message: BusMessage) -> None:
@@ -483,9 +515,10 @@ class FrontBrain:
         
         # Task completion events interrupt if from active workspace
         if (event.payload.get("event") in ["task.complete", "task.failed"] and
-            event.workspace and
-            self.focus_manager.workspaces.get(event.workspace, {}).state == FocusState.ACTIVE):
-            return True
+            event.workspace):
+            ws_focus = self.focus_manager.workspaces.get(event.workspace)
+            if ws_focus and ws_focus.state == FocusState.ACTIVE:
+                return True
         
         return False
     

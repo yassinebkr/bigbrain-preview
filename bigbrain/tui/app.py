@@ -130,8 +130,11 @@ class BigBrainApp(App):
             message: User input message
         """
         try:
-            # Send to Front Brain (this would integrate with the actual system)
-            response = await self.simulate_bigbrain_response(message)
+            # Route through the real Front Brain when available
+            if self.bigbrain_system and self.bigbrain_system.front_brain:
+                response = await self.bigbrain_system.front_brain.handle_user_input(message)
+            else:
+                response = await self.simulate_bigbrain_response(message)
             
             # Stream response to chat
             if hasattr(response, '__aiter__'):
@@ -200,33 +203,76 @@ This provides a solid foundation for your data processing needs. Would you like 
         if not self.bigbrain_system:
             return
         
-        # This would set up real integration with bus messages, brain events, etc.
-        # For now, simulate some activity
-        await self.simulate_system_activity()
-    
-    async def simulate_system_activity(self) -> None:
-        """Simulate system activity for demo purposes."""
-        await asyncio.sleep(2)
+        system = self.bigbrain_system
         
-        # Simulate brain status updates
+        # Wire real bus events to TUI panels
+        if system.bus:
+            system.bus.subscribe("*", self._on_bus_message)
+        
+        # Sync initial brain status from live brains
+        await asyncio.sleep(0.5)  # Let widgets mount
+        
         if self.brain_panel:
-            self.brain_panel.update_brain_status("python_brain", "idle", True)
-            self.brain_panel.update_brain_status("researcher_brain", "ready", True)
+            for brain_name, brain in system.brains.items():
+                status = brain.get_status()
+                state = "idle" if status.get("running") else "offline"
+                self.brain_panel.update_brain_status(brain_name, state, status.get("running", False))
+            
+            # Voice brain (not a real brain, always disabled in preview)
             self.brain_panel.update_brain_status("voice_brain", "disabled", False)
         
-        # Simulate focus updates
+        # Set initial focus
         if self.focus_panel:
-            self.focus_panel.update_focus("normal", "demo", 0.1)
-        
-        await asyncio.sleep(1)
-        
-        # Simulate some bus messages
-        if self.bus_monitor:
-            self.bus_monitor.add_message("TASK", "user → front_brain", "Process user input")
-            await asyncio.sleep(0.5)
-            self.bus_monitor.add_message("EVENT", "front_brain → *", "Intent analyzed")
-            await asyncio.sleep(0.3)
-            self.bus_monitor.add_message("RESULT", "front_brain → user", "Response generated")
+            self.focus_panel.update_focus("normal", system.workspace, 0.0)
+    
+    async def _on_bus_message(self, message) -> None:
+        """Handle real bus messages and route to TUI widgets."""
+        try:
+            msg_type = str(message.type).upper()
+            
+            source = message.source or "unknown"
+            target = message.target or "*"
+            route = f"{source} → {target}"
+            
+            # Build payload preview
+            payload_preview = ""
+            if message.payload:
+                event_type = message.payload.get("event", "")
+                task_type = message.payload.get("type", "")
+                payload_preview = event_type or task_type or str(message.payload)[:50]
+            
+            # Feed to bus monitor
+            if self.bus_monitor:
+                self.bus_monitor.add_message(msg_type, route, payload_preview)
+            
+            # Update brain panel on brain events
+            event_type = message.payload.get("event", "")
+            if "brain.started" in event_type:
+                brain_name = message.payload.get("brain", message.source)
+                if self.brain_panel:
+                    self.brain_panel.update_brain_status(brain_name, "idle", True)
+            elif "brain.complete" in event_type:
+                brain_name = message.payload.get("brain", message.source)
+                if self.brain_panel:
+                    self.brain_panel.update_brain_status(brain_name, "idle", True)
+            elif "brain.error" in event_type:
+                brain_name = message.payload.get("brain", message.source)
+                if self.brain_panel:
+                    self.brain_panel.update_brain_status(brain_name, "error", True)
+            
+            # Update task panel on task events
+            if "task.received" in event_type and self.task_panel:
+                task_id = message.payload.get("task_id", "")[:8]
+                desc = f"Task in {message.workspace or 'default'}"
+                self.task_panel.add_task(desc, task_id)
+            elif "task.complete" in event_type and self.task_panel:
+                task_id = message.payload.get("task_id", "")[:8]
+                self.task_panel.complete_task(task_id, True)
+            elif "task.failed" in event_type and self.task_panel:
+                task_id = message.payload.get("task_id", "")[:8]
+                self.task_panel.complete_task(task_id, False)
+        except Exception:
+            pass  # Don't crash the TUI on bus message errors
     
     def action_refresh(self) -> None:
         """Refresh all panels."""

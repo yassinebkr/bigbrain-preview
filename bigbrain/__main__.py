@@ -416,21 +416,9 @@ print(f"✓ Files in directory: {python_files}")
                     await self.run_demo()
                     continue
                 
-                # Send user input to front brain for processing
-                user_message = BusMessage(
-                    type=MessageType.TASK,
-                    source="user",
-                    target="front_brain",
-                    workspace=self.workspace,
-                    payload={
-                        "type": "user_input",
-                        "text": user_input,
-                        "timestamp": time.time()
-                    }
-                )
-                
-                await self.bus.send(user_message)
-                await self._ui_msg(f"📤 Sent: {user_input}", "info")
+                # Send user input directly to Front Brain for processing
+                response = await self.front_brain.handle_user_input(user_input)
+                await self._ui_msg(f"🧠 {response}", "info")
                 
             except KeyboardInterrupt:
                 self._shutdown_event.set()
