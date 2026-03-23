@@ -9,14 +9,23 @@ from typing import Dict, Any, Optional
 
 from .bus.bus import MessageBus
 from .bus.message import BusMessage, MessageType, Priority
+from .bus.auth import BusAuth
 from .config import config
 from .orchestrator.orchestrator import WorkspaceOrchestrator
+from .orchestrator.execution_modes import ExecutionMode, BrainExecutionConfig
 from .brains.python_brain import PythonBrain
 from .brains.researcher import ResearcherBrain
 from .front.front_brain import FrontBrain
+from .front.focus_manager import FocusManager, FocusMode, FocusState
 from .ui.rich_adapter import RichAdapter
 from .llm.mock_provider import MockLLMProvider
-from .voice.voice_manager import VoiceManager
+from .voice.voice_manager import create_voice_manager
+from .verification.pipeline import VerificationPipeline, VerificationLevel
+from .verification.v1_schema import SchemaValidator
+from .verification.v4_deterministic import DeterministicValidator
+from .verification.v3_cross_check import CrossProviderVerifier
+from .verification.v5_human_gate import HumanGateVerifier
+from .memory.memory_manager import MemoryManager
 
 # Try to import TUI, fall back to Rich if unavailable
 try:
@@ -49,14 +58,18 @@ class BigBrainSystem:
         
         # Core components
         self.bus: Optional[MessageBus] = None
+        self.bus_auth: Optional[BusAuth] = None
         self.orchestrator: Optional[WorkspaceOrchestrator] = None
         self.front_brain: Optional[FrontBrain] = None
+        self.focus_manager: Optional[FocusManager] = None
         self.ui: Optional[RichAdapter] = None
         self.tui_app: Optional['BigBrainApp'] = None
         
         # New components
         self.llm_provider: Optional[MockLLMProvider] = None
-        self.voice_manager: Optional[VoiceManager] = None
+        self.voice_manager = None
+        self.verification: Optional[VerificationPipeline] = None
+        self.memory_manager: Optional[MemoryManager] = None
         
         # Brain registry
         self.brains: Dict[str, Any] = {}
@@ -109,31 +122,150 @@ class BigBrainSystem:
         """Initialize all BigBrain components."""
         print(f"🧠 Initializing BigBrain system (workspace: {self.workspace})...")
         
-        # Create message bus
-        self.bus = MessageBus(log_dir=self.log_dir)
+        # 1. Bus authentication (HMAC-SHA256 per-brain tokens)
+        self.bus_auth = BusAuth()
         
-        # Create orchestrator
-        self.orchestrator = WorkspaceOrchestrator(self.workspace, self.bus)
+        # 2. Message bus with auth
+        self.bus = MessageBus(log_dir=self.log_dir, auth=self.bus_auth)
         
-        # Create LLM provider
+        # 3. Focus manager (attention filtering)
+        self.focus_manager = FocusManager()
+        self.focus_manager.set_workspace_focus(self.workspace, FocusState.ACTIVE, "system")
+        self.focus_manager.set_focus_mode(FocusMode.NORMAL, "system")
+        
+        # 4. LLM provider (OAuth → litellm → mock)
         self.llm_provider = self._create_llm_provider()
         
-        # Create voice manager
-        self.voice_manager = VoiceManager(auto_listen=True)
+        # 5. Verification pipeline (V4 → V1 → V3 → V5)
+        self.verification = self._create_verification_pipeline()
         
-        # Create brains (now with LLM support)
+        # 6. Memory manager
+        try:
+            self.memory_manager = MemoryManager(
+                brain_name="system",
+                project_name="bigbrain",
+                workspace=self.workspace,
+            )
+            print("💾 Memory: ChromaDB loaded")
+        except Exception as e:
+            print(f"⚠️  Memory init failed: {e} — running without persistent memory")
+            self.memory_manager = None
+        
+        # 7. Orchestrator with execution modes
+        self.orchestrator = WorkspaceOrchestrator(self.workspace, self.bus)
+        self._configure_execution_modes()
+        
+        # 8. Voice manager (auto-detects real APIs)
+        self.voice_manager = create_voice_manager(auto_listen=True)
+        
+        # 9. Brains (registers HMAC tokens)
         await self._create_brains()
         
-        # Create front brain (now with LLM and voice support)
+        # 10. Front brain
         self.front_brain = FrontBrain(self.bus, llm_provider=self.llm_provider)
         
-        # Wire voice manager callbacks
+        # 11. Wire everything together
         self._setup_voice_integration()
+        self._setup_focus_filtering()
         
-        # Create UI based on mode
+        # 12. UI
         await self._create_ui()
         
         print("✅ BigBrain system initialized successfully!")
+    
+    def _create_verification_pipeline(self) -> VerificationPipeline:
+        """Create the 5-layer verification pipeline."""
+        pipeline = VerificationPipeline()
+        
+        # V4: Deterministic checks (syntax, tests) — free, fast
+        try:
+            v4 = DeterministicValidator()
+            pipeline.add_verifier(v4)
+        except Exception:
+            pass
+        
+        # V1: Schema validation — free
+        try:
+            v1 = SchemaValidator()
+            pipeline.add_verifier(v1)
+        except Exception:
+            pass
+        
+        # V3: Cross-provider LLM review — costs money, uses different provider
+        try:
+            v3 = CrossProviderVerifier(llm_provider=self.llm_provider)
+            pipeline.add_verifier(v3)
+        except Exception:
+            pass
+        
+        # V5: Human gate — waits for approval
+        try:
+            v5 = HumanGateVerifier(timeout=300.0)
+            pipeline.add_verifier(v5)
+        except Exception:
+            pass
+        
+        # Default: run V4 + V1 only (Lightning mode)
+        pipeline.set_enabled_levels([
+            VerificationLevel.V4_DETERMINISTIC,
+            VerificationLevel.V1_SCHEMA,
+        ])
+        
+        print(f"✅ Verification: {len(pipeline.verifiers)} layers loaded")
+        return pipeline
+    
+    def _configure_execution_modes(self) -> None:
+        """Configure execution modes for each brain."""
+        # PythonBrain: Lightning (auto) by default — V4 + V1 only
+        self.orchestrator.set_execution_mode(
+            "python_brain",
+            BrainExecutionConfig(
+                brain_name="python_brain",
+                mode=ExecutionMode.LIGHTNING,
+                requires_approval=False,
+                max_retries=3,
+            )
+        )
+        
+        # Researcher: Lightning — auto-approve research results
+        self.orchestrator.set_execution_mode(
+            "researcher",
+            BrainExecutionConfig(
+                brain_name="researcher",
+                mode=ExecutionMode.LIGHTNING,
+                requires_approval=False,
+                max_retries=2,
+            )
+        )
+        
+        print("⚡ Execution modes: Lightning (auto) for all brains")
+    
+    def _setup_focus_filtering(self) -> None:
+        """Wire focus manager as bus event filter for Front Brain."""
+        original_on_message = self.front_brain._on_message if self.front_brain else None
+        focus = self.focus_manager
+        
+        if not original_on_message or not focus:
+            return
+        
+        async def filtered_on_message(msg):
+            """Only forward events that pass focus filtering."""
+            # Always let TASK and RESULT through (operational messages)
+            if msg.type in (MessageType.TASK, MessageType.RESULT, 
+                           MessageType.CANCEL, MessageType.QUERY):
+                if original_on_message:
+                    await original_on_message(msg)
+                return
+            
+            # Filter EVENTs through focus system
+            filtered = focus.filter_event(msg)
+            if filtered and original_on_message:
+                await original_on_message(filtered)
+        
+        # Replace front brain's bus handler with filtered version
+        if self.front_brain and hasattr(self.front_brain, 'name'):
+            self.bus.unsubscribe(self.front_brain.name, original_on_message)
+            self.bus.subscribe(self.front_brain.name, filtered_on_message)
     
     async def _create_brains(self) -> None:
         """Create and register execution brains."""
@@ -159,6 +291,15 @@ class BigBrainSystem:
         except Exception as e:
             print(f"⚠️  Research brain unavailable: {e}")
             print("    Code execution will still work, but research tasks may be limited.")
+        
+        # Register HMAC tokens for each brain
+        for brain_name in self.brains:
+            if self.bus_auth:
+                self.bus_auth.generate_token(brain_name)
+        # Also register system components
+        for name in ["orchestrator", f"orchestrator_{self.workspace}", "front_brain", "voice_manager"]:
+            if self.bus_auth:
+                self.bus_auth.generate_token(name)
         
         print(f"📋 Registered {len(self.brains)} brains: {list(self.brains.keys())}")
     
