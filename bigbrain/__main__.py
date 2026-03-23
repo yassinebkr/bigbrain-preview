@@ -78,17 +78,12 @@ class BigBrainSystem:
         # Check for OAuth token first (Claude Pro/Max)
         oauth_key = config.resolve_anthropic_key()
         if oauth_key and not config.anthropic_api_key:
-            # OAuth token available — set it for litellm
-            import os
-            os.environ["ANTHROPIC_API_KEY"] = oauth_key
-            try:
-                from .llm.litellm_provider import LiteLLMProvider
-                model = config.front_brain_model or "claude-sonnet-4-20250514"
-                provider = LiteLLMProvider(default_model=model)
-                print(f"🔑 LLM: Claude via OAuth ({model})")
-                return provider
-            except ImportError:
-                print("⚠️  OAuth token found but litellm not installed. Run: pip install litellm")
+            # OAuth token — use dedicated provider with stealth headers
+            from .llm.anthropic_oauth import AnthropicOAuthProvider
+            model = config.front_brain_model or "claude-sonnet-4-20250514"
+            provider = AnthropicOAuthProvider(token=oauth_key, default_model=model)
+            print(f"🔑 LLM: Claude via OAuth ({model})")
+            return provider
 
         # Check for env var API keys
         if config.has_api_key:
