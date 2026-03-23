@@ -41,7 +41,6 @@ App {
 
 #chat-panel {
     height: 90%;
-    border-title-text: "💬 Chat";
 }
 
 #input-container {
@@ -56,23 +55,19 @@ App {
 
 #brain-panel {
     height: 50%;
-    border-title-text: "🧠 Brains";
 }
 
 #task-panel {
     height: 50%;
-    border-title-text: "📊 Tasks";
 }
 
 #bus-monitor {
     width: 70%;
-    border-title-text: "📡 Bus Monitor";
     margin-right: 1;
 }
 
 #focus-panel {
     width: 30%;
-    border-title-text: "🎯 Focus";
 }
 
 /* Chat message styling */
