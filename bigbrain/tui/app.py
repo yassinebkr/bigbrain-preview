@@ -668,18 +668,26 @@ This provides a solid foundation for your data processing needs. Would you like 
         response_text = ""
         try:
             if vb and vb._running:
-                # Stream response for lower perceived latency
+                # Stream response with 20s timeout (voice needs to be fast)
                 self.chat_panel.start_streaming_message("assistant")
                 chunks = []
-                async for sentence in vb.stream_response(final_text):
-                    chunks.append(sentence)
-                    self.chat_panel.append_to_streaming(sentence)
+                try:
+                    async with asyncio.timeout(20):
+                        async for sentence in vb.stream_response(final_text):
+                            chunks.append(sentence)
+                            self.chat_panel.append_to_streaming(sentence)
+                except TimeoutError:
+                    self.chat_panel.append_to_streaming("\n⏱️ (response timed out)")
                 self.chat_panel.finish_streaming_message()
                 response_text = "".join(chunks)
 
-                # If streaming produced nothing, try non-streaming fallback
+                # If streaming produced nothing, try non-streaming with timeout
                 if not response_text.strip():
-                    response_text = await vb.respond_to_voice(final_text)
+                    try:
+                        async with asyncio.timeout(15):
+                            response_text = await vb.respond_to_voice(final_text)
+                    except TimeoutError:
+                        response_text = "Sorry, took too long to respond."
                     if response_text:
                         self.chat_panel.add_message("assistant", response_text)
             else:
@@ -693,9 +701,10 @@ This provides a solid foundation for your data processing needs. Would you like 
                     messages = [{"role": "system", "content": system_prompt}]
                     messages.extend(system.front_brain._conversation_history[-20:])
 
-                    response_text = await system.llm_provider.chat_complete(
-                        messages=messages, stream=False
-                    )
+                    async with asyncio.timeout(15):
+                        response_text = await system.llm_provider.chat_complete(
+                            messages=messages, stream=False
+                        )
                     self.chat_panel.add_message("assistant", response_text)
                     system.front_brain._conversation_history.append(
                         {"role": "assistant", "content": response_text}
@@ -732,24 +741,26 @@ This provides a solid foundation for your data processing needs. Would you like 
             tts = vm.tts
             has_audio_playback = self._has_audio_playback()
 
-            async for chunk in tts.stream(response_text):
-                if not self.voice_enabled:
-                    break
+            async with asyncio.timeout(30):
+                async for chunk in tts.stream(response_text):
+                    if not self.voice_enabled:
+                        break
 
-                audio = chunk.get("audio", b"")
-                word = chunk.get("word", "")
-                is_final = chunk.get("is_final", False)
+                    audio = chunk.get("audio", b"")
+                    is_final = chunk.get("is_final", False)
 
-                if has_audio_playback and audio:
-                    # Real audio playback via sounddevice
-                    await self._play_audio_chunk(audio)
-                elif not has_audio_playback:
-                    # Mock mode: simulate timing
-                    duration = chunk.get("duration", 0.1)
-                    await asyncio.sleep(duration)
+                    if has_audio_playback and audio:
+                        # Real audio playback via sounddevice
+                        await self._play_audio_chunk(audio)
+                    elif not has_audio_playback:
+                        # Mock mode: simulate timing
+                        duration = chunk.get("duration", 0.1)
+                        await asyncio.sleep(duration)
 
-                if is_final:
-                    break
+                    if is_final:
+                        break
+        except TimeoutError:
+            self.chat_panel.add_message("system", "🔊 TTS timed out (30s)")
         except asyncio.CancelledError:
             raise
         except Exception as e:

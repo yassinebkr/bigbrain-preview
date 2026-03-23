@@ -44,7 +44,7 @@ class BigBrainSystem:
     Creates the bus, registers brains, starts orchestrator, and launches TUI.
     """
     
-    def __init__(self, workspace: str = "demo", log_dir: Path = None, ui_mode: str = "tui"):
+    def __init__(self, workspace: str = "demo", log_dir: Path = None, ui_mode: str = "tui", mock_voice: bool = False):
         """
         Initialize BigBrain system.
         
@@ -52,10 +52,12 @@ class BigBrainSystem:
             workspace: Name of the primary workspace
             log_dir: Directory for message logs (defaults to ./logs)
             ui_mode: UI mode ("tui" or "simple")
+            mock_voice: Force mock STT/TTS even if API keys are available
         """
         self.workspace = workspace
         self.log_dir = log_dir or Path("logs")
         self.ui_mode = ui_mode
+        self.mock_voice = mock_voice
         
         # Core components
         self.bus: Optional[MessageBus] = None
@@ -157,8 +159,15 @@ class BigBrainSystem:
         self.orchestrator = WorkspaceOrchestrator(self.workspace, self.bus)
         self._configure_execution_modes()
         
-        # 8. Voice manager (auto-detects real APIs)
-        self.voice_manager = create_voice_manager(auto_listen=True)
+        # 8. Voice manager (auto-detects real APIs, or forced mock)
+        if self.mock_voice:
+            from .voice.stt import MockSTT
+            from .voice.tts import MockTTS
+            from .voice.voice_manager import VoiceManager
+            self.voice_manager = VoiceManager(stt=MockSTT(), tts=MockTTS(), auto_listen=True)
+            print("🎤 Voice: mock mode (--mock-voice)")
+        else:
+            self.voice_manager = create_voice_manager(auto_listen=True)
         
         # 8b. Voice Brain — fast conversational LLM for natural speech
         self.voice_brain = VoiceBrain(
@@ -687,6 +696,8 @@ async def main() -> None:
     parser.add_argument("--log-dir", default="logs", help="Log directory (default: logs)")
     parser.add_argument("--simple", action="store_true", default=False,
                        help="Use simple Rich console interface instead of TUI")
+    parser.add_argument("--mock-voice", action="store_true", default=False,
+                       help="Force mock STT/TTS (skip real Deepgram/Cartesia)")
     parser.add_argument("--login", action="store_true", default=False,
                        help="Login with Claude Pro/Max OAuth (free API access)")
     parser.add_argument("--logout", action="store_true", default=False,
@@ -736,7 +747,8 @@ async def main() -> None:
     system = BigBrainSystem(
         workspace=args.workspace,
         log_dir=Path(args.log_dir),
-        ui_mode=ui_mode
+        ui_mode=ui_mode,
+        mock_voice=args.mock_voice,
     )
     
     try:

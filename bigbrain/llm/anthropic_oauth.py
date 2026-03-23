@@ -215,6 +215,10 @@ class AnthropicOAuthProvider(LLMProvider):
                         f"{err.get('message', str(err))}"
                     )
 
+                # Anthropic signals stream end with message_stop
+                if event_type == "message_stop":
+                    break
+
                 if event_type == "content_block_delta":
                     delta = event.get("delta", {})
                     if delta.get("type") == "text_delta":
