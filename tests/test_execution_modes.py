@@ -260,9 +260,10 @@ class TestOrchestratorExecutionModes:
         )
         subtask.status = TaskStatus.RUNNING
         subtask.assigned_brain = "python_brain"
+        subtask._dispatch_msg_id = "dispatch_msg_id"
         plan.subtasks = [subtask]
         orchestrator.task_plans[plan.id] = plan
-        orchestrator.active_subtasks[subtask.id] = plan.id
+        orchestrator.active_subtasks["dispatch_msg_id"] = plan.id
         orchestrator.brain_load["python_brain"] = 1
 
         # Send successful result
@@ -270,7 +271,7 @@ class TestOrchestratorExecutionModes:
             type=MessageType.RESULT,
             source="python_brain",
             target="orchestrator_test_workspace",
-            reply_to="st1",
+            reply_to="dispatch_msg_id",
             payload={"success": True, "output": "done"},
         )
         mock_bus.broadcast_event.reset_mock()
@@ -296,16 +297,17 @@ class TestOrchestratorExecutionModes:
         )
         subtask.status = TaskStatus.RUNNING
         subtask.assigned_brain = "python_brain"
+        subtask._dispatch_msg_id = "dispatch_msg_id"
         plan.subtasks = [subtask]
         orchestrator.task_plans[plan.id] = plan
-        orchestrator.active_subtasks[subtask.id] = plan.id
+        orchestrator.active_subtasks["dispatch_msg_id"] = plan.id
         orchestrator.brain_load["python_brain"] = 1
 
         result_msg = BusMessage(
             type=MessageType.RESULT,
             source="python_brain",
             target="orchestrator_test_workspace",
-            reply_to="st2",
+            reply_to="dispatch_msg_id",
             payload={"success": True, "output": "done"},
         )
         mock_bus.broadcast_event.reset_mock()
@@ -329,16 +331,17 @@ class TestOrchestratorExecutionModes:
         )
         subtask.status = TaskStatus.RUNNING
         subtask.assigned_brain = "python_brain"
+        subtask._dispatch_msg_id = "dispatch_msg_id"
         plan.subtasks = [subtask]
         orchestrator.task_plans[plan.id] = plan
-        orchestrator.active_subtasks[subtask.id] = plan.id
+        orchestrator.active_subtasks["dispatch_msg_id"] = plan.id
         orchestrator.brain_load["python_brain"] = 1
 
         result_msg = BusMessage(
             type=MessageType.RESULT,
             source="python_brain",
             target="orchestrator_test_workspace",
-            reply_to="st3",
+            reply_to="dispatch_msg_id",
             payload={"success": False, "error": "kaboom"},
         )
         mock_bus.broadcast_event.reset_mock()
@@ -367,16 +370,17 @@ class TestOrchestratorExecutionModes:
         )
         subtask.status = TaskStatus.RUNNING
         subtask.assigned_brain = "python_brain"
+        subtask._dispatch_msg_id = "dispatch_msg_id"
         plan.subtasks = [subtask]
         orchestrator.task_plans[plan.id] = plan
-        orchestrator.active_subtasks[subtask.id] = plan.id
+        orchestrator.active_subtasks["dispatch_msg_id"] = plan.id
         orchestrator.brain_load["python_brain"] = 1
 
         result_msg = BusMessage(
             type=MessageType.RESULT,
             source="python_brain",
             target="orchestrator_test_workspace",
-            reply_to="st4",
+            reply_to="dispatch_msg_id",
             payload={"success": True, "output": "done"},
         )
         mock_bus.broadcast_event.reset_mock()
@@ -408,16 +412,17 @@ class TestOrchestratorExecutionModes:
         )
         subtask.status = TaskStatus.RUNNING
         subtask.assigned_brain = "python_brain"
+        subtask._dispatch_msg_id = "dispatch_msg_id"
         plan.subtasks = [subtask]
         orchestrator.task_plans[plan.id] = plan
-        orchestrator.active_subtasks[subtask.id] = plan.id
+        orchestrator.active_subtasks["dispatch_msg_id"] = plan.id
         orchestrator.brain_load["python_brain"] = 1
 
         result_msg = BusMessage(
             type=MessageType.RESULT,
             source="python_brain",
             target="orchestrator_test_workspace",
-            reply_to="st5",
+            reply_to="dispatch_msg_id",
             payload={"success": True},
         )
         mock_bus.broadcast_event.reset_mock()

@@ -61,8 +61,15 @@ class FrontBrain:
         self._current_conversation_id: Optional[str] = None
         self._conversation_history: List[Dict[str, str]] = []
         
+        # Brain registry for system prompt
+        self._registered_brains: Dict[str, str] = {}
+        
         # Load user preferences and context
         self._load_user_context()
+    
+    def register_brain(self, name: str, description: str) -> None:
+        """Register a brain so the Front Brain knows how to delegate."""
+        self._registered_brains[name] = description
     
     async def start(self) -> None:
         """Start the Front Brain and register with message bus."""
@@ -241,31 +248,68 @@ class FrontBrain:
             return f"⚠️ Execution error: {e}"
     
     def _build_system_prompt(self, focus_status: dict) -> str:
-        """Build the system prompt for the Front Brain LLM."""
+        """Build the system prompt for the Front Brain LLM.
+        
+        The Front Brain is a conversational layer that DELEGATES work.
+        It never writes code, never does research — it routes tasks to
+        sub-brains via the orchestrator and stays available for conversation.
+        """
         active_ws = focus_status.get("active_workspace", "default")
         mode = focus_status.get("focus_mode", "normal")
         
-        return f"""You are BigBrain, a multi-brain AI assistant system. You are the Front Brain — the user-facing personality layer.
+        # Build brain list from registered brains
+        brain_lines = []
+        if hasattr(self, '_registered_brains') and self._registered_brains:
+            for name, desc in self._registered_brains.items():
+                brain_lines.append(f"  - {name}: {desc}")
+        else:
+            brain_lines = [
+                "  - python_brain: Generates and executes Python code",
+                "  - researcher: Researches topics, gathers information",
+            ]
+        brains_str = "\n".join(brain_lines)
+        
+        return f"""You are BigBrain's Front Brain — the user-facing conversational layer.
 
-Your name is BigBrain. You're helpful, direct, and technically capable.
+You are NOT a code assistant. You are NOT a chatbot. You are the personality and router of a multi-brain AI system.
+
+YOUR JOB:
+1. Talk to the user naturally — answer questions, chat, manage context
+2. When the user wants WORK done (code, research, analysis), DELEGATE it
+3. Stay available for conversation while work runs in background
+
+DELEGATION: When the user asks for code, research, or any complex task, respond with EXACTLY this JSON format:
+{{"reply": "brief natural acknowledgment to the user", "tasks": [{{"brain": "brain_name", "request": "clear description of what to do"}}]}}
+
+CONVERSATION: For greetings, questions, status, opinions — just respond naturally as plain text (no JSON).
+
+RULES:
+- NEVER write code yourself. NEVER. That's PythonBrain's job.
+- NEVER do research yourself. That's Researcher's job.
+- Keep task acknowledgments brief and natural: "On it.", "Working on that.", "Let me get PythonBrain on this."
+- You CAN answer factual questions directly (those aren't tasks)
+- You CAN give opinions, explain concepts, have conversations
+- Be direct, no filler phrases
 
 Current state:
-- User: {self.user_name}
 - Active workspace: {active_ws}
 - Focus mode: {mode}
-- Available brains: PythonBrain (code execution), ResearcherBrain (web research)
 
-Capabilities you can help with:
-- Writing and executing Python code
-- Research and analysis
-- General conversation and questions
-- Managing focus and attention across workspaces
-- Task decomposition and delegation
+Available brains:
+{brains_str}
 
-When the user asks you to write or run code, provide the code and explain what it does.
-When the user asks a question, answer it directly and helpfully.
-Be conversational but concise. No filler phrases like "Great question!" or "I'd be happy to help!"
-"""
+Examples:
+User: "write a fibonacci function"
+You: {{"reply": "On it — sending that to PythonBrain.", "tasks": [{{"brain": "python_brain", "request": "Write a fibonacci function in Python and execute it"}}]}}
+
+User: "what's the capital of France?"  
+You: Paris.
+
+User: "research the best sorting algorithms and then implement quicksort"
+You: {{"reply": "Got it — researching first, then coding. I'll let you know when it's done.", "tasks": [{{"brain": "researcher", "request": "Research the best sorting algorithms, compare time/space complexity"}}, {{"brain": "python_brain", "request": "Implement quicksort in Python based on research findings"}}]}}
+
+User: "hello"
+You: Hey! What are you working on?"""
     
     def _get_help_text(self) -> str:
         """Return help text."""

@@ -458,9 +458,6 @@ Example — complex request "research async patterns then build an async web scr
         subtask.start_time = time.time()
         subtask.assigned_brain = subtask.brain_target
         
-        # Track active subtask
-        self.active_subtasks[subtask.id] = plan.id
-        
         # Update brain load
         self.brain_load[subtask.brain_target] = self.brain_load.get(subtask.brain_target, 0) + 1
         
@@ -475,8 +472,13 @@ Example — complex request "research async patterns then build an async web scr
             workspace=self.workspace,
             project=plan.original_task.project,
             payload=resolved_payload,
-            reply_to=subtask.id  # Use subtask ID for result tracking
+            reply_to=subtask.id  # Informational — not used for result matching
         )
+        
+        # Track by BusMessage ID — this is what brain.send_result uses as reply_to
+        self.active_subtasks[task_message.id] = plan.id
+        # Also map message ID → subtask ID for lookup
+        subtask._dispatch_msg_id = task_message.id
         
         await self.bus.send(task_message)
         
@@ -521,21 +523,26 @@ Example — complex request "research async patterns then build an async web scr
     async def _handle_task_result(self, message: BusMessage) -> None:
         """Handle result from brain execution.
         
-        Checks if the brain's execution mode requires V3/V5 verification
-        before accepting the result.
+        The brain sends result with reply_to = BusMessage.id (the dispatched
+        task message's UUID). We map that back to the subtask/plan.
         """
         import time
         
-        subtask_id = message.reply_to
-        if not subtask_id or subtask_id not in self.active_subtasks:
+        dispatch_msg_id = message.reply_to
+        if not dispatch_msg_id or dispatch_msg_id not in self.active_subtasks:
             return  # Not our subtask
         
-        plan_id = self.active_subtasks[subtask_id]
+        plan_id = self.active_subtasks[dispatch_msg_id]
         plan = self.task_plans.get(plan_id)
         if not plan:
             return  # Plan not found
         
-        subtask = plan.get_subtask(subtask_id)
+        # Find the subtask by its stored dispatch message ID
+        subtask = None
+        for st in plan.subtasks:
+            if getattr(st, '_dispatch_msg_id', None) == dispatch_msg_id:
+                subtask = st
+                break
         if not subtask:
             return  # Subtask not found
         
@@ -590,7 +597,7 @@ Example — complex request "research async patterns then build an async web scr
             self.brain_load[subtask.assigned_brain] = max(0, current_load - 1)
         
         # Remove from active tracking
-        del self.active_subtasks[subtask_id]
+        del self.active_subtasks[dispatch_msg_id]
         
         # Announce subtask completion
         await self.bus.broadcast_event(
@@ -635,9 +642,10 @@ Example — complex request "research async patterns then build an async web scr
                     "subtasks_completed": len(plan.subtasks)
                 }
             
-            # Send final result back to original requester
+            # Send final result back to original requester (explicit target)
             await self.bus.send_result(
                 source=self.name,
+                target=plan.original_task.source,
                 result_data=plan.result,
                 reply_to=plan.original_task.id,
                 workspace=self.workspace,
@@ -680,17 +688,22 @@ Example — complex request "research async patterns then build an async web scr
         
         plan.status = TaskStatus.CANCELLED
         
-        # Cancel active subtasks
-        for subtask_id in list(self.active_subtasks.keys()):
-            if self.active_subtasks[subtask_id] == task_id:
-                subtask = plan.get_subtask(subtask_id)
+        # Cancel active subtasks (keys are dispatch message IDs)
+        for dispatch_id in list(self.active_subtasks.keys()):
+            if self.active_subtasks[dispatch_id] == task_id:
+                # Find subtask by dispatch message ID
+                subtask = None
+                for st in plan.subtasks:
+                    if getattr(st, '_dispatch_msg_id', None) == dispatch_id:
+                        subtask = st
+                        break
                 if subtask and subtask.assigned_brain:
                     # Send cancel to brain
                     cancel_msg = BusMessage(
                         type=MessageType.CANCEL,
                         source=self.name,
                         target=subtask.assigned_brain,
-                        payload={"task_id": subtask_id, "mode": mode}
+                        payload={"task_id": subtask.id, "mode": mode}
                     )
                     await self.bus.send(cancel_msg)
         

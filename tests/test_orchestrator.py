@@ -491,10 +491,11 @@ class TestWorkspaceOrchestrator:
         )
         subtask.status = TaskStatus.RUNNING
         subtask.assigned_brain = "python_brain"
+        subtask._dispatch_msg_id = "dispatch_msg_id"
         
         plan.subtasks = [subtask]
         orchestrator.task_plans[plan.id] = plan
-        orchestrator.active_subtasks[subtask.id] = plan.id
+        orchestrator.active_subtasks["dispatch_msg_id"] = plan.id
         orchestrator.brain_load["python_brain"] = 1
         
         # Send result message
@@ -502,7 +503,7 @@ class TestWorkspaceOrchestrator:
             type=MessageType.RESULT,
             source="python_brain",
             target="orchestrator_test_workspace",
-            reply_to=subtask.id,
+            reply_to="dispatch_msg_id",
             payload={
                 "success": True,
                 "output": "task completed"
@@ -618,10 +619,11 @@ class TestWorkspaceOrchestrator:
         )
         subtask.status = TaskStatus.RUNNING
         subtask.assigned_brain = "python_brain"
+        subtask._dispatch_msg_id = "dispatch_msg_id"
         
         plan.subtasks = [subtask]
         orchestrator.task_plans[plan.id] = plan
-        orchestrator.active_subtasks[subtask.id] = plan.id
+        orchestrator.active_subtasks["dispatch_msg_id"] = plan.id
         
         # Send cancellation
         cancel_message = BusMessage(

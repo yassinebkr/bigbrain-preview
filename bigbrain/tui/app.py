@@ -125,10 +125,16 @@ class BigBrainApp(App):
     
     @work(group="chat")
     async def process_user_message(self, message: str) -> None:
-        """Process user message through the full brain pipeline.
+        """Process user message through the Front Brain → Orchestrator pipeline.
         
-        NOT exclusive — each message runs independently so one slow
-        response never blocks subsequent user input.
+        Flow:
+        1. Send message to Front Brain LLM (non-streaming — it's brief)
+        2. Front Brain decides: conversation (plain text) or delegation (JSON)
+        3. Conversation → show response immediately
+        4. Delegation → show acknowledgment, dispatch tasks to orchestrator in background
+        5. User can keep chatting while tasks run
+        
+        NOT exclusive — each message runs independently.
         """
         system = self.bigbrain_system
         if not system or not system.front_brain:
@@ -150,77 +156,201 @@ class BigBrainApp(App):
                 self.chat_panel.add_message("assistant", resp)
                 return
 
-            # All messages go through conversation path (LLM decides actions)
-            # The FrontBrain's system prompt tells it when/how to delegate code tasks
-            await self._handle_conversation(message, system, front)
+            # Front Brain LLM call — non-streaming because responses are brief
+            # (it either answers directly or delegates with a short acknowledgment)
+            await self._front_brain_respond(message, system, front)
         except asyncio.CancelledError:
-            raise  # Let Textual handle worker cancellation
+            raise
         except Exception as e:
             self.chat_panel.add_message("system", f"❌ Error: {e}")
         finally:
-            # ALWAYS refocus input so user can keep typing
             self._refocus_input()
 
     def _refocus_input(self) -> None:
-        """Restore focus to the message input field.
-        
-        Called after every message processing to prevent focus loss
-        when widgets are mounted/updated during the worker.
-        """
+        """Restore focus to the message input field."""
         if self.message_input:
             self.call_after_refresh(lambda: self.set_focus(self.message_input))
 
-    async def _handle_conversation(self, message, system, front):
-        """Stream a conversational response from FrontBrain LLM."""
+    async def _front_brain_respond(self, message: str, system, front):
+        """Front Brain decides: respond directly or delegate to sub-brains.
+        
+        The LLM returns either:
+        - Plain text → conversation, show to user
+        - JSON with "reply" + "tasks" → acknowledge and dispatch
+        """
+        import json as json_mod
+
         focus_status = front.focus_manager.get_focus_status()
         system_prompt = front._build_system_prompt(focus_status)
         messages = [{"role": "system", "content": system_prompt}]
         messages.extend(front._conversation_history[-20:])
 
-        response_text = ""
-
-        # Try streaming first (with 60s overall timeout)
+        # Non-streaming — Front Brain responses are brief
         try:
-            self.chat_panel.start_streaming_message("assistant")
-            async with asyncio.timeout(60):
-                stream = await system.llm_provider.chat_complete(messages=messages, stream=True)
-                full = []
-                async for chunk in stream:
-                    full.append(chunk)
-                    self.chat_panel.append_to_streaming(chunk)
-            self.chat_panel.finish_streaming_message()
-            response_text = "".join(full)
+            async with asyncio.timeout(30):
+                response_text = await system.llm_provider.chat_complete(
+                    messages=messages, stream=False, max_tokens=512,
+                )
         except asyncio.TimeoutError:
-            self.chat_panel.discard_streaming_message()
-            self.chat_panel.add_message("system", "⚠️ Response timed out (60s). Try again.")
+            self.chat_panel.add_message("system", "⚠️ Front Brain timed out (30s).")
             return
         except Exception as e:
-            self.chat_panel.discard_streaming_message()
-            # Show error and fall through to non-streaming
-            self.chat_panel.add_message("system", f"⚠️ Streaming error: {e}")
-            response_text = ""
+            self.chat_panel.add_message("system", f"❌ LLM error: {e}")
+            return
 
-        # Fallback: if streaming yielded nothing, try non-streaming
-        if not response_text.strip():
+        if not response_text or not response_text.strip():
+            self.chat_panel.add_message("system", "⚠️ Empty response from Front Brain.")
+            return
+
+        # Try to parse as JSON (delegation)
+        raw = response_text.strip()
+        tasks = None
+        reply_text = raw
+
+        # Strip markdown code fences if LLM wrapped JSON in them
+        if raw.startswith("```"):
+            first_nl = raw.find("\n")
+            if first_nl >= 0:
+                inner = raw[first_nl + 1:]
+                if "```" in inner:
+                    inner = inner[:inner.rindex("```")]
+                raw = inner.strip()
+
+        if raw.startswith("{"):
             try:
-                async with asyncio.timeout(30):
-                    response_text = await system.llm_provider.chat_complete(
-                        messages=messages, stream=False
-                    )
+                parsed = json_mod.loads(raw)
+                if isinstance(parsed, dict) and "reply" in parsed:
+                    reply_text = parsed["reply"]
+                    tasks = parsed.get("tasks", [])
+            except json_mod.JSONDecodeError:
+                pass  # Not valid JSON — treat as plain text
+
+        # Show the Front Brain's response
+        self.chat_panel.add_message("assistant", reply_text)
+        front._conversation_history.append({"role": "assistant", "content": reply_text})
+
+        # If tasks were requested, dispatch them to the orchestrator
+        if tasks and isinstance(tasks, list):
+            for task_def in tasks:
+                brain = task_def.get("brain", "python_brain")
+                request = task_def.get("request", str(task_def))
+                # Fire and forget — runs in background
+                self._dispatch_task(system, brain, request, message)
+
+    @work(group="tasks")
+    async def _dispatch_task(self, system, brain_target: str, request: str,
+                             original_message: str) -> None:
+        """Dispatch a task to the orchestrator and show results when done.
+        
+        Runs in background — user can keep chatting.
+        """
+        from ..bus.message import BusMessage, MessageType, Priority
+
+        # Update task panel
+        if self.task_panel:
+            self.task_panel.add_task(request[:50], brain_target)
+            self.task_panel.update_task_progress(brain_target, 10, "running", "Dispatched...")
+
+        if self.brain_panel:
+            self.brain_panel.update_brain_status(brain_target, "busy", True, request[:30])
+
+        # Send TASK to orchestrator via bus
+        task_msg = BusMessage(
+            type=MessageType.TASK,
+            source="front_brain",
+            target=f"orchestrator_{system.workspace}",
+            workspace=system.workspace,
+            payload={
+                "type": "generate_and_execute" if "python" in brain_target else "research",
+                "user_request": request,
+            },
+            priority=Priority.NORMAL,
+        )
+
+        # Set up result listener
+        result_future = asyncio.get_running_loop().create_future()
+
+        async def _capture_result(result_msg: BusMessage):
+            if (result_msg.type == MessageType.RESULT
+                    and result_msg.reply_to == task_msg.id
+                    and not result_future.done()):
+                result_future.set_result(result_msg)
+
+        system.bus.subscribe("front_brain", _capture_result)
+
+        try:
+            await system.bus.send(task_msg)
+
+            if self.task_panel:
+                self.task_panel.update_task_progress(brain_target, 40, "running", "Working...")
+
+            # Wait for result (60s timeout)
+            try:
+                result_msg = await asyncio.wait_for(result_future, timeout=60)
             except asyncio.TimeoutError:
-                self.chat_panel.add_message("system", "⚠️ LLM timed out. Check your connection.")
-                return
-            except Exception as e:
-                self.chat_panel.add_message("system", f"❌ LLM error: {e}")
+                self.chat_panel.add_message("system", f"⏱️ {brain_target} timed out (60s).")
+                if self.task_panel:
+                    self.task_panel.complete_task(brain_target, False)
                 return
 
-        if response_text and response_text.strip():
-            # If we got text from fallback (not streaming), show it
-            if not self.chat_panel.current_streaming_message:
-                self.chat_panel.add_message("assistant", response_text)
-            front._conversation_history.append({"role": "assistant", "content": response_text})
+            if self.task_panel:
+                self.task_panel.update_task_progress(brain_target, 90, "running", "Processing...")
+
+            # Present result
+            data = result_msg.payload
+            success = data.get("success", False)
+
+            if success:
+                results = data.get("results", data.get("data", data))
+                # Format results for display
+                self._show_task_result(brain_target, request, results)
+                if self.task_panel:
+                    self.task_panel.complete_task(brain_target, True)
+            else:
+                error = data.get("error", "Unknown error")
+                self.chat_panel.add_message("system", f"❌ {brain_target} failed: {error}")
+                if self.task_panel:
+                    self.task_panel.complete_task(brain_target, False)
+
+        finally:
+            system.bus.unsubscribe("front_brain", _capture_result)
+            if self.brain_panel:
+                self.brain_panel.update_brain_status(brain_target, "idle", True)
+
+    def _show_task_result(self, brain: str, request: str, results) -> None:
+        """Format and display task results in chat."""
+        parts = [f"**{brain}** completed:"]
+
+        if isinstance(results, dict):
+            # Code execution results
+            for key, subtask_result in results.items():
+                if isinstance(subtask_result, dict):
+                    sr = subtask_result.get("data", subtask_result)
+                    code = sr.get("generated_code", "")
+                    stdout = sr.get("stdout", "").strip()
+                    stderr = sr.get("stderr", "").strip()
+                    exit_code = sr.get("exit_code", -1)
+
+                    if code:
+                        preview = code[:600]
+                        if len(code) > 600:
+                            preview += "\n# ... (truncated)"
+                        parts.append(f"```python\n{preview}\n```")
+
+                    if exit_code == 0 and stdout:
+                        parts.append(f"**Output:**\n```\n{stdout[:500]}\n```")
+                    elif exit_code == 0:
+                        parts.append("✅ Ran successfully (no output)")
+                    else:
+                        parts.append(f"⚠️ Exit code: {exit_code}")
+                        if stderr:
+                            parts.append(f"```\n{stderr[:300]}\n```")
+                else:
+                    parts.append(str(subtask_result)[:500])
         else:
-            self.chat_panel.add_message("system", "⚠️ LLM returned empty response. Check model config.")
+            parts.append(str(results)[:500])
+
+        self.chat_panel.add_message("assistant", "\n\n".join(parts))
 
     async def _handle_code_request(self, message, system, front):
         """Route code through brain pipeline. FrontBrain decides what to tell user."""

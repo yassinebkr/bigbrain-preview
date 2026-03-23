@@ -188,8 +188,15 @@ class BigBrainSystem:
         # 9. Brains (registers HMAC tokens)
         await self._create_brains()
         
-        # 10. Front brain
+        # 10. Front brain — register available brains so it knows how to delegate
         self.front_brain = FrontBrain(self.bus, llm_provider=self.llm_provider)
+        brain_descriptions = {
+            "python_brain": "Generates and executes Python code, scripts, calculations",
+            "researcher": "Researches topics, gathers information, analyzes data",
+        }
+        for brain_name in self.brains:
+            desc = brain_descriptions.get(brain_name, brain_name)
+            self.front_brain.register_brain(brain_name, desc)
         
         # 11. Wire everything together
         self._setup_voice_integration()
@@ -246,23 +253,17 @@ class BigBrainSystem:
         # PythonBrain: Lightning (auto) by default — V4 + V1 only
         self.orchestrator.set_execution_mode(
             "python_brain",
-            BrainExecutionConfig(
-                brain_name="python_brain",
-                mode=ExecutionMode.LIGHTNING,
-                requires_approval=False,
-                max_retries=3,
-            )
+            ExecutionMode.LIGHTNING,
+            requires_approval=False,
+            max_retries=3,
         )
         
         # Researcher: Lightning — auto-approve research results
         self.orchestrator.set_execution_mode(
             "researcher",
-            BrainExecutionConfig(
-                brain_name="researcher",
-                mode=ExecutionMode.LIGHTNING,
-                requires_approval=False,
-                max_retries=2,
-            )
+            ExecutionMode.LIGHTNING,
+            requires_approval=False,
+            max_retries=2,
         )
         
         print("⚡ Execution modes: Lightning (auto) for all brains")
