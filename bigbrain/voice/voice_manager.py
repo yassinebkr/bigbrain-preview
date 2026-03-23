@@ -44,11 +44,21 @@ class VoiceManager:
         """
         Initialize voice manager.
         
+        Checks DEEPGRAM_API_KEY and CARTESIA_API_KEY from environment.
+        When keys are present, voice features are available.
+        When missing, voice is disabled (mock-only).
+        
         Args:
             stt: Speech-to-text service (creates default if None)
             tts: Text-to-speech service (creates default if None)
             auto_listen: Automatically resume listening after speaking
         """
+        import os
+        
+        self.deepgram_key = os.environ.get("DEEPGRAM_API_KEY", "")
+        self.cartesia_key = os.environ.get("CARTESIA_API_KEY", "")
+        self.is_available = bool(self.deepgram_key and self.cartesia_key)
+        
         self.stt = stt or MockSTT()
         self.tts = tts or MockTTS()
         self.auto_listen = auto_listen
@@ -56,6 +66,11 @@ class VoiceManager:
         self.state = VoiceState.IDLE
         self.is_enabled = False
         self.current_session_id = None
+        
+        if self.is_available:
+            # Configure STT/TTS with real API keys
+            self.stt.api_key = self.deepgram_key
+            self.tts.api_key = self.cartesia_key
         
         # Callbacks for integration with Front Brain
         self._on_transcription: Optional[Callable] = None

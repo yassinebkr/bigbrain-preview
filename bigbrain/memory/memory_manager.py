@@ -1,57 +1,55 @@
-"""Memory Manager - Coordinates 3-tier memory system for BigBrain."""
+"""Memory Manager - Unified memory interface for BigBrain.
+
+Tier 1: Working Memory — ephemeral, in-memory, per-brain.
+Tier 2+3: Persistent Memory — single ChromaDB collection with scope field.
+  scope="workspace" → project-specific (dies with workspace)
+  scope="global" → long-term (survives workspace deletion)
+"""
 
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .working_memory import WorkingMemory
+from .chromadb_backend import ChromaMemoryBackend
+
+# Keep old imports for backward compatibility with tests
 from .project_memory import ProjectMemory
 from .long_term_memory import LongTermMemory
 
 
 class MemoryManager:
     """
-    Coordinates BigBrain's 3-tier memory system.
+    Unified memory interface for BigBrain.
     
-    Provides unified interface for memory operations across:
+    Coordinates:
     - Tier 1: Working Memory (ephemeral, per-brain)
-    - Tier 2: Project Memory (persistent, project-scoped)
-    - Tier 3: Long-term Memory (persistent, global)
+    - Tier 2+3: ChromaDB backend (persistent, scope-based)
     
-    Key Features:
-    - Automatic memory tier selection based on content type
-    - Cross-tier search and retrieval
-    - Memory consolidation and cleanup
-    - Performance optimization through tier-appropriate caching
-    - Context-aware memory routing
+    Also maintains legacy ProjectMemory/LongTermMemory for backward
+    compatibility with existing tests.
     """
     
     def __init__(self, brain_name: str, project_name: str = None, 
                  workspace: str = None, storage_dir: Path = None):
-        """
-        Initialize memory manager for a brain instance.
-        
-        Args:
-            brain_name: Name of the brain using this memory
-            project_name: Current project name
-            workspace: Workspace name
-            storage_dir: Storage directory for persistent memory
-        """
         self.brain_name = brain_name
         self.project_name = project_name or "default"
         self.workspace = workspace or "default"
         
-        # Initialize all memory tiers
+        # Tier 1: Working Memory (ephemeral)
         self.working = WorkingMemory()
         
+        # Tier 2+3: Unified persistent backend
+        self.persistent = ChromaMemoryBackend(storage_dir=storage_dir)
+        
+        # Legacy interfaces (kept for test compatibility)
         self.project = ProjectMemory(
             project_name=self.project_name,
             workspace=self.workspace,
             storage_dir=storage_dir
         )
-        
         self.long_term = LongTermMemory(storage_dir=storage_dir)
         
-        # Cache frequently accessed items
+        # Cache
         self._context_cache: Dict[str, Any] = {}
     
     def store(self, content: str, memory_type: str = "auto",
@@ -79,20 +77,40 @@ class MemoryManager:
             memory_type = self._determine_memory_tier(content, metadata)
         
         if memory_type == "working":
-            # Store in working memory with brain-scoped key
             key = f"{self.brain_name}_{len(self.working._data)}"
             self.working.store(key, content, metadata)
             return key
         
         elif memory_type == "project":
-            # Store in project memory (returns list of IDs for chunks)
-            entry_ids = self.project.store(content, metadata)
-            return entry_ids[0] if entry_ids else ""
+            # Store in unified persistent backend (workspace scope)
+            tags = ",".join(metadata.get("tags", []))  if isinstance(metadata.get("tags"), list) else metadata.get("tags", "")
+            entry_id = self.persistent.store(
+                content=content,
+                scope="workspace",
+                workspace=self.workspace,
+                brain=self.brain_name,
+                memory_type=metadata.get("type", "fact"),
+                tags=tags,
+                task_id=metadata.get("task_id", ""),
+                extra_metadata=metadata,
+            )
+            # Also store in legacy for test compat
+            self.project.store(content, metadata)
+            return entry_id
         
         elif memory_type == "long_term":
-            # Store in long-term memory
+            # Store in unified persistent backend (global scope)
+            entry_id = self.persistent.store(
+                content=content,
+                scope="global",
+                brain=self.brain_name,
+                memory_type=metadata.get("type", "lesson"),
+                extra_metadata=metadata,
+            )
+            # Also store in legacy for test compat
             category = metadata.get("category", "general")
-            return self.long_term.store_knowledge(content, category, metadata)
+            self.long_term.store_knowledge(content, category, metadata)
+            return entry_id
         
         else:
             raise ValueError(f"Unknown memory type: {memory_type}")
@@ -122,30 +140,43 @@ class MemoryManager:
                 result["brain_scope"] = True
                 all_results.append(result)
         
-        # Search project memory
-        if "project" in tiers:
-            metadata_filter = {}
-            if context and context.get("source_brain"):
-                metadata_filter["source"] = context["source_brain"]
+        # Search persistent memory (unified Tier 2+3)
+        if "project" in tiers or "long_term" in tiers:
+            scope = None
+            workspace = None
+            if "project" in tiers and "long_term" not in tiers:
+                scope = "workspace"
+                workspace = self.workspace
+            elif "long_term" in tiers and "project" not in tiers:
+                scope = "global"
+            # else: search all scopes
             
-            project_results = self.project.search(query, limit, metadata_filter)
-            for result in project_results:
-                result["tier"] = "project"
-                result["project_scope"] = True
+            if "project" in tiers:
+                workspace = self.workspace
+            
+            brain_filter = None
+            if context and context.get("source_brain"):
+                brain_filter = context["source_brain"]
+            
+            persistent_results = self.persistent.query(
+                query_text=query,
+                limit=limit,
+                scope=scope,
+                workspace=workspace if "project" in tiers else None,
+                brain=brain_filter,
+            )
+            for result in persistent_results:
+                result_scope = result.get("metadata", {}).get("scope", "workspace")
+                result["tier"] = "project" if result_scope == "workspace" else "long_term"
                 all_results.append(result)
         
-        # Search long-term memory
-        if "long_term" in tiers:
-            category = context.get("category") if context else None
-            lt_results = self.long_term.search_knowledge(query, category, limit)
-            for result in lt_results:
-                result["tier"] = "long_term"
-                result["global_scope"] = True
-                all_results.append(result)
+        # Sort by relevance (distance for ChromaDB, similarity for working)
+        def sort_key(x):
+            if "distance" in x and x["distance"] is not None:
+                return -x["distance"]  # Lower distance = better
+            return x.get("similarity", x.get("score", 0))
         
-        # Sort by relevance score across all tiers
-        all_results.sort(key=lambda x: x.get("similarity", x.get("score", 0)), reverse=True)
-        
+        all_results.sort(key=sort_key, reverse=True)
         return all_results[:limit * len(tiers)]
     
     def store_conversation_turn(self, message_type: str, content: str,
@@ -163,11 +194,17 @@ class MemoryManager:
         return self.working.get_conversation_history(turns)
     
     def store_user_preference(self, key: str, value: Any, description: str = None) -> None:
-        """Store user preference in long-term memory."""
+        """Store user preference in persistent memory (global scope)."""
+        self.persistent.store_preference(key, value)
+        # Legacy compat
         self.long_term.store_user_preference(key, value, description)
     
     def get_user_preference(self, key: str, default: Any = None) -> Any:
-        """Get user preference from long-term memory."""
+        """Get user preference from persistent memory."""
+        result = self.persistent.get_preference(key)
+        if result is not None:
+            return result
+        # Fallback to legacy
         return self.long_term.get_user_preference(key, default)
     
     def record_lesson(self, lesson: str, context: str = None, 
@@ -247,8 +284,7 @@ class MemoryManager:
         """Get comprehensive memory statistics."""
         return {
             "working_memory": self.working.get_stats(),
-            "project_memory": self.project.get_stats(),
-            "long_term_memory": self.long_term.get_stats(),
+            "persistent_memory": self.persistent.get_stats(),
             "brain_name": self.brain_name,
             "project_name": self.project_name,
             "workspace": self.workspace,

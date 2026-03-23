@@ -11,6 +11,13 @@ textual>=0.40       # For TUI mode (optional — falls back to Rich)
 litellm>=1.30       # Unified LLM API (OpenAI, Anthropic, Google, etc.)
 python-dotenv>=1.0  # Load .env config
 
+# Memory (persistent storage — optional, falls back to in-memory)
+chromadb>=0.4       # Vector database for persistent memory
+
+# Voice (optional — disabled when keys not set)
+# deepgram-sdk>=3.0     # STT (needs DEEPGRAM_API_KEY)
+# cartesia>=1.0         # TTS (needs CARTESIA_API_KEY)
+
 # Testing
 pytest>=7.0
 pytest-asyncio>=0.21

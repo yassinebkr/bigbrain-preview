@@ -677,8 +677,7 @@ class TestMemoryManager:
         stats = memory_manager.get_memory_stats()
         
         assert "working_memory" in stats
-        assert "project_memory" in stats
-        assert "long_term_memory" in stats
+        assert "persistent_memory" in stats
         assert "brain_name" in stats
         assert "project_name" in stats
         assert "workspace" in stats
