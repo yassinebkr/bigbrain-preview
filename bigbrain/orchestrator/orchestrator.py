@@ -8,6 +8,8 @@ from typing import Any, Dict, List, Optional, Set
 
 from ..bus.bus import MessageBus
 from ..bus.message import BusMessage, MessageType, Priority
+from ..bus.participant import BusParticipant
+from .execution_modes import BrainExecutionConfig, ExecutionMode
 
 
 class TaskStatus(str, Enum):
@@ -89,9 +91,12 @@ class TaskPlan:
         return results
 
 
-class WorkspaceOrchestrator:
+class WorkspaceOrchestrator(BusParticipant):
     """
     Event-driven orchestrator for a specific workspace.
+    
+    Inherits bus subscribe/unsubscribe plumbing from BusParticipant
+    and adds orchestrator-specific task management.
     
     Manages task decomposition, routing, and execution tracking within
     one workspace domain (e.g. webdev, research, electronics).
@@ -119,9 +124,8 @@ class WorkspaceOrchestrator:
             workspace: Workspace name this orchestrator manages
             bus: MessageBus for communication
         """
+        super().__init__(f"orchestrator_{workspace}", bus)
         self.workspace = workspace
-        self.bus = bus
-        self.name = f"orchestrator_{workspace}"
         
         # Task tracking
         self.task_plans: Dict[str, TaskPlan] = {}
@@ -131,8 +135,8 @@ class WorkspaceOrchestrator:
         self.registered_brains: Dict[str, Dict[str, Any]] = {}
         self.brain_load: Dict[str, int] = {}  # brain -> active task count
         
-        # State
-        self._running = False
+        # Execution mode configs per brain
+        self.execution_configs: Dict[str, BrainExecutionConfig] = {}
     
     async def start(self) -> None:
         """Start the orchestrator and register with message bus."""
@@ -413,7 +417,11 @@ class WorkspaceOrchestrator:
         return resolved
     
     async def _handle_task_result(self, message: BusMessage) -> None:
-        """Handle result from brain execution."""
+        """Handle result from brain execution.
+        
+        Checks if the brain's execution mode requires V3/V5 verification
+        before accepting the result.
+        """
         import time
         
         subtask_id = message.reply_to
@@ -428,6 +436,41 @@ class WorkspaceOrchestrator:
         subtask = plan.get_subtask(subtask_id)
         if not subtask:
             return  # Subtask not found
+        
+        # Check execution mode for this brain
+        brain_name = subtask.assigned_brain or subtask.brain_target
+        exec_config = self.get_execution_config(brain_name)
+        
+        # If brain requires V3 cross-check and result was successful, flag it
+        if message.payload.get("success", False) and exec_config.should_run_v3():
+            # Broadcast event indicating V3 review is needed
+            await self.bus.broadcast_event(
+                source=self.name,
+                event_type="verification.v3_required",
+                payload={
+                    "task_id": plan.id,
+                    "subtask_id": subtask.id,
+                    "brain": brain_name,
+                    "execution_mode": exec_config.mode.value,
+                },
+                workspace=self.workspace,
+                priority=Priority.NORMAL,
+            )
+        
+        # If brain requires V5 human gate and result was successful, flag it
+        if message.payload.get("success", False) and exec_config.should_run_v5():
+            await self.bus.broadcast_event(
+                source=self.name,
+                event_type="verification.v5_required",
+                payload={
+                    "task_id": plan.id,
+                    "subtask_id": subtask.id,
+                    "brain": brain_name,
+                    "execution_mode": exec_config.mode.value,
+                },
+                workspace=self.workspace,
+                priority=Priority.HIGH,
+            )
         
         # Update subtask with result
         subtask.end_time = time.time()
@@ -612,6 +655,43 @@ class WorkspaceOrchestrator:
         self.registered_brains.pop(brain_name, None)
         self.brain_load.pop(brain_name, None)
     
+    def set_execution_mode(self, brain_name: str, mode: ExecutionMode, **kwargs) -> BrainExecutionConfig:
+        """
+        Set execution mode for a specific brain.
+        
+        Args:
+            brain_name: Name of the brain to configure
+            mode: Execution mode to set
+            **kwargs: Additional config options (requires_approval, max_retries, verification_levels)
+            
+        Returns:
+            The created/updated BrainExecutionConfig
+        """
+        config = BrainExecutionConfig(
+            brain_name=brain_name,
+            mode=mode,
+            requires_approval=kwargs.get("requires_approval", mode == ExecutionMode.CONTROL),
+            max_retries=kwargs.get("max_retries", 3),
+            verification_levels=kwargs.get("verification_levels", None),
+        )
+        self.execution_configs[brain_name] = config
+        return config
+    
+    def get_execution_config(self, brain_name: str) -> BrainExecutionConfig:
+        """
+        Get execution config for a brain, defaulting to LIGHTNING if not set.
+        
+        Args:
+            brain_name: Name of the brain
+            
+        Returns:
+            BrainExecutionConfig for the brain
+        """
+        if brain_name in self.execution_configs:
+            return self.execution_configs[brain_name]
+        # Default: lightning mode (full auto)
+        return BrainExecutionConfig(brain_name=brain_name, mode=ExecutionMode.LIGHTNING)
+
     def get_status(self) -> Dict[str, Any]:
         """Get orchestrator status for monitoring."""
         return {
@@ -623,5 +703,9 @@ class WorkspaceOrchestrator:
             "total_tasks": len(self.task_plans),
             "registered_brains": list(self.registered_brains.keys()),
             "brain_load": dict(self.brain_load),
-            "active_subtasks": len(self.active_subtasks)
+            "active_subtasks": len(self.active_subtasks),
+            "execution_configs": {
+                name: {"mode": config.mode.value, "requires_approval": config.requires_approval}
+                for name, config in self.execution_configs.items()
+            }
         }

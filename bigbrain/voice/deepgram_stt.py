@@ -18,6 +18,8 @@ import json
 import logging
 from typing import AsyncIterator
 
+import websockets
+
 log = logging.getLogger("bigbrain.voice.stt")
 
 # WebSocket URL with query params for Nova-3
@@ -64,13 +66,11 @@ class DeepgramSTT:
             language: BCP-47 language code
             model: Deepgram model name (nova-3, nova-2, enhanced, base)
         """
-        # TODO 1: Store parameters
-        #   self.api_key = api_key
-        #   self.language = language
-        #   self.model = model
-        #   self.is_listening = False
-        #   self._ws = None  (will hold the websocket connection)
-        raise NotImplementedError("TODO 1: Store parameters")
+        self.api_key = api_key
+        self.language = language
+        self.model = model
+        self.is_listening = False
+        self._ws = None  # will hold the websocket connection
 
     def _build_ws_url(self) -> str:
         """
@@ -82,13 +82,11 @@ class DeepgramSTT:
         Returns:
             Full WebSocket URL string
         """
-        # TODO 2: Build URL
-        #   params = dict(_DEFAULT_PARAMS)
-        #   params["model"] = self.model
-        #   params["language"] = self.language
-        #   query = "&".join(f"{k}={v}" for k, v in params.items())
-        #   return f"{_WS_BASE}?{query}"
-        raise NotImplementedError("TODO 2: Build WebSocket URL")
+        params = dict(_DEFAULT_PARAMS)
+        params["model"] = self.model
+        params["language"] = self.language
+        query = "&".join(f"{k}={v}" for k, v in params.items())
+        return f"{_WS_BASE}?{query}"
 
     async def stream(self, audio_source: AsyncIterator[bytes] | None = None) -> AsyncIterator[dict]:
         """
@@ -116,46 +114,40 @@ class DeepgramSTT:
             audio_source: async iterator yielding raw audio bytes (16kHz, 16-bit, mono)
                           or None to use microphone
         """
-        # TODO 3: Implement WebSocket streaming
-        #
-        # Use the `websockets` library:
-        #   import websockets
-        #
-        #   url = self._build_ws_url()
-        #   headers = {"Authorization": f"Token {self.api_key}"}
-        #
-        #   async with websockets.connect(url, extra_headers=headers) as ws:
-        #       self._ws = ws
-        #       self.is_listening = True
-        #
-        #       # If no audio_source, create one from microphone
-        #       if audio_source is None:
-        #           audio_source = self._microphone_stream()
-        #
-        #       # Sender task: forward audio to Deepgram
-        #       async def sender():
-        #           async for chunk in audio_source:
-        #               if not self.is_listening:
-        #                   break
-        #               await ws.send(chunk)
-        #           # Signal end of audio
-        #           await ws.send(b"")
-        #
-        #       # Start sender in background
-        #       send_task = asyncio.create_task(sender())
-        #
-        #       # Receiver: read transcription results
-        #       try:
-        #           async for raw_msg in ws:
-        #               data = json.loads(raw_msg)
-        #               result = self._parse_result(data)
-        #               if result:
-        #                   yield result
-        #       finally:
-        #           send_task.cancel()
-        #           self.is_listening = False
-        #           self._ws = None
-        raise NotImplementedError("TODO 3: WebSocket streaming")
+        url = self._build_ws_url()
+        headers = {"Authorization": f"Token {self.api_key}"}
+
+        async with websockets.connect(url, additional_headers=headers) as ws:
+            self._ws = ws
+            self.is_listening = True
+
+            # If no audio_source, create one from microphone
+            if audio_source is None:
+                audio_source = self._microphone_stream()
+
+            # Sender task: forward audio to Deepgram
+            async def sender():
+                async for chunk in audio_source:
+                    if not self.is_listening:
+                        break
+                    await ws.send(chunk)
+                # Signal end of audio
+                await ws.send(b"")
+
+            # Start sender in background
+            send_task = asyncio.create_task(sender())
+
+            # Receiver: read transcription results
+            try:
+                async for raw_msg in ws:
+                    data = json.loads(raw_msg)
+                    result = self._parse_result(data)
+                    if result:
+                        yield result
+            finally:
+                send_task.cancel()
+                self.is_listening = False
+                self._ws = None
 
     def _parse_result(self, data: dict) -> dict | None:
         """
@@ -180,28 +172,26 @@ class DeepgramSTT:
         
         Returns None for non-transcription messages (metadata, etc.)
         """
-        # TODO 4: Parse Deepgram response
-        #   if data.get("type") != "Results":
-        #       return None
-        #   
-        #   channel = data.get("channel", {})
-        #   alternatives = channel.get("alternatives", [])
-        #   if not alternatives:
-        #       return None
-        #   
-        #   best = alternatives[0]
-        #   transcript = best.get("transcript", "").strip()
-        #   if not transcript:
-        #       return None
-        #   
-        #   return {
-        #       "text": transcript,
-        #       "is_final": data.get("is_final", False),
-        #       "confidence": best.get("confidence", 0.0),
-        #       "words": best.get("words", []),
-        #       "language": self.language,
-        #   }
-        raise NotImplementedError("TODO 4: Parse Deepgram response")
+        if data.get("type") != "Results":
+            return None
+
+        channel = data.get("channel", {})
+        alternatives = channel.get("alternatives", [])
+        if not alternatives:
+            return None
+
+        best = alternatives[0]
+        transcript = best.get("transcript", "").strip()
+        if not transcript:
+            return None
+
+        return {
+            "text": transcript,
+            "is_final": data.get("is_final", False),
+            "confidence": best.get("confidence", 0.0),
+            "words": best.get("words", []),
+            "language": self.language,
+        }
 
     async def _microphone_stream(self, chunk_duration_ms: int = 100) -> AsyncIterator[bytes]:
         """
@@ -213,34 +203,31 @@ class DeepgramSTT:
         Args:
             chunk_duration_ms: Duration of each audio chunk in milliseconds
         """
-        # TODO 5: Microphone capture
-        #
-        #   import sounddevice as sd
-        #   import numpy as np
-        #
-        #   sample_rate = 16000
-        #   chunk_samples = int(sample_rate * chunk_duration_ms / 1000)
-        #   
-        #   # Use an asyncio.Queue to bridge sounddevice callback → async iterator
-        #   audio_queue: asyncio.Queue[bytes] = asyncio.Queue()
-        #   
-        #   def audio_callback(indata, frames, time_info, status):
-        #       """Called by sounddevice for each audio chunk."""
-        #       # Convert float32 → int16 PCM
-        #       pcm = (indata[:, 0] * 32767).astype(np.int16).tobytes()
-        #       audio_queue.put_nowait(pcm)
-        #   
-        #   with sd.InputStream(
-        #       samplerate=sample_rate,
-        #       channels=1,
-        #       dtype="float32",
-        #       blocksize=chunk_samples,
-        #       callback=audio_callback,
-        #   ):
-        #       while self.is_listening:
-        #           chunk = await audio_queue.get()
-        #           yield chunk
-        raise NotImplementedError("TODO 5: Microphone capture")
+        import sounddevice as sd
+        import numpy as np
+
+        sample_rate = 16000
+        chunk_samples = int(sample_rate * chunk_duration_ms / 1000)
+
+        # Use an asyncio.Queue to bridge sounddevice callback → async iterator
+        audio_queue: asyncio.Queue[bytes] = asyncio.Queue()
+
+        def audio_callback(indata, frames, time_info, status):
+            """Called by sounddevice for each audio chunk."""
+            # Convert float32 → int16 PCM
+            pcm = (indata[:, 0] * 32767).astype(np.int16).tobytes()
+            audio_queue.put_nowait(pcm)
+
+        with sd.InputStream(
+            samplerate=sample_rate,
+            channels=1,
+            dtype="float32",
+            blocksize=chunk_samples,
+            callback=audio_callback,
+        ):
+            while self.is_listening:
+                chunk = await audio_queue.get()
+                yield chunk
 
     def stop_listening(self) -> None:
         """Stop the current listening session."""

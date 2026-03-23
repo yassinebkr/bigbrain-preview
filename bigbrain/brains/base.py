@@ -6,15 +6,15 @@ from typing import Any, Dict, Optional
 
 from ..bus.bus import MessageBus
 from ..bus.message import BusMessage, MessageType, Priority
+from ..bus.participant import BusParticipant
 
 
-class BaseBrain(ABC):
+class BaseBrain(BusParticipant, ABC):
     """
     Abstract base class for BigBrain execution workers.
     
-    Provides common bus integration and lifecycle management for all brains.
-    Each brain is an independent worker that receives tasks, executes them,
-    and returns results via the message bus.
+    Inherits bus subscribe/unsubscribe plumbing from BusParticipant
+    and adds brain-specific lifecycle, task handling, and event broadcasting.
     
     Brain Lifecycle:
     1. Initialize with bus connection and brain name
@@ -38,10 +38,8 @@ class BaseBrain(ABC):
             bus: MessageBus instance for communication
             workspace: Optional workspace this brain belongs to
         """
-        self.name = name
-        self.bus = bus
+        super().__init__(name, bus)
         self.workspace = workspace
-        self._running = False
         self._current_task: Optional[BusMessage] = None
         self._cancelled = False
         
@@ -61,7 +59,7 @@ class BaseBrain(ABC):
         self._running = True
         self._cancelled = False
         
-        # Subscribe to messages targeted at this brain
+        # Subscribe to messages targeted at this brain (via BusParticipant plumbing)
         self.bus.subscribe(self.name, self._message_handler)
         
         # Announce brain availability

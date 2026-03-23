@@ -1,12 +1,18 @@
 """MessageBus - Async pub/sub message bus for BigBrain components."""
 
 import asyncio
+import logging
 from collections import defaultdict
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Set
+from typing import Callable, Dict, List, Optional, Set, TYPE_CHECKING
 
 from .logger import BusLogger
 from .message import BusMessage, MessageType, Priority
+
+if TYPE_CHECKING:
+    from .auth import BusAuth
+
+logger = logging.getLogger(__name__)
 
 
 class MessageBus:
@@ -24,9 +30,10 @@ class MessageBus:
     The bus routes messages based on target field and calls handlers asynchronously.
     """
     
-    def __init__(self, log_dir: Path = Path("logs")):
-        """Initialize message bus with logging."""
+    def __init__(self, log_dir: Path = Path("logs"), auth: "Optional[BusAuth]" = None):
+        """Initialize message bus with logging and optional HMAC auth."""
         self.logger = BusLogger(log_dir)
+        self.auth = auth
         
         # Subscriber registry: target_name -> set of handler functions
         self._subscribers: Dict[str, Set[Callable[[BusMessage], None]]] = defaultdict(set)
@@ -52,6 +59,12 @@ class MessageBus:
         Broadcast messages (target="*") are delivered to all subscribers.
         Specific targets are delivered only to subscribers registered for that target.
         """
+        # Auto-sign if auth is configured and source has a token
+        if self.auth is not None and message.signature is None:
+            token = self.auth.get_token(message.source)
+            if token is not None:
+                message.signature = self.auth.sign_message(token, message)
+
         # Log the message first for full audit trail
         await self.logger.log_message(message)
         self._stats["messages_sent"] += 1
@@ -76,6 +89,21 @@ class MessageBus:
             # Specific target: send only to that target's subscribers
             handlers.update(self._subscribers.get(message.target, set()))
         
+        # Verify signature if auth is configured
+        if self.auth is not None:
+            if message.signature is None:
+                logger.warning(
+                    "MessageBus: Dropping unsigned message %s from %s (auth enabled)",
+                    message.id, message.source,
+                )
+                return
+            if not self.auth.verify_message(message.source, message, message.signature):
+                logger.warning(
+                    "MessageBus: Dropping message %s from %s — invalid signature",
+                    message.id, message.source,
+                )
+                return
+
         # Deliver to all collected handlers concurrently
         if handlers:
             await asyncio.gather(

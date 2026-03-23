@@ -68,6 +68,9 @@ class BusMessage(BaseModel):
     priority: Priority = Field(default=Priority.NORMAL)
     """Priority level for focus filtering and interrupt management"""
 
+    signature: Optional[str] = Field(default=None)
+    """Optional HMAC-SHA256 signature for bus message authentication"""
+
     def is_broadcast(self) -> bool:
         """Check if this is a broadcast message."""
         return self.target == "*"
@@ -102,7 +105,8 @@ class BusMessage(BaseModel):
             "payload": self.payload,
             "timestamp": self.timestamp,
             "reply_to": self.reply_to,
-            "priority": self.priority if isinstance(self.priority, int) else self.priority.value
+            "priority": self.priority if isinstance(self.priority, int) else self.priority.value,
+            "signature": self.signature
         }
 
     class Config:

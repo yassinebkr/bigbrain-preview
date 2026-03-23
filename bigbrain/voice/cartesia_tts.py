@@ -23,6 +23,7 @@ import logging
 from typing import AsyncIterator
 
 import httpx
+import websockets
 
 log = logging.getLogger("bigbrain.voice.tts")
 
@@ -96,23 +97,21 @@ class CartesiaTTS:
             output_format: Key from OUTPUT_FORMATS dict
             speed: Speech rate (0.5 - 2.0, normal = 1.0)
         """
-        # TODO 1: Store parameters
-        #   self.api_key = api_key
-        #   self.voice_id = voice_id
-        #   self.model = model
-        #   self.output_format = OUTPUT_FORMATS.get(output_format, OUTPUT_FORMATS["pcm_16khz"])
-        #   self.speed = max(0.5, min(2.0, speed))
-        #   self.voice = voice_id or "default"  # friendly name for display
-        #   self._client = httpx.AsyncClient(
-        #       base_url=_API_BASE,
-        #       headers={
-        #           "X-API-Key": self.api_key,
-        #           "Cartesia-Version": "2024-06-10",
-        #           "Content-Type": "application/json",
-        #       },
-        #       timeout=30.0,
-        #   )
-        raise NotImplementedError("TODO 1: Store parameters")
+        self.api_key = api_key
+        self.voice_id = voice_id
+        self.model = model
+        self.output_format = OUTPUT_FORMATS.get(output_format, OUTPUT_FORMATS["pcm_16khz"])
+        self.speed = max(0.5, min(2.0, speed))
+        self.voice = voice_id or "default"  # friendly name for display
+        self._client = httpx.AsyncClient(
+            base_url=_API_BASE,
+            headers={
+                "X-API-Key": self.api_key,
+                "Cartesia-Version": "2024-06-10",
+                "Content-Type": "application/json",
+            },
+            timeout=30.0,
+        )
 
     async def synthesize(self, text: str, voice_id: str | None = None) -> bytes:
         """
@@ -127,28 +126,25 @@ class CartesiaTTS:
         Returns:
             Raw audio bytes in the configured format
         """
-        # TODO 2: REST synthesis
-        #
-        #   vid = voice_id or self.voice_id
-        #   if not vid:
-        #       raise ValueError("No voice_id set — pass one or set in __init__")
-        #
-        #   response = await self._client.post(
-        #       "/tts/bytes",
-        #       json={
-        #           "transcript": text,
-        #           "model_id": self.model,
-        #           "voice": {
-        #               "mode": "id",
-        #               "id": vid,
-        #           },
-        #           "language": "en",
-        #           "output_format": self.output_format,
-        #       },
-        #   )
-        #   response.raise_for_status()
-        #   return response.content
-        raise NotImplementedError("TODO 2: REST synthesis")
+        vid = voice_id or self.voice_id
+        if not vid:
+            raise ValueError("No voice_id set — pass one or set in __init__")
+
+        response = await self._client.post(
+            "/tts/bytes",
+            json={
+                "transcript": text,
+                "model_id": self.model,
+                "voice": {
+                    "mode": "id",
+                    "id": vid,
+                },
+                "language": "en",
+                "output_format": self.output_format,
+            },
+        )
+        response.raise_for_status()
+        return response.content
 
     async def stream(self, text: str, voice_id: str | None = None) -> AsyncIterator[dict]:
         """
@@ -172,69 +168,64 @@ class CartesiaTTS:
                - Text frames = JSON status/word-timing
             4. "done" message signals end
         """
-        # TODO 3: WebSocket streaming
-        #
-        #   import websockets
-        #
-        #   vid = voice_id or self.voice_id
-        #   if not vid:
-        #       raise ValueError("No voice_id set")
-        #
-        #   headers = {
-        #       "X-API-Key": self.api_key,
-        #       "Cartesia-Version": "2024-06-10",
-        #   }
-        #
-        #   url = f"{_WS_BASE}?model_id={self.model}&voice[mode]=id&voice[id]={vid}"
-        #
-        #   async with websockets.connect(url, extra_headers=headers) as ws:
-        #       # Send the synthesis request
-        #       request = {
-        #           "transcript": text,
-        #           "continue": False,
-        #           "context_id": "bigbrain",
-        #           "output_format": self.output_format,
-        #       }
-        #       await ws.send(json.dumps(request))
-        #
-        #       current_time = 0.0
-        #
-        #       # Receive audio chunks
-        #       async for msg in ws:
-        #           if isinstance(msg, bytes):
-        #               # Binary = audio data
-        #               sample_rate = self.output_format.get("sample_rate", 16000)
-        #               duration = len(msg) / (sample_rate * 2)  # 16-bit = 2 bytes/sample
-        #               yield {
-        #                   "audio": msg,
-        #                   "word": "",
-        #                   "start_time": current_time,
-        #                   "duration": duration,
-        #                   "is_final": False,
-        #               }
-        #               current_time += duration
-        #           else:
-        #               # Text = JSON status
-        #               data = json.loads(msg)
-        #               if data.get("type") == "done":
-        #                   yield {
-        #                       "audio": b"",
-        #                       "word": "",
-        #                       "start_time": current_time,
-        #                       "duration": 0,
-        #                       "is_final": True,
-        #                   }
-        #                   break
-        #               # Word timing events, status updates, etc.
-        #               if "word" in data:
-        #                   yield {
-        #                       "audio": b"",
-        #                       "word": data["word"],
-        #                       "start_time": data.get("start", current_time),
-        #                       "duration": data.get("duration", 0),
-        #                       "is_final": False,
-        #                   }
-        raise NotImplementedError("TODO 3: WebSocket streaming")
+        vid = voice_id or self.voice_id
+        if not vid:
+            raise ValueError("No voice_id set")
+
+        headers = {
+            "X-API-Key": self.api_key,
+            "Cartesia-Version": "2024-06-10",
+        }
+
+        url = f"{_WS_BASE}?model_id={self.model}&voice[mode]=id&voice[id]={vid}"
+
+        async with websockets.connect(url, additional_headers=headers) as ws:
+            # Send the synthesis request
+            request = {
+                "transcript": text,
+                "continue": False,
+                "context_id": "bigbrain",
+                "output_format": self.output_format,
+            }
+            await ws.send(json.dumps(request))
+
+            current_time = 0.0
+
+            # Receive audio chunks
+            async for msg in ws:
+                if isinstance(msg, bytes):
+                    # Binary = audio data
+                    sample_rate = self.output_format.get("sample_rate", 16000)
+                    duration = len(msg) / (sample_rate * 2)  # 16-bit = 2 bytes/sample
+                    yield {
+                        "audio": msg,
+                        "word": "",
+                        "start_time": current_time,
+                        "duration": duration,
+                        "is_final": False,
+                    }
+                    current_time += duration
+                else:
+                    # Text = JSON status
+                    data = json.loads(msg)
+                    if data.get("type") == "done":
+                        yield {
+                            "audio": b"",
+                            "word": "",
+                            "start_time": current_time,
+                            "duration": 0,
+                            "is_final": True,
+                        }
+                        break
+                    # Word timing events, status updates, etc.
+                    if "word" in data:
+                        yield {
+                            "audio": b"",
+                            "word": data["word"],
+                            "start_time": data.get("start", current_time),
+                            "duration": data.get("duration", 0),
+                            "is_final": False,
+                        }
 
     async def list_voices(self) -> list[dict]:
         """
@@ -243,11 +234,9 @@ class CartesiaTTS:
         Returns:
             List of voice dicts with id, name, description, language, etc.
         """
-        # TODO 4: List voices
-        #   response = await self._client.get("/voices")
-        #   response.raise_for_status()
-        #   return response.json()
-        raise NotImplementedError("TODO 4: List voices")
+        response = await self._client.get("/voices")
+        response.raise_for_status()
+        return response.json()
 
     def set_voice(self, voice_id: str) -> None:
         """Set the active voice by ID."""
@@ -268,15 +257,14 @@ class CartesiaTTS:
         Warm up the TTS service with a short synthesis call.
         Reduces first-call latency.
         """
-        # TODO 5: Warm up
-        #   try:
-        #       start = time.monotonic()
-        #       await self.synthesize("Hello.")
-        #       latency = (time.monotonic() - start) * 1000
-        #       return {"status": "ready", "latency_ms": latency, "voice": self.voice}
-        #   except Exception as e:
-        #       return {"status": "error", "error": str(e)}
-        raise NotImplementedError("TODO 5: Warm up")
+        import time
+        try:
+            start = time.monotonic()
+            await self.synthesize("Hello.")
+            latency = (time.monotonic() - start) * 1000
+            return {"status": "ready", "latency_ms": latency, "voice": self.voice}
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
 
     async def close(self) -> None:
         """Close the HTTP client."""
