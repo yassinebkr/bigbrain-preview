@@ -2,7 +2,45 @@
 
 A modular, async AI agent system built on a **3-layer architecture** with specialized brain topologies, event-driven orchestration, and focus-managed attention.
 
-> **Preview Implementation** — This is a reference/demo codebase. The [real project](https://github.com/yassinebkr/bigbrain) is built incrementally by hand.
+> **Preview Implementation** — Full reference codebase with 311 tests. The [real project](https://github.com/yassinebkr/bigbrain) is built incrementally by hand.
+
+## Quick Start
+
+```bash
+git clone https://github.com/yassinebkr/bigbrain-preview.git
+cd bigbrain-preview
+
+# Core + TUI + tests
+pip install pydantic rich textual litellm pytest pytest-asyncio
+
+# Voice (optional)
+pip install websockets sounddevice numpy
+
+# Authenticate with Claude (free via Pro/Max subscription)
+python -m bigbrain --login
+
+# Run
+python -m bigbrain
+```
+
+### Environment (`.env`)
+```bash
+# LLM (used when NOT using OAuth)
+BIGBRAIN_MODEL=anthropic/claude-opus-4-6
+BIGBRAIN_FRONT_MODEL=anthropic/claude-opus-4-6
+BIGBRAIN_CODE_MODEL=anthropic/claude-sonnet-4-20250514
+
+# Voice (optional)
+DEEPGRAM_API_KEY=dg-...
+CARTESIA_API_KEY=sk-cart-...
+CARTESIA_VOICE_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+
+# System
+BIGBRAIN_LOG_DIR=logs
+BIGBRAIN_MAX_TOKENS=2048
+BIGBRAIN_CODE_TIMEOUT=30
+BIGBRAIN_TEMPERATURE=0.7
+```
 
 ## Architecture
 
@@ -22,304 +60,277 @@ User ←→ Front Brain ←→ Bus ←→ Orchestrator(s) ←→ Sub-brains
 - Translates technical bus events into human language
 - **NOT a narrator.** Silent by default, speaks when relevant — like a real colleague
 - Drives voice pipeline (STT/TTS) when enabled
+- **Model: Opus** — the smartest available. Sub-brains can use cheaper models.
 
 ### Layer 2 — Orchestrator(s) (Task Management)
 - Pure task decomposition and routing. Never talks to the user directly.
 - One orchestrator per workspace (web dev, research, electronics, etc.)
 - Event-driven message handler (NOT a blocking loop)
-- Tracks task state, manages dependencies, dispatches subtasks
-- **RT State Streaming**: publishes typed events continuously (`brain.started`, `brain.progress`, `brain.verify`, `brain.complete`, `brain.error`)
+- DAG-based dependency resolution with ReWOO-style variable references
+- **RT State Streaming**: publishes typed events continuously
+- Configurable **execution modes** per brain (Lightning / Control / Custom)
 
 ### Layer 3 — Sub-brains (Independent Workers)
 - Standalone workers. Don't know about the user. Receive tasks, execute, return results.
-- Each brain has its own **loop topology** (see below)
+- Each brain has its own **loop topology** (Honk, ReWOO, etc.)
 - Multiple brains per workspace can collaborate
 - Monitored by their workspace's Orchestrator via heartbeats
 
+## Implemented Features
+
+### Core Infrastructure
+| Feature | Status | Description |
+|---------|--------|-------------|
+| Message Bus | ✅ | Async pub/sub, wildcard routing, concurrent dispatch, disk logging |
+| Bus Authentication | ✅ | HMAC-SHA256 per-brain tokens, auto-sign/verify |
+| BusParticipant | ✅ | Shared base class for Brains + Orchestrators |
+| BusMessage | ✅ | Pydantic-typed with priority (P0-P3), workspace, signature |
+
+### Brains
+| Feature | Status | Description |
+|---------|--------|-------------|
+| BaseBrain | ✅ | Abstract base with lifecycle, error events, double-start guard |
+| PythonBrain | ✅ | Subprocess code execution with timeout, lifecycle events |
+| ResearcherBrain | ✅ | Research planning + summarization |
+| Front Brain | ✅ | Real Claude LLM via OAuth, conversation history, code auto-execution |
+
+### Orchestration
+| Feature | Status | Description |
+|---------|--------|-------------|
+| WorkspaceOrchestrator | ✅ | DAG decomposition, ReWOO variable refs, brain load balancing |
+| Task Cancellation | ✅ | Soft (cooperative) + hard (kill) modes |
+| Execution Modes | ✅ | Lightning (auto) / Control (human gate) / Custom (per-brain) |
+| Task Timeout | ✅ | Configurable TTL with cleanup loop and callback |
+
+### Verification (5-layer pipeline)
+| Layer | Status | Description |
+|-------|--------|-------------|
+| V1 Schema | ✅ | Pydantic output validation |
+| V2 Sandbox | 🔲 | OS-level isolation (bubblewrap — production only) |
+| V3 Cross-Check | ✅ | Different-provider LLM reviews brain output |
+| V4 Deterministic | ✅ | Syntax checks, test runners, type checking |
+| V5 Human Gate | ✅ | Async approval with configurable timeout |
+
+### Focus System
+| Feature | Status | Description |
+|---------|--------|-------------|
+| Focus Modes | ✅ | Deep Focus / Normal / Overview |
+| Workspace States | ✅ | Active / Peripheral / Background |
+| Priority Filtering | ✅ | P0 (critical) through P3 (low) |
+| Event Buffering | ✅ | Deferred delivery on focus switch |
+| Focus Suggestions | ✅ | Idle detection, break suggestions, attention alerts |
+
+### Memory (3-tier)
+| Tier | Status | Description |
+|------|--------|-------------|
+| Working Memory | ✅ | Ephemeral per-brain context (in-memory) |
+| Project Memory | ✅ | Workspace-scoped ChromaDB with embeddings |
+| Long-term Memory | ✅ | Cross-workspace knowledge, single collection with scope field |
+
+### Voice Pipeline
+| Feature | Status | Description |
+|---------|--------|-------------|
+| Deepgram STT | ✅ | Nova-3 WebSocket streaming, microphone capture |
+| Cartesia TTS | ✅ | Sonic REST + WebSocket streaming, voice selection |
+| VoiceManager | ✅ | State machine, wake words, auto-listen loop |
+| Auto-detection | ✅ | `create_voice_manager()` — real APIs if keys present, mock fallback |
+
+### Auth & LLM
+| Feature | Status | Description |
+|---------|--------|-------------|
+| Anthropic OAuth | ✅ | PKCE flow, `--login` CLI, token persistence |
+| AnthropicOAuthProvider | ✅ | Raw httpx with Claude Code stealth headers |
+| litellm Provider | ✅ | Multi-provider LLM routing |
+| Mock Provider | ✅ | Realistic responses for testing |
+
+### UI
+| Feature | Status | Description |
+|---------|--------|-------------|
+| Textual TUI | ✅ | 4-panel layout: chat, brains, tasks, bus/focus |
+| Rich Fallback | ✅ | Console output when Textual unavailable |
+
 ## Brain Loop Topologies
 
-Each brain type uses a different execution loop architecture, chosen based on research into multi-agent patterns (MASS paper, Spotify Honk, LangChain, Andrew Ng patterns).
-
-### Python Brain → Spotify Honk Pattern (Inner/Outer Loop)
-
+### Python Brain → Spotify Honk Pattern
 ```
-┌─────────────── Outer Loop (Cross-Provider Review) ──────────────┐
-│                                                                  │
-│   ┌──────── Inner Loop (Deterministic Verification) ──────┐     │
-│   │                                                        │     │
-│   │   LLM generates code                                  │     │
-│   │       ↓                                                │     │
-│   │   Morph Fast Apply (merge edits into files)            │     │
-│   │       ↓                                                │     │
-│   │   verify() tool → pytest + mypy + ruff                 │     │
-│   │       ↓                                                │     │
-│   │   Pass? ──yes──→ Exit inner loop                       │     │
-│   │    │no                                                 │     │
-│   │    ↓                                                   │     │
-│   │   Reflexion memory (don't repeat same mistake)         │     │
-│   │    ↓                                                   │     │
-│   │   Fix → loop back ─────────────────────────────────────┘     │
-│   │                                                              │
-│   Cross-provider LLM review (catches scope creep — 25% go       │
-│   off-task per Spotify's findings)                               │
-│       ↓                                                          │
-│   Pass? ──yes──→ Exit gate: V4 → V1 → V3 → V5                  │
-│    │no                                                           │
-│    ↓                                                             │
-│   Retry with feedback ──────────────────────────────────────────┘
+┌─── Outer Loop (Cross-Provider Review) ───┐
+│  ┌── Inner Loop (Deterministic) ──┐      │
+│  │  LLM → code → verify → fix    │      │
+│  │  (pytest + mypy + ruff)        │      │
+│  └────────────────────────────────┘      │
+│  Cross-provider LLM review               │
+│  Exit gate: V4 → V1 → V3 → V5           │
+└──────────────────────────────────────────┘
 ```
-
-**Key insight**: The agent never sees verifier internals — just pass/fail + focused error excerpt. This prevents the LLM from gaming the verifier.
 
 ### Researcher Brain → ReWOO + Source Triangulation
-
 ```
-┌──────────── ReWOO Planning Phase ────────────┐
-│                                               │
-│   Decompose query into search plan            │
-│   (all steps planned BEFORE execution)        │
-│       ↓                                       │
-│   ┌── Parallel Execution (LLMCompiler) ──┐   │
-│   │   Search 1 ──→ results               │   │
-│   │   Search 2 ──→ results    (3.6x      │   │
-│   │   Search 3 ──→ results     speedup)  │   │
-│   └──────────────────────────────────────┘   │
-│       ↓                                       │
-│   Source triangulation                        │
-│   (cross-reference findings, score trust)     │
-│       ↓                                       │
-│   Synthesize summary with citations           │
-└───────────────────────────────────────────────┘
+Plan all steps upfront → parallel execution (3.6x speedup)
+→ source triangulation → synthesize with citations
 ```
-
-**Why ReWOO over ReAct**: ReWOO plans all steps upfront → enables parallel execution. ReAct is sequential (observe→think→act→repeat). For research, parallelism matters.
-
-### Future Brain Topologies (Planned)
-
-| Brain | Topology | Pattern |
-|-------|----------|---------|
-| **DevOps** | Plan + Rollback | Execute with automatic rollback on failure |
-| **Designer** | Self-Refine + Visual | Generate → render → self-critique → iterate |
-| **Writer** | ReWOO Sequential | Plan structure → write sections → verify coherence |
-| **Security** | Reflexion + Memory | Audit → remember past vulnerabilities → cross-reference |
-| **KiCad** | MCP-Driven | Agent-driven PCB design via KiCad's IPC-API |
-
-### Morph Fast Apply (Edit Merging Tool)
-
-Not a brain — a tool inside the Python Brain's inner loop:
-- 7B model specialized in merging code edit snippets into existing files
-- 10,500 tok/s, 98% accuracy, $0.80/M input tokens
-- Replaces brittle search-and-replace (84-96% accuracy) with purpose-built merging
-- Flow: LLM generates edit snippet → Morph applies to file → verify → loop
-- OpenAI-compatible API (works with litellm)
 
 ## Verification Pipeline
 
-Every brain output passes through a 5-layer verification pipeline, ordered cheapest-first:
+Every brain output passes through verification layers, ordered cheapest-first:
 
-| Layer | Type | What | Cost |
-|-------|------|------|------|
-| V4 | Deterministic | Syntax, tests, types (no LLM) | Free |
-| V1 | Schema | Pydantic output validation | Free |
-| V2 | Sandbox | OS-level subprocess isolation | Free |
-| V3 | Cross-Check | Different-provider LLM review | $ |
-| V5 | Human Gate | Auto/review/notify per brain | Time |
+```
+V4 (syntax/tests) → V1 (schema) → V3 (cross-provider LLM) → V5 (human gate)
+```
 
-**Key rule**: Worker and verifier use DIFFERENT LLM providers (cross-provider verification).
+**Key rule**: Worker and verifier use DIFFERENT LLM providers.
+
+Execution modes control which layers run per brain:
+- **Lightning**: V4 + V1 only (full auto)
+- **Control**: All layers including V5 human approval
+- **Custom**: Per-brain configuration
 
 ## Focus System
 
-LLMs, like humans, need focus to be efficient. The Focus System manages attention as an explicit resource.
+| Mode | What reaches the user | Use case |
+|------|----------------------|----------|
+| **Deep Focus** | P0 only (critical) | In the zone, don't interrupt |
+| **Normal** | P0 + P1 (critical + high) | Standard working |
+| **Overview** | P0 + P1 + P2 (all but low) | Checking on everything |
 
-### Three Focus States Per Workspace
-- **Active** — Full attention. All events reach Front Brain.
-- **Peripheral** — Background monitoring. Only high-priority events (failures, completions).
-- **Background** — Minimal attention. Only critical alerts break through.
-
-### User-Selectable Focus Modes
-- **Deep Focus** — Only critical (P0) events interrupt. Guards flow state.
-- **Normal** — Critical + high priority. Standard working mode.
-- **Overview** — All workspaces visible. "Project manager" mode.
-
-### Priority Hierarchy
-
-| Level | Name | Behavior | Examples |
-|-------|------|----------|----------|
-| P0 | Critical | Always interrupts | Security breach, system crash |
-| P1 | High | Next natural pause | Task failed, human input needed |
-| P2 | Normal | Buffered | Task complete, build passed |
-| P3 | Low | Detail view only | Heartbeats, minor progress |
-
-## Memory Architecture
-
-### Tier 1: Working Memory (Ephemeral)
-- Per-brain conversation context
-- Dies with brain process
-
-### Tier 2: Project Memory (ChromaDB)
-- Per-workspace structured data with vector embeddings
-- Semantic search within workspace scope
-
-### Tier 3: Long-term Memory (ChromaDB)
-- Cross-workspace knowledge, user preferences, lessons learned
-- Vectorized, query by meaning
-
-## Message Bus
-
-CAN bus-style async pub/sub connecting all components:
-
-- **Decoupled**: Components only know about the bus, not each other
-- **Logged**: Every message persisted to disk (full replay for debugging)
-- **Typed**: Pydantic-validated messages (`TASK`, `RESULT`, `EVENT`, `PROGRESS`, `CANCEL`, `QUERY`, `STATE`)
-- **Priority-filtered**: Focus System filters events by priority level
-- **Broadcast + point-to-point**: `target="*"` for events, specific target for tasks
-- **Auth**: HMAC-SHA256 per-brain tokens (planned)
-
-## Tech Stack
-
-| Component | Technology |
-|-----------|-----------|
-| Language | Python 3.12+ |
-| LLM Interface | litellm (unified API, easy model swap) |
-| Memory | ChromaDB + Google text-embedding-004 |
-| Schemas | Pydantic v2 |
-| Concurrency | asyncio |
-| Sandboxing | subprocess (→ bubblewrap for production) |
-| STT | Deepgram Nova-3 (streaming, ~100ms) |
-| TTS | Cartesia Sonic (sub-100ms, natural voice) |
-| Terminal UI | Textual (TUI) / Rich (fallback) |
-
-## Installation
-
-```bash
-git clone https://github.com/yassinebkr/bigbrain-preview.git
-cd bigbrain-preview
-
-# Core dependencies
-pip install pydantic rich
-
-# For TUI mode
-pip install textual
-
-# For tests
-pip install pytest pytest-asyncio
-```
+| Priority | Name | Examples |
+|----------|------|----------|
+| P0 | Critical | Security breach, system crash |
+| P1 | High | Task failed, human input needed |
+| P2 | Normal | Task complete, build passed |
+| P3 | Low | Heartbeats, minor progress |
 
 ## Usage
 
-### Demo Mode (default)
+### Interactive Mode (default)
 ```bash
-python -m bigbrain --mode demo
+python -m bigbrain
 ```
-Runs automated demos showing code execution and file operations, then drops into interactive mode.
+Opens the Textual TUI. Chat with the Front Brain, watch bus events, monitor brain status.
 
-### Interactive Mode
-```bash
-python -m bigbrain --mode interactive
-```
-Direct conversation with the Front Brain.
-
-### Simple Mode (no Textual TUI)
+### Simple Mode (no TUI)
 ```bash
 python -m bigbrain --simple
 ```
-Falls back to Rich console output if Textual is unavailable.
+Falls back to Rich console output.
 
-### Options
-```
---workspace NAME    Workspace name (default: demo)
---mode TYPE         interactive | demo (default: demo)
---log-dir DIR       Log directory (default: logs)
---tui               Use Textual TUI (default)
---simple            Use Rich console fallback
+### OAuth Login
+```bash
+python -m bigbrain --login    # Authenticate with Claude
+python -m bigbrain --logout   # Clear stored token
 ```
 
-## TUI Layout
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│  BigBrain - Multi-Brain AI Agent System            00:00:00  │
-├────────────────────────────────┬─────────────────────────────┤
-│ 💬 Chat                       │ 🧠 Brains                   │
-│                                │  Python: 🟢 idle             │
-│ User: hey!                     │  Researcher: 🟢 ready        │
-│ BigBrain: Hello! How can I     │  Voice: 🔇 disabled          │
-│   help you today?              │                              │
-│                                ├─────────────────────────────┤
-│                                │ 📊 Tasks                     │
-│                                │  No active tasks             │
-├────────────────────────────────┼─────────────────────────────┤
-│ 📡 Bus Monitor                 │ 🎯 Focus                    │
-│ [01:22:49] EVENT               │ Mode: 🟢 Normal              │
-│   orchestrator → *             │ Active: 📂 demo              │
-│   orchestrator.started         │ Idle: ⚡ 2s                  │
-│ [01:22:50] EVENT               │ ─────────────                │
-│   bigbrain_system → *          │ Workspaces:                  │
-│   system.ready                 │   🎯 demo (12)               │
-│                                │   👁️ research (3)            │
-├────────────────────────────────┴─────────────────────────────┤
-│ Type your message... 💬                                       │
-└──────────────────────────────────────────────────────────────┘
-```
-
-**Keybindings**: `Ctrl+C` quit · `F1` toggle focus mode · `F2` toggle voice · `F3` help · `Ctrl+L` clear chat · `Tab` navigate panels
+### Run in Separate Terminal
+**Important**: Run BigBrain in a standalone PowerShell/terminal, NOT VS Code's integrated terminal. VS Code captures keyboard shortcuts that conflict with the TUI.
 
 ## Tests
 
 ```bash
-# Full suite (133 tests)
+# Full suite (311 tests)
 python -m pytest tests/ -v
+
+# By module
+python -m pytest tests/test_bus.py -v           # Bus (14 tests)
+python -m pytest tests/test_brain.py -v          # Brains (24 tests)
+python -m pytest tests/test_python_brain.py -v   # PythonBrain (25 tests)
+python -m pytest tests/test_orchestrator.py -v   # Orchestrator (28 tests)
+python -m pytest tests/test_bus_auth.py -v       # HMAC auth (22 tests)
+python -m pytest tests/test_bus_participant.py -v # BusParticipant (17 tests)
+python -m pytest tests/test_v3_cross_check.py -v # V3 verification (19 tests)
+python -m pytest tests/test_v5_human_gate.py -v  # V5 human gate (21 tests)
+python -m pytest tests/test_execution_modes.py -v # Execution modes (30 tests)
+python -m pytest tests/test_voice_real.py -v     # Voice providers (66 tests)
+python -m pytest tests/test_memory.py -v         # Memory system
+python -m pytest tests/test_verification.py -v   # Verification pipeline
 ```
 
 ## Project Structure
 
 ```
 bigbrain/
-├── bus/              # Message bus + logging
-│   ├── bus.py        # Async pub/sub with wildcard routing
-│   ├── message.py    # BusMessage (Pydantic) + Priority enum
-│   └── logger.py     # JSONL disk logger
-├── front/            # Layer 1 — User-facing intelligence
-│   ├── front_brain.py    # Conversation, intent, task routing
+├── bus/                  # Message bus infrastructure
+│   ├── bus.py            # Async pub/sub, concurrent dispatch
+│   ├── message.py        # BusMessage + Priority + MessageType
+│   ├── auth.py           # HMAC-SHA256 message authentication
+│   ├── participant.py    # BusParticipant base class
+│   └── logger.py         # JSONL disk logger
+├── front/                # Layer 1 — User-facing intelligence
+│   ├── front_brain.py    # Conversation, intent routing, code execution
 │   └── focus_manager.py  # Attention filtering + workspace focus
-├── orchestrator/     # Layer 2 — Task management
-│   └── orchestrator.py   # Decomposition, dependencies, dispatch
-├── brains/           # Layer 3 — Execution workers
-│   ├── base.py       # BaseBrain ABC (lifecycle, bus integration)
-│   ├── python_brain.py   # Code execution (subprocess)
+├── orchestrator/         # Layer 2 — Task management
+│   ├── orchestrator.py   # DAG decomposition, dispatch, tracking
+│   └── execution_modes.py # Lightning/Control/Custom per brain
+├── brains/               # Layer 3 — Execution workers
+│   ├── base.py           # BaseBrain ABC (inherits BusParticipant)
+│   ├── python_brain.py   # Code execution via subprocess
 │   └── researcher.py     # Research + summarization
-├── memory/           # 3-tier memory system
-│   ├── working_memory.py     # Ephemeral per-brain context
-│   ├── project_memory.py     # Workspace-scoped ChromaDB
-│   ├── long_term_memory.py   # Cross-workspace knowledge
+├── memory/               # 3-tier memory system
+│   ├── working_memory.py     # Ephemeral per-brain
+│   ├── project_memory.py     # ChromaDB workspace-scoped
+│   ├── long_term_memory.py   # ChromaDB cross-workspace
+│   ├── chromadb_backend.py   # ChromaDB integration
 │   └── memory_manager.py     # Unified interface
-├── verification/     # 5-layer verification pipeline
+├── verification/         # 5-layer verification pipeline
+│   ├── pipeline.py       # Pipeline orchestration
 │   ├── v1_schema.py      # Pydantic output validation
-│   ├── v4_deterministic.py   # Syntax, tests, types
-│   └── pipeline.py       # Pipeline orchestration
-├── llm/              # LLM provider abstraction
-│   ├── provider.py   # ABC for LLM providers
+│   ├── v3_cross_check.py # Cross-provider LLM review
+│   ├── v4_deterministic.py # Syntax, tests, types
+│   └── v5_human_gate.py  # Async human approval
+├── llm/                  # LLM provider abstraction
+│   ├── provider.py       # ABC for LLM providers
+│   ├── anthropic_oauth.py # OAuth + Claude Code stealth headers
+│   ├── litellm_provider.py # Multi-provider via litellm
 │   └── mock_provider.py  # Mock with realistic responses
-├── voice/            # Voice pipeline
-│   ├── stt.py        # Speech-to-text (Deepgram Nova-3)
-│   ├── tts.py        # Text-to-speech (Cartesia Sonic)
-│   └── voice_manager.py  # Pipeline coordinator
-├── tui/              # Textual TUI
-│   ├── app.py        # Main 4-panel application
-│   ├── app.css       # Dark theme styling
-│   └── widgets/      # Chat, brains, tasks, bus, focus panels
-├── ui/               # Rich fallback UI
+├── voice/                # Voice pipeline
+│   ├── deepgram_stt.py   # Deepgram Nova-3 WebSocket streaming
+│   ├── cartesia_tts.py   # Cartesia Sonic REST + WebSocket
+│   ├── stt.py            # MockSTT for testing
+│   ├── tts.py            # MockTTS for testing
+│   └── voice_manager.py  # Pipeline coordinator + auto-detection
+├── auth/                 # Authentication
+│   └── oauth.py          # Anthropic PKCE OAuth flow
+├── tui/                  # Textual TUI
+│   ├── app.py            # Main 4-panel application
+│   ├── app.css           # Dark theme styling
+│   └── widgets/          # Chat, brains, tasks, bus, focus panels
+├── ui/                   # Rich fallback UI
 │   ├── ui_adapter.py     # ABC for UI adapters
 │   └── rich_adapter.py   # Rich console implementation
-└── __main__.py       # Entry point + system coordinator
+├── config.py             # Configuration (env + defaults)
+└── __main__.py           # Entry point + system coordinator
 ```
+
+## Tech Stack
+
+| Component | Technology |
+|-----------|-----------|
+| Language | Python 3.12+ |
+| LLM Interface | litellm + custom Anthropic OAuth provider |
+| Auth | Anthropic OAuth (PKCE) — free via Pro/Max subscription |
+| Memory | ChromaDB (PersistentClient) + vector embeddings |
+| Schemas | Pydantic v2 |
+| Concurrency | asyncio |
+| Bus Auth | HMAC-SHA256 per-brain tokens |
+| STT | Deepgram Nova-3 (WebSocket streaming, ~100ms) |
+| TTS | Cartesia Sonic (REST + WebSocket, sub-100ms) |
+| Terminal UI | Textual 8.x (dark theme, 4-panel layout) |
+| Fallback UI | Rich (console panels) |
+| Tests | pytest + pytest-asyncio (311 tests) |
+
+## Design Philosophy
+
+- **3 layers, never collapse them.** Front Brain (user) → Orchestrator (tasks) → Sub-brains (execution).
+- **Bus-decoupled.** Components only know about the bus. No direct calls.
+- **Focus is a managed resource.** Attention dilution = bad output. Filter aggressively.
+- **Cheapest verification first.** V4 (free) catches 80% of issues before V3 (costs money).
+- **Cross-provider verification.** Worker and reviewer use different LLMs. Same-provider = blind spots.
+- **Specialized beats full-stack.** Each brain has focused rules, not a generic "do everything" prompt.
+- **The user decides.** System suggests, never forces context switches or interrupts (except P0).
 
 ## License
 
-Reference implementation for educational and demonstration purposes.
+Dual license: AGPL-3.0 (core) + Commercial (contact for production use without open-source obligations).
 
 ## Links
 
 - **Real project**: [github.com/yassinebkr/bigbrain](https://github.com/yassinebkr/bigbrain) (private)
-- **Architecture spec**: See `memory/bigbrain-architecture.md` in the workspace
-- **Research**: MASS (Google ICLR 2026), Spotify Honk, LangChain planning agents, Andrew Ng patterns
+- **Research**: MASS (Google ICLR 2026), Spotify Honk, LLMCompiler, ReWOO, Andrew Ng patterns
