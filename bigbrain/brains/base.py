@@ -220,15 +220,24 @@ class BaseBrain(BusParticipant, ABC):
         """
         Send a task result back to the requester.
         
+        Passes the target explicitly (from _current_task.source) to avoid
+        fragile log-file lookups that fail on busy buses.
+        
         Args:
             result_data: Result payload - should include 'success' boolean
             reply_to: Message ID this is a response to
         """
+        # Determine target from stored task reference (avoids log search)
+        target = None
+        if self._current_task and self._current_task.id == reply_to:
+            target = self._current_task.source
+        
         await self.bus.send_result(
             source=self.name,
             result_data=result_data,
             reply_to=reply_to,
-            workspace=self.workspace
+            workspace=self.workspace,
+            target=target,
         )
     
     async def send_event(self, event_type: str, payload: Dict[str, Any] = None,

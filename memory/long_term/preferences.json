@@ -2,19 +2,19 @@
   "user_name": {
     "value": "User",
     "description": null,
-    "timestamp": 1774258767.63214,
-    "updated_count": 22
+    "timestamp": 1774260614.861396,
+    "updated_count": 29
   },
   "focus_mode": {
     "value": "FocusMode.NORMAL",
     "description": null,
-    "timestamp": 1774258767.9645734,
-    "updated_count": 22
+    "timestamp": 1774260614.8619568,
+    "updated_count": 29
   },
   "auto_focus_switch": {
-    "value": "True",
+    "value": true,
     "description": null,
-    "timestamp": 1774258768.3049972,
-    "updated_count": 22
+    "timestamp": 1774260614.8631194,
+    "updated_count": 29
   }
 }

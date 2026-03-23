@@ -221,27 +221,35 @@ class MessageBus:
     
     async def send_result(self, source: str, result_data: Dict, 
                          reply_to: str, workspace: str = None,
-                         project: str = None) -> None:
+                         project: str = None, target: str = None) -> None:
         """
         Convenience method for sending task results.
         
-        Automatically sets up the reply relationship and delivers
-        the result back to the original task sender.
-        """
-        # Get the original message to determine target
-        original_target = None
-        async for msg in self.logger.read_messages(limit=1000):
-            if msg.id == reply_to:
-                original_target = msg.source
-                break
+        Delivers the result back to the original task sender.
         
-        if not original_target:
-            raise ValueError(f"Cannot find original message {reply_to} to reply to")
+        Args:
+            source: Source component name
+            result_data: Result payload
+            reply_to: Original message ID this is a response to
+            workspace: Workspace name
+            project: Project name
+            target: Explicit target. If None, searches the log for the
+                    original message's source (fragile — prefer passing target).
+        """
+        if target is None:
+            # Fallback: search log for original message's source
+            async for msg in self.logger.read_messages(limit=1000):
+                if msg.id == reply_to:
+                    target = msg.source
+                    break
+            
+            if target is None:
+                raise ValueError(f"Cannot find original message {reply_to} to reply to")
         
         message = BusMessage(
             type=MessageType.RESULT,
             source=source,
-            target=original_target,
+            target=target,
             workspace=workspace,
             project=project,
             payload=result_data,

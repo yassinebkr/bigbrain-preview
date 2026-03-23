@@ -241,31 +241,14 @@ class BigBrainSystem:
         print("⚡ Execution modes: Lightning (auto) for all brains")
     
     def _setup_focus_filtering(self) -> None:
-        """Wire focus manager as bus event filter for Front Brain."""
-        original_on_message = self.front_brain._on_message if self.front_brain else None
-        focus = self.focus_manager
+        """Wire the system's focus manager into Front Brain.
         
-        if not original_on_message or not focus:
-            return
-        
-        async def filtered_on_message(msg):
-            """Only forward events that pass focus filtering."""
-            # Always let TASK and RESULT through (operational messages)
-            if msg.type in (MessageType.TASK, MessageType.RESULT, 
-                           MessageType.CANCEL, MessageType.QUERY):
-                if original_on_message:
-                    await original_on_message(msg)
-                return
-            
-            # Filter EVENTs through focus system
-            filtered = focus.filter_event(msg)
-            if filtered and original_on_message:
-                await original_on_message(filtered)
-        
-        # Replace front brain's bus handler with filtered version
-        if self.front_brain and hasattr(self.front_brain, 'name'):
-            self.bus.unsubscribe(self.front_brain.name, original_on_message)
-            self.bus.subscribe(self.front_brain.name, filtered_on_message)
+        FrontBrain already has focus filtering built into _handle_bus_event,
+        so we just share the system-level FocusManager instance instead of
+        letting FrontBrain use a separate one.
+        """
+        if self.front_brain and self.focus_manager:
+            self.front_brain.focus_manager = self.focus_manager
     
     async def _create_brains(self) -> None:
         """Create and register execution brains."""
@@ -297,7 +280,7 @@ class BigBrainSystem:
             if self.bus_auth:
                 self.bus_auth.generate_token(brain_name)
         # Also register system components
-        for name in ["orchestrator", f"orchestrator_{self.workspace}", "front_brain", "voice_manager"]:
+        for name in ["orchestrator", f"orchestrator_{self.workspace}", "front_brain", "voice_manager", "bigbrain_system", "demo_system"]:
             if self.bus_auth:
                 self.bus_auth.generate_token(name)
         
