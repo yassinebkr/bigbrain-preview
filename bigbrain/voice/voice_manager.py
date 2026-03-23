@@ -13,16 +13,21 @@ def create_voice_manager(**kwargs) -> "VoiceManager":
     """
     Factory that auto-detects real vs mock voice services.
     
-    Detection chain:
-      1. DEEPGRAM_API_KEY + CARTESIA_API_KEY both set → real STT + TTS
-      2. Only one key set → that service is real, other is mock
-      3. No keys → full mock (demo mode)
+    STT detection chain (first match wins):
+      1. ASSEMBLYAI_API_KEY → AssemblyAI Universal v3 (u3-rt-pro)
+      2. DEEPGRAM_API_KEY → Deepgram Nova-3
+      3. No keys → MockSTT
+    
+    TTS detection:
+      1. CARTESIA_API_KEY → Cartesia Sonic
+      2. No key → MockTTS
     
     Also needs CARTESIA_VOICE_ID for real TTS (get from Cartesia dashboard).
     
     Returns:
         VoiceManager configured with the best available providers
     """
+    assemblyai_key = os.environ.get("ASSEMBLYAI_API_KEY", "")
     deepgram_key = os.environ.get("DEEPGRAM_API_KEY", "")
     cartesia_key = os.environ.get("CARTESIA_API_KEY", "")
     cartesia_voice = os.environ.get("CARTESIA_VOICE_ID", "")
@@ -30,13 +35,21 @@ def create_voice_manager(**kwargs) -> "VoiceManager":
     stt = None
     tts = None
 
-    if deepgram_key:
+    # STT: prefer AssemblyAI if key is set, then Deepgram
+    if assemblyai_key and assemblyai_key.strip():
+        try:
+            from .assemblyai_stt import AssemblyAISTT
+            stt = AssemblyAISTT(api_key=assemblyai_key)
+            print("🎤 AssemblyAI Universal v3 STT loaded (real)")
+        except ImportError:
+            print("⚠️  websockets not installed — AssemblyAI STT unavailable. pip install websockets")
+        except Exception as e:
+            print(f"⚠️  AssemblyAI STT failed to init: {e} — falling back")
+
+    if stt is None and deepgram_key and deepgram_key.strip():
         try:
             from .deepgram_stt import DeepgramSTT
             stt = DeepgramSTT(api_key=deepgram_key)
-            # Quick validation: key should start with expected prefix
-            if not deepgram_key.strip():
-                raise ValueError("DEEPGRAM_API_KEY is empty")
             print("🎤 Deepgram Nova-3 STT loaded (real)")
         except ImportError:
             print("⚠️  websockets not installed — Deepgram STT unavailable. pip install websockets")
