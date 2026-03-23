@@ -613,7 +613,8 @@ This provides a solid foundation for your data processing needs. Would you like 
         self.message_input.placeholder = "🎤 Listening..."
 
         final_text = ""
-        self.chat_panel.start_streaming_message("user")
+        # Don't pre-create streaming widget — only show when we have interim text
+        _stt_streaming_started = False
 
         try:
             async for result in stt.stream():
@@ -626,17 +627,18 @@ This provides a solid foundation for your data processing needs. Would you like 
                 if is_final:
                     final_text = text
                     break
-                else:
-                    # Show interim transcription — REPLACE (not append)
-                    # so we see the evolving transcript, not duplicated words
-                    if self.chat_panel.current_streaming_message:
-                        self.chat_panel.current_streaming_message.replace_content(f"🎤 {text}")
+                elif text:
+                    # Show interim transcription — create widget on first interim
+                    if not _stt_streaming_started:
+                        self.chat_panel.start_streaming_message("user")
+                        _stt_streaming_started = True
+                    self.chat_panel.current_streaming_message.replace_content(f"🎤 {text}")
         except asyncio.CancelledError:
             raise
         except Exception as e:
             # Clean up orphaned streaming message
-            self.chat_panel.discard_streaming_message()
-            # Re-raise auth errors so the loop handles them (stops retrying)
+            if _stt_streaming_started:
+                self.chat_panel.discard_streaming_message()
             err_str = str(e)
             if "401" in err_str or "403" in err_str or "Unauthorized" in err_str:
                 raise
@@ -644,7 +646,8 @@ This provides a solid foundation for your data processing needs. Would you like 
             return
 
         # Discard the interim streaming widget — replace with clean final message
-        self.chat_panel.discard_streaming_message()
+        if _stt_streaming_started:
+            self.chat_panel.discard_streaming_message()
         if final_text:
             self.chat_panel.add_message("user", f"🎤 {final_text}")
 
@@ -669,20 +672,20 @@ This provides a solid foundation for your data processing needs. Would you like 
         try:
             if vb and vb._running:
                 # Stream response with 20s timeout (voice needs to be fast)
-                self.chat_panel.start_streaming_message("assistant")
+                # Collect all chunks, then show as a clean ChatMessage
                 chunks = []
                 try:
                     async with asyncio.timeout(20):
                         async for sentence in vb.stream_response(final_text):
                             chunks.append(sentence)
-                            self.chat_panel.append_to_streaming(sentence)
                 except TimeoutError:
-                    self.chat_panel.append_to_streaming("\n⏱️ (response timed out)")
-                self.chat_panel.finish_streaming_message()
-                response_text = "".join(chunks)
+                    chunks.append("\n⏱️ (timed out)")
+                response_text = "".join(chunks).strip()
 
-                # If streaming produced nothing, try non-streaming with timeout
-                if not response_text.strip():
+                if response_text:
+                    self.chat_panel.add_message("assistant", response_text)
+                else:
+                    # Streaming produced nothing — try non-streaming fallback
                     try:
                         async with asyncio.timeout(15):
                             response_text = await vb.respond_to_voice(final_text)
@@ -715,8 +718,6 @@ This provides a solid foundation for your data processing needs. Would you like 
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            # Clean up any orphaned streaming message
-            self.chat_panel.discard_streaming_message()
             response_text = f"Sorry, hit a snag — {e}"
             self.chat_panel.add_message("system", f"🧠 Voice response error: {e}")
 
