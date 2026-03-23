@@ -33,7 +33,7 @@ class PythonBrain(BaseBrain):
     """
     
     def __init__(self, name: str = "python_brain", bus=None, workspace: str = None,
-                 timeout: int = 30, work_dir: Path = None, llm_provider=None):
+                 timeout: int = 60, work_dir: Path = None, llm_provider=None):
         """
         Initialize Python execution brain.
         
@@ -262,6 +262,7 @@ Rules:
 - The code must be self-contained and runnable as a script
 - IMPORTANT: The script MUST produce printed output. Always include a main section that runs the code and prints interesting results, statistics, or insights using print()
 - No external dependencies beyond the standard library (no numpy, scipy, matplotlib, etc.)
+- Keep execution time under 30 seconds — limit iterations/grid sizes to stay fast
 - Include error handling where appropriate
 - For f-strings with dict access, use double quotes outside and bracket notation: f"{{d['key']}}" or use variables: val = d['key']; f"{{val}}"
 - Ensure all strings are properly closed on the same line"""

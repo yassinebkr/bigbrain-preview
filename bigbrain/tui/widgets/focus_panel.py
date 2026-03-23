@@ -25,15 +25,13 @@ class FocusPanel(Vertical):
     def __init__(self, **kwargs):
         """Initialize focus panel."""
         self.current_mode = "normal"
-        self.active_workspace = "demo"
+        self.active_workspace = "default"
         self.last_activity = datetime.now()
         self.focus_start_time = datetime.now()
         
-        # Workspace states
+        # Workspace states — starts with the system workspace, grows dynamically
         self.workspaces = {
-            "demo": {"state": "active", "since": datetime.now(), "events": 12},
-            "research": {"state": "peripheral", "since": datetime.now() - timedelta(minutes=15), "events": 3},
-            "coding": {"state": "background", "since": datetime.now() - timedelta(hours=1), "events": 0}
+            "default": {"state": "active", "since": datetime.now(), "events": 0},
         }
         
         super().__init__(**kwargs)
@@ -306,21 +304,5 @@ class FocusPanel(Vertical):
         }
     
     def simulate_focus_changes(self) -> None:
-        """Simulate focus changes for demo purposes."""
-        import asyncio
-        
-        async def focus_simulation():
-            # Simulate normal workflow
-            await asyncio.sleep(3)
-            self.increment_workspace_events("demo", 2)
-            
-            await asyncio.sleep(2)
-            self.update_focus("normal", "demo", 0.1)
-            
-            await asyncio.sleep(4)
-            self.add_workspace("analysis", "peripheral")
-            
-            await asyncio.sleep(3)
-            self.increment_workspace_events("analysis", 1)
-        
-        asyncio.create_task(focus_simulation())
+        """No-op — replaced demo simulation with real bus events."""
+        pass

@@ -36,6 +36,7 @@ class BigBrainApp(App):
         Binding("f3", "show_help", "Help"),
         Binding("ctrl+l", "clear_chat", "Clear Chat"),
         Binding("ctrl+b", "clear_bus", "Clear Bus"),
+        Binding("ctrl+y", "copy_last", "Copy Last"),
         Binding("tab", "focus_next", "Next Panel"),
         Binding("shift+tab", "focus_previous", "Previous Panel"),
     ]
@@ -646,13 +647,10 @@ This provides a solid foundation for your data processing needs. Would you like 
             task_id = message.payload.get("task_id", "")[:8] if message.payload.get("task_id") else None
 
             if "brain.started" in event_type and task_id:
-                # Brain picked up a task
+                # Brain picked up a task — update brain panel status
                 if self.brain_panel:
                     task_type = message.payload.get("task_type", "task")
                     self.brain_panel.update_brain_status(brain_name, "busy", True, task_type)
-                if self.task_panel and task_id:
-                    self.task_panel.add_task(f"{brain_name}: {message.payload.get('task_type', 'working')}", task_id)
-                    self.task_panel.update_task_progress(task_id, 30, "running", "Processing...")
 
             elif "brain.complete" in event_type:
                 if self.brain_panel:
@@ -1066,3 +1064,29 @@ All system activity is shown in real-time across the panels."""
         if self.bus_monitor:
             self.bus_monitor.clear()
             self.notify("Bus monitor cleared")
+
+    def action_copy_last(self) -> None:
+        """Copy last assistant message to clipboard."""
+        if not self.chat_panel or not self.chat_panel.messages:
+            self.notify("Nothing to copy", severity="warning")
+            return
+        
+        # Find last assistant message
+        for msg in reversed(self.chat_panel.messages):
+            if hasattr(msg, 'role') and msg.role == "assistant" and hasattr(msg, 'message_text'):
+                text = msg.message_text
+                try:
+                    self.copy_to_clipboard(text)
+                    preview = text[:40] + "..." if len(text) > 40 else text
+                    self.notify(f"Copied: {preview}")
+                except Exception:
+                    # Fallback: try pyperclip
+                    try:
+                        import pyperclip
+                        pyperclip.copy(text)
+                        self.notify("Copied to clipboard")
+                    except Exception:
+                        self.notify("Clipboard unavailable — use terminal selection", severity="warning")
+                return
+        
+        self.notify("No assistant message to copy", severity="warning")
