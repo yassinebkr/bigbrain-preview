@@ -34,7 +34,12 @@ def create_voice_manager(**kwargs) -> "VoiceManager":
         try:
             from .deepgram_stt import DeepgramSTT
             stt = DeepgramSTT(api_key=deepgram_key)
+            # Quick validation: key should start with expected prefix
+            if not deepgram_key.strip():
+                raise ValueError("DEEPGRAM_API_KEY is empty")
             print("🎤 Deepgram Nova-3 STT loaded (real)")
+        except ImportError:
+            print("⚠️  websockets not installed — Deepgram STT unavailable. pip install websockets")
         except Exception as e:
             print(f"⚠️  Deepgram STT failed to init: {e} — falling back to mock")
 

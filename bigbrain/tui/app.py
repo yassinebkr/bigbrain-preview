@@ -540,18 +540,56 @@ This provides a solid foundation for your data processing needs. Would you like 
 
         vm = system.voice_manager
         vb = system.voice_brain
+        consecutive_errors = 0
+        max_consecutive_errors = 3
 
         while self.voice_enabled and vm.is_enabled:
             try:
                 await self._voice_listen_once(vm, vb, system)
+                consecutive_errors = 0  # Reset on success
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                self.chat_panel.add_message("system", f"🎤 Voice error: {e}")
+                consecutive_errors += 1
+                err_str = str(e)
+
+                # Auth errors → stop immediately, no retry
+                if "401" in err_str or "403" in err_str or "Unauthorized" in err_str:
+                    self.chat_panel.add_message(
+                        "system",
+                        f"🔑 STT authentication failed: {e}\n"
+                        "Check your DEEPGRAM_API_KEY in .env — it may be expired or invalid.\n"
+                        "Voice mode disabled."
+                    )
+                    # Force disable voice
+                    self.voice_enabled = False
+                    if vm:
+                        vm.disable_voice()
+                    if self.brain_panel:
+                        self.brain_panel.update_brain_status("voice_brain", "disabled", False)
+                    self.message_input.placeholder = "Type your message... 💬"
+                    break
+
+                # Too many consecutive errors → give up
+                if consecutive_errors >= max_consecutive_errors:
+                    self.chat_panel.add_message(
+                        "system",
+                        f"🎤 Voice error ({consecutive_errors}x): {e}\n"
+                        "Too many errors — disabling voice. Press F2 to try again."
+                    )
+                    self.voice_enabled = False
+                    if vm:
+                        vm.disable_voice()
+                    if self.brain_panel:
+                        self.brain_panel.update_brain_status("voice_brain", "disabled", False)
+                    self.message_input.placeholder = "Type your message... 💬"
+                    break
+
+                self.chat_panel.add_message("system", f"🎤 Voice error: {e} (retry {consecutive_errors}/{max_consecutive_errors})")
                 if self.brain_panel:
                     self.brain_panel.update_brain_status("voice_brain", "error", True)
-                # Brief pause before retrying
-                await asyncio.sleep(1.0)
+                # Exponential backoff: 1s, 2s, 4s
+                await asyncio.sleep(min(2 ** (consecutive_errors - 1), 8))
 
         # Clean exit
         if self.brain_panel:
@@ -600,7 +638,13 @@ This provides a solid foundation for your data processing needs. Would you like 
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            self.chat_panel.finish_streaming_message()
+            # Clean up orphaned streaming message
+            if self.chat_panel.current_streaming_message:
+                self.chat_panel.finish_streaming_message()
+            # Re-raise auth errors so the loop handles them (stops retrying)
+            err_str = str(e)
+            if "401" in err_str or "403" in err_str or "Unauthorized" in err_str:
+                raise
             self.chat_panel.add_message("system", f"🎤 STT error: {e}")
             return
 
