@@ -240,19 +240,4 @@ Footer {
     text-style: bold;
 }
 
-/* Responsive adjustments for smaller screens */
-@media (max-width: 120) {
-    #chat-container {
-        width: 100%;
-    }
-    
-    #right-column {
-        width: 100%;
-        height: 30%;
-    }
-    
-    #top-row {
-        layout: vertical;
-        height: 70%;
-    }
-}
+/* Responsive adjustments removed — Textual CSS does not support @media queries */
