@@ -78,6 +78,8 @@ class BusMonitor(VerticalScroll):
     - Activity statistics
     """
     
+    BORDER_TITLE = "📡 Bus Monitor"
+    
     def __init__(self, max_messages: int = 100, **kwargs):
         """
         Initialize bus monitor.

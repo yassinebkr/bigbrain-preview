@@ -105,6 +105,8 @@ class ChatPanel(VerticalScroll):
     - Automatic scroll to bottom
     """
     
+    BORDER_TITLE = "💬 Chat"
+    
     def __init__(self, **kwargs):
         """Initialize chat panel."""
         self.messages = []

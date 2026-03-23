@@ -171,6 +171,8 @@ class TaskPanel(Vertical):
     - Task flow visualization
     """
     
+    BORDER_TITLE = "📊 Tasks"
+    
     def __init__(self, **kwargs):
         """Initialize task panel."""
         self.tasks = {}

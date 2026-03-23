@@ -20,6 +20,8 @@ class FocusPanel(Vertical):
     - Attention statistics
     """
     
+    BORDER_TITLE = "🎯 Focus"
+    
     def __init__(self, **kwargs):
         """Initialize focus panel."""
         self.current_mode = "normal"

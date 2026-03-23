@@ -104,6 +104,8 @@ class BrainPanel(Vertical):
     - Color-coded status indicators
     """
     
+    BORDER_TITLE = "🧠 Brains"
+    
     def __init__(self, **kwargs):
         """Initialize brain panel."""
         self.brains = {}
