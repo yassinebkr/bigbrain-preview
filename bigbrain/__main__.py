@@ -9,6 +9,7 @@ from typing import Dict, Any, Optional
 
 from .bus.bus import MessageBus
 from .bus.message import BusMessage, MessageType, Priority
+from .config import config
 from .orchestrator.orchestrator import WorkspaceOrchestrator
 from .brains.python_brain import PythonBrain
 from .brains.researcher import ResearcherBrain
@@ -82,11 +83,19 @@ class BigBrainSystem:
         # Create orchestrator
         self.orchestrator = WorkspaceOrchestrator(self.workspace, self.bus)
         
-        # Create LLM provider
-        self.llm_provider = MockLLMProvider(
-            token_delay_ms=50,
-            realistic_responses=True
-        )
+        # Create LLM provider — real if API key available, mock otherwise
+        if config.has_api_key:
+            try:
+                from .llm.litellm_provider import LiteLLMProvider
+                self.llm_provider = LiteLLMProvider(default_model=config.effective_front_model)
+                print(f"🔑 LLM: {config.summary()}")
+            except ImportError:
+                print("⚠️  API key found but litellm not installed. Run: pip install litellm")
+                print("    Falling back to mock LLM.")
+                self.llm_provider = MockLLMProvider(token_delay_ms=50, realistic_responses=True)
+        else:
+            print("ℹ️  No API key found — using mock LLM. Set OPENAI_API_KEY or ANTHROPIC_API_KEY in .env")
+            self.llm_provider = MockLLMProvider(token_delay_ms=50, realistic_responses=True)
         
         # Create voice manager
         self.voice_manager = VoiceManager(auto_listen=True)
@@ -107,13 +116,14 @@ class BigBrainSystem:
     
     async def _create_brains(self) -> None:
         """Create and register execution brains."""
-        # Python execution brain
+        # Python execution brain (with LLM for code generation)
         python_brain = PythonBrain(
             name="python_brain",
             bus=self.bus,
             workspace=self.workspace,
             timeout=30,
-            work_dir=Path(f"work/{self.workspace}/python")
+            work_dir=Path(f"work/{self.workspace}/python"),
+            llm_provider=self.llm_provider
         )
         self.brains["python_brain"] = python_brain
         

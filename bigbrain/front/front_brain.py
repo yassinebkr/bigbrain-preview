@@ -59,6 +59,7 @@ class FrontBrain:
         # State
         self._running = False
         self._current_conversation_id: Optional[str] = None
+        self._conversation_history: List[Dict[str, str]] = []
         
         # Load user preferences and context
         self._load_user_context()
@@ -110,6 +111,9 @@ class FrontBrain:
         """
         Process user input and return response.
         
+        When a real LLM is available, uses it for all responses.
+        Falls back to pattern-matching + mock when no LLM configured.
+        
         Args:
             input_text: User's input text
             input_type: Type of input ("text", "voice", "command")
@@ -120,36 +124,122 @@ class FrontBrain:
         self.focus_manager.mark_user_activity()
         
         # Store conversation turn
+        self._conversation_history.append({"role": "user", "content": input_text})
         self.memory.store_conversation_turn("user", input_text, {
             "type": input_type,
             "conversation_id": self._current_conversation_id
         })
         
-        # Analyze intent
-        intent = await self._analyze_intent(input_text)
-        
-        if intent["type"] == "focus_management":
+        # Handle built-in commands first (no LLM needed)
+        command = input_text.lower().strip()
+        if command == "help":
+            response = self._get_help_text()
+        elif command == "status":
+            response = await self._handle_status_query({"target": "general"})
+        elif any(word in command for word in ["deep focus", "normal focus", "overview"]):
+            intent = await self._analyze_intent(input_text)
             response = await self._handle_focus_command(intent)
-        
-        elif intent["type"] == "task_request":
-            response = await self._handle_task_request(intent, input_text)
-        
-        elif intent["type"] == "status_query":
-            response = await self._handle_status_query(intent)
-        
-        elif intent["type"] == "conversation":
-            response = await self._handle_conversation(intent, input_text)
-        
+        elif self.llm_provider and not isinstance(self.llm_provider, type(None)):
+            # Use LLM for everything else
+            response = await self._llm_respond(input_text)
         else:
-            response = await self._handle_unknown_input(input_text)
+            # Fallback to pattern matching
+            intent = await self._analyze_intent(input_text)
+            if intent["type"] == "task_request":
+                response = await self._handle_task_request(intent, input_text)
+            elif intent["type"] == "conversation":
+                response = await self._handle_conversation(intent, input_text)
+            else:
+                response = await self._handle_unknown_input(input_text)
         
         # Store response
+        self._conversation_history.append({"role": "assistant", "content": response})
         self.memory.store_conversation_turn("assistant", response, {
-            "intent": intent,
             "conversation_id": self._current_conversation_id
         })
         
         return response
+    
+    async def _llm_respond(self, input_text: str) -> str:
+        """Generate response using the real LLM with full conversation context."""
+        # Check if user wants code execution
+        text_lower = input_text.lower()
+        is_code_request = any(kw in text_lower for kw in [
+            "run", "execute", "code", "python", "script", "write a program",
+            "write code", "create a script", "```"
+        ])
+        
+        if is_code_request and "```" in input_text:
+            # User provided code directly — route to execution
+            return await self._handle_task_request(
+                {"type": "task_request", "task_type": "execute_code", "content": input_text},
+                input_text
+            )
+        
+        # Build system prompt with current context
+        focus_status = self.focus_manager.get_focus_status()
+        system_prompt = self._build_system_prompt(focus_status)
+        
+        messages = [{"role": "system", "content": system_prompt}]
+        
+        # Add conversation history (keep last 20 turns for context)
+        history = self._conversation_history[-20:]
+        messages.extend(history)
+        
+        try:
+            response = await self.llm_provider.chat_complete(
+                messages=messages,
+                stream=False
+            )
+            
+            # If the LLM suggests running code, route it
+            if is_code_request and response:
+                # Let the LLM's response stand — it might include code or explanation
+                pass
+            
+            return response
+        except Exception as e:
+            return f"I encountered an error processing your request: {e}"
+    
+    def _build_system_prompt(self, focus_status: dict) -> str:
+        """Build the system prompt for the Front Brain LLM."""
+        active_ws = focus_status.get("active_workspace", "default")
+        mode = focus_status.get("focus_mode", "normal")
+        
+        return f"""You are BigBrain, a multi-brain AI assistant system. You are the Front Brain — the user-facing personality layer.
+
+Your name is BigBrain. You're helpful, direct, and technically capable.
+
+Current state:
+- User: {self.user_name}
+- Active workspace: {active_ws}
+- Focus mode: {mode}
+- Available brains: PythonBrain (code execution), ResearcherBrain (web research)
+
+Capabilities you can help with:
+- Writing and executing Python code
+- Research and analysis
+- General conversation and questions
+- Managing focus and attention across workspaces
+- Task decomposition and delegation
+
+When the user asks you to write or run code, provide the code and explain what it does.
+When the user asks a question, answer it directly and helpfully.
+Be conversational but concise. No filler phrases like "Great question!" or "I'd be happy to help!"
+"""
+    
+    def _get_help_text(self) -> str:
+        """Return help text."""
+        return """**BigBrain Commands & Capabilities**
+
+💬 **Chat** — Just talk naturally. I use a real LLM to understand and respond.
+🐍 **Code** — "Write a fibonacci function" or paste code in ``` blocks to execute
+🔍 **Research** — "Research quantum computing" (routes to Researcher Brain)
+🎯 **Focus** — "deep focus" / "normal focus" / "overview" to change attention mode
+📊 **Status** — Check system and workspace status
+❓ **Help** — This message
+
+Type 'quit' or 'exit' to stop."""
     
     async def _handle_bus_event(self, event: BusMessage) -> None:
         """
@@ -303,16 +393,20 @@ class FrontBrain:
         }
         
         if task_type == "execute_code":
-            # Extract code from input (simplified)
+            # Check if user provided actual code or just a description
             if "```" in original_text:
+                # Extract code from markdown fences
                 code_start = original_text.find("```") + 3
                 code_end = original_text.rfind("```")
                 code = original_text[code_start:code_end].strip()
                 if code.startswith("python"):
                     code = code[6:].strip()
                 task_payload["code"] = code
+                task_payload["type"] = "execute_code"
             else:
-                task_payload["code"] = original_text
+                # Natural language request — let PythonBrain generate code via LLM
+                task_payload["type"] = "generate_and_execute"
+                task_payload["user_request"] = original_text
             
             target = "python_brain"
         

@@ -33,7 +33,7 @@ class PythonBrain(BaseBrain):
     """
     
     def __init__(self, name: str = "python_brain", bus=None, workspace: str = None,
-                 timeout: int = 30, work_dir: Path = None):
+                 timeout: int = 30, work_dir: Path = None, llm_provider=None):
         """
         Initialize Python execution brain.
         
@@ -43,9 +43,11 @@ class PythonBrain(BaseBrain):
             workspace: Workspace this brain belongs to
             timeout: Default execution timeout in seconds
             work_dir: Working directory for code execution
+            llm_provider: LLM provider for code generation (optional)
         """
         super().__init__(name, bus, workspace)
         self.timeout = timeout
+        self.llm_provider = llm_provider
         self.work_dir = Path(work_dir or tempfile.gettempdir()) / f"bigbrain_python_{name}"
         self.work_dir.mkdir(exist_ok=True, parents=True)
         
@@ -79,21 +81,88 @@ class PythonBrain(BaseBrain):
         payload = message.payload
         task_type = payload.get("type")
         
-        if task_type != "execute_code":
+        if task_type == "generate_and_execute":
+            # LLM generates code from natural language, then we execute it
+            return await self._generate_and_execute(payload)
+        elif task_type == "execute_code":
+            code = payload.get("code")
+            if not code:
+                raise ValueError("No code provided in task")
+            timeout = payload.get("timeout", self.timeout)
+            await self._create_task_files(payload.get("files", {}))
+            return await self._execute_code(code, timeout)
+        else:
             raise ValueError(f"Unknown task type: {task_type}")
+    
+    async def _generate_and_execute(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate code via LLM from natural language request, then execute it."""
+        if not self.llm_provider:
+            return {
+                "success": False,
+                "error": "No LLM provider configured — cannot generate code. Provide code directly.",
+                "stdout": "", "stderr": "", "exit_code": -1
+            }
         
-        code = payload.get("code")
-        if not code:
-            raise ValueError("No code provided in task")
+        user_request = payload.get("user_request", payload.get("query", ""))
+        if not user_request:
+            return {"success": False, "error": "No request provided", "stdout": "", "stderr": "", "exit_code": -1}
         
-        # Use task-specific timeout if provided
-        timeout = payload.get("timeout", self.timeout)
+        await self.send_progress({"stage": "generating_code", "request": user_request[:100]})
         
-        # Create any additional files requested
-        await self._create_task_files(payload.get("files", {}))
+        # Ask LLM to generate executable Python code
+        prompt = f"""Write a Python script that does the following:
+
+{user_request}
+
+Rules:
+- Output ONLY the Python code, no explanation before or after
+- The code must be self-contained and runnable as a script
+- Use print() to show results
+- No external dependencies beyond the standard library
+- Include error handling where appropriate"""
         
-        # Execute the code
-        return await self._execute_code(code, timeout)
+        try:
+            generated = await self.llm_provider.complete(prompt, stream=False)
+            
+            # Extract code from response (strip markdown fences if present)
+            code = self._extract_code(generated)
+            
+            if not code.strip():
+                return {"success": False, "error": "LLM returned empty code", "stdout": "", "stderr": "", "exit_code": -1}
+            
+            await self.send_progress({"stage": "executing_generated_code", "code_lines": code.count("\n") + 1})
+            
+            # Execute the generated code
+            timeout = payload.get("timeout", self.timeout)
+            result = await self._execute_code(code, timeout)
+            result["generated_code"] = code
+            return result
+            
+        except Exception as e:
+            return {"success": False, "error": f"Code generation failed: {e}", "stdout": "", "stderr": "", "exit_code": -1}
+    
+    @staticmethod
+    def _extract_code(text: str) -> str:
+        """Extract Python code from LLM response (handles markdown fences)."""
+        # If wrapped in ```python ... ``` or ``` ... ```
+        if "```" in text:
+            lines = text.split("\n")
+            code_lines = []
+            in_block = False
+            for line in lines:
+                if line.strip().startswith("```") and not in_block:
+                    in_block = True
+                    continue
+                elif line.strip() == "```" and in_block:
+                    in_block = False
+                    continue
+                elif in_block:
+                    code_lines.append(line)
+            if code_lines:
+                return "\n".join(code_lines)
+        
+        # No fences — return as-is
+        return text
     
     async def _create_task_files(self, files: Dict[str, str]) -> None:
         """Create additional files requested by the task."""
