@@ -3,10 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#08080f">
+  <meta name="color-scheme" content="dark">
   <title>BigBrain — Morphable UI</title>
   <link rel="stylesheet" href="/static/style.css">
 
-  <!-- Geist font (same as Scratchy) -->
+  <!-- Geist font -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono&display=swap" rel="stylesheet">
@@ -15,30 +17,30 @@
   <div id="app">
 
     <!-- Top Bar -->
-    <div id="top-bar">
+    <header id="top-bar">
       <div class="logo">
         <span>🧠</span>
         <span>BigBrain</span>
       </div>
-      <div id="workspace-selector">
+      <nav id="workspace-selector" aria-label="Workspace switcher">
         <!-- Populated by app.js -->
-      </div>
+      </nav>
       <div class="connection-wrap">
         <span class="connection-label">Bus</span>
-        <div id="connection-status" class="connection-disconnected"></div>
+        <div id="connection-status" class="connection-disconnected" role="status" aria-label="Connection status"></div>
       </div>
-    </div>
+    </header>
 
     <!-- Panel grid -->
-    <div id="grid-container"></div>
+    <main id="grid-container"></main>
 
     <!-- Status strip -->
-    <div id="status-strip"></div>
+    <div id="status-strip" role="complementary" aria-label="Status bar"></div>
 
     <!-- Chat input -->
     <div id="input-area">
-      <input type="text" id="chat-input" placeholder="Ask BigBrain anything..." autocomplete="off" spellcheck="false">
-      <button id="send-btn">Send ⏎</button>
+      <input type="text" id="chat-input" placeholder="Ask BigBrain anything…" autocomplete="off" spellcheck="false" aria-label="Chat message input">
+      <button id="send-btn" aria-label="Send message">Send ⏎</button>
     </div>
 
   </div>

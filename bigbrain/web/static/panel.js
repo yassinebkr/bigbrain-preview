@@ -14,6 +14,26 @@
  */
 
 // ============================================================
+// HELPERS
+// ============================================================
+
+/** Escape HTML to prevent XSS in user-facing text. */
+function _escapeHtml(text) {
+  const el = document.createElement('span');
+  el.textContent = text;
+  return el.innerHTML;
+}
+
+/** Format a compact timestamp for chat / bus messages. */
+function _timestamp(fmt = 'HH:mm') {
+  const d = new Date();
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  const ss = String(d.getSeconds()).padStart(2, '0');
+  return fmt === 'HH:mm:ss' ? `${hh}:${mm}:${ss}` : `${hh}:${mm}`;
+}
+
+// ============================================================
 // BASE PANEL
 // ============================================================
 
@@ -56,25 +76,21 @@ class BasePanel {
     titleBar.className = 'panel-title-bar';
     titleBar.innerHTML = `
       <span class="panel-icon">${this.icon}</span>
-      <span class="panel-title">${this.title}</span>
+      <span class="panel-title">${_escapeHtml(this.title)}</span>
       <span class="panel-actions">
         <button class="panel-btn panel-btn-collapse" title="Toggle collapse">▾</button>
       </span>
     `;
 
-    // Click title bar to toggle collapse
+    // Click title bar → request collapse (let app.js orchestrate FLIP)
     titleBar.addEventListener('click', (e) => {
-      if (e.target.closest('.panel-btn')) return; // Let button handlers run
-      this.el.classList.toggle('panel-collapsed');
-      this._onCollapseToggle();
+      if (e.target.closest('.panel-btn')) return;
+      this._requestCollapseToggle();
     });
 
     // Collapse button
-    const collapseBtn = titleBar.querySelector('.panel-btn-collapse');
-    collapseBtn.addEventListener('click', () => {
-      this.el.classList.toggle('panel-collapsed');
-      this._onCollapseToggle();
-    });
+    titleBar.querySelector('.panel-btn-collapse')
+      .addEventListener('click', () => this._requestCollapseToggle());
 
     // Content area
     const content = document.createElement('div');
@@ -98,7 +114,11 @@ class BasePanel {
    * @param {HTMLElement} contentEl - The .panel-content element
    */
   renderContent(contentEl) {
-    contentEl.textContent = 'Empty panel';
+    contentEl.innerHTML = `
+      <div class="panel-empty">
+        <span class="panel-empty-icon">📦</span>
+        <span class="panel-empty-text">Empty panel</span>
+      </div>`;
   }
 
   /**
@@ -108,7 +128,6 @@ class BasePanel {
    */
   subscribe(busClient) {
     this._busClient = busClient;
-    // Subclass should override to add specific subscriptions
     this._setupSubscriptions();
   }
 
@@ -116,9 +135,7 @@ class BasePanel {
    * Override to set up bus subscriptions.
    * Use this._addSubscription(filter, handler).
    */
-  _setupSubscriptions() {
-    // Default: no subscriptions
-  }
+  _setupSubscriptions() {}
 
   /**
    * Register a bus subscription.
@@ -138,15 +155,12 @@ class BasePanel {
    *
    * @param {object} event - Bus event data
    */
-  onEvent(event) {
-    // Override in subclass
-  }
+  onEvent(event) {}
 
   /**
    * Unmount and cleanup.
    */
   unmount() {
-    // Remove bus subscriptions
     for (const sub of this._subscriptions) {
       if (this._busClient) {
         this._busClient.off(sub.filter, sub.handler);
@@ -155,7 +169,6 @@ class BasePanel {
     this._subscriptions = [];
     this._busClient = null;
 
-    // Remove DOM
     if (this.el && this.el.parentNode) {
       this.el.remove();
     }
@@ -210,10 +223,27 @@ class BasePanel {
     }
   }
 
+  /**
+   * Dispatch a bubbling event so app.js can orchestrate FLIP animation
+   * and grid adaptation.  The actual class toggle happens in app.js.
+   */
+  _requestCollapseToggle() {
+    if (!this.el) return;
+    this.el.dispatchEvent(new CustomEvent('panel-collapse-toggle', {
+      bubbles: true,
+      detail: { panelId: this.id },
+    }));
+  }
+
+  /**
+   * Called by app.js AFTER the collapsed class has been toggled
+   * to update visual affordances (button icon).
+   */
   _onCollapseToggle() {
-    const btn = this.el.querySelector('.panel-btn-collapse');
+    const btn = this.el?.querySelector('.panel-btn-collapse');
+    if (!btn) return;
     const collapsed = this.el.classList.contains('panel-collapsed');
-    if (btn) btn.textContent = collapsed ? '▸' : '▾';
+    btn.textContent = collapsed ? '▸' : '▾';
   }
 }
 
@@ -235,7 +265,8 @@ class ChatPanel extends BasePanel {
       <div class="chat-messages" id="chat-${this.id}">
         <div class="panel-empty">
           <span class="panel-empty-icon">💬</span>
-          <span class="panel-empty-text">Conversation will appear here as you chat with BigBrain</span>
+          <span class="panel-empty-text">Start a conversation with BigBrain</span>
+          <span class="panel-empty-hint">Type a message below and press Enter</span>
         </div>
       </div>
     `;
@@ -258,10 +289,14 @@ class ChatPanel extends BasePanel {
 
     const role = data.role || 'system';
     const text = data.text || data.content || '';
+    const time = _timestamp('HH:mm');
 
     const msgEl = document.createElement('div');
     msgEl.className = `chat-msg chat-msg-${role}`;
-    msgEl.textContent = text;
+    msgEl.innerHTML = `
+      <div class="chat-msg-body">${_escapeHtml(text)}</div>
+      <div class="chat-msg-timestamp">${time}</div>
+    `;
     container.appendChild(msgEl);
     container.scrollTop = container.scrollHeight;
 
@@ -282,7 +317,8 @@ class BrainStatusPanel extends BasePanel {
     el.innerHTML = `<div class="brain-list">
       <div class="panel-empty">
         <span class="panel-empty-icon">🧠</span>
-        <span class="panel-empty-text">Waiting for brain activity...</span>
+        <span class="panel-empty-text">Waiting for brain activity</span>
+        <span class="panel-empty-hint">Brains will appear here when active</span>
       </div>
     </div>`;
   }
@@ -321,19 +357,17 @@ class BrainStatusPanel extends BasePanel {
     const list = this.el?.querySelector('.brain-list');
     if (!list) return;
 
-    // Clear empty state
-    const empty = list.querySelector('.panel-empty');
-    if (empty) empty.remove();
-
     list.innerHTML = '';
     for (const [name, info] of this.brains) {
+      const statusLabel = { idle: 'Idle', busy: 'Working', error: 'Error' }[info.status] || 'Unknown';
+
       const item = document.createElement('div');
       item.className = `brain-item brain-${info.status}`;
-      const indicator = { idle: '🟢', busy: '🟡', error: '🔴' }[info.status] || '⚪';
       item.innerHTML = `
-        <span class="brain-indicator">${indicator}</span>
-        <span class="brain-name">${name}</span>
-        <span class="brain-task">${info.task}</span>
+        <span class="brain-indicator"></span>
+        <span class="brain-name">${_escapeHtml(name)}</span>
+        ${info.task ? `<span class="brain-task">${_escapeHtml(info.task)}</span>` : ''}
+        <span class="brain-status-badge">${statusLabel}</span>
       `;
       list.appendChild(item);
     }
@@ -353,7 +387,8 @@ class TaskListPanel extends BasePanel {
     el.innerHTML = `<div class="task-list">
       <div class="panel-empty">
         <span class="panel-empty-icon">📋</span>
-        <span class="panel-empty-text">No active tasks. Send a message to get started.</span>
+        <span class="panel-empty-text">No active tasks</span>
+        <span class="panel-empty-hint">Send a message to start a task</span>
       </div>
     </div>`;
   }
@@ -399,15 +434,22 @@ class TaskListPanel extends BasePanel {
 
     list.innerHTML = '';
     for (const [, task] of this.tasks) {
-      const item = document.createElement('div');
       const icon = { running: '⏳', complete: '✅', failed: '❌' }[task.status] || '⏳';
+      const statusLabel = { running: 'Running', complete: 'Done', failed: 'Failed' }[task.status] || 'Pending';
+
+      const item = document.createElement('div');
       item.className = `task-item task-${task.status}`;
       item.innerHTML = `
-        <span class="task-icon">${icon}</span>
-        <span class="task-type">${task.type}</span>
-        <span class="task-target">${task.target}</span>
+        <div class="task-item-header">
+          <span class="task-icon">${icon}</span>
+          <span class="task-type">${_escapeHtml(task.type)}</span>
+          <span class="task-status-badge">${statusLabel}</span>
+        </div>
+        <div style="padding-left:24px">
+          <span class="task-target">${_escapeHtml(task.target || '')}</span>
+        </div>
         <div class="task-progress-bar">
-          <div class="task-progress-fill" style="width: ${task.progress}%"></div>
+          <div class="task-progress-fill" style="width:${task.progress}%"></div>
         </div>
       `;
       list.appendChild(item);
@@ -428,7 +470,8 @@ class BusMonitorPanel extends BasePanel {
     el.innerHTML = `<div class="bus-messages">
       <div class="panel-empty">
         <span class="panel-empty-icon">📡</span>
-        <span class="panel-empty-text">Listening for bus messages...</span>
+        <span class="panel-empty-text">Listening for bus messages</span>
+        <span class="panel-empty-hint">Messages will stream in real-time</span>
       </div>
     </div>`;
   }
@@ -450,13 +493,15 @@ class BusMonitorPanel extends BasePanel {
     const source = msg.source || '?';
     const target = msg.target || '*';
     const event = msg.payload?.event || msg.payload?.type || '';
+    const time = _timestamp('HH:mm:ss');
 
     const msgEl = document.createElement('div');
     msgEl.className = `bus-msg bus-msg-${type.toLowerCase()}`;
     msgEl.innerHTML = `
-      <span class="bus-type">${type}</span>
-      <span class="bus-route">${source} → ${target}</span>
-      <span class="bus-event">${event}</span>
+      <span class="bus-type">${_escapeHtml(type)}</span>
+      <span class="bus-route">${_escapeHtml(source)} → ${_escapeHtml(target)}</span>
+      <span class="bus-event">${_escapeHtml(event)}</span>
+      <span class="bus-time">${time}</span>
     `;
 
     container.appendChild(msgEl);
@@ -472,14 +517,8 @@ class BusMonitorPanel extends BasePanel {
 
 /**
  * Pipeline panel — renders data from a data pipeline.
- * Generic container that displays whatever data its pipeline provides.
  */
 class PipelinePanel extends BasePanel {
-  /**
-   * @param {string} id
-   * @param {object} config
-   * @param {object} config.pipeline - Pipeline definition
-   */
   constructor(id, config = {}) {
     super(id, { title: config.title || 'Data', icon: '📊', type: 'pipeline', ...config });
     this.pipeline = config.pipeline || null;
@@ -487,7 +526,13 @@ class PipelinePanel extends BasePanel {
   }
 
   renderContent(el) {
-    el.innerHTML = '<div class="pipeline-data"><em>Waiting for data...</em></div>';
+    el.innerHTML = `<div class="pipeline-data">
+      <div class="panel-empty">
+        <span class="panel-empty-icon">📊</span>
+        <span class="panel-empty-text">Awaiting data pipeline</span>
+        <span class="panel-empty-hint">Data will render when the pipeline connects</span>
+      </div>
+    </div>`;
   }
 
   /**
@@ -500,7 +545,6 @@ class PipelinePanel extends BasePanel {
     const container = this.el?.querySelector('.pipeline-data');
     if (!container) return;
 
-    // Render based on data shape
     if (typeof data === 'string') {
       container.textContent = data;
     } else if (Array.isArray(data)) {
@@ -509,25 +553,24 @@ class PipelinePanel extends BasePanel {
         .join('');
     } else if (data && typeof data === 'object') {
       container.innerHTML = Object.entries(data)
-        .map(([k, v]) => `<div class="pipeline-kv"><strong>${k}:</strong> ${v}</div>`)
+        .map(([k, v]) => `<div class="pipeline-kv"><strong>${_escapeHtml(k)}:</strong> ${_escapeHtml(String(v))}</div>`)
         .join('');
     }
   }
 
   _formatItem(item) {
-    if (typeof item === 'string') return item;
+    if (typeof item === 'string') return _escapeHtml(item);
     if (typeof item === 'object') {
       return Object.entries(item)
-        .map(([k, v]) => `<span class="kv-key">${k}:</span> ${v}`)
+        .map(([k, v]) => `<span class="kv-key">${_escapeHtml(k)}:</span> ${_escapeHtml(String(v))}`)
         .join(' · ');
     }
-    return String(item);
+    return _escapeHtml(String(item));
   }
 }
 
 /**
  * Status Strip panel — persistent ambient info bar.
- * Displays calendar next event, unread email count, weather, etc.
  */
 class StatusStripPanel extends BasePanel {
   constructor(id, config = {}) {
@@ -573,8 +616,8 @@ class StatusStripPanel extends BasePanel {
       el.dataset.key = key;
       el.innerHTML = `
         <span class="status-icon">${item.icon || '•'}</span>
-        <span class="status-label">${item.label || key}</span>
-        <span class="status-value">${item.value || ''}</span>
+        <span class="status-label">${_escapeHtml(item.label || key)}</span>
+        <span class="status-value">${_escapeHtml(item.value || '')}</span>
       `;
       el.title = item.detail || '';
       container.appendChild(el);

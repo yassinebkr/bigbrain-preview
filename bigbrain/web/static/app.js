@@ -84,6 +84,11 @@ class MorphableUI {
     // Set up chat input
     this._initChatInput();
 
+    // ---- Panel collapse: coordinate FLIP + grid adaptation ----
+    this.gridContainer.addEventListener('panel-collapse-toggle', (e) => {
+      this._handleCollapseToggle(e.detail.panelId);
+    });
+
     // Listen for focus state changes from the server
     this.bus.on({ type: 'state', event: 'focus.' }, (msg) => {
       this._handleFocusChange(msg.payload);
@@ -162,7 +167,14 @@ class MorphableUI {
       // Collapse specified slots
       for (const slotName of wsDef.collapsed || []) {
         this.slotManager.collapseSlot(slotName);
+        // Update button icon for collapsed panels
+        const panelId = this.slotManager.assignments.get(slotName);
+        const panel = panelId ? this.panels.get(panelId) : null;
+        if (panel) panel._onCollapseToggle();
       }
+
+      // Adapt grid rows for initially collapsed panels
+      this._adaptGridForCollapse();
 
       // LAST + INVERT + PLAY: animate the transition
       flipPanels(this.gridContainer, first, {
@@ -238,6 +250,11 @@ class MorphableUI {
     this.morphThrottle.request(() => {
       const first = snapshotPanels(this.gridContainer);
       this.slotManager.collapseSlot(slotName);
+      // Update button icon
+      const panelId = this.slotManager.assignments.get(slotName);
+      const panel = panelId ? this.panels.get(panelId) : null;
+      if (panel) panel._onCollapseToggle();
+      this._adaptGridForCollapse();
       flipPanels(this.gridContainer, first, { preset: 'breathe' });
     });
   }
@@ -251,6 +268,11 @@ class MorphableUI {
     this.morphThrottle.request(() => {
       const first = snapshotPanels(this.gridContainer);
       this.slotManager.expandSlot(slotName);
+      // Update button icon
+      const panelId = this.slotManager.assignments.get(slotName);
+      const panel = panelId ? this.panels.get(panelId) : null;
+      if (panel) panel._onCollapseToggle();
+      this._adaptGridForCollapse();
       flipPanels(this.gridContainer, first, { preset: 'breathe' });
     });
   }
@@ -337,7 +359,6 @@ class MorphableUI {
   _initStatusStrip() {
     if (!this.statusStrip) return;
 
-    // Status strip is always visible — not part of the workspace grid
     const strip = new StatusStripPanel('status-strip', {
       title: 'Status',
       icon: '📌',
@@ -401,7 +422,6 @@ class MorphableUI {
       this.connectionIndicator.title = 'Connected to BigBrain';
     }
 
-    // Update status strip
     const strip = this.panels.get('status-strip');
     if (strip?.updateItem) {
       strip.updateItem('connection', {
@@ -485,6 +505,123 @@ class MorphableUI {
       btn.addEventListener('click', () => this.switchWorkspace(wsName));
       selector.appendChild(btn);
     }
+  }
+
+  // ============================================================
+  // COLLAPSE ↔ GRID ADAPTATION
+  //
+  // When a panel collapses, the CSS grid row it occupies should
+  // shrink to `auto` so the collapsed panel only takes title-bar
+  // height.  Rows with expanded panels keep their original `fr`
+  // sizing.  Spanning slots (like "primary" in tri-left) don't
+  // prevent a row from shrinking — only single-row slots matter.
+  // ============================================================
+
+  /**
+   * Handle a panel collapse toggle dispatched from panel.js.
+   * Wraps the state change in a FLIP animation.
+   *
+   * @param {string} panelId
+   */
+  _handleCollapseToggle(panelId) {
+    const panel = this.panels.get(panelId);
+    if (!panel?.el) return;
+
+    // FIRST: snapshot positions before the change
+    const first = snapshotPanels(this.gridContainer);
+
+    // Toggle the collapsed class
+    panel.el.classList.toggle('panel-collapsed');
+    panel._onCollapseToggle();
+
+    // Also keep SlotManager in sync
+    const slot = panel.el.dataset.slot;
+    if (slot) {
+      if (panel.el.classList.contains('panel-collapsed')) {
+        this.slotManager.collapsedSlots.add(slot);
+      } else {
+        this.slotManager.collapsedSlots.delete(slot);
+      }
+    }
+
+    // Adapt the CSS grid template
+    this._adaptGridForCollapse();
+
+    // FLIP: animate from old to new positions
+    flipPanels(this.gridContainer, first, { preset: 'breathe' });
+  }
+
+  /**
+   * Rebuild the grid template, replacing row sizes with `auto`
+   * for rows whose single-row slots are all collapsed.
+   */
+  _adaptGridForCollapse() {
+    const layout = this.slotManager.currentLayout;
+    if (!layout) return;
+
+    const template = layout.grid.template;
+
+    // --- Parse grid-template shorthand ---
+    // Format: "area names" rowSize "area names" rowSize … / colSizes
+    const slashIdx = template.lastIndexOf('/');
+    if (slashIdx === -1) return; // malformed, bail
+
+    const rowsPart = template.substring(0, slashIdx).trim();
+    const colsPart = template.substring(slashIdx + 1).trim();
+
+    const rowRegex = /"([^"]+)"\s+(\S+)/g;
+    const rows = [];
+    let m;
+    while ((m = rowRegex.exec(rowsPart)) !== null) {
+      rows.push({ areas: m[1].trim().split(/\s+/), originalSize: m[2] });
+    }
+
+    if (rows.length === 0) return;
+
+    // --- Build slot → set-of-row-indices ---
+    const slotRowMap = {};
+    rows.forEach((row, idx) => {
+      for (const area of row.areas) {
+        if (!slotRowMap[area]) slotRowMap[area] = new Set();
+        slotRowMap[area].add(idx);
+      }
+    });
+
+    // --- Determine which slots are currently collapsed ---
+    const collapsedSlots = new Set();
+    for (const el of this.gridContainer.querySelectorAll('.panel[data-slot]')) {
+      if (el.classList.contains('panel-collapsed')) {
+        collapsedSlots.add(el.dataset.slot);
+      }
+    }
+
+    // --- For each row, decide auto vs original size ---
+    const newRows = rows.map((row) => {
+      const uniqueAreas = [...new Set(row.areas)];
+
+      // Single-row slots: slots that only appear in THIS row
+      const singleRowSlots = uniqueAreas.filter(
+        (a) => slotRowMap[a] && slotRowMap[a].size === 1
+      );
+
+      // No single-row slots in this row → keep original
+      if (singleRowSlots.length === 0) return row;
+
+      // All single-row slots collapsed → row becomes auto
+      const allCollapsed = singleRowSlots.every((s) => collapsedSlots.has(s));
+
+      return {
+        ...row,
+        size: allCollapsed ? 'auto' : row.originalSize,
+      };
+    });
+
+    // --- Rebuild and apply ---
+    const rebuilt = newRows
+      .map((r) => `"${r.areas.join(' ')}" ${r.size || r.originalSize}`)
+      .join(' ');
+
+    this.gridContainer.style.gridTemplate = `${rebuilt} / ${colsPart}`;
   }
 }
 
