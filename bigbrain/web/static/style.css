@@ -233,16 +233,40 @@ body::after {
   color: #fff;
 }
 
-/* Workspace tab pulse — signals results are ready */
-.ws-btn-pulse {
-  animation: ws-pulse 0.6s ease-in-out 4;
-  box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.6);
+.ws-btn {
+  position: relative;
 }
 
-@keyframes ws-pulse {
-  0%   { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.6); background: var(--surface-2); }
-  50%  { box-shadow: 0 0 12px 4px rgba(99, 102, 241, 0.4); background: var(--accent); color: #fff; }
-  100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.6); background: var(--surface-2); }
+.ws-icon {
+  font-size: 13px;
+}
+
+.ws-label {
+  font-size: var(--fs-sm);
+}
+
+/* Workspace tab notification dot — subtle, persistent until clicked */
+.ws-btn-notify {
+  color: var(--text-2);
+}
+
+.ws-btn-notify::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-light);
+  box-shadow: 0 0 6px var(--accent);
+  animation: notify-breathe 2.5s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes notify-breathe {
+  0%, 100% { opacity: 0.6; }
+  50%      { opacity: 1; }
 }
 
 .connection-wrap {
@@ -1062,6 +1086,152 @@ body::after {
 .bus-msg-state    .bus-type { color: var(--accent-light); }
 .bus-msg-progress .bus-type { color: var(--text-muted); }
 .bus-msg-query    .bus-type { color: var(--text-2); }
+
+/* ============================================================
+   § 18b — CODE OUTPUT PANEL
+   ============================================================ */
+
+.code-output-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.code-result {
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  overflow: hidden;
+  animation: panel-enter 250ms var(--ease-out) both;
+}
+
+.code-result-ok  { border-left: 3px solid var(--green); }
+.code-result-err { border-left: 3px solid var(--red); }
+
+.code-result-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--fs-sm);
+}
+
+.code-result-status { font-size: 13px; }
+.code-result-time   { color: var(--text-ghost); font-family: var(--font-mono); font-size: var(--fs-xs); }
+
+.code-block {
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--bg);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+  overflow-x: auto;
+  white-space: pre;
+  color: var(--text-2);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.code-block code { font-family: inherit; }
+
+.code-stdout-label {
+  padding: 6px 12px 2px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.code-stdout {
+  margin: 0;
+  padding: 6px 12px 10px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+  white-space: pre-wrap;
+  color: var(--green);
+  overflow-x: auto;
+}
+
+.code-stderr {
+  margin: 0;
+  padding: 6px 12px 10px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+  white-space: pre-wrap;
+  color: var(--red);
+  background: var(--red-soft);
+  overflow-x: auto;
+}
+
+/* ============================================================
+   § 18c — RESEARCH RESULTS PANEL
+   ============================================================ */
+
+.research-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.research-finding {
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--blue);
+  animation: panel-enter 250ms var(--ease-out) both;
+}
+
+.research-finding-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: var(--fs-sm);
+}
+
+.research-finding-icon { font-size: 14px; }
+.research-finding-time { color: var(--text-ghost); font-family: var(--font-mono); font-size: var(--fs-xs); margin-left: auto; }
+
+.research-query {
+  font-weight: 600;
+  color: var(--text);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.research-summary {
+  font-size: var(--fs-base);
+  line-height: var(--lh-loose);
+  color: var(--text-2);
+  white-space: pre-wrap;
+}
+
+.research-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.research-source-tag {
+  padding: 2px 8px;
+  border-radius: 20px;
+  background: var(--blue-soft);
+  color: var(--blue);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* ============================================================
    § 19 — PIPELINE DATA

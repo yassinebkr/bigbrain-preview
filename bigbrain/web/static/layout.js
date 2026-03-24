@@ -399,43 +399,35 @@ class SlotManager {
 // WORKSPACE DEFINITIONS — domain-specific panel + layout configs
 // ============================================================
 
+/**
+ * Workspace label/icon map for the tab bar.
+ */
+const WORKSPACE_LABELS = {
+  default:       { icon: '🏠', label: 'Home' },
+  'python-dev':  { icon: '🐍', label: 'Python' },
+  research:      { icon: '🔍', label: 'Research' },
+  'web-dev':     { icon: '🌐', label: 'Web' },
+  '3d-printing': { icon: '🖨️', label: '3D Print' },
+  electronics:   { icon: '⚡', label: 'Electronics' },
+};
+
 const WORKSPACE_DEFAULTS = {
+  default: {
+    layout: 'tri-left',
+    panels: {
+      primary:       { type: 'chat',         title: 'Chat',         icon: '💬' },
+      'side-top':    { type: 'brain-status', title: 'Brains',       icon: '🧠' },
+      'side-bottom': { type: 'task-list',    title: 'Tasks',        icon: '📋' },
+    },
+    collapsed: ['side-bottom'],
+  },
+
   'python-dev': {
     layout: 'tri-left',
     panels: {
-      primary: { type: 'editor', title: 'Editor' },
-      'side-top': { type: 'repl', title: 'REPL' },
-      'side-bottom': { type: 'terminal', title: 'Terminal' },
-    },
-    collapsed: ['side-bottom'],
-  },
-
-  'web-dev': {
-    layout: 'tri-left',
-    panels: {
-      primary: { type: 'editor', title: 'Editor' },
-      'side-top': { type: 'preview', title: 'Live Preview' },
-      'side-bottom': { type: 'devtools', title: 'DevTools' },
-    },
-    collapsed: ['side-bottom'],
-  },
-
-  '3d-printing': {
-    layout: 'tri-left',
-    panels: {
-      primary: { type: 'camera', title: 'Printer Camera' },
-      'side-top': { type: 'klipper-status', title: 'Klipper Status' },
-      'side-bottom': { type: 'gcode-viewer', title: 'GCode Viewer' },
-    },
-    collapsed: ['side-bottom'],
-  },
-
-  electronics: {
-    layout: 'tri-left',
-    panels: {
-      primary: { type: 'schematic', title: 'Schematic' },
-      'side-top': { type: 'pinout', title: 'Pinout Reference' },
-      'side-bottom': { type: 'terminal', title: 'Serial Monitor' },
+      primary:       { type: 'chat',        title: 'Chat',         icon: '💬' },
+      'side-top':    { type: 'code-output', title: 'Code Output',  icon: '💻' },
+      'side-bottom': { type: 'task-list',   title: 'Tasks',        icon: '📋' },
     },
     collapsed: ['side-bottom'],
   },
@@ -443,18 +435,38 @@ const WORKSPACE_DEFAULTS = {
   research: {
     layout: 'split',
     panels: {
-      left: { type: 'browser', title: 'Research' },
-      right: { type: 'notes', title: 'Notes' },
+      left:  { type: 'chat',             title: 'Chat',     icon: '💬' },
+      right: { type: 'research-results', title: 'Research', icon: '🔍' },
     },
     collapsed: [],
   },
 
-  default: {
+  'web-dev': {
     layout: 'tri-left',
     panels: {
-      primary: { type: 'chat', title: 'Chat' },
-      'side-top': { type: 'brain-status', title: 'Brain Status' },
-      'side-bottom': { type: 'task-list', title: 'Tasks' },
+      primary:       { type: 'chat',        title: 'Chat',    icon: '💬' },
+      'side-top':    { type: 'code-output', title: 'Output',  icon: '🌐' },
+      'side-bottom': { type: 'task-list',   title: 'Tasks',   icon: '📋' },
+    },
+    collapsed: ['side-bottom'],
+  },
+
+  '3d-printing': {
+    layout: 'tri-left',
+    panels: {
+      primary:       { type: 'chat',        title: 'Chat',           icon: '💬' },
+      'side-top':    { type: 'placeholder', title: 'Printer Camera', icon: '📷' },
+      'side-bottom': { type: 'task-list',   title: 'Tasks',          icon: '📋' },
+    },
+    collapsed: ['side-bottom'],
+  },
+
+  electronics: {
+    layout: 'tri-left',
+    panels: {
+      primary:       { type: 'chat',        title: 'Chat',      icon: '💬' },
+      'side-top':    { type: 'placeholder', title: 'Schematic', icon: '⚡' },
+      'side-bottom': { type: 'task-list',   title: 'Tasks',     icon: '📋' },
     },
     collapsed: ['side-bottom'],
   },
@@ -464,4 +476,4 @@ const WORKSPACE_DEFAULTS = {
 // EXPORTS
 // ============================================================
 
-export { LAYOUT_CATALOG, SlotManager, WORKSPACE_DEFAULTS };
+export { LAYOUT_CATALOG, SlotManager, WORKSPACE_DEFAULTS, WORKSPACE_LABELS };

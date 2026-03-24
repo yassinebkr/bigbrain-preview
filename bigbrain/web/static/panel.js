@@ -517,6 +517,14 @@ class TaskListPanel extends BasePanel {
       const event = msg.payload?.event || '';
       const taskId = msg.payload?.subtask_id || msg.id;
       if (event.includes('started')) {
+        // Remove parent "Planning" task entry — subtasks replace it
+        const parentTaskId = msg.payload?.task_id;
+        if (parentTaskId && this.tasks.has(parentTaskId)) {
+          if (this._removeTimers.has(parentTaskId)) clearTimeout(this._removeTimers.get(parentTaskId));
+          this._removeTimers.delete(parentTaskId);
+          this.tasks.delete(parentTaskId);
+        }
+
         this.tasks.set(taskId, {
           id: taskId,
           label: this._extractLabel(msg),
@@ -664,6 +672,209 @@ class BusMonitorPanel extends BasePanel {
 }
 
 /**
+ * Code Output panel — shows code execution results from PythonBrain.
+ */
+class CodeOutputPanel extends BasePanel {
+  constructor(id, config = {}) {
+    super(id, { title: 'Code Output', icon: '💻', type: 'code-output', ...config });
+    this.results = [];
+  }
+
+  renderContent(el) {
+    el.innerHTML = `<div class="code-output-list">
+      <div class="panel-empty">
+        <span class="panel-empty-icon">💻</span>
+        <span class="panel-empty-text">Code output will appear here</span>
+        <span class="panel-empty-hint">Send a coding task to see results</span>
+      </div>
+    </div>`;
+  }
+
+  _setupSubscriptions() {
+    // Listen for RESULT messages from python brains
+    this._addSubscription({ type: 'result' }, (msg) => {
+      const src = (msg.source || '').toLowerCase();
+      if (src.includes('python')) {
+        this._addResult(msg);
+      }
+    });
+
+    // Listen for progress updates
+    this._addSubscription({ type: 'progress' }, (msg) => {
+      const src = (msg.source || '').toLowerCase();
+      if (src.includes('python')) {
+        this._updateProgress(msg);
+      }
+    });
+  }
+
+  _addResult(msg) {
+    const payload = msg.payload || {};
+    const container = this.el?.querySelector('.code-output-list');
+    if (!container) return;
+
+    const empty = container.querySelector('.panel-empty');
+    if (empty) empty.remove();
+
+    const code = payload.generated_code || '';
+    const stdout = payload.stdout || payload.output || '';
+    const stderr = payload.stderr || '';
+    const success = payload.success !== false;
+    const time = _timestamp('HH:mm:ss');
+
+    const result = document.createElement('div');
+    result.className = `code-result ${success ? 'code-result-ok' : 'code-result-err'}`;
+
+    let html = `<div class="code-result-header">
+      <span class="code-result-status">${success ? '✅' : '❌'}</span>
+      <span class="code-result-time">${time}</span>
+    </div>`;
+
+    if (code) {
+      html += `<pre class="code-block"><code>${_escapeHtml(code)}</code></pre>`;
+    }
+
+    if (stdout) {
+      html += `<div class="code-stdout-label">Output</div>
+               <pre class="code-stdout">${_escapeHtml(stdout)}</pre>`;
+    }
+
+    if (stderr) {
+      html += `<pre class="code-stderr">${_escapeHtml(stderr)}</pre>`;
+    }
+
+    if (!code && !stdout && !stderr) {
+      html += `<div class="code-stdout-label">${success ? 'Completed (no output)' : 'Failed (no details)'}</div>`;
+    }
+
+    result.innerHTML = html;
+    container.appendChild(result);
+    container.scrollTop = container.scrollHeight;
+
+    this.results.push({ code, stdout, stderr, success, time: Date.now() });
+
+    // Keep max 20 results
+    while (this.results.length > 20 && container.children.length > 20) {
+      container.removeChild(container.firstChild);
+      this.results.shift();
+    }
+  }
+
+  _updateProgress(msg) {
+    const stage = msg.payload?.stage || '';
+    if (stage) {
+      const label = stage.replace(/_/g, ' ');
+      this.setTitle(`Code Output — ${label}`);
+    }
+  }
+}
+
+/**
+ * Research Results panel — shows findings from ResearcherBrain.
+ */
+class ResearchResultsPanel extends BasePanel {
+  constructor(id, config = {}) {
+    super(id, { title: 'Research', icon: '🔍', type: 'research-results', ...config });
+    this.findings = [];
+  }
+
+  renderContent(el) {
+    el.innerHTML = `<div class="research-list">
+      <div class="panel-empty">
+        <span class="panel-empty-icon">🔍</span>
+        <span class="panel-empty-text">Research results will appear here</span>
+        <span class="panel-empty-hint">Ask BigBrain to research a topic</span>
+      </div>
+    </div>`;
+  }
+
+  _setupSubscriptions() {
+    this._addSubscription({ type: 'result' }, (msg) => {
+      const src = (msg.source || '').toLowerCase();
+      if (src.includes('research')) {
+        this._addFinding(msg);
+      }
+    });
+
+    this._addSubscription({ type: 'progress' }, (msg) => {
+      const src = (msg.source || '').toLowerCase();
+      if (src.includes('research')) {
+        this._updateProgress(msg);
+      }
+    });
+  }
+
+  _addFinding(msg) {
+    const payload = msg.payload || {};
+    const container = this.el?.querySelector('.research-list');
+    if (!container) return;
+
+    const empty = container.querySelector('.panel-empty');
+    if (empty) empty.remove();
+
+    const summary = payload.summary || payload.text || payload.content || '';
+    const sources = payload.sources || [];
+    const query = payload.query || '';
+    const time = _timestamp('HH:mm:ss');
+
+    const finding = document.createElement('div');
+    finding.className = 'research-finding';
+
+    let html = `<div class="research-finding-header">
+      <span class="research-finding-icon">📄</span>
+      ${query ? `<span class="research-query">${_escapeHtml(query)}</span>` : ''}
+      <span class="research-finding-time">${time}</span>
+    </div>`;
+
+    if (summary) {
+      html += `<div class="research-summary">${_escapeHtml(summary)}</div>`;
+    } else {
+      html += `<div class="research-summary">${_escapeHtml(JSON.stringify(payload).slice(0, 300))}</div>`;
+    }
+
+    if (sources.length > 0) {
+      html += '<div class="research-sources">';
+      for (const src of sources.slice(0, 5)) {
+        const label = typeof src === 'string' ? src : src.title || src.url || String(src);
+        html += `<span class="research-source-tag">${_escapeHtml(label)}</span>`;
+      }
+      html += '</div>';
+    }
+
+    finding.innerHTML = html;
+    container.appendChild(finding);
+    container.scrollTop = container.scrollHeight;
+
+    this.findings.push({ summary, sources, query, time: Date.now() });
+  }
+
+  _updateProgress(msg) {
+    const stage = msg.payload?.stage || '';
+    if (stage) {
+      const label = stage.replace(/_/g, ' ');
+      this.setTitle(`Research — ${label}`);
+    }
+  }
+}
+
+/**
+ * Placeholder panel — "Coming soon" for unimplemented workspace features.
+ */
+class PlaceholderPanel extends BasePanel {
+  constructor(id, config = {}) {
+    super(id, { type: 'placeholder', ...config });
+  }
+
+  renderContent(el) {
+    el.innerHTML = `<div class="panel-empty">
+      <span class="panel-empty-icon">${this.icon}</span>
+      <span class="panel-empty-text">${_escapeHtml(this.title)}</span>
+      <span class="panel-empty-hint">Coming soon</span>
+    </div>`;
+  }
+}
+
+/**
  * Pipeline panel — renders data from a data pipeline.
  */
 class PipelinePanel extends BasePanel {
@@ -784,6 +995,22 @@ const PANEL_TYPES = {
   'bus-monitor': BusMonitorPanel,
   pipeline: PipelinePanel,
   'status-strip': StatusStripPanel,
+  'code-output': CodeOutputPanel,
+  'research-results': ResearchResultsPanel,
+  placeholder: PlaceholderPanel,
+  // Aliases: workspace panel names → best available implementation
+  editor: PlaceholderPanel,
+  repl: CodeOutputPanel,
+  terminal: BusMonitorPanel,
+  preview: PlaceholderPanel,
+  devtools: PlaceholderPanel,
+  camera: PlaceholderPanel,
+  'klipper-status': PlaceholderPanel,
+  'gcode-viewer': PlaceholderPanel,
+  schematic: PlaceholderPanel,
+  pinout: PlaceholderPanel,
+  browser: PlaceholderPanel,
+  notes: PlaceholderPanel,
 };
 
 /**
@@ -821,6 +1048,9 @@ export {
   BusMonitorPanel,
   PipelinePanel,
   StatusStripPanel,
+  CodeOutputPanel,
+  ResearchResultsPanel,
+  PlaceholderPanel,
   PANEL_TYPES,
   createPanel,
   registerPanelType,

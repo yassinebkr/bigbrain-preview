@@ -11,7 +11,7 @@
  */
 
 import { snapshotPanels, flipPanels, highlightPanel, MorphThrottle, getSpringCSS } from './morph.js';
-import { LAYOUT_CATALOG, SlotManager, WORKSPACE_DEFAULTS } from './layout.js';
+import { LAYOUT_CATALOG, SlotManager, WORKSPACE_DEFAULTS, WORKSPACE_LABELS } from './layout.js';
 import { createPanel, registerPanelType, StatusStripPanel } from './panel.js';
 import { BusClient } from './bus-client.js';
 import { PipelineManager } from './pipeline.js';
@@ -505,23 +505,27 @@ class MorphableUI {
 
     selector.innerHTML = '';
     for (const wsName of Object.keys(WORKSPACE_DEFAULTS)) {
+      const meta = WORKSPACE_LABELS[wsName] || { icon: '📁', label: wsName };
       const btn = document.createElement('button');
       btn.className = `ws-btn ${wsName === active ? 'ws-btn-active' : ''}`;
-      btn.textContent = wsName;
+      btn.innerHTML = `<span class="ws-icon">${meta.icon}</span><span class="ws-label">${meta.label}</span>`;
       btn.dataset.workspace = wsName;
-      btn.addEventListener('click', () => this.switchWorkspace(wsName));
+      btn.addEventListener('click', () => {
+        // Clear notification dot when clicked
+        btn.classList.remove('ws-btn-notify');
+        this.switchWorkspace(wsName);
+      });
       selector.appendChild(btn);
     }
   }
 
-  /** Pulse a workspace tab to signal results are ready. */
+  /** Add a notification dot to a workspace tab to signal results are ready. */
   _pulseWorkspaceTab(wsName) {
     const selector = document.getElementById('workspace-selector');
     if (!selector) return;
     const btn = selector.querySelector(`[data-workspace="${wsName}"]`);
-    if (!btn || btn.classList.contains('ws-btn-active')) return; // don't pulse if already active
-    btn.classList.add('ws-btn-pulse');
-    setTimeout(() => btn.classList.remove('ws-btn-pulse'), 3000);
+    if (!btn || btn.classList.contains('ws-btn-active')) return;
+    btn.classList.add('ws-btn-notify');
   }
 
   // ============================================================
