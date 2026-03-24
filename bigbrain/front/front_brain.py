@@ -168,15 +168,11 @@ class FrontBrain:
         return response
     
     async def _llm_respond(self, input_text: str) -> str:
-        """Generate response using the real LLM with full conversation context."""
-        # Check if user wants code execution
-        text_lower = input_text.lower()
-        is_code_request = any(kw in text_lower for kw in [
-            "run", "execute", "code", "python", "script", "write a program",
-            "write code", "create a script", "calculate", "fibonacci", "simulate",
-            "plot", "generate", "```"
-        ])
+        """Generate response using the real LLM with full conversation context.
         
+        The LLM will return either plain text (conversation) or delegation
+        JSON (task request). The caller handles both cases.
+        """
         # Build system prompt with current context
         focus_status = self.focus_manager.get_focus_status()
         system_prompt = self._build_system_prompt(focus_status)
@@ -197,62 +193,17 @@ class FrontBrain:
         except Exception as e:
             return f"I encountered an error processing your request: {e}"
     
-    @staticmethod
-    def _extract_code_blocks(text: str) -> str:
-        """Extract Python code from markdown code blocks."""
-        import re
-        # Find all ```python ... ``` blocks
-        pattern = r'```python\s*\n(.*?)```'
-        matches = re.findall(pattern, text, re.DOTALL)
-        if matches:
-            return "\n\n".join(matches)
-        # Try generic ``` blocks
-        pattern = r'```\s*\n(.*?)```'
-        matches = re.findall(pattern, text, re.DOTALL)
-        if matches:
-            return "\n\n".join(matches)
-        return ""
-    
-    async def _execute_code_direct(self, code: str) -> str:
-        """Execute Python code directly via subprocess."""
-        import asyncio
-        import sys
-        import tempfile
-        from pathlib import Path
-        
-        # Write code to temp file
-        work_dir = Path("work/execution")
-        work_dir.mkdir(parents=True, exist_ok=True)
-        
-        script_path = work_dir / "script.py"
-        script_path.write_text(code, encoding="utf-8")
-        
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                sys.executable, str(script_path),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=str(work_dir),
-            )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
-            
-            output = stdout.decode("utf-8", errors="replace").strip()
-            errors = stderr.decode("utf-8", errors="replace").strip()
-            
-            if proc.returncode != 0:
-                return f"{output}\n⚠️ STDERR:\n{errors}" if output else f"⚠️ Error:\n{errors}"
-            return output if output else "(no output)"
-        except asyncio.TimeoutError:
-            return "⚠️ Execution timed out (30s limit)"
-        except Exception as e:
-            return f"⚠️ Execution error: {e}"
+    # _execute_code_direct REMOVED — Front Brain must never execute code.
+    # All execution goes through the orchestrator → PythonBrain pipeline.
     
     def _build_system_prompt(self, focus_status: dict) -> str:
         """Build the system prompt for the Front Brain LLM.
         
         The Front Brain is a conversational layer that DELEGATES work.
         It never writes code, never does research — it routes tasks to
-        sub-brains via the orchestrator and stays available for conversation.
+        the orchestrator as a SINGLE compound request and stays available
+        for conversation. The ORCHESTRATOR handles decomposition into
+        subtasks with dependencies.
         """
         active_ws = focus_status.get("active_workspace", "default")
         mode = focus_status.get("focus_mode", "normal")
@@ -275,18 +226,24 @@ You are NOT a code assistant. You are NOT a chatbot. You are the personality and
 
 YOUR JOB:
 1. Talk to the user naturally — answer questions, chat, manage context
-2. When the user wants WORK done (code, research, analysis), DELEGATE it
+2. When the user wants WORK done (code, research, analysis), DELEGATE it as ONE task
 3. Stay available for conversation while work runs in background
 
-DELEGATION: When the user asks for code, research, or any complex task, respond with EXACTLY this JSON format:
-{{"reply": "brief natural acknowledgment to the user", "tasks": [{{"brain": "brain_name", "request": "clear description of what to do"}}]}}
+DELEGATION: When the user asks for work, respond with EXACTLY this JSON format:
+{{"reply": "brief natural acknowledgment to the user", "task": "full description of what the user wants done, preserving ALL details and intent"}}
+
+IMPORTANT: Send the ENTIRE request as ONE task. Do NOT break it into subtasks yourself.
+The orchestrator will decompose it into subtasks with proper dependencies.
+For example, "research sorting algorithms and benchmark them" is ONE task — the orchestrator
+will figure out that research must complete before benchmarking can start.
 
 CONVERSATION: For greetings, questions, status, opinions — just respond naturally as plain text (no JSON).
 
 RULES:
 - NEVER write code yourself. NEVER. That's PythonBrain's job.
 - NEVER do research yourself. That's Researcher's job.
-- Keep task acknowledgments brief and natural: "On it.", "Working on that.", "Let me get PythonBrain on this."
+- NEVER decompose tasks into multiple items — that's the Orchestrator's job.
+- Keep task acknowledgments brief and natural: "On it.", "Working on that.", "Let me look into that."
 - You CAN answer factual questions directly (those aren't tasks)
 - You CAN give opinions, explain concepts, have conversations
 - Be direct, no filler phrases
@@ -295,18 +252,18 @@ Current state:
 - Active workspace: {active_ws}
 - Focus mode: {mode}
 
-Available brains:
+Available brains (for your awareness, NOT for you to assign):
 {brains_str}
 
 Examples:
 User: "write a fibonacci function"
-You: {{"reply": "On it — sending that to PythonBrain.", "tasks": [{{"brain": "python_brain", "request": "Write a fibonacci function in Python and execute it"}}]}}
+You: {{"reply": "On it.", "task": "Write a fibonacci function in Python and execute it"}}
 
 User: "what's the capital of France?"  
 You: Paris.
 
 User: "research the best sorting algorithms and then implement quicksort"
-You: {{"reply": "Got it — researching first, then coding. I'll let you know when it's done.", "tasks": [{{"brain": "researcher", "request": "Research the best sorting algorithms, compare time/space complexity"}}, {{"brain": "python_brain", "request": "Implement quicksort in Python based on research findings"}}]}}
+You: {{"reply": "Got it — I'll have the team research first, then code it up.", "task": "Research the best sorting algorithms with time/space complexity comparisons, then implement quicksort in Python using the research findings and benchmark it"}}
 
 User: "hello"
 You: Hey! What are you working on?"""
@@ -373,6 +330,9 @@ Type 'quit' or 'exit' to stop."""
         Processes the text through handle_user_input(), then sends
         the response back on the bus as a chat.message event so the
         ChatPanel in the browser can display it.
+        
+        Delegation sends ONE compound task to the orchestrator, which
+        handles decomposition into subtasks with proper dependencies.
         """
         import json
         import re
@@ -388,30 +348,52 @@ Type 'quit' or 'exit' to stop."""
             # Try to parse as delegation JSON
             parsed = self._try_parse_delegation(response)
             
-            if parsed and "tasks" in parsed:
+            if parsed and "task" in parsed:
                 # Front Brain wants to delegate — send the reply part to chat
                 reply_text = parsed.get("reply", "Working on it...")
                 await self._emit_chat_message("assistant", reply_text)
                 
-                # Delegate tasks to orchestrator
+                # Send ONE compound task to the orchestrator
+                # The orchestrator's _llm_decompose() will break it into
+                # subtasks with proper dependencies (ReWOO-style #E1 → #E2)
                 ws = self.focus_manager.get_active_workspace() or "default"
-                for task in parsed.get("tasks", []):
-                    brain = task.get("brain", "python_brain")
-                    request = task.get("request", "")
-                    # Build a short human-readable description for the UI
-                    description = request[:60] + "..." if len(request) > 60 else request
-                    await self.bus.send_task(
-                        source=self.name,
-                        target=f"orchestrator_{ws}",
-                        task_data={
-                            "type": "delegate",
-                            "brain": brain,
-                            "request": request,
-                            "description": description,
-                            "reply_to_ui": True,
-                        },
-                        priority=Priority.NORMAL,
-                    )
+                task_request = parsed["task"]
+                description = task_request[:60] + "..." if len(task_request) > 60 else task_request
+                await self.bus.send_task(
+                    source=self.name,
+                    target=f"orchestrator_{ws}",
+                    task_data={
+                        "type": "compound",
+                        "request": task_request,
+                        "description": description,
+                        "user_request": task_request,
+                        "reply_to_ui": True,
+                    },
+                    priority=Priority.NORMAL,
+                )
+            elif parsed and "tasks" in parsed:
+                # Legacy multi-task format — merge into single compound request
+                reply_text = parsed.get("reply", "Working on it...")
+                await self._emit_chat_message("assistant", reply_text)
+                
+                tasks = parsed.get("tasks", [])
+                combined_request = "; then ".join(
+                    t.get("request", t.get("description", "")) for t in tasks
+                )
+                ws = self.focus_manager.get_active_workspace() or "default"
+                description = combined_request[:60] + "..." if len(combined_request) > 60 else combined_request
+                await self.bus.send_task(
+                    source=self.name,
+                    target=f"orchestrator_{ws}",
+                    task_data={
+                        "type": "compound",
+                        "request": combined_request,
+                        "description": description,
+                        "user_request": combined_request,
+                        "reply_to_ui": True,
+                    },
+                    priority=Priority.NORMAL,
+                )
             else:
                 # Plain text response — send to chat
                 await self._emit_chat_message("assistant", response)
@@ -426,8 +408,10 @@ Type 'quit' or 'exit' to stop."""
         """
         Try to parse a Front Brain response as delegation JSON.
         
-        Handles raw JSON, markdown-fenced JSON (```json ... ```),
-        and JSON embedded in surrounding text.
+        Handles:
+        - New format: {"reply": "...", "task": "single compound request"}
+        - Legacy format: {"reply": "...", "tasks": [...]}
+        - Raw JSON, markdown-fenced JSON, JSON embedded in text
         """
         import json
         import re
@@ -438,7 +422,7 @@ Type 'quit' or 'exit' to stop."""
         # 1. Try raw JSON
         try:
             parsed = json.loads(response.strip())
-            if isinstance(parsed, dict):
+            if isinstance(parsed, dict) and ("task" in parsed or "tasks" in parsed):
                 return parsed
         except (json.JSONDecodeError, TypeError):
             pass
@@ -448,17 +432,17 @@ Type 'quit' or 'exit' to stop."""
         if fence_match:
             try:
                 parsed = json.loads(fence_match.group(1).strip())
-                if isinstance(parsed, dict):
+                if isinstance(parsed, dict) and ("task" in parsed or "tasks" in parsed):
                     return parsed
             except (json.JSONDecodeError, TypeError):
                 pass
         
-        # 3. Try finding JSON object in the text
-        brace_match = re.search(r'\{[^{}]*"tasks"\s*:\s*\[.*?\]\s*\}', response, re.DOTALL)
+        # 3. Try finding JSON object with "task" key in the text
+        brace_match = re.search(r'\{[^{}]*"task(?:s)?"\s*:.*?\}', response, re.DOTALL)
         if brace_match:
             try:
                 parsed = json.loads(brace_match.group(0))
-                if isinstance(parsed, dict):
+                if isinstance(parsed, dict) and ("task" in parsed or "tasks" in parsed):
                     return parsed
             except (json.JSONDecodeError, TypeError):
                 pass
@@ -643,46 +627,35 @@ Type 'quit' or 'exit' to stop."""
         return "I didn't understand that focus command."
     
     async def _handle_task_request(self, intent: Dict[str, Any], original_text: str) -> str:
-        """Route task requests to appropriate orchestrators."""
+        """Route ALL task requests through the workspace orchestrator.
+        
+        Never sends directly to individual brains — the orchestrator
+        handles decomposition, dependency management, and brain assignment.
+        """
         task_type = intent.get("task_type")
         workspace = "default"  # Could be determined from context
         
         # Create task message with human-readable description for UI
         description = original_text[:60] + "..." if len(original_text) > 60 else original_text
         task_payload = {
-            "type": task_type,
+            "type": "compound",
             "description": description,
             "user_request": original_text,
+            "request": original_text,
             "timestamp": time.time()
         }
         
-        if task_type == "execute_code":
-            # Check if user provided actual code or just a description
-            if "```" in original_text:
-                # Extract code from markdown fences
-                code_start = original_text.find("```") + 3
-                code_end = original_text.rfind("```")
-                code = original_text[code_start:code_end].strip()
-                if code.startswith("python"):
-                    code = code[6:].strip()
-                task_payload["code"] = code
-                task_payload["type"] = "execute_code"
-            else:
-                # Natural language request — let PythonBrain generate code via LLM
-                task_payload["type"] = "generate_and_execute"
-                task_payload["user_request"] = original_text
-            
-            target = "python_brain"
+        # If user provided raw code in backticks, include it as context
+        if "```" in original_text:
+            code_start = original_text.find("```") + 3
+            code_end = original_text.rfind("```")
+            code = original_text[code_start:code_end].strip()
+            if code.startswith("python"):
+                code = code[6:].strip()
+            task_payload["code"] = code
         
-        elif task_type == "research":
-            # Extract query
-            query = original_text.replace("search", "").replace("research", "").strip()
-            task_payload["query"] = query
-            target = "orchestrator_research"
-        
-        else:
-            # Route to general orchestrator
-            target = f"orchestrator_{workspace}"
+        # Always route through the workspace orchestrator
+        target = f"orchestrator_{workspace}"
         
         # Send task
         task_message = await self.bus.send_task(
@@ -699,7 +672,7 @@ Type 'quit' or 'exit' to stop."""
         # Store task context
         self._current_conversation_id = task_message.id
         
-        return f"I'll work on that {task_type.replace('_', ' ')} for you. I'll let you know when it's done."
+        return f"I'll work on that for you. I'll let you know when it's done."
     
     async def _handle_status_query(self, intent: Dict[str, Any]) -> str:
         """Handle status and information queries."""
