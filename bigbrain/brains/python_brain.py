@@ -166,8 +166,11 @@ class PythonBrain(BaseBrain):
                 result["attempt_history"] = attempt_history
 
                 # Check if execution succeeded
-                if result.get("exit_code") == 0 and not result.get("stderr", "").strip():
-                    # Clean success
+                has_output = bool(result.get("stdout", "").strip())
+                no_errors = result.get("exit_code") == 0 and not result.get("stderr", "").strip()
+                
+                if no_errors and has_output:
+                    # Clean success with output
                     result["success"] = True
                     await self.send_progress({
                         "stage": "succeeded",
@@ -175,6 +178,34 @@ class PythonBrain(BaseBrain):
                         "success": True,
                     })
                     return result
+                
+                if no_errors and not has_output:
+                    # Code ran but produced no stdout — treat as fixable failure.
+                    # This is the #1 cause of "empty Python tab" in the UI.
+                    error_info = {
+                        "attempt": attempt,
+                        "code": code,
+                        "exit_code": 0,
+                        "stderr": "CODE PRODUCED NO OUTPUT. The script ran successfully but never called print(). You MUST add print() statements that display the results, statistics, or key values. A script with no printed output is useless.",
+                        "stdout": "",
+                    }
+                    attempt_history.append(error_info)
+                    
+                    if attempt < max_retries:
+                        await self.send_progress({
+                            "stage": "retrying",
+                            "attempt": attempt,
+                            "error": "No stdout output — adding print statements",
+                            "next_attempt": attempt + 1,
+                        })
+                        continue
+                    else:
+                        # Final attempt still no output — return what we have
+                        result["total_attempts"] = attempt
+                        result["attempt_history"] = attempt_history
+                        result["success"] = True  # Code did run, just no output
+                        result["warning"] = "Code executed successfully but produced no printed output"
+                        return result
 
                 # Execution failed — record for Reflexion and retry
                 error_info = {
@@ -260,12 +291,20 @@ class PythonBrain(BaseBrain):
 Rules:
 - Output ONLY the Python code, no explanation before or after
 - The code must be self-contained and runnable as a script
-- IMPORTANT: The script MUST produce printed output. Always include a main section that runs the code and prints interesting results, statistics, or insights using print()
 - No external dependencies beyond the standard library (no numpy, scipy, matplotlib, etc.)
 - Keep execution time under 30 seconds — limit iterations/grid sizes to stay fast
 - Include error handling where appropriate
 - For f-strings with dict access, use double quotes outside and bracket notation: f"{{d['key']}}" or use variables: val = d['key']; f"{{val}}"
-- Ensure all strings are properly closed on the same line"""
+- Ensure all strings are properly closed on the same line
+
+⚠️ CRITICAL — PRINT OUTPUT IS MANDATORY:
+The script's stdout is the ONLY way results reach the user.
+If the script produces no printed output, it is considered BROKEN.
+You MUST include print() calls that show:
+- The actual results/answer to the user's request
+- Key statistics, values, or insights
+- A summary at the end
+A script that computes something but never prints it is USELESS."""
 
         generated = await self.llm_provider.complete(prompt, stream=False)
         return self._extract_code(generated)
