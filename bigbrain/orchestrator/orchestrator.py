@@ -294,6 +294,7 @@ Example — "research async patterns then build a scraper using what you find":
         task_data = message.payload
         user_request = (
             task_data.get("user_request")
+            or task_data.get("request")
             or task_data.get("query")
             or task_data.get("description")
             or str(task_data)
