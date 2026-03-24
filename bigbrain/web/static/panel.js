@@ -324,6 +324,7 @@ class BrainStatusPanel extends BasePanel {
   }
 
   _setupSubscriptions() {
+    // Brain-specific events
     this._addSubscription(
       { type: 'event', event: 'brain.' },
       (msg) => this._handleBrainEvent(msg)
@@ -332,21 +333,35 @@ class BrainStatusPanel extends BasePanel {
       { type: 'state', event: 'brain.' },
       (msg) => this._handleBrainEvent(msg)
     );
+    // Orchestrator subtask events (these carry brain names)
+    this._addSubscription(
+      { type: 'event', event: 'subtask.' },
+      (msg) => this._handleBrainEvent(msg)
+    );
+    this._addSubscription(
+      { type: 'event', event: 'task.' },
+      (msg) => this._handleBrainEvent(msg)
+    );
     // Brain progress messages use PROGRESS type
     this._addSubscription(
       { type: 'progress' },
+      (msg) => this._handleBrainEvent(msg)
+    );
+    // Orchestrator events
+    this._addSubscription(
+      { type: 'event', event: 'orchestrator.' },
       (msg) => this._handleBrainEvent(msg)
     );
   }
 
   _handleBrainEvent(msg) {
     const event = msg.payload?.event || '';
-    const brainName = msg.payload?.brain || msg.source;
+    const brainName = msg.payload?.brain || msg.payload?.target_brain || msg.source;
     let status = 'idle';
 
-    if (event.includes('started')) status = 'busy';
+    if (event.includes('started') || event.includes('received')) status = 'busy';
     else if (event.includes('complete')) status = 'idle';
-    else if (event.includes('error')) status = 'error';
+    else if (event.includes('error') || event.includes('failed')) status = 'error';
     else if (event.includes('progress')) status = 'busy';
 
     this.brains.set(brainName, {
