@@ -256,6 +256,7 @@ Example — "research async patterns then build a scraper using what you find":
     
     async def _handle_task_request(self, message: BusMessage) -> None:
         """Handle incoming task requests."""
+        print(f"[ORCH] _handle_task_request from {message.source} type={message.payload.get('type','?')}")
         task_data = message.payload
         
         # Create task plan
@@ -454,9 +455,11 @@ Example — "research async patterns then build a scraper using what you find":
         """Execute all subtasks that are ready (dependencies satisfied)."""
         # Don't dispatch if plan is already complete/failed
         if plan.status in (TaskStatus.COMPLETE, TaskStatus.FAILED, TaskStatus.CANCELLED):
+            print(f"[ORCH] Skipping _execute_ready_subtasks: plan {plan.id[-8:]} is {plan.status.value}")
             return
         
         ready_subtasks = plan.get_ready_subtasks()
+        print(f"[ORCH] _execute_ready_subtasks: plan={plan.id[-8:]} status={plan.status.value} ready={len(ready_subtasks)} total={len(plan.subtasks)}")
         
         for subtask in ready_subtasks:
             await self._dispatch_subtask(plan, subtask)
