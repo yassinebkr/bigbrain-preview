@@ -401,8 +401,8 @@ Type 'quit' or 'exit' to stop."""
                     await self.bus.send_task(
                         source=self.name,
                         target=f"orchestrator_{ws}",
-                        task_type=request,
-                        payload={
+                        task_data={
+                            "type": "delegate",
                             "brain": brain,
                             "request": request,
                             "reply_to_ui": True,
