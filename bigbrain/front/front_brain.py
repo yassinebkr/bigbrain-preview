@@ -374,6 +374,9 @@ Type 'quit' or 'exit' to stop."""
         the response back on the bus as a chat.message event so the
         ChatPanel in the browser can display it.
         """
+        import json
+        import re
+        
         text = message.payload.get("text", "").strip()
         if not text:
             return
@@ -382,40 +385,82 @@ Type 'quit' or 'exit' to stop."""
             # Process through the normal input pipeline
             response = await self.handle_user_input(text, input_type="web")
             
-            # Check if response is a delegation (JSON with tasks)
-            import json
-            try:
-                parsed = json.loads(response)
-                if isinstance(parsed, dict) and "tasks" in parsed:
-                    # Front Brain wants to delegate — send the reply part to chat
-                    reply_text = parsed.get("reply", "Working on it...")
-                    await self._emit_chat_message("assistant", reply_text)
-                    
-                    # Delegate tasks to orchestrator
-                    for task in parsed.get("tasks", []):
-                        brain = task.get("brain", "python_brain")
-                        request = task.get("request", "")
-                        ws = self.focus_manager.get_active_workspace() or "default"
-                        await self.bus.send_task(
-                            source=self.name,
-                            target=f"orchestrator_{ws}",
-                            task_type=request,
-                            payload={
-                                "brain": brain,
-                                "request": request,
-                                "reply_to_ui": True,
-                            },
-                            priority=Priority.NORMAL,
-                        )
-                    return
-            except (json.JSONDecodeError, TypeError):
-                pass  # Not JSON — it's a plain text response
+            # Try to parse as delegation JSON
+            parsed = self._try_parse_delegation(response)
             
-            # Plain text response — send to chat
-            await self._emit_chat_message("assistant", response)
+            if parsed and "tasks" in parsed:
+                # Front Brain wants to delegate — send the reply part to chat
+                reply_text = parsed.get("reply", "Working on it...")
+                await self._emit_chat_message("assistant", reply_text)
+                
+                # Delegate tasks to orchestrator
+                ws = self.focus_manager.get_active_workspace() or "default"
+                for task in parsed.get("tasks", []):
+                    brain = task.get("brain", "python_brain")
+                    request = task.get("request", "")
+                    await self.bus.send_task(
+                        source=self.name,
+                        target=f"orchestrator_{ws}",
+                        task_type=request,
+                        payload={
+                            "brain": brain,
+                            "request": request,
+                            "reply_to_ui": True,
+                        },
+                        priority=Priority.NORMAL,
+                    )
+            else:
+                # Plain text response — send to chat
+                await self._emit_chat_message("assistant", response)
             
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             await self._emit_chat_message("system", f"Error: {e}")
+    
+    @staticmethod
+    def _try_parse_delegation(response: str) -> dict | None:
+        """
+        Try to parse a Front Brain response as delegation JSON.
+        
+        Handles raw JSON, markdown-fenced JSON (```json ... ```),
+        and JSON embedded in surrounding text.
+        """
+        import json
+        import re
+        
+        if not response:
+            return None
+        
+        # 1. Try raw JSON
+        try:
+            parsed = json.loads(response.strip())
+            if isinstance(parsed, dict):
+                return parsed
+        except (json.JSONDecodeError, TypeError):
+            pass
+        
+        # 2. Try extracting from markdown code fences
+        fence_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', response, re.DOTALL)
+        if fence_match:
+            try:
+                parsed = json.loads(fence_match.group(1).strip())
+                if isinstance(parsed, dict):
+                    return parsed
+            except (json.JSONDecodeError, TypeError):
+                pass
+        
+        # 3. Try finding JSON object in the text
+        brace_match = re.search(r'\{[^{}]*"tasks"\s*:\s*\[.*?\]\s*\}', response, re.DOTALL)
+        if brace_match:
+            try:
+                parsed = json.loads(brace_match.group(0))
+                if isinstance(parsed, dict):
+                    return parsed
+            except (json.JSONDecodeError, TypeError):
+                pass
+        
+        return None
     
     async def _emit_chat_message(self, role: str, text: str) -> None:
         """Emit a chat message event on the bus for the Morphable UI."""
