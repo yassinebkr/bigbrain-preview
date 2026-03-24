@@ -118,6 +118,12 @@ class MorphableUI {
       }
     });
 
+    // Listen for workspace highlight (task complete → pulse the tab)
+    this.bus.on({ type: 'event', event: 'workspace.highlight' }, (msg) => {
+      const ws = msg.payload?.workspace;
+      if (ws) this._pulseWorkspaceTab(ws);
+    });
+
     // Load initial workspace
     this.switchWorkspace(workspace);
 
@@ -502,9 +508,20 @@ class MorphableUI {
       const btn = document.createElement('button');
       btn.className = `ws-btn ${wsName === active ? 'ws-btn-active' : ''}`;
       btn.textContent = wsName;
+      btn.dataset.workspace = wsName;
       btn.addEventListener('click', () => this.switchWorkspace(wsName));
       selector.appendChild(btn);
     }
+  }
+
+  /** Pulse a workspace tab to signal results are ready. */
+  _pulseWorkspaceTab(wsName) {
+    const selector = document.getElementById('workspace-selector');
+    if (!selector) return;
+    const btn = selector.querySelector(`[data-workspace="${wsName}"]`);
+    if (!btn || btn.classList.contains('ws-btn-active')) return; // don't pulse if already active
+    btn.classList.add('ws-btn-pulse');
+    setTimeout(() => btn.classList.remove('ws-btn-pulse'), 3000);
   }
 
   // ============================================================

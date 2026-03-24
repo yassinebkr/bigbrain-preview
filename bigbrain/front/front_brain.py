@@ -742,51 +742,46 @@ Type 'quit' or 'exit' to stop."""
         success = result.get("success", False)
         
         if success:
-            # Build a meaningful completion message
-            parts = ["✅"]
+            # Brief conversational notification — actual results go to workspace panels
+            # Determine what brain(s) did the work for context
+            workspace_hint = None
+            task_summary = None
             
-            # Try to get task description from results
-            if "summary" in result:
-                parts.append(result["summary"][:200])
-            elif "stdout" in result:
-                stdout = result["stdout"].strip()
-                if stdout:
-                    parts.append(f"Done. Output:\n{stdout[:300]}")
-                else:
-                    parts.append("Task completed.")
-            elif "result" in result:
-                res = str(result["result"]).strip()
-                if res:
-                    parts.append(res[:500])
-                else:
-                    parts.append("Task completed.")
-            elif "results" in result and isinstance(result["results"], dict):
-                # Orchestrator multi-subtask result — extract meaningful content
-                n = result.get("subtasks_completed", len(result["results"]))
-                found_content = False
+            if "results" in result and isinstance(result["results"], dict):
                 for _sid, sub_result in result["results"].items():
                     if not isinstance(sub_result, dict):
                         continue
-                    # Priority: summary > stdout > generated_code > error
-                    if sub_result.get("summary"):
-                        parts.append(sub_result["summary"][:300])
-                        found_content = True
-                    elif sub_result.get("stdout", "").strip():
-                        stdout = sub_result["stdout"].strip()
-                        parts.append(f"Output:\n```\n{stdout[:400]}\n```")
-                        found_content = True
-                    elif sub_result.get("generated_code"):
-                        code = sub_result["generated_code"]
-                        parts.append(f"Generated code ({len(code.splitlines())} lines)")
-                        if sub_result.get("success"):
-                            parts.append("— executed successfully.")
-                        found_content = True
-                if not found_content:
-                    parts.append(f"All {n} subtask(s) completed.")
-            else:
-                parts.append("Task completed.")
+                    if sub_result.get("generated_code") or sub_result.get("stdout"):
+                        workspace_hint = "python-dev"
+                    elif sub_result.get("summary") or sub_result.get("sources"):
+                        workspace_hint = "research"
+                        # Research summaries ARE the deliverable — show in chat
+                        if sub_result.get("summary"):
+                            task_summary = sub_result["summary"][:500]
+            elif "summary" in result:
+                task_summary = result["summary"][:500]
+                workspace_hint = "research"
+            elif "stdout" in result or "generated_code" in result:
+                workspace_hint = "python-dev"
             
-            notification = " ".join(parts)
+            # Build notification
+            if task_summary:
+                # Research results are conversational — show the summary
+                notification = f"✅ {task_summary}"
+            elif workspace_hint:
+                notification = f"✅ Done — results ready in {workspace_hint.replace('-', ' ').title()} workspace."
+            else:
+                notification = "✅ Task complete."
+            
+            # Emit workspace highlight event so UI can pulse the tab
+            if workspace_hint:
+                await self.bus.broadcast_event(
+                    source=self.name,
+                    event_type="workspace.highlight",
+                    payload={"workspace": workspace_hint, "reason": "task_complete"},
+                    workspace=workspace_hint,
+                    priority=Priority.NORMAL,
+                )
         else:
             error = result.get("error", "Unknown error")
             notification = f"❌ Task failed: {error}"
