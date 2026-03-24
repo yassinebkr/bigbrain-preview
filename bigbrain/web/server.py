@@ -185,11 +185,21 @@ class WebServer:
             self._app.router.add_static("/static", STATIC_DIR)
 
     async def _handle_index(self, request: web.Request) -> web.Response:
-        """Serve the main HTML page."""
+        """Serve the main HTML page, injecting WS auth token if auth is enabled."""
         index_path = STATIC_DIR / "index.html"
-        if index_path.exists():
-            return web.FileResponse(index_path)
-        return web.Response(text="BigBrain Morphable UI", content_type="text/html")
+        if not index_path.exists():
+            return web.Response(text="BigBrain Morphable UI", content_type="text/html")
+
+        html = index_path.read_text()
+
+        # Inject WS auth token so bus-client.js can authenticate the WebSocket
+        if self._auth_password:
+            html = html.replace(
+                '<body data-focus-mode="normal">',
+                f'<body data-focus-mode="normal" data-ws-token="{self._auth_password}">',
+            )
+
+        return web.Response(text=html, content_type="text/html")
 
     async def _handle_status(self, request: web.Request) -> web.Response:
         """Server status endpoint."""

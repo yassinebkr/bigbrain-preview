@@ -68,8 +68,9 @@ class MorphableUI {
     // Initialize SlotManager
     this.slotManager = new SlotManager(this.gridContainer);
 
-    // Connect to bus
-    this.bus = new BusClient(wsUrl || this._defaultWsUrl());
+    // Connect to bus (pass WS auth token if present)
+    const wsToken = document.body.dataset.wsToken || null;
+    this.bus = new BusClient(wsUrl || this._defaultWsUrl(), { token: wsToken });
     this.bus.onConnect = () => this._onBusConnect();
     this.bus.onDisconnect = () => this._onBusDisconnect();
     this.bus.connect();
