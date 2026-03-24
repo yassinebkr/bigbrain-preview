@@ -98,6 +98,7 @@ class AnthropicOAuthProvider(LLMProvider):
 
     Uses Claude Code stealth headers to access the API via consumer OAuth.
     Supports both streaming and non-streaming completions.
+    Auto-refreshes expired tokens on 401 responses.
     """
 
     def __init__(self, token: str, default_model: str = "claude-sonnet-4-20250514"):
@@ -112,6 +113,21 @@ class AnthropicOAuthProvider(LLMProvider):
         self.default_model = _normalize_model(default_model)
         self._headers = _build_headers(token)
         self._client = httpx.AsyncClient(timeout=120.0)
+    
+    def _try_refresh_token(self) -> bool:
+        """Attempt to refresh the OAuth token. Returns True on success."""
+        try:
+            from ..auth.oauth import load_credentials, refresh_token
+            creds = load_credentials()
+            if creds and creds.refresh_token:
+                new_creds = refresh_token(creds)
+                self.token = new_creds.access_token
+                self._headers = _build_headers(new_creds.access_token)
+                return True
+        except Exception as e:
+            import sys
+            print(f"[AnthropicOAuth] Token refresh failed: {e}", file=sys.stderr)
+        return False
 
     async def complete(
         self,
@@ -170,12 +186,20 @@ class AnthropicOAuthProvider(LLMProvider):
             return await self._sync_chat(body)
 
     async def _sync_chat(self, body: dict) -> str:
-        """Non-streaming chat completion."""
+        """Non-streaming chat completion with auto-refresh on 401."""
         resp = await self._client.post(
             ANTHROPIC_API_URL,
             headers=self._headers,
             json=body,
         )
+
+        # Auto-refresh on 401 and retry once
+        if resp.status_code == 401 and self._try_refresh_token():
+            resp = await self._client.post(
+                ANTHROPIC_API_URL,
+                headers=self._headers,
+                json=body,
+            )
 
         if resp.status_code != 200:
             error = resp.json()
@@ -188,7 +212,7 @@ class AnthropicOAuthProvider(LLMProvider):
         return "\n".join(texts)
 
     async def _stream_chat(self, body: dict) -> AsyncIterator[str]:
-        """Streaming chat completion using SSE.
+        """Streaming chat completion using SSE with auto-refresh on 401.
         
         Uses a fresh httpx client per stream to avoid connection pool
         issues when the main client is reused for multiple concurrent or
@@ -197,6 +221,57 @@ class AnthropicOAuthProvider(LLMProvider):
         body["stream"] = True
 
         # Fresh client per stream — avoids connection reuse issues
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            async with client.stream(
+                "POST",
+                ANTHROPIC_API_URL,
+                headers=self._headers,
+                json=body,
+            ) as resp:
+                if resp.status_code == 401:
+                    # Drain this response so the connection can be reused
+                    await resp.aread()
+                    # Try refresh — if it works, we'll retry below
+                    if not self._try_refresh_token():
+                        raise RuntimeError("Anthropic API error (401): OAuth token expired and refresh failed")
+                else:
+                    if resp.status_code != 200:
+                        raw = await resp.aread()
+                        try:
+                            error = json.loads(raw)
+                            msg = error.get("error", {}).get("message", raw.decode())
+                        except Exception:
+                            msg = raw.decode(errors="replace")
+                        raise RuntimeError(f"Anthropic API error ({resp.status_code}): {msg}")
+                    
+                    # Success — yield tokens from this stream
+                    async for line in resp.aiter_lines():
+                        if not line.startswith("data: "):
+                            continue
+                        payload = line[6:]
+                        if payload == "[DONE]":
+                            break
+                        try:
+                            event = json.loads(payload)
+                        except json.JSONDecodeError:
+                            continue
+                        event_type = event.get("type", "")
+                        if event_type == "error":
+                            err = event.get("error", {})
+                            raise RuntimeError(
+                                f"Stream error: {err.get('type', 'unknown')}: "
+                                f"{err.get('message', str(err))}"
+                            )
+                        if event_type == "message_stop":
+                            break
+                        if event_type == "content_block_delta":
+                            delta = event.get("delta", {})
+                            if delta.get("type") == "text_delta":
+                                yield delta["text"]
+                    return  # Stream completed successfully
+
+        # If we got here, the first attempt was a 401 and token was refreshed.
+        # Retry with new token.
         async with httpx.AsyncClient(timeout=120.0) as client:
             async with client.stream(
                 "POST",
