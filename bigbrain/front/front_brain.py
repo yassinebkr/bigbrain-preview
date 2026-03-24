@@ -395,9 +395,10 @@ Type 'quit' or 'exit' to stop."""
                     for task in parsed.get("tasks", []):
                         brain = task.get("brain", "python_brain")
                         request = task.get("request", "")
+                        ws = self.focus_manager.get_active_workspace() or "default"
                         await self.bus.send_task(
                             source=self.name,
-                            target=f"orchestrator_{self.focus_manager._state.active_workspace}",
+                            target=f"orchestrator_{ws}",
                             task_type=request,
                             payload={
                                 "brain": brain,
