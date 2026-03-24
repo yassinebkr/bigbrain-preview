@@ -366,13 +366,13 @@ class WebServer:
         if not self._ws_clients:
             return
         
-        # Debug: log progress and subtask events
+        # Debug: log ALL forwarded messages (temporary)
         msg_type = message.type if isinstance(message.type, str) else message.type.value
-        if msg_type in ("progress", "event"):
-            event = (message.payload or {}).get("event", "")
-            if msg_type == "progress" or "subtask" in event or "brain" in event:
-                logger.info("WS→browser: type=%s event=%s src=%s clients=%d",
-                           msg_type, event, message.source, len(self._ws_clients))
+        event = (message.payload or {}).get("event", "")
+        stage = (message.payload or {}).get("stage", "")
+        # Skip noisy focus state broadcasts
+        if not (msg_type == "state" and "focus" in event):
+            print(f"[WS→{len(self._ws_clients)}] {msg_type:10} {event:25} src={message.source} {f'stage={stage}' if stage else ''}")
 
         # Serialize to JSON-safe dict
         try:
