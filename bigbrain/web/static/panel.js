@@ -332,6 +332,11 @@ class BrainStatusPanel extends BasePanel {
       { type: 'state', event: 'brain.' },
       (msg) => this._handleBrainEvent(msg)
     );
+    // Brain progress messages use PROGRESS type
+    this._addSubscription(
+      { type: 'progress' },
+      (msg) => this._handleBrainEvent(msg)
+    );
   }
 
   _handleBrainEvent(msg) {
@@ -397,7 +402,7 @@ class TaskListPanel extends BasePanel {
     this._addSubscription({ type: 'task' }, (msg) => {
       this.tasks.set(msg.id, {
         id: msg.id,
-        type: msg.payload?.type || 'unknown',
+        type: msg.payload?.type || msg.payload?.task_type || 'unknown',
         target: msg.target,
         status: 'running',
         progress: 0,
@@ -414,10 +419,58 @@ class TaskListPanel extends BasePanel {
         this._renderTasks();
       }
     });
+    // Orchestrator events (task.received, subtask.started, etc.)
+    this._addSubscription({ type: 'event', event: 'task.' }, (msg) => {
+      const event = msg.payload?.event || '';
+      const taskId = msg.payload?.task_id || msg.id;
+      if (event.includes('received') || event.includes('started')) {
+        this.tasks.set(taskId, {
+          id: taskId,
+          type: msg.payload?.task_type || event,
+          target: msg.payload?.brain || msg.target,
+          status: 'running',
+          progress: 0,
+          started: Date.now(),
+        });
+        this._renderTasks();
+      } else if (event.includes('complete')) {
+        if (this.tasks.has(taskId)) {
+          this.tasks.get(taskId).status = 'complete';
+          this.tasks.get(taskId).progress = 100;
+          this._renderTasks();
+        }
+      } else if (event.includes('failed') || event.includes('cancelled')) {
+        if (this.tasks.has(taskId)) {
+          this.tasks.get(taskId).status = 'failed';
+          this._renderTasks();
+        }
+      }
+    });
+    this._addSubscription({ type: 'event', event: 'subtask.' }, (msg) => {
+      const event = msg.payload?.event || '';
+      const taskId = msg.payload?.subtask_id || msg.id;
+      if (event.includes('started')) {
+        this.tasks.set(taskId, {
+          id: taskId,
+          type: msg.payload?.brain || 'subtask',
+          target: msg.payload?.brain || msg.target,
+          status: 'running',
+          progress: 0,
+          started: Date.now(),
+        });
+        this._renderTasks();
+      } else if (event.includes('complete') || event.includes('failed')) {
+        if (this.tasks.has(taskId)) {
+          this.tasks.get(taskId).status = event.includes('complete') ? 'complete' : 'failed';
+          this.tasks.get(taskId).progress = 100;
+          this._renderTasks();
+        }
+      }
+    });
     this._addSubscription(
-      { type: 'state', event: 'brain.progress' },
+      { type: 'progress' },
       (msg) => {
-        const taskId = msg.payload?.task_id;
+        const taskId = msg.reply_to || msg.payload?.task_id;
         if (taskId && this.tasks.has(taskId)) {
           const task = this.tasks.get(taskId);
           task.progress = msg.payload?.progress || task.progress;

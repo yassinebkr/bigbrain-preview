@@ -359,6 +359,74 @@ Type 'quit' or 'exit' to stop."""
         elif message.type == MessageType.EVENT:
             # Direct events bypass focus filtering
             await self._process_filtered_event(message)
+        
+        elif message.type in (MessageType.TASK, "task"):
+            # Handle user messages from Morphable UI
+            payload = message.payload or {}
+            if payload.get("type") == "user_message":
+                await self._handle_ui_message(message)
+    
+    async def _handle_ui_message(self, message: BusMessage) -> None:
+        """
+        Handle a user message from the Morphable UI.
+        
+        Processes the text through handle_user_input(), then sends
+        the response back on the bus as a chat.message event so the
+        ChatPanel in the browser can display it.
+        """
+        text = message.payload.get("text", "").strip()
+        if not text:
+            return
+        
+        try:
+            # Process through the normal input pipeline
+            response = await self.handle_user_input(text, input_type="web")
+            
+            # Check if response is a delegation (JSON with tasks)
+            import json
+            try:
+                parsed = json.loads(response)
+                if isinstance(parsed, dict) and "tasks" in parsed:
+                    # Front Brain wants to delegate — send the reply part to chat
+                    reply_text = parsed.get("reply", "Working on it...")
+                    await self._emit_chat_message("assistant", reply_text)
+                    
+                    # Delegate tasks to orchestrator
+                    for task in parsed.get("tasks", []):
+                        brain = task.get("brain", "python_brain")
+                        request = task.get("request", "")
+                        await self.bus.send_task(
+                            source=self.name,
+                            target=f"orchestrator_{self.focus_manager._state.active_workspace}",
+                            task_type=request,
+                            payload={
+                                "brain": brain,
+                                "request": request,
+                                "reply_to_ui": True,
+                            },
+                            priority=Priority.NORMAL,
+                        )
+                    return
+            except (json.JSONDecodeError, TypeError):
+                pass  # Not JSON — it's a plain text response
+            
+            # Plain text response — send to chat
+            await self._emit_chat_message("assistant", response)
+            
+        except Exception as e:
+            await self._emit_chat_message("system", f"Error: {e}")
+    
+    async def _emit_chat_message(self, role: str, text: str) -> None:
+        """Emit a chat message event on the bus for the Morphable UI."""
+        await self.bus.broadcast_event(
+            source=self.name,
+            event_type="chat.message",
+            payload={
+                "role": role,
+                "text": text,
+            },
+            priority=Priority.NORMAL,
+        )
     
     async def _process_filtered_event(self, event: BusMessage) -> None:
         """
@@ -632,9 +700,16 @@ Type 'quit' or 'exit' to stop."""
                 stdout = result["stdout"].strip()
                 if stdout:
                     notification += f" Output: {stdout[:100]}..."
+            elif "result" in result:
+                res = str(result["result"]).strip()
+                if res:
+                    notification += f"\n{res[:500]}"
         else:
             error = result.get("error", "Unknown error")
             notification = f"❌ Task failed: {error}"
+        
+        # Send result to Morphable UI chat
+        await self._emit_chat_message("assistant", notification)
         
         # Check if we should interrupt based on focus mode
         if self.focus_manager.focus_rules.current_mode != FocusMode.DEEP_FOCUS:
