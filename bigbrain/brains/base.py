@@ -285,6 +285,12 @@ class BaseBrain(BusParticipant, ABC):
         Args:
             progress_data: Progress information (e.g. percentage, current step)
         """
+        # Include subtask_id from task payload so UI can correlate
+        if self._current_task and self._current_task.payload:
+            subtask_id = self._current_task.payload.get("_subtask_id")
+            if subtask_id and "subtask_id" not in progress_data:
+                progress_data = {**progress_data, "subtask_id": subtask_id}
+        
         message = BusMessage(
             type=MessageType.PROGRESS,
             source=self.name,

@@ -518,14 +518,26 @@ class TaskListPanel extends BasePanel {
       }
     });
 
-    // Explicit progress updates
+    // Explicit progress updates — match by reply_to, subtask_id, or brain source
     this._addSubscription(
       { type: 'progress' },
       (msg) => {
-        const taskId = msg.reply_to || msg.payload?.task_id;
-        if (taskId && this.tasks.has(taskId)) {
-          const task = this.tasks.get(taskId);
-          task.progress = msg.payload?.progress ?? task.progress;
+        const p = msg.payload || {};
+        // Try multiple correlation keys
+        const candidates = [msg.reply_to, p.task_id, p.subtask_id];
+        let task = null;
+        for (const cid of candidates) {
+          if (cid && this.tasks.has(cid)) { task = this.tasks.get(cid); break; }
+        }
+        // Fallback: match by brain name (source) — find first running task assigned to this brain
+        if (!task && msg.source) {
+          for (const [, t] of this.tasks) {
+            if (t.status === 'running' && t.target === msg.source) { task = t; break; }
+          }
+        }
+        if (task) {
+          if (typeof p.progress === 'number') task.progress = p.progress;
+          if (p.stage) task.stage = p.stage;
           task.status = 'running';
           this._renderTasks();
         }
@@ -553,6 +565,9 @@ class TaskListPanel extends BasePanel {
       const statusLabel = { running: 'Running', complete: 'Done', failed: 'Failed' }[task.status] || 'Pending';
       const isIndeterminate = task.status === 'running' && task.progress < 0;
 
+      const stageText = task.stage ? ` — ${task.stage}` : '';
+      const targetLine = task.target ? `<span class="task-target">${_escapeHtml(task.target)}${_escapeHtml(stageText)}</span>` : '';
+
       const item = document.createElement('div');
       item.className = `task-item task-${task.status}`;
       item.innerHTML = `
@@ -561,7 +576,7 @@ class TaskListPanel extends BasePanel {
           <span class="task-type">${_escapeHtml(task.label)}</span>
           <span class="task-status-badge">${statusLabel}</span>
         </div>
-        ${task.target ? `<div style="padding-left:24px"><span class="task-target">${_escapeHtml(task.target)}</span></div>` : ''}
+        ${targetLine ? `<div style="padding-left:24px">${targetLine}</div>` : ''}
         <div class="task-progress-bar${isIndeterminate ? ' task-progress-indeterminate' : ''}">
           <div class="task-progress-fill" style="width:${isIndeterminate ? '30' : task.progress}%"></div>
         </div>

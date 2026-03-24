@@ -761,17 +761,28 @@ Type 'quit' or 'exit' to stop."""
                 else:
                     parts.append("Task completed.")
             elif "results" in result and isinstance(result["results"], dict):
-                # Orchestrator multi-subtask result
+                # Orchestrator multi-subtask result — extract meaningful content
                 n = result.get("subtasks_completed", len(result["results"]))
-                parts.append(f"All {n} subtask(s) completed.")
-                # Include first non-empty result summary
+                found_content = False
                 for _sid, sub_result in result["results"].items():
-                    if isinstance(sub_result, dict) and sub_result.get("summary"):
-                        parts.append(sub_result["summary"][:150])
-                        break
-                    elif isinstance(sub_result, dict) and sub_result.get("stdout"):
-                        parts.append(f"Output: {sub_result['stdout'][:150]}")
-                        break
+                    if not isinstance(sub_result, dict):
+                        continue
+                    # Priority: summary > stdout > generated_code > error
+                    if sub_result.get("summary"):
+                        parts.append(sub_result["summary"][:300])
+                        found_content = True
+                    elif sub_result.get("stdout", "").strip():
+                        stdout = sub_result["stdout"].strip()
+                        parts.append(f"Output:\n```\n{stdout[:400]}\n```")
+                        found_content = True
+                    elif sub_result.get("generated_code"):
+                        code = sub_result["generated_code"]
+                        parts.append(f"Generated code ({len(code.splitlines())} lines)")
+                        if sub_result.get("success"):
+                            parts.append("— executed successfully.")
+                        found_content = True
+                if not found_content:
+                    parts.append(f"All {n} subtask(s) completed.")
             else:
                 parts.append("Task completed.")
             

@@ -478,7 +478,7 @@ Example — "research async patterns then build a scraper using what you find":
             target=subtask.brain_target,
             workspace=self.workspace,
             project=plan.original_task.project,
-            payload=resolved_payload,
+            payload={**resolved_payload, "_subtask_id": subtask.id},
             reply_to=subtask.id  # Informational — not used for result matching
         )
         
