@@ -14,7 +14,7 @@
 <body data-focus-mode="normal">
   <div id="app">
 
-    <!-- Top Bar: logo + workspace selector + connection -->
+    <!-- Top Bar -->
     <div id="top-bar">
       <div class="logo">
         <span>🧠</span>
@@ -23,36 +23,26 @@
       <div id="workspace-selector">
         <!-- Populated by app.js -->
       </div>
-      <div style="display: flex; align-items: center; gap: 8px;">
-        <span style="font-size: 12px; color: var(--text-muted);">Bus</span>
+      <div class="connection-wrap">
+        <span class="connection-label">Bus</span>
         <div id="connection-status" class="connection-disconnected"></div>
       </div>
     </div>
 
-    <!-- Grid Container: panels live here, managed by SlotManager -->
-    <div id="grid-container">
-      <!-- Panels are dynamically created by app.js -->
-    </div>
+    <!-- Panel grid -->
+    <div id="grid-container"></div>
 
-    <!-- Status Strip: persistent ambient info -->
-    <div id="status-strip">
-      <!-- Populated by StatusStripPanel -->
-    </div>
+    <!-- Status strip -->
+    <div id="status-strip"></div>
 
-    <!-- Chat Input -->
+    <!-- Chat input -->
     <div id="input-area">
-      <input
-        type="text"
-        id="chat-input"
-        placeholder="Talk to BigBrain... (Enter to send)"
-        autocomplete="off"
-        spellcheck="false"
-      >
+      <input type="text" id="chat-input" placeholder="Ask BigBrain anything..." autocomplete="off" spellcheck="false">
+      <button id="send-btn">Send ⏎</button>
     </div>
 
   </div>
 
-  <!-- App Entry Point -->
   <script type="module" src="/static/app.js"></script>
 </body>
 </html>

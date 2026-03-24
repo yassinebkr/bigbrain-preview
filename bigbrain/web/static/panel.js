@@ -232,7 +232,12 @@ class ChatPanel extends BasePanel {
 
   renderContent(el) {
     el.innerHTML = `
-      <div class="chat-messages" id="chat-${this.id}"></div>
+      <div class="chat-messages" id="chat-${this.id}">
+        <div class="panel-empty">
+          <span class="panel-empty-icon">💬</span>
+          <span class="panel-empty-text">Conversation will appear here as you chat with BigBrain</span>
+        </div>
+      </div>
     `;
   }
 
@@ -246,6 +251,10 @@ class ChatPanel extends BasePanel {
   addMessage(data) {
     const container = this.el?.querySelector('.chat-messages');
     if (!container) return;
+
+    // Clear empty state on first message
+    const empty = container.querySelector('.panel-empty');
+    if (empty) empty.remove();
 
     const role = data.role || 'system';
     const text = data.text || data.content || '';
@@ -270,7 +279,12 @@ class BrainStatusPanel extends BasePanel {
   }
 
   renderContent(el) {
-    el.innerHTML = '<div class="brain-list"></div>';
+    el.innerHTML = `<div class="brain-list">
+      <div class="panel-empty">
+        <span class="panel-empty-icon">🧠</span>
+        <span class="panel-empty-text">Waiting for brain activity...</span>
+      </div>
+    </div>`;
   }
 
   _setupSubscriptions() {
@@ -307,6 +321,10 @@ class BrainStatusPanel extends BasePanel {
     const list = this.el?.querySelector('.brain-list');
     if (!list) return;
 
+    // Clear empty state
+    const empty = list.querySelector('.panel-empty');
+    if (empty) empty.remove();
+
     list.innerHTML = '';
     for (const [name, info] of this.brains) {
       const item = document.createElement('div');
@@ -332,7 +350,12 @@ class TaskListPanel extends BasePanel {
   }
 
   renderContent(el) {
-    el.innerHTML = '<div class="task-list"></div>';
+    el.innerHTML = `<div class="task-list">
+      <div class="panel-empty">
+        <span class="panel-empty-icon">📋</span>
+        <span class="panel-empty-text">No active tasks. Send a message to get started.</span>
+      </div>
+    </div>`;
   }
 
   _setupSubscriptions() {
@@ -402,7 +425,12 @@ class BusMonitorPanel extends BasePanel {
   }
 
   renderContent(el) {
-    el.innerHTML = '<div class="bus-messages"></div>';
+    el.innerHTML = `<div class="bus-messages">
+      <div class="panel-empty">
+        <span class="panel-empty-icon">📡</span>
+        <span class="panel-empty-text">Listening for bus messages...</span>
+      </div>
+    </div>`;
   }
 
   _setupSubscriptions() {
@@ -413,6 +441,10 @@ class BusMonitorPanel extends BasePanel {
   _addMessage(msg) {
     const container = this.el?.querySelector('.bus-messages');
     if (!container) return;
+
+    // Clear empty state
+    const empty = container.querySelector('.panel-empty');
+    if (empty) empty.remove();
 
     const type = msg.type?.toUpperCase?.() || msg.type || 'EVENT';
     const source = msg.source || '?';

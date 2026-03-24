@@ -1,10 +1,6 @@
 /*
  * style.css — BigBrain Morphable UI Styles
- *
- * Layout catalog CSS grid definitions.
- * Panel styles with collapse/expand support.
- * Dark theme with indigo accent.
- * Geist font (matches Scratchy).
+ * v2.0 — Full design pass
  */
 
 /* ============================================================
@@ -14,11 +10,13 @@
 :root {
   /* Colors — dark theme */
   --bg: #0a0a0f;
-  --bg-panel: #12121a;
-  --bg-panel-hover: #1a1a25;
-  --bg-title-bar: #16162080;
-  --bg-input: #1a1a25;
-  --border: #2a2a3a;
+  --bg-panel: #101018;
+  --bg-panel-hover: #16162a;
+  --bg-title-bar: #14141f;
+  --bg-input: #14141f;
+  --bg-surface: #0d0d14;
+  --border: #1e1e30;
+  --border-hover: #2a2a45;
   --border-focus: #4f46e5;
   --text: #e4e4e7;
   --text-muted: #71717a;
@@ -26,26 +24,33 @@
 
   /* Accent — indigo */
   --accent: #6366f1;
-  --accent-soft: #6366f120;
+  --accent-soft: #6366f115;
+  --accent-mid: #6366f130;
   --accent-glow: #6366f140;
 
   /* Status colors */
   --green: #22c55e;
+  --green-soft: #22c55e20;
   --yellow: #eab308;
+  --yellow-soft: #eab30820;
   --red: #ef4444;
+  --red-soft: #ef444420;
   --blue: #3b82f6;
+  --blue-soft: #3b82f620;
 
   /* Sizing */
-  --title-bar-height: 36px;
-  --status-strip-height: 40px;
-  --input-height: 48px;
-  --gap: 8px;
-  --radius: 8px;
-  --radius-sm: 4px;
+  --title-bar-height: 38px;
+  --status-strip-height: 36px;
+  --input-height: 44px;
+  --top-bar-height: 48px;
+  --gap: 6px;
+  --radius: 10px;
+  --radius-sm: 6px;
 
   /* Transitions */
-  --transition-fast: 150ms ease;
-  --transition-normal: 250ms ease;
+  --transition-fast: 120ms ease;
+  --transition-normal: 200ms ease;
+  --transition-smooth: 300ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* ============================================================
@@ -64,7 +69,7 @@ html, body {
   background: var(--bg);
   color: var(--text);
   font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
@@ -80,80 +85,110 @@ html, body {
   overflow: hidden;
 }
 
-/* Top bar — workspace selector + connection status */
+/* ============================================================
+   TOP BAR
+   ============================================================ */
+
 #top-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 44px;
+  height: var(--top-bar-height);
   padding: 0 16px;
-  background: var(--bg-panel);
+  background: var(--bg-surface);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  z-index: 10;
 }
 
 #top-bar .logo {
   font-weight: 600;
-  font-size: 15px;
+  font-size: 14px;
   display: flex;
   align-items: center;
   gap: 8px;
+  color: var(--text);
+  letter-spacing: -0.2px;
 }
 
+#top-bar .logo span:first-child {
+  font-size: 18px;
+}
+
+/* Workspace selector — pill tabs */
 #workspace-selector {
   display: flex;
-  gap: 4px;
+  gap: 2px;
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+  padding: 3px;
 }
 
 .ws-btn {
-  padding: 4px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  padding: 5px 14px;
+  border: none;
+  border-radius: 4px;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text-dim);
+  font-family: inherit;
   font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
   transition: all var(--transition-fast);
+  white-space: nowrap;
 }
 
 .ws-btn:hover {
   background: var(--accent-soft);
-  color: var(--text);
-  border-color: var(--accent);
+  color: var(--text-muted);
 }
 
 .ws-btn-active {
   background: var(--accent);
   color: white;
-  border-color: var(--accent);
+  box-shadow: 0 1px 4px rgba(99, 102, 241, 0.3);
 }
 
 /* Connection indicator */
+.connection-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.connection-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
 #connection-status {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  transition: background var(--transition-normal);
+  transition: all var(--transition-normal);
 }
 
 .connection-connected {
   background: var(--green);
-  box-shadow: 0 0 6px var(--green);
+  box-shadow: 0 0 6px var(--green), 0 0 12px rgba(34, 197, 94, 0.2);
 }
 
 .connection-disconnected {
   background: var(--red);
   box-shadow: 0 0 6px var(--red);
-  animation: pulse-red 2s infinite;
+  animation: pulse-red 2s ease-in-out infinite;
 }
 
 @keyframes pulse-red {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+  50% { opacity: 0.4; }
 }
 
 /* ============================================================
-   GRID CONTAINER — holds the panel grid
+   GRID CONTAINER
    ============================================================ */
 
 #grid-container {
@@ -169,30 +204,25 @@ html, body {
    LAYOUT CATALOG — CSS Grid templates
    ============================================================ */
 
-/* Focus: single panel */
 [data-layout="focus"] {
   grid-template: "primary" 1fr / 1fr;
 }
 
-/* Split: two equal columns */
 [data-layout="split"] {
   grid-template: "left right" 1fr / 1fr 1fr;
 }
 
-/* Focus-Left: wide primary + sidebar */
 [data-layout="focus-left"] {
-  grid-template: "primary side" 1fr / 2fr 1fr;
+  grid-template: "primary side" 1fr / 5fr 2fr;
 }
 
-/* Tri-Left: primary + two stacked right panels */
 [data-layout="tri-left"] {
   grid-template:
     "primary side-top" 1fr
     "primary side-bottom" 1fr
-    / 2fr 1fr;
+    / 5fr 2fr;
 }
 
-/* Quad: four equal panels */
 [data-layout="quad"] {
   grid-template:
     "tl tr" 1fr
@@ -200,7 +230,6 @@ html, body {
     / 1fr 1fr;
 }
 
-/* Primary-Dock: large top + 3 dock panels at bottom */
 [data-layout="primary-dock"] {
   grid-template:
     "primary primary primary" 3fr
@@ -208,7 +237,6 @@ html, body {
     / 1fr 1fr 1fr;
 }
 
-/* Tri-Bottom: two columns + wide bottom */
 [data-layout="tri-bottom"] {
   grid-template:
     "left right" 2fr
@@ -228,11 +256,20 @@ html, body {
   border-radius: var(--radius);
   overflow: hidden;
   min-height: 0;
-  transition: box-shadow var(--transition-normal);
+  transition:
+    border-color var(--transition-normal),
+    box-shadow var(--transition-normal),
+    max-height var(--transition-smooth),
+    min-height var(--transition-smooth);
 }
 
 .panel:hover {
+  border-color: var(--border-hover);
+}
+
+.panel:focus-within {
   border-color: var(--border-focus);
+  box-shadow: 0 0 0 1px var(--accent-soft);
 }
 
 /* Title bar */
@@ -241,42 +278,57 @@ html, body {
   align-items: center;
   gap: 8px;
   height: var(--title-bar-height);
+  min-height: var(--title-bar-height);
   padding: 0 12px;
   background: var(--bg-title-bar);
   border-bottom: 1px solid var(--border);
   cursor: pointer;
   user-select: none;
   flex-shrink: 0;
-  backdrop-filter: blur(8px);
+  transition: background var(--transition-fast);
+}
+
+.panel-title-bar:hover {
+  background: var(--bg-panel-hover);
 }
 
 .panel-icon {
-  font-size: 14px;
+  font-size: 13px;
+  flex-shrink: 0;
 }
 
 .panel-title {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.6px;
   flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .panel-actions {
   display: flex;
-  gap: 4px;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.panel-title-bar:hover .panel-actions {
+  opacity: 1;
 }
 
 .panel-btn {
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   border: none;
   background: transparent;
-  color: var(--text-muted);
-  font-size: 12px;
+  color: var(--text-dim);
+  font-size: 11px;
   cursor: pointer;
-  border-radius: var(--radius-sm);
+  border-radius: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -284,7 +336,7 @@ html, body {
 }
 
 .panel-btn:hover {
-  background: var(--accent-soft);
+  background: var(--accent-mid);
   color: var(--accent);
 }
 
@@ -297,43 +349,78 @@ html, body {
 }
 
 /* ============================================================
-   COLLAPSED PANEL — shrinks to title bar only
+   EMPTY STATE — shown when panels have no data
+   ============================================================ */
+
+.panel-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 100%;
+  min-height: 80px;
+  color: var(--text-dim);
+  text-align: center;
+  padding: 20px;
+}
+
+.panel-empty-icon {
+  font-size: 24px;
+  opacity: 0.4;
+}
+
+.panel-empty-text {
+  font-size: 12px;
+  line-height: 1.5;
+  max-width: 200px;
+}
+
+/* ============================================================
+   COLLAPSED PANEL
    ============================================================ */
 
 .panel-collapsed {
-  /* Title bar stays visible, content hidden */
+  min-height: var(--title-bar-height) !important;
+  max-height: var(--title-bar-height) !important;
+  overflow: hidden;
 }
 
 .panel-collapsed .panel-content {
   display: none;
 }
 
+.panel-collapsed .panel-title-bar {
+  border-bottom-color: transparent;
+}
+
 .panel-collapsed .panel-btn-collapse {
   transform: rotate(-90deg);
 }
 
-/* In collapsed state, panel has a fixed min-height */
-.panel-collapsed {
-  min-height: var(--title-bar-height);
-  max-height: var(--title-bar-height);
+.panel-collapsed .panel-actions {
+  opacity: 1;
 }
 
 /* ============================================================
-   STATUS STRIP — persistent bar below grid
+   STATUS STRIP
    ============================================================ */
 
 #status-strip {
   height: var(--status-strip-height);
   border-top: 1px solid var(--border);
-  background: var(--bg-panel);
+  background: var(--bg-surface);
   padding: 0 16px;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
 }
 
 #status-strip .panel {
   border: none;
   border-radius: 0;
   background: transparent;
+  width: 100%;
 }
 
 #status-strip .panel-title-bar {
@@ -344,16 +431,18 @@ html, body {
   padding: 0;
   display: flex;
   align-items: center;
+  overflow: visible;
 }
 
 .status-strip-content {
   display: flex;
   align-items: center;
+  width: 100%;
 }
 
 .status-items {
   display: flex;
-  gap: 24px;
+  gap: 20px;
   align-items: center;
   height: 100%;
 }
@@ -362,22 +451,33 @@ html, body {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-muted);
   cursor: default;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background var(--transition-fast);
+}
+
+.status-item:hover {
+  background: var(--accent-soft);
 }
 
 .status-icon {
-  font-size: 14px;
+  font-size: 12px;
 }
 
 .status-label {
   font-weight: 500;
   color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  font-size: 10px;
 }
 
 .status-value {
   color: var(--text);
+  font-weight: 500;
 }
 
 /* ============================================================
@@ -386,11 +486,12 @@ html, body {
 
 #input-area {
   display: flex;
-  padding: var(--gap);
-  gap: var(--gap);
+  padding: 8px 12px;
+  gap: 8px;
   border-top: 1px solid var(--border);
-  background: var(--bg-panel);
+  background: var(--bg-surface);
   flex-shrink: 0;
+  align-items: center;
 }
 
 #chat-input {
@@ -401,10 +502,10 @@ html, body {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   color: var(--text);
-  font-size: 14px;
+  font-size: 13px;
   font-family: inherit;
   outline: none;
-  transition: border-color var(--transition-fast);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 #chat-input:focus {
@@ -414,6 +515,33 @@ html, body {
 
 #chat-input::placeholder {
   color: var(--text-dim);
+}
+
+#send-btn {
+  height: var(--input-height);
+  padding: 0 20px;
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius);
+  color: white;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#send-btn:hover {
+  background: #5558e6;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+}
+
+#send-btn:active {
+  transform: scale(0.97);
 }
 
 /* ============================================================
@@ -428,7 +556,7 @@ html, body {
 
 .chat-msg {
   padding: 8px 12px;
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   font-size: 13px;
   line-height: 1.5;
   max-width: 85%;
@@ -455,6 +583,7 @@ html, body {
   font-size: 12px;
   align-self: center;
   text-align: center;
+  padding: 4px 12px;
 }
 
 /* ============================================================
@@ -464,21 +593,27 @@ html, body {
 .brain-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .brain-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
+  gap: 10px;
+  padding: 8px 10px;
   border-radius: var(--radius-sm);
-  background: var(--bg);
+  background: var(--bg-surface);
   font-size: 13px;
+  transition: background var(--transition-fast);
+}
+
+.brain-item:hover {
+  background: var(--bg-panel-hover);
 }
 
 .brain-indicator {
   font-size: 10px;
+  flex-shrink: 0;
 }
 
 .brain-name {
@@ -487,13 +622,19 @@ html, body {
 }
 
 .brain-task {
-  color: var(--text-muted);
-  font-size: 12px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-style: italic;
 }
 
 .brain-idle { border-left: 2px solid var(--green); }
-.brain-busy { border-left: 2px solid var(--yellow); }
+.brain-busy { border-left: 2px solid var(--yellow); animation: brain-pulse 1.5s ease infinite; }
 .brain-error { border-left: 2px solid var(--red); }
+
+@keyframes brain-pulse {
+  0%, 100% { background: var(--bg-surface); }
+  50% { background: var(--yellow-soft); }
+}
 
 /* ============================================================
    PANEL CONTENT — task list
@@ -502,16 +643,16 @@ html, body {
 .task-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .task-item {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 6px 8px;
+  gap: 6px;
+  padding: 8px 10px;
   border-radius: var(--radius-sm);
-  background: var(--bg);
+  background: var(--bg-surface);
   font-size: 13px;
 }
 
@@ -523,6 +664,7 @@ html, body {
 
 .task-icon {
   font-size: 12px;
+  flex-shrink: 0;
 }
 
 .task-type {
@@ -531,8 +673,8 @@ html, body {
 }
 
 .task-target {
-  color: var(--text-muted);
-  font-size: 12px;
+  color: var(--text-dim);
+  font-size: 11px;
 }
 
 .task-progress-bar {
@@ -544,9 +686,8 @@ html, body {
 
 .task-progress-fill {
   height: 100%;
-  background: var(--accent);
   border-radius: 2px;
-  transition: width 300ms ease;
+  transition: width 400ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .task-running .task-progress-fill { background: var(--accent); }
@@ -560,7 +701,7 @@ html, body {
 .bus-messages {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   font-family: 'Geist Mono', 'SF Mono', 'Fira Code', monospace;
   font-size: 11px;
 }
@@ -568,22 +709,27 @@ html, body {
 .bus-msg {
   display: flex;
   gap: 8px;
-  padding: 2px 4px;
-  border-radius: 2px;
+  padding: 3px 6px;
+  border-radius: 3px;
+  transition: background var(--transition-fast);
+}
+
+.bus-msg:hover {
+  background: var(--accent-soft);
 }
 
 .bus-type {
   font-weight: 600;
-  min-width: 60px;
+  min-width: 55px;
 }
 
 .bus-route {
-  color: var(--text-muted);
-  min-width: 150px;
+  color: var(--text-dim);
+  min-width: 140px;
 }
 
 .bus-event {
-  color: var(--text-dim);
+  color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -604,7 +750,7 @@ html, body {
 }
 
 .pipeline-item {
-  padding: 4px 0;
+  padding: 6px 0;
   border-bottom: 1px solid var(--border);
 }
 
@@ -613,21 +759,24 @@ html, body {
 }
 
 .pipeline-kv {
-  padding: 2px 0;
+  padding: 3px 0;
+  display: flex;
+  gap: 8px;
 }
 
 .pipeline-kv strong {
-  color: var(--text-muted);
+  color: var(--text-dim);
+  font-weight: 500;
+  min-width: 80px;
 }
 
 /* ============================================================
    FOCUS MODE OVERRIDES
    ============================================================ */
 
-/* Deep focus — dim non-primary panels */
 [data-focus-mode="deep_focus"] .panel:not([data-slot="primary"]) {
-  opacity: 0.4;
-  transition: opacity var(--transition-normal);
+  opacity: 0.35;
+  transition: opacity var(--transition-smooth);
 }
 
 [data-focus-mode="deep_focus"] .panel:not([data-slot="primary"]):hover {
@@ -639,30 +788,32 @@ html, body {
    ============================================================ */
 
 @media (max-width: 768px) {
-  /* Stack everything vertically on small screens */
   #grid-container {
     grid-template: none !important;
     grid-template-columns: 1fr !important;
-    grid-auto-rows: minmax(200px, 1fr) !important;
+    grid-auto-rows: minmax(180px, 1fr) !important;
   }
 
   .panel {
     grid-area: auto !important;
   }
 
-  .ws-btn {
-    font-size: 11px;
-    padding: 2px 8px;
+  #workspace-selector {
+    display: none;
+  }
+
+  #top-bar .logo span:last-child {
+    display: none;
   }
 }
 
 /* ============================================================
-   SCROLLBAR STYLING
+   SCROLLBAR
    ============================================================ */
 
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 
 ::-webkit-scrollbar-track {
@@ -676,4 +827,17 @@ html, body {
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--text-dim);
+}
+
+/* ============================================================
+   ANIMATIONS
+   ============================================================ */
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.panel {
+  animation: fade-in 200ms ease-out;
 }

@@ -354,35 +354,45 @@ class MorphableUI {
     });
   }
 
+  _sendMessage() {
+    const text = this.chatInput.value.trim();
+    if (!text) return;
+
+    this.chatInput.value = '';
+
+    // Send to Front Brain via bus
+    this.bus.send({
+      type: 'task',
+      source: 'morphable_ui',
+      target: 'front_brain',
+      payload: {
+        type: 'user_message',
+        text,
+      },
+    });
+
+    // Also add to local chat panel
+    const chatPanel = this._findPanelByType('chat');
+    if (chatPanel) {
+      chatPanel.addMessage({ role: 'user', text });
+    }
+  }
+
   _initChatInput() {
     if (!this.chatInput) return;
 
     this.chatInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
-        const text = this.chatInput.value.trim();
-        if (!text) return;
-
-        this.chatInput.value = '';
-
-        // Send to Front Brain via bus
-        this.bus.send({
-          type: 'task',
-          source: 'morphable_ui',
-          target: 'front_brain',
-          payload: {
-            type: 'user_message',
-            text,
-          },
-        });
-
-        // Also add to local chat panel
-        const chatPanel = this._findPanelByType('chat');
-        if (chatPanel) {
-          chatPanel.addMessage({ role: 'user', text });
-        }
+        this._sendMessage();
       }
     });
+
+    // Send button
+    const sendBtn = document.getElementById('send-btn');
+    if (sendBtn) {
+      sendBtn.addEventListener('click', () => this._sendMessage());
+    }
   }
 
   _onBusConnect() {
