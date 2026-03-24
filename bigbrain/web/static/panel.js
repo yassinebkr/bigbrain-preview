@@ -360,6 +360,8 @@ class BrainStatusPanel extends BasePanel {
     const brainName = msg.payload?.brain || msg.payload?.target_brain || msg.source;
     
     if (!brainName || brainName === '*') return;
+    // Don't show orchestrators in brain status — they're coordinators, not workers
+    if (brainName.startsWith('orchestrator')) return;
 
     let status = 'idle';
     let stage = '';
@@ -464,18 +466,9 @@ class TaskListPanel extends BasePanel {
   }
 
   _setupSubscriptions() {
-    // Direct TASK messages (from front_brain → orchestrator)
-    this._addSubscription({ type: 'task' }, (msg) => {
-      this.tasks.set(msg.id, {
-        id: msg.id,
-        label: this._extractLabel(msg, 'Processing'),
-        target: msg.target,
-        status: 'running',
-        progress: -1, // indeterminate
-        started: Date.now(),
-      });
-      this._renderTasks();
-    });
+    // Only show tasks dispatched TO brains (not routing tasks between front_brain/orchestrator)
+    // Subtask events from the orchestrator are the real work items
+    // Skip: morphable_ui→front_brain (user input), front_brain→orchestrator (delegation)
 
     // RESULT messages
     this._addSubscription({ type: 'result' }, (msg) => {
