@@ -10,11 +10,11 @@
  *   - Focus state (shared between Front Brain and UI)
  */
 
-import { snapshotPanels, flipPanels, highlightPanel, MorphThrottle, getSpringCSS } from './morph.js';
-import { LAYOUT_CATALOG, SlotManager, WORKSPACE_DEFAULTS, WORKSPACE_LABELS } from './layout.js';
-import { createPanel, registerPanelType, StatusStripPanel } from './panel.js';
-import { BusClient } from './bus-client.js';
-import { PipelineManager } from './pipeline.js';
+import { snapshotPanels, flipPanels, highlightPanel, MorphThrottle, getSpringCSS } from './morph.js?v=20260324g';
+import { LAYOUT_CATALOG, SlotManager, WORKSPACE_DEFAULTS, WORKSPACE_LABELS } from './layout.js?v=20260324g';
+import { createPanel, registerPanelType, StatusStripPanel } from './panel.js?v=20260324g';
+import { BusClient } from './bus-client.js?v=20260324g';
+import { PipelineManager } from './pipeline.js?v=20260324g';
 
 // ============================================================
 // APPLICATION STATE
@@ -42,6 +42,13 @@ class MorphableUI {
     };
     this.panels = new Map();  // panelId -> BasePanel
     this._initialized = false;
+
+    // Persistent panels survive workspace switches (chat, task-list)
+    this._persistentPanels = new Map(); // type -> { panel, busConnected }
+
+    // Global result buffers (for panels that only exist in specific workspaces)
+    this._codeResults = [];      // buffered python_brain results
+    this._researchFindings = []; // buffered researcher results
   }
 
   /**
@@ -124,6 +131,21 @@ class MorphableUI {
       if (ws) this._pulseWorkspaceTab(ws);
     });
 
+    // Global result buffering — catch results even when target panel doesn't exist yet
+    this.bus.on({ type: 'result' }, (msg) => {
+      const src = (msg.source || '').toLowerCase();
+      if (src.includes('python')) {
+        this._codeResults.push(msg);
+        const p = this._findPanelByType('code-output');
+        if (p) p._addResult(msg);
+      }
+      if (src.includes('research')) {
+        this._researchFindings.push(msg);
+        const p = this._findPanelByType('research-results');
+        if (p) p._addFinding(msg);
+      }
+    });
+
     // Load initial workspace
     this.switchWorkspace(workspace);
 
@@ -140,6 +162,7 @@ class MorphableUI {
     const wsDef = WORKSPACE_DEFAULTS[workspaceName] || WORKSPACE_DEFAULTS.default;
 
     this.morphThrottle.request(() => {
+      try {
       // FIRST: snapshot current positions
       const first = snapshotPanels(this.gridContainer);
 
@@ -149,22 +172,37 @@ class MorphableUI {
       // Apply new layout
       this.slotManager.applyLayout(wsDef.layout);
 
-      // Create and mount panels
+      // Create and mount panels (reuse persistent panels when possible)
       for (const [slotName, panelDef] of Object.entries(wsDef.panels)) {
         const panelId = `${workspaceName}-${slotName}`;
-        const panel = createPanel(panelDef.type, panelId, {
-          title: panelDef.title,
-          icon: panelDef.icon,
-        });
+        let panel;
 
-        // Mount into container first (SlotManager will position via grid-area)
-        panel.mount(this.gridContainer);
+        // Check if we have a persistent instance of this panel type
+        if (this._persistentPanels.has(panelDef.type)) {
+          panel = this._persistentPanels.get(panelDef.type);
+          this._persistentPanels.delete(panelDef.type);
+          // Re-attach to grid (subscriptions still active)
+          this.gridContainer.appendChild(panel.el);
+          // Update grid position
+          this.slotManager.assignPanel(slotName, panelId, panel.el);
+        } else {
+          // Create fresh panel
+          panel = createPanel(panelDef.type, panelId, {
+            title: panelDef.title,
+            icon: panelDef.icon,
+          });
+          panel.mount(this.gridContainer);
+          this.slotManager.assignPanel(slotName, panelId, panel.el);
+          panel.subscribe(this.bus);
 
-        // Assign to slot
-        this.slotManager.assignPanel(slotName, panelId, panel.el);
-
-        // Subscribe to bus
-        panel.subscribe(this.bus);
+          // Hydrate result panels from global buffers
+          if (panelDef.type === 'code-output' && this._codeResults.length) {
+            for (const msg of this._codeResults) panel._addResult(msg);
+          }
+          if (panelDef.type === 'research-results' && this._researchFindings.length) {
+            for (const msg of this._researchFindings) panel._addFinding(msg);
+          }
+        }
 
         // Track
         this.panels.set(panelId, panel);
@@ -212,6 +250,12 @@ class MorphableUI {
 
       // Update workspace selector in UI
       this._updateWorkspaceSelector(workspaceName);
+
+      } catch (e) {
+        console.error('[switchWorkspace] ERROR:', e);
+        document.getElementById('grid-container').innerHTML =
+          `<div style="color:red;padding:20px;font-family:monospace;white-space:pre-wrap">${e.stack || e.message}</div>`;
+      }
     });
   }
 
@@ -346,10 +390,18 @@ class MorphableUI {
   }
 
   _teardownWorkspace() {
-    // Unmount workspace panels (keep status strip)
+    // Unmount workspace panels, but PRESERVE persistent panels (chat, task-list, brain-status)
     const statusStrip = this.panels.get('status-strip');
+    const PERSISTENT_TYPES = new Set(['chat', 'task-list', 'brain-status']);
+
     for (const [id, panel] of this.panels) {
       if (id === 'status-strip') continue;
+      if (PERSISTENT_TYPES.has(panel.type)) {
+        // Detach from DOM but keep alive (subscriptions stay active)
+        if (panel.el?.parentNode) panel.el.remove();
+        this._persistentPanels.set(panel.type, panel);
+        continue;
+      }
       panel.unmount();
     }
     this.panels.clear();
@@ -653,16 +705,25 @@ class MorphableUI {
 let app = null;
 
 function boot() {
-  app = new MorphableUI();
+  try {
+    console.log('[BOOT] Starting MorphableUI...');
+    app = new MorphableUI();
 
-  // Determine WebSocket URL
-  const wsUrl = document.body.dataset.wsUrl || undefined;
-  const workspace = document.body.dataset.workspace || 'default';
+    // Determine WebSocket URL
+    const wsUrl = document.body.dataset.wsUrl || undefined;
+    const workspace = document.body.dataset.workspace || 'default';
 
-  app.init({ wsUrl, workspace });
+    console.log('[BOOT] init() with workspace:', workspace);
+    app.init({ wsUrl, workspace });
 
-  // Expose for debugging
-  window.__bigbrain = app;
+    // Expose for debugging
+    window.__bigbrain = app;
+    console.log('[BOOT] Complete');
+  } catch (e) {
+    console.error('[BOOT] FATAL:', e);
+    document.getElementById('grid-container').innerHTML =
+      `<div style="color:red;padding:20px;font-family:monospace;white-space:pre-wrap">${e.stack || e.message}</div>`;
+  }
 }
 
 // Start when DOM is ready

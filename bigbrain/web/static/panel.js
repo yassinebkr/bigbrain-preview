@@ -678,6 +678,7 @@ class CodeOutputPanel extends BasePanel {
   constructor(id, config = {}) {
     super(id, { title: 'Code Output', icon: '💻', type: 'code-output', ...config });
     this.results = [];
+    this._seenIds = new Set(); // dedup results from global buffer + panel subscription
   }
 
   renderContent(el) {
@@ -709,6 +710,11 @@ class CodeOutputPanel extends BasePanel {
   }
 
   _addResult(msg) {
+    // Dedup: global buffer + panel subscription can both deliver
+    const msgId = msg.id || msg.reply_to || `${msg.source}-${msg.timestamp}`;
+    if (this._seenIds.has(msgId)) return;
+    this._seenIds.add(msgId);
+
     const payload = msg.payload || {};
     const container = this.el?.querySelector('.code-output-list');
     if (!container) return;
@@ -776,6 +782,7 @@ class ResearchResultsPanel extends BasePanel {
   constructor(id, config = {}) {
     super(id, { title: 'Research', icon: '🔍', type: 'research-results', ...config });
     this.findings = [];
+    this._seenIds = new Set();
   }
 
   renderContent(el) {
@@ -805,6 +812,10 @@ class ResearchResultsPanel extends BasePanel {
   }
 
   _addFinding(msg) {
+    const msgId = msg.id || msg.reply_to || `${msg.source}-${msg.timestamp}`;
+    if (this._seenIds.has(msgId)) return;
+    this._seenIds.add(msgId);
+
     const payload = msg.payload || {};
     const container = this.el?.querySelector('.research-list');
     if (!container) return;
