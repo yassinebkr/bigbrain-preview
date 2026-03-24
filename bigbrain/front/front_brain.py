@@ -742,34 +742,50 @@ Type 'quit' or 'exit' to stop."""
         success = result.get("success", False)
         
         if success:
-            # Brief conversational notification — actual results go to workspace panels
-            # Determine what brain(s) did the work for context
+            # Brief conversational summary — not raw dumps, but not empty either
             workspace_hint = None
-            task_summary = None
+            notification = None
             
+            # Collect outputs from subtask results
+            outputs = []
             if "results" in result and isinstance(result["results"], dict):
                 for _sid, sub_result in result["results"].items():
                     if not isinstance(sub_result, dict):
                         continue
-                    if sub_result.get("generated_code") or sub_result.get("stdout"):
-                        workspace_hint = "python-dev"
-                    elif sub_result.get("summary") or sub_result.get("sources"):
+                    if sub_result.get("summary"):
+                        outputs.append(("research", sub_result["summary"]))
                         workspace_hint = "research"
-                        # Research summaries ARE the deliverable — show in chat
-                        if sub_result.get("summary"):
-                            task_summary = sub_result["summary"][:500]
+                    elif sub_result.get("stdout", "").strip():
+                        outputs.append(("code", sub_result["stdout"].strip()))
+                        workspace_hint = workspace_hint or "python-dev"
+                    elif sub_result.get("generated_code"):
+                        lines = sub_result["generated_code"].count("\n") + 1
+                        outputs.append(("code_only", f"Generated {lines} lines of code"))
+                        workspace_hint = workspace_hint or "python-dev"
             elif "summary" in result:
-                task_summary = result["summary"][:500]
+                outputs.append(("research", result["summary"]))
                 workspace_hint = "research"
-            elif "stdout" in result or "generated_code" in result:
+            elif "stdout" in result and result["stdout"].strip():
+                outputs.append(("code", result["stdout"].strip()))
                 workspace_hint = "python-dev"
             
-            # Build notification
-            if task_summary:
-                # Research results are conversational — show the summary
-                notification = f"✅ {task_summary}"
-            elif workspace_hint:
-                notification = f"✅ Done — results ready in {workspace_hint.replace('-', ' ').title()} workspace."
+            # Build a brief, useful notification
+            if outputs:
+                parts = ["✅"]
+                for kind, content in outputs:
+                    if kind == "research":
+                        # Research summaries are conversational — show them
+                        parts.append(content[:500])
+                    elif kind == "code":
+                        # Show brief output (first 3 lines max)
+                        lines = content.split("\n")
+                        brief = "\n".join(lines[:3])
+                        if len(lines) > 3:
+                            brief += f"\n... ({len(lines) - 3} more lines)"
+                        parts.append(f"Result:\n{brief}")
+                    elif kind == "code_only":
+                        parts.append(content)
+                notification = " ".join(parts) if len(parts) <= 2 else "\n".join(parts)
             else:
                 notification = "✅ Task complete."
             
