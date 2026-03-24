@@ -10,11 +10,11 @@
  *   - Focus state (shared between Front Brain and UI)
  */
 
-import { snapshotPanels, flipPanels, highlightPanel, MorphThrottle, getSpringCSS } from './morph.js?v=20260324k';
-import { LAYOUT_CATALOG, SlotManager, WORKSPACE_DEFAULTS, WORKSPACE_LABELS } from './layout.js?v=20260324k';
-import { createPanel, registerPanelType, StatusStripPanel } from './panel.js?v=20260324k';
-import { BusClient } from './bus-client.js?v=20260324k';
-import { PipelineManager } from './pipeline.js?v=20260324k';
+import { snapshotPanels, flipPanels, highlightPanel, MorphThrottle, getSpringCSS } from './morph.js?v=20260325a';
+import { LAYOUT_CATALOG, SlotManager, WORKSPACE_DEFAULTS, WORKSPACE_LABELS } from './layout.js?v=20260325a';
+import { createPanel, registerPanelType, StatusStripPanel } from './panel.js?v=20260325a';
+import { BusClient } from './bus-client.js?v=20260325a';
+import { PipelineManager } from './pipeline.js?v=20260325a';
 
 // ============================================================
 // APPLICATION STATE
@@ -134,11 +134,12 @@ class MorphableUI {
     // Global result buffering — catch results even when target panel doesn't exist yet
     this.bus.on({ type: 'result' }, (msg) => {
       const src = (msg.source || '').toLowerCase();
+
+      // Direct brain results
       if (src.includes('python')) {
         this._codeResults.push(msg);
         const p = this._findPanelByType('code-output');
         if (p) p._addResult(msg);
-        // Highlight python-dev tab so user knows results are ready
         this._pulseWorkspaceTab('python-dev');
       }
       if (src.includes('research')) {
@@ -146,6 +147,34 @@ class MorphableUI {
         const p = this._findPanelByType('research-results');
         if (p) p._addFinding(msg);
         this._pulseWorkspaceTab('research');
+      }
+
+      // Orchestrator aggregated results — extract nested brain results.
+      // Handles cases where the direct brain result was missed (WS disconnect).
+      if (src.includes('orchestrator') && msg.payload?.results) {
+        const results = msg.payload.results;
+        for (const [key, val] of Object.entries(results)) {
+          if (!val || typeof val !== 'object') continue;
+          const data = val.data || val;
+
+          // Python brain result nested in orchestrator response
+          if (data.stdout || data.generated_code) {
+            const synth = { ...msg, payload: data, source: 'python_brain', _synthetic: true };
+            this._codeResults.push(synth);
+            const cp = this._findPanelByType('code-output');
+            if (cp) cp._addResult(synth);
+            this._pulseWorkspaceTab('python-dev');
+          }
+
+          // Research brain result nested in orchestrator response
+          if (data.summary || data.answer) {
+            const synth = { ...msg, payload: data, source: 'researcher', _synthetic: true };
+            this._researchFindings.push(synth);
+            const rp = this._findPanelByType('research-results');
+            if (rp) rp._addFinding(synth);
+            this._pulseWorkspaceTab('research');
+          }
+        }
       }
     });
 

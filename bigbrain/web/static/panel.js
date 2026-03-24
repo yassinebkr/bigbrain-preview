@@ -466,11 +466,7 @@ class TaskListPanel extends BasePanel {
   }
 
   _setupSubscriptions() {
-    // Only show tasks dispatched TO brains (not routing tasks between front_brain/orchestrator)
-    // Subtask events from the orchestrator are the real work items
-    // Skip: morphable_ui→front_brain (user input), front_brain→orchestrator (delegation)
-
-    // RESULT messages
+    // RESULT messages — match by reply_to
     this._addSubscription({ type: 'result' }, (msg) => {
       const taskId = msg.reply_to;
       if (taskId && this.tasks.has(taskId)) {
@@ -489,6 +485,7 @@ class TaskListPanel extends BasePanel {
       if (event.includes('received') || event.includes('started')) {
         this.tasks.set(taskId, {
           id: taskId,
+          planId: taskId,  // Track plan ID for task.complete matching
           label: this._extractLabel(msg, 'Planning'),
           target: msg.source || msg.target,
           status: 'running',
@@ -496,37 +493,48 @@ class TaskListPanel extends BasePanel {
           started: Date.now(),
         });
         this._renderTasks();
-      } else if (event.includes('complete')) {
+      } else if (event.includes('complete') || event.includes('failed')) {
+        const isFail = event.includes('failed') || event.includes('cancelled');
+        const newStatus = isFail ? 'failed' : 'complete';
+
+        // Direct match by task_id (plan ID)
         if (this.tasks.has(taskId)) {
-          this.tasks.get(taskId).status = 'complete';
+          this.tasks.get(taskId).status = newStatus;
           this.tasks.get(taskId).progress = 100;
           this._renderTasks();
-          this._scheduleRemoval(taskId);
+          this._scheduleRemoval(taskId, isFail ? 12000 : 8000);
         }
-      } else if (event.includes('failed') || event.includes('cancelled')) {
-        if (this.tasks.has(taskId)) {
-          this.tasks.get(taskId).status = 'failed';
-          this._renderTasks();
-          this._scheduleRemoval(taskId, 12000);
+
+        // Also mark ALL subtasks belonging to this plan as complete.
+        // This handles cases where subtask.complete was missed (WS disconnect).
+        for (const [sid, task] of this.tasks) {
+          if (task.planId === taskId && task.status === 'running') {
+            task.status = newStatus;
+            task.progress = 100;
+            this._scheduleRemoval(sid, isFail ? 12000 : 8000);
+          }
         }
+        this._renderTasks();
       }
     });
 
     // Subtask events (subtask.started, subtask.complete, subtask.failed)
     this._addSubscription({ type: 'event', event: 'subtask.' }, (msg) => {
       const event = msg.payload?.event || '';
-      const taskId = msg.payload?.subtask_id || msg.id;
+      const subtaskId = msg.payload?.subtask_id || msg.id;
+      const planId = msg.payload?.task_id;  // Parent plan ID
+
       if (event.includes('started')) {
         // Remove parent "Planning" task entry — subtasks replace it
-        const parentTaskId = msg.payload?.task_id;
-        if (parentTaskId && this.tasks.has(parentTaskId)) {
-          if (this._removeTimers.has(parentTaskId)) clearTimeout(this._removeTimers.get(parentTaskId));
-          this._removeTimers.delete(parentTaskId);
-          this.tasks.delete(parentTaskId);
+        if (planId && this.tasks.has(planId)) {
+          if (this._removeTimers.has(planId)) clearTimeout(this._removeTimers.get(planId));
+          this._removeTimers.delete(planId);
+          this.tasks.delete(planId);
         }
 
-        this.tasks.set(taskId, {
-          id: taskId,
+        this.tasks.set(subtaskId, {
+          id: subtaskId,
+          planId: planId,  // Link subtask to its parent plan
           label: this._extractLabel(msg),
           target: msg.payload?.brain || msg.target,
           status: 'running',
@@ -535,12 +543,12 @@ class TaskListPanel extends BasePanel {
         });
         this._renderTasks();
       } else if (event.includes('complete') || event.includes('failed')) {
-        if (this.tasks.has(taskId)) {
-          const task = this.tasks.get(taskId);
+        if (this.tasks.has(subtaskId)) {
+          const task = this.tasks.get(subtaskId);
           task.status = event.includes('complete') ? 'complete' : 'failed';
           task.progress = 100;
           this._renderTasks();
-          this._scheduleRemoval(taskId);
+          this._scheduleRemoval(subtaskId);
         }
       }
     });
@@ -848,10 +856,25 @@ class ResearchResultsPanel extends BasePanel {
     }
 
     if (sources.length > 0) {
-      html += '<div class="research-sources">';
-      for (const src of sources.slice(0, 5)) {
-        const label = typeof src === 'string' ? src : src.title || src.url || String(src);
-        html += `<span class="research-source-tag">${_escapeHtml(label)}</span>`;
+      html += '<div class="research-sources"><div class="research-sources-title">Sources</div>';
+      for (let i = 0; i < Math.min(sources.length, 8); i++) {
+        const src = sources[i];
+        const title = typeof src === 'string' ? src : (src.title || src.name || '');
+        const url = typeof src === 'object' ? (src.url || src.link || '') : '';
+        const snippet = typeof src === 'object' ? (src.snippet || src.excerpt || '') : '';
+
+        if (url) {
+          html += `<a class="research-source-link" href="${_escapeHtml(url)}" target="_blank" rel="noopener">
+            <span class="research-source-num">[${i + 1}]</span>
+            <span class="research-source-title">${_escapeHtml(title || url)}</span>
+            ${snippet ? `<span class="research-source-snippet">${_escapeHtml(snippet.slice(0, 120))}</span>` : ''}
+          </a>`;
+        } else {
+          html += `<div class="research-source-link">
+            <span class="research-source-num">[${i + 1}]</span>
+            <span class="research-source-title">${_escapeHtml(title || String(src))}</span>
+          </div>`;
+        }
       }
       html += '</div>';
     }
@@ -863,23 +886,41 @@ class ResearchResultsPanel extends BasePanel {
     this.findings.push({ summary, sources, query, time: Date.now() });
   }
 
-  /** Simple markdown-to-HTML for research summaries. */
+  /** Markdown-to-HTML for research summaries — with links, structure, and citations. */
   _renderMarkdown(text) {
-    return _escapeHtml(text)
-      // Headers: ## Title → <strong>Title</strong>
-      .replace(/^#{1,3}\s+(.+)$/gm, '<strong>$1</strong>')
-      // Bold: **text** → <strong>text</strong>
-      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-      // Italic: *text* → <em>text</em>
-      .replace(/\*([^*]+)\*/g, '<em>$1</em>')
-      // Bullet lists: - item → styled item
-      .replace(/^[-•]\s+(.+)$/gm, '<span class="research-bullet">• $1</span>')
-      // Numbered lists: 1. item
-      .replace(/^\d+\.\s+(.+)$/gm, '<span class="research-bullet">$1</span>')
-      // Citations: [1] [2] etc
-      .replace(/\[(\d+)\]/g, '<sup class="research-cite">[$1]</sup>')
-      // Line breaks
-      .replace(/\n/g, '<br>');
+    let html = _escapeHtml(text);
+
+    // Headers: ## Title → styled header
+    html = html.replace(/^#{1,2}\s+(.+)$/gm, '<div class="research-heading">$1</div>');
+    html = html.replace(/^###\s+(.+)$/gm, '<div class="research-subheading">$1</div>');
+
+    // Bold: **text**
+    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    // Italic: *text*
+    html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    // Inline code: `code`
+    html = html.replace(/`([^`]+)`/g, '<code class="research-code">$1</code>');
+
+    // Bullet lists: - item → styled item
+    html = html.replace(/^[-•]\s+(.+)$/gm, '<div class="research-bullet">• $1</div>');
+    // Numbered lists: 1. item
+    html = html.replace(/^\d+\.\s+(.+)$/gm, '<div class="research-bullet-num">$&</div>');
+
+    // Citations: [1] [2] etc — clickable superscripts
+    html = html.replace(/\[(\d+)\]/g, '<sup class="research-cite">[$1]</sup>');
+
+    // URLs: detect bare URLs and make them clickable
+    html = html.replace(
+      /(?:https?:\/\/)[^\s<>&"]+/g,
+      (url) => `<a class="research-link" href="${url}" target="_blank" rel="noopener">${url}</a>`
+    );
+
+    // Double line breaks → paragraph spacing, single → <br>
+    html = html.replace(/\n\n/g, '</p><p class="research-para">');
+    html = html.replace(/\n/g, '<br>');
+    html = `<p class="research-para">${html}</p>`;
+
+    return html;
   }
 
   _updateProgress(msg) {
