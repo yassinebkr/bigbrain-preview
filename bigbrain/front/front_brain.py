@@ -465,6 +465,68 @@ Type 'quit' or 'exit' to stop."""
         
         return None
     
+    async def _summarize_result(self, raw_outputs: list) -> str:
+        """Use the LLM to turn raw task output into a conversational answer.
+        
+        Takes the user's last question + raw stdout/summary and produces
+        a natural, direct response. Falls back to brief formatting if
+        no LLM is available.
+        """
+        # Build context from raw outputs
+        output_text = ""
+        for kind, content in raw_outputs:
+            if kind == "research":
+                output_text += f"Research findings:\n{content}\n\n"
+            elif kind == "code":
+                output_text += f"Code execution output:\n{content}\n\n"
+            elif kind == "code_only":
+                output_text += f"Generated code (no output):\n{content[:500]}\n\n"
+        
+        # Find the user's original question from conversation history
+        user_question = ""
+        for msg in reversed(self._conversation_history):
+            if msg.get("role") == "user":
+                user_question = msg.get("content", "")
+                break
+        
+        if self.llm_provider and user_question:
+            try:
+                response = await self.llm_provider.chat_complete(
+                    messages=[
+                        {"role": "system", "content": (
+                            "You are summarizing a task result for the user. "
+                            "The user asked a question, a brain executed code or research, "
+                            "and now you need to give a direct, conversational answer. "
+                            "Rules:\n"
+                            "- Answer the question directly — don't describe what happened\n"
+                            "- Be concise (1-3 sentences max)\n"
+                            "- Don't show code or raw output\n"
+                            "- If the output contains the answer, extract it\n"
+                            "- Start with the answer, not 'The result is' or 'Here's what I found'"
+                        )},
+                        {"role": "user", "content": (
+                            f"User's question: {user_question}\n\n"
+                            f"Task output:\n{output_text[:2000]}"
+                        )},
+                    ],
+                    stream=False,
+                )
+                return response
+            except Exception as e:
+                print(f"[FrontBrain] LLM summarize failed: {e}")
+        
+        # Fallback: brief formatting without LLM
+        if raw_outputs:
+            kind, content = raw_outputs[0]
+            if kind == "research":
+                return content[:300]
+            elif kind == "code":
+                lines = content.split("\n")
+                return lines[0] if lines else "✅ Done."
+            else:
+                return "✅ Done — check the workspace tab for details."
+        return "✅ Done."
+
     async def _emit_chat_message(self, role: str, text: str) -> None:
         """Emit a chat message event on the bus for the Morphable UI."""
         await self.bus.broadcast_event(
@@ -737,73 +799,58 @@ Type 'quit' or 'exit' to stop."""
         return "I'm not sure what you want me to do with that. Try asking me to run code, research something, or check status."
     
     async def _handle_task_result(self, message: BusMessage) -> None:
-        """Handle results from tasks we initiated."""
+        """Handle results from tasks we initiated.
+        
+        Instead of dumping raw stdout, uses the LLM to generate a
+        conversational answer to the user's original question.
+        """
         result = message.payload
         success = result.get("success", False)
         
+        # Collect raw outputs and determine workspace hint
+        workspace_hint = None
+        raw_outputs = []  # (kind, content) tuples
+        
         if success:
-            # Brief conversational summary — not raw dumps, but not empty either
-            workspace_hint = None
-            notification = None
-            
-            # Collect outputs from subtask results
-            # Note: PythonBrain nests output under sub_result["data"], not flat
-            outputs = []
             if "results" in result and isinstance(result["results"], dict):
                 for _sid, sub_result in result["results"].items():
                     if not isinstance(sub_result, dict):
                         continue
-                    # Unwrap nested data dict (PythonBrain sends {success, data: {stdout, ...}})
                     data = sub_result.get("data", sub_result)
                     if data.get("summary"):
-                        outputs.append(("research", data["summary"]))
+                        raw_outputs.append(("research", data["summary"]))
                         workspace_hint = "research"
                     elif data.get("stdout", "").strip():
-                        outputs.append(("code", data["stdout"].strip()))
+                        raw_outputs.append(("code", data["stdout"].strip()))
                         workspace_hint = workspace_hint or "python-dev"
                     elif data.get("generated_code"):
-                        lines = data["generated_code"].count("\n") + 1
-                        outputs.append(("code_only", f"Generated {lines} lines of code"))
+                        raw_outputs.append(("code_only", data["generated_code"]))
                         workspace_hint = workspace_hint or "python-dev"
             elif "summary" in result:
-                outputs.append(("research", result["summary"]))
+                raw_outputs.append(("research", result["summary"]))
                 workspace_hint = "research"
             elif "stdout" in result and result["stdout"].strip():
-                outputs.append(("code", result["stdout"].strip()))
+                raw_outputs.append(("code", result["stdout"].strip()))
                 workspace_hint = "python-dev"
-            
-            # Build a brief, useful notification
-            if outputs:
-                parts = ["✅"]
-                for kind, content in outputs:
-                    if kind == "research":
-                        # Research summaries are conversational — show them
-                        parts.append(content[:500])
-                    elif kind == "code":
-                        # Show brief output (first 3 lines max)
-                        lines = content.split("\n")
-                        brief = "\n".join(lines[:3])
-                        if len(lines) > 3:
-                            brief += f"\n... ({len(lines) - 3} more lines)"
-                        parts.append(f"Result:\n{brief}")
-                    elif kind == "code_only":
-                        parts.append(content)
-                notification = " ".join(parts) if len(parts) <= 2 else "\n".join(parts)
-            else:
-                notification = "✅ Task complete."
-            
-            # Emit workspace highlight event so UI can pulse the tab
-            if workspace_hint:
-                await self.bus.broadcast_event(
-                    source=self.name,
-                    event_type="workspace.highlight",
-                    payload={"workspace": workspace_hint, "reason": "task_complete"},
-                    workspace=workspace_hint,
-                    priority=Priority.NORMAL,
-                )
+        
+        # Generate conversational answer via LLM
+        if success and raw_outputs:
+            notification = await self._summarize_result(raw_outputs)
+        elif success:
+            notification = "✅ Done, but no output was produced."
         else:
             error = result.get("error", "Unknown error")
             notification = f"❌ Task failed: {error}"
+        
+        # Emit workspace highlight event so UI can pulse the tab
+        if workspace_hint:
+            await self.bus.broadcast_event(
+                source=self.name,
+                event_type="workspace.highlight",
+                payload={"workspace": workspace_hint, "reason": "task_complete"},
+                workspace=workspace_hint,
+                priority=Priority.NORMAL,
+            )
         
         # Send result to Morphable UI chat
         await self._emit_chat_message("assistant", notification)
