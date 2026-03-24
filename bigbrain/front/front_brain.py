@@ -398,6 +398,8 @@ Type 'quit' or 'exit' to stop."""
                 for task in parsed.get("tasks", []):
                     brain = task.get("brain", "python_brain")
                     request = task.get("request", "")
+                    # Build a short human-readable description for the UI
+                    description = request[:60] + "..." if len(request) > 60 else request
                     await self.bus.send_task(
                         source=self.name,
                         target=f"orchestrator_{ws}",
@@ -405,6 +407,7 @@ Type 'quit' or 'exit' to stop."""
                             "type": "delegate",
                             "brain": brain,
                             "request": request,
+                            "description": description,
                             "reply_to_ui": True,
                         },
                         priority=Priority.NORMAL,
@@ -582,9 +585,11 @@ Type 'quit' or 'exit' to stop."""
         task_type = intent.get("task_type")
         workspace = "default"  # Could be determined from context
         
-        # Create task message
+        # Create task message with human-readable description for UI
+        description = original_text[:60] + "..." if len(original_text) > 60 else original_text
         task_payload = {
             "type": task_type,
+            "description": description,
             "user_request": original_text,
             "timestamp": time.time()
         }
@@ -737,19 +742,40 @@ Type 'quit' or 'exit' to stop."""
         success = result.get("success", False)
         
         if success:
-            notification = "✅ Task completed successfully!"
+            # Build a meaningful completion message
+            parts = ["✅"]
             
-            # Add specific details based on result type
+            # Try to get task description from results
             if "summary" in result:
-                notification += f" Summary: {result['summary'][:100]}..."
+                parts.append(result["summary"][:200])
             elif "stdout" in result:
                 stdout = result["stdout"].strip()
                 if stdout:
-                    notification += f" Output: {stdout[:100]}..."
+                    parts.append(f"Done. Output:\n{stdout[:300]}")
+                else:
+                    parts.append("Task completed.")
             elif "result" in result:
                 res = str(result["result"]).strip()
                 if res:
-                    notification += f"\n{res[:500]}"
+                    parts.append(res[:500])
+                else:
+                    parts.append("Task completed.")
+            elif "results" in result and isinstance(result["results"], dict):
+                # Orchestrator multi-subtask result
+                n = result.get("subtasks_completed", len(result["results"]))
+                parts.append(f"All {n} subtask(s) completed.")
+                # Include first non-empty result summary
+                for _sid, sub_result in result["results"].items():
+                    if isinstance(sub_result, dict) and sub_result.get("summary"):
+                        parts.append(sub_result["summary"][:150])
+                        break
+                    elif isinstance(sub_result, dict) and sub_result.get("stdout"):
+                        parts.append(f"Output: {sub_result['stdout'][:150]}")
+                        break
+            else:
+                parts.append("Task completed.")
+            
+            notification = " ".join(parts)
         else:
             error = result.get("error", "Unknown error")
             notification = f"❌ Task failed: {error}"

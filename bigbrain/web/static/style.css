@@ -961,8 +961,20 @@ body::after {
 .task-complete .task-progress-fill { background: var(--green); width: 100% !important; }
 .task-failed   .task-progress-fill { background: var(--red); }
 
-/* shimmer on running progress bar */
-.task-running .task-progress-fill::after {
+/* Indeterminate progress: sliding bar animation */
+.task-progress-indeterminate .task-progress-fill {
+  width: 30% !important;
+  animation: indeterminate-slide 1.4s ease-in-out infinite;
+}
+
+@keyframes indeterminate-slide {
+  0%   { transform: translateX(-100%); }
+  50%  { transform: translateX(230%); }
+  100% { transform: translateX(-100%); }
+}
+
+/* shimmer on running progress bar (determinate only) */
+.task-running .task-progress-fill:not(.task-progress-indeterminate .task-progress-fill)::after {
   content: '';
   position: absolute;
   inset: 0;

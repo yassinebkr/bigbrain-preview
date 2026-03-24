@@ -401,6 +401,7 @@ class TaskListPanel extends BasePanel {
   constructor(id, config = {}) {
     super(id, { title: 'Tasks', icon: '📋', type: 'task-list', ...config });
     this.tasks = new Map();
+    this._removeTimers = new Map();
   }
 
   renderContent(el) {
@@ -413,18 +414,44 @@ class TaskListPanel extends BasePanel {
     </div>`;
   }
 
+  /** Extract a human-readable label from a bus message payload. */
+  _extractLabel(msg, fallback) {
+    const p = msg.payload || {};
+    // Priority: description > request (truncated) > brain name > fallback
+    if (p.description) return p.description;
+    if (p.request) return p.request.length > 60 ? p.request.slice(0, 57) + '...' : p.request;
+    if (p.brain && p.brain !== 'subtask') {
+      const pretty = p.brain.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      return pretty;
+    }
+    return fallback || 'Task';
+  }
+
+  /** Schedule auto-removal of completed/failed tasks after delay. */
+  _scheduleRemoval(taskId, delayMs = 8000) {
+    if (this._removeTimers.has(taskId)) clearTimeout(this._removeTimers.get(taskId));
+    this._removeTimers.set(taskId, setTimeout(() => {
+      this.tasks.delete(taskId);
+      this._removeTimers.delete(taskId);
+      this._renderTasks();
+    }, delayMs));
+  }
+
   _setupSubscriptions() {
+    // Direct TASK messages (from front_brain → orchestrator)
     this._addSubscription({ type: 'task' }, (msg) => {
       this.tasks.set(msg.id, {
         id: msg.id,
-        type: msg.payload?.type || msg.payload?.task_type || 'unknown',
+        label: this._extractLabel(msg, 'Processing'),
         target: msg.target,
         status: 'running',
-        progress: 0,
+        progress: -1, // indeterminate
         started: Date.now(),
       });
       this._renderTasks();
     });
+
+    // RESULT messages
     this._addSubscription({ type: 'result' }, (msg) => {
       const taskId = msg.reply_to;
       if (taskId && this.tasks.has(taskId)) {
@@ -432,19 +459,21 @@ class TaskListPanel extends BasePanel {
         task.status = msg.payload?.success ? 'complete' : 'failed';
         task.progress = 100;
         this._renderTasks();
+        this._scheduleRemoval(taskId);
       }
     });
-    // Orchestrator events (task.received, subtask.started, etc.)
+
+    // Orchestrator events (task.received, task.complete, task.failed)
     this._addSubscription({ type: 'event', event: 'task.' }, (msg) => {
       const event = msg.payload?.event || '';
       const taskId = msg.payload?.task_id || msg.id;
       if (event.includes('received') || event.includes('started')) {
         this.tasks.set(taskId, {
           id: taskId,
-          type: msg.payload?.task_type || event,
-          target: msg.payload?.brain || msg.target,
+          label: this._extractLabel(msg, 'Planning'),
+          target: msg.source || msg.target,
           status: 'running',
-          progress: 0,
+          progress: -1,
           started: Date.now(),
         });
         this._renderTasks();
@@ -453,42 +482,50 @@ class TaskListPanel extends BasePanel {
           this.tasks.get(taskId).status = 'complete';
           this.tasks.get(taskId).progress = 100;
           this._renderTasks();
+          this._scheduleRemoval(taskId);
         }
       } else if (event.includes('failed') || event.includes('cancelled')) {
         if (this.tasks.has(taskId)) {
           this.tasks.get(taskId).status = 'failed';
           this._renderTasks();
+          this._scheduleRemoval(taskId, 12000);
         }
       }
     });
+
+    // Subtask events (subtask.started, subtask.complete, subtask.failed)
     this._addSubscription({ type: 'event', event: 'subtask.' }, (msg) => {
       const event = msg.payload?.event || '';
       const taskId = msg.payload?.subtask_id || msg.id;
       if (event.includes('started')) {
         this.tasks.set(taskId, {
           id: taskId,
-          type: msg.payload?.brain || 'subtask',
+          label: this._extractLabel(msg),
           target: msg.payload?.brain || msg.target,
           status: 'running',
-          progress: 0,
+          progress: -1,
           started: Date.now(),
         });
         this._renderTasks();
       } else if (event.includes('complete') || event.includes('failed')) {
         if (this.tasks.has(taskId)) {
-          this.tasks.get(taskId).status = event.includes('complete') ? 'complete' : 'failed';
-          this.tasks.get(taskId).progress = 100;
+          const task = this.tasks.get(taskId);
+          task.status = event.includes('complete') ? 'complete' : 'failed';
+          task.progress = 100;
           this._renderTasks();
+          this._scheduleRemoval(taskId);
         }
       }
     });
+
+    // Explicit progress updates
     this._addSubscription(
       { type: 'progress' },
       (msg) => {
         const taskId = msg.reply_to || msg.payload?.task_id;
         if (taskId && this.tasks.has(taskId)) {
           const task = this.tasks.get(taskId);
-          task.progress = msg.payload?.progress || task.progress;
+          task.progress = msg.payload?.progress ?? task.progress;
           task.status = 'running';
           this._renderTasks();
         }
@@ -500,24 +537,33 @@ class TaskListPanel extends BasePanel {
     const list = this.el?.querySelector('.task-list');
     if (!list) return;
 
+    if (this.tasks.size === 0) {
+      list.innerHTML = `
+        <div class="panel-empty">
+          <span class="panel-empty-icon">📋</span>
+          <span class="panel-empty-text">No active tasks</span>
+          <span class="panel-empty-hint">Send a message to start a task</span>
+        </div>`;
+      return;
+    }
+
     list.innerHTML = '';
     for (const [, task] of this.tasks) {
       const icon = { running: '⏳', complete: '✅', failed: '❌' }[task.status] || '⏳';
       const statusLabel = { running: 'Running', complete: 'Done', failed: 'Failed' }[task.status] || 'Pending';
+      const isIndeterminate = task.status === 'running' && task.progress < 0;
 
       const item = document.createElement('div');
       item.className = `task-item task-${task.status}`;
       item.innerHTML = `
         <div class="task-item-header">
           <span class="task-icon">${icon}</span>
-          <span class="task-type">${_escapeHtml(task.type)}</span>
+          <span class="task-type">${_escapeHtml(task.label)}</span>
           <span class="task-status-badge">${statusLabel}</span>
         </div>
-        <div style="padding-left:24px">
-          <span class="task-target">${_escapeHtml(task.target || '')}</span>
-        </div>
-        <div class="task-progress-bar">
-          <div class="task-progress-fill" style="width:${task.progress}%"></div>
+        ${task.target ? `<div style="padding-left:24px"><span class="task-target">${_escapeHtml(task.target)}</span></div>` : ''}
+        <div class="task-progress-bar${isIndeterminate ? ' task-progress-indeterminate' : ''}">
+          <div class="task-progress-fill" style="width:${isIndeterminate ? '30' : task.progress}%"></div>
         </div>
       `;
       list.appendChild(item);

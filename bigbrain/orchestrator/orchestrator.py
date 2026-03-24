@@ -262,12 +262,14 @@ Example — "research async patterns then build a scraper using what you find":
         plan = await self._create_task_plan(message)
         self.task_plans[plan.id] = plan
         
-        # Announce task received
+        # Announce task received — include description for UI
+        task_desc = message.payload.get("description", "") if message.payload else ""
         await self.bus.broadcast_event(
             source=self.name,
             event_type="task.received",
             payload={
                 "task_id": plan.id,
+                "description": task_desc or f"{len(plan.subtasks)} subtask(s)",
                 "workspace": self.workspace,
                 "subtasks_count": len(plan.subtasks)
             },
