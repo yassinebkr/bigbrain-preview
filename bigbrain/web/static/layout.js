@@ -425,8 +425,8 @@ const WORKSPACE_DEFAULTS = {
   'python-dev': {
     layout: 'tri-left',
     panels: {
-      primary:       { type: 'chat',        title: 'Chat',         icon: '💬' },
-      'side-top':    { type: 'code-output', title: 'Code Output',  icon: '💻' },
+      primary:       { type: 'code-output', title: 'Code Output',  icon: '💻' },
+      'side-top':    { type: 'chat',        title: 'Chat',         icon: '💬' },
       'side-bottom': { type: 'task-list',   title: 'Tasks',        icon: '📋' },
     },
     collapsed: ['side-bottom'],

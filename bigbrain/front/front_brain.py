@@ -747,19 +747,22 @@ Type 'quit' or 'exit' to stop."""
             notification = None
             
             # Collect outputs from subtask results
+            # Note: PythonBrain nests output under sub_result["data"], not flat
             outputs = []
             if "results" in result and isinstance(result["results"], dict):
                 for _sid, sub_result in result["results"].items():
                     if not isinstance(sub_result, dict):
                         continue
-                    if sub_result.get("summary"):
-                        outputs.append(("research", sub_result["summary"]))
+                    # Unwrap nested data dict (PythonBrain sends {success, data: {stdout, ...}})
+                    data = sub_result.get("data", sub_result)
+                    if data.get("summary"):
+                        outputs.append(("research", data["summary"]))
                         workspace_hint = "research"
-                    elif sub_result.get("stdout", "").strip():
-                        outputs.append(("code", sub_result["stdout"].strip()))
+                    elif data.get("stdout", "").strip():
+                        outputs.append(("code", data["stdout"].strip()))
                         workspace_hint = workspace_hint or "python-dev"
-                    elif sub_result.get("generated_code"):
-                        lines = sub_result["generated_code"].count("\n") + 1
+                    elif data.get("generated_code"):
+                        lines = data["generated_code"].count("\n") + 1
                         outputs.append(("code_only", f"Generated {lines} lines of code"))
                         workspace_hint = workspace_hint or "python-dev"
             elif "summary" in result:

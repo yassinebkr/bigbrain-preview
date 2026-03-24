@@ -10,11 +10,11 @@
  *   - Focus state (shared between Front Brain and UI)
  */
 
-import { snapshotPanels, flipPanels, highlightPanel, MorphThrottle, getSpringCSS } from './morph.js?v=20260324h';
-import { LAYOUT_CATALOG, SlotManager, WORKSPACE_DEFAULTS, WORKSPACE_LABELS } from './layout.js?v=20260324h';
-import { createPanel, registerPanelType, StatusStripPanel } from './panel.js?v=20260324h';
-import { BusClient } from './bus-client.js?v=20260324h';
-import { PipelineManager } from './pipeline.js?v=20260324h';
+import { snapshotPanels, flipPanels, highlightPanel, MorphThrottle, getSpringCSS } from './morph.js?v=20260324i';
+import { LAYOUT_CATALOG, SlotManager, WORKSPACE_DEFAULTS, WORKSPACE_LABELS } from './layout.js?v=20260324i';
+import { createPanel, registerPanelType, StatusStripPanel } from './panel.js?v=20260324i';
+import { BusClient } from './bus-client.js?v=20260324i';
+import { PipelineManager } from './pipeline.js?v=20260324i';
 
 // ============================================================
 // APPLICATION STATE
@@ -138,11 +138,14 @@ class MorphableUI {
         this._codeResults.push(msg);
         const p = this._findPanelByType('code-output');
         if (p) p._addResult(msg);
+        // Highlight python-dev tab so user knows results are ready
+        this._pulseWorkspaceTab('python-dev');
       }
       if (src.includes('research')) {
         this._researchFindings.push(msg);
         const p = this._findPanelByType('research-results');
         if (p) p._addFinding(msg);
+        this._pulseWorkspaceTab('research');
       }
     });
 
