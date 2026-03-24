@@ -716,16 +716,18 @@ class CodeOutputPanel extends BasePanel {
     this._seenIds.add(msgId);
 
     const payload = msg.payload || {};
+    // Result data may be nested under payload.data (PythonBrain) or flat
+    const data = payload.data || payload;
     const container = this.el?.querySelector('.code-output-list');
     if (!container) return;
 
     const empty = container.querySelector('.panel-empty');
     if (empty) empty.remove();
 
-    const code = payload.generated_code || '';
-    const stdout = payload.stdout || payload.output || '';
-    const stderr = payload.stderr || '';
-    const success = payload.success !== false;
+    const code = data.generated_code || '';
+    const stdout = data.stdout || data.output || '';
+    const stderr = data.stderr || '';
+    const success = data.success !== false && payload.success !== false;
     const time = _timestamp('HH:mm:ss');
 
     const result = document.createElement('div');
