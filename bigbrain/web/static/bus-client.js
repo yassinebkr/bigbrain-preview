@@ -70,6 +70,10 @@ class BusClient {
     this._ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
+        // Debug: log non-state messages
+        if (msg.type !== 'state') {
+          console.log(`[BUS] ${msg.type} ${msg.payload?.event || ''} src=${msg.source} handlers=${this._handlers.length}`);
+        }
         this._dispatch(msg);
       } catch (e) {
         console.warn('BusClient: invalid message:', e);
