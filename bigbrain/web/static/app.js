@@ -318,11 +318,14 @@ class MorphableUI {
   }
 
   _teardownWorkspace() {
-    // Unmount all panels
+    // Unmount workspace panels (keep status strip)
+    const statusStrip = this.panels.get('status-strip');
     for (const [id, panel] of this.panels) {
+      if (id === 'status-strip') continue;
       panel.unmount();
     }
     this.panels.clear();
+    if (statusStrip) this.panels.set('status-strip', statusStrip);
 
     // Clear pipelines
     this.pipelineManager?.destroyAll();
@@ -341,6 +344,7 @@ class MorphableUI {
     });
     strip.mount(this.statusStrip);
     strip.subscribe(this.bus);
+    this.panels.set('status-strip', strip);
 
     // Default status items
     strip.updateItem('connection', {
