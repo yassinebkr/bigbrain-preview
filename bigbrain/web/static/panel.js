@@ -819,15 +819,17 @@ class ResearchResultsPanel extends BasePanel {
     this._seenIds.add(msgId);
 
     const payload = msg.payload || {};
+    // ResearcherBrain nests output under payload.data (same as PythonBrain)
+    const data = payload.data || payload;
     const container = this.el?.querySelector('.research-list');
     if (!container) return;
 
     const empty = container.querySelector('.panel-empty');
     if (empty) empty.remove();
 
-    const summary = payload.summary || payload.text || payload.content || '';
-    const sources = payload.sources || [];
-    const query = payload.query || '';
+    const summary = data.summary || data.text || data.content || '';
+    const sources = data.sources || [];
+    const query = data.query || '';
     const time = _timestamp('HH:mm:ss');
 
     const finding = document.createElement('div');
@@ -840,9 +842,9 @@ class ResearchResultsPanel extends BasePanel {
     </div>`;
 
     if (summary) {
-      html += `<div class="research-summary">${_escapeHtml(summary)}</div>`;
+      html += `<div class="research-summary">${this._renderMarkdown(summary)}</div>`;
     } else {
-      html += `<div class="research-summary">${_escapeHtml(JSON.stringify(payload).slice(0, 300))}</div>`;
+      html += `<div class="research-summary">${_escapeHtml(JSON.stringify(data).slice(0, 300))}</div>`;
     }
 
     if (sources.length > 0) {
@@ -859,6 +861,25 @@ class ResearchResultsPanel extends BasePanel {
     container.scrollTop = container.scrollHeight;
 
     this.findings.push({ summary, sources, query, time: Date.now() });
+  }
+
+  /** Simple markdown-to-HTML for research summaries. */
+  _renderMarkdown(text) {
+    return _escapeHtml(text)
+      // Headers: ## Title → <strong>Title</strong>
+      .replace(/^#{1,3}\s+(.+)$/gm, '<strong>$1</strong>')
+      // Bold: **text** → <strong>text</strong>
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      // Italic: *text* → <em>text</em>
+      .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+      // Bullet lists: - item → styled item
+      .replace(/^[-•]\s+(.+)$/gm, '<span class="research-bullet">• $1</span>')
+      // Numbered lists: 1. item
+      .replace(/^\d+\.\s+(.+)$/gm, '<span class="research-bullet">$1</span>')
+      // Citations: [1] [2] etc
+      .replace(/\[(\d+)\]/g, '<sup class="research-cite">[$1]</sup>')
+      // Line breaks
+      .replace(/\n/g, '<br>');
   }
 
   _updateProgress(msg) {

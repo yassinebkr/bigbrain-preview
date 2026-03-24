@@ -1233,6 +1233,22 @@ body::after {
   white-space: nowrap;
 }
 
+.research-summary strong { color: var(--text); font-weight: 600; }
+.research-summary em { color: var(--text-2); }
+
+.research-bullet {
+  display: block;
+  padding-left: 12px;
+  margin: 3px 0;
+  color: var(--text-2);
+}
+
+.research-cite {
+  font-size: 9px;
+  color: var(--accent-light);
+  font-weight: 600;
+}
+
 /* ============================================================
    § 19 — PIPELINE DATA
    ============================================================ */
