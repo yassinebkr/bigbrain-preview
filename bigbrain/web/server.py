@@ -180,9 +180,18 @@ class WebServer:
         self._app.router.add_post("/api/focus", self._handle_focus_set)
         self._app.router.add_get("/api/status", self._handle_status)
 
-        # Static files (JS, CSS, images)
+        # Static files (JS, CSS, images) — with no-cache for dev
         if STATIC_DIR.exists():
-            self._app.router.add_static("/static", STATIC_DIR)
+            self._app.router.add_get("/static/{filename:.+}", self._handle_static)
+
+    async def _handle_static(self, request: web.Request) -> web.FileResponse:
+        """Serve static files with no-cache headers."""
+        filename = request.match_info["filename"]
+        file_path = STATIC_DIR / filename
+        if not file_path.exists() or not file_path.is_file():
+            return web.Response(status=404, text="Not found")
+        headers = {"Cache-Control": "no-cache, must-revalidate"}
+        return web.FileResponse(file_path, headers=headers)
 
     async def _handle_index(self, request: web.Request) -> web.Response:
         """Serve the main HTML page, injecting WS auth token if auth is enabled."""
@@ -199,7 +208,10 @@ class WebServer:
                 f'<body data-focus-mode="normal" data-ws-token="{self._auth_password}">',
             )
 
-        return web.Response(text=html, content_type="text/html")
+        return web.Response(
+            text=html, content_type="text/html",
+            headers={"Cache-Control": "no-cache, must-revalidate"},
+        )
 
     async def _handle_status(self, request: web.Request) -> web.Response:
         """Server status endpoint."""
