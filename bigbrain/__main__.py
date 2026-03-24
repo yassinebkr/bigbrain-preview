@@ -53,7 +53,7 @@ class BigBrainSystem:
     Creates the bus, registers brains, starts orchestrator, and launches TUI.
     """
     
-    def __init__(self, workspace: str = "demo", log_dir: Path = None, ui_mode: str = "tui", mock_voice: bool = False, web_port: int = 8080):
+    def __init__(self, workspace: str = "demo", log_dir: Path = None, ui_mode: str = "tui", mock_voice: bool = False, web_port: int = 8080, web_host: str = "127.0.0.1"):
         """
         Initialize BigBrain system.
         
@@ -63,12 +63,14 @@ class BigBrainSystem:
             ui_mode: UI mode ("tui", "simple", or "web")
             mock_voice: Force mock STT/TTS even if API keys are available
             web_port: Port for web UI server (default 8080)
+            web_host: Bind address for web UI (default 127.0.0.1)
         """
         self.workspace = workspace
         self.log_dir = log_dir or Path("logs")
         self.ui_mode = ui_mode
         self.mock_voice = mock_voice
         self.web_port = web_port
+        self.web_host = web_host
         
         # Core components
         self.bus: Optional[MessageBus] = None
@@ -330,7 +332,7 @@ class BigBrainSystem:
             if self.bus_auth:
                 self.bus_auth.generate_token(brain_name)
         # Also register system components
-        for name in ["orchestrator", f"orchestrator_{self.workspace}", "front_brain", "voice_manager", "voice_brain", "bigbrain_system", "demo_system"]:
+        for name in ["orchestrator", f"orchestrator_{self.workspace}", "front_brain", "voice_manager", "voice_brain", "bigbrain_system", "demo_system", "web_adapter", "focus_bridge", "morphable_ui", "server"]:
             if self.bus_auth:
                 self.bus_auth.generate_token(name)
         
@@ -343,6 +345,7 @@ class BigBrainSystem:
             self.web_server = WebServer(
                 bus=self.bus,
                 focus_manager=self.focus_manager,
+                host=self.web_host,
                 port=self.web_port,
             )
             self.web_adapter = WebAdapter(
@@ -776,6 +779,8 @@ async def main() -> None:
                        help="Launch Morphable Web UI (browser-based, port 8080)")
     parser.add_argument("--web-port", type=int, default=8080,
                        help="Port for web UI server (default: 8080)")
+    parser.add_argument("--web-host", default="127.0.0.1",
+                       help="Bind address for web UI (default: 127.0.0.1)")
     parser.add_argument("--mock-voice", action="store_true", default=False,
                        help="Force mock STT/TTS (skip real Deepgram/Cartesia)")
     parser.add_argument("--login", action="store_true", default=False,
@@ -838,6 +843,7 @@ async def main() -> None:
         ui_mode=ui_mode,
         mock_voice=args.mock_voice,
         web_port=args.web_port,
+        web_host=getattr(args, 'web_host', '127.0.0.1'),
     )
     
     try:

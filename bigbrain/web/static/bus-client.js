@@ -12,9 +12,14 @@ class BusClient {
    * @param {object} [opts]
    * @param {number} [opts.reconnectMs=3000] - Reconnect interval
    * @param {number} [opts.maxReconnects=20] - Max reconnect attempts
+   * @param {string} [opts.token] - Auth token (appended as ?token= for Basic Auth bypass)
    */
   constructor(url, opts = {}) {
     this.url = url;
+    if (opts.token) {
+      const sep = url.includes('?') ? '&' : '?';
+      this.url = `${url}${sep}token=${encodeURIComponent(opts.token)}`;
+    }
     this.reconnectMs = opts.reconnectMs || 3000;
     this.maxReconnects = opts.maxReconnects || 20;
 

@@ -12,8 +12,10 @@ MessageBus, allowing panels to be autonomous bus subscribers.
 """
 
 import asyncio
+import base64
 import json
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Set, TYPE_CHECKING
@@ -45,6 +47,7 @@ class WebServer:
         focus_manager: "Optional[FocusManager]" = None,
         host: str = "0.0.0.0",
         port: int = 8080,
+        auth_password: "Optional[str]" = None,
     ):
         """
         Initialize the web server.
@@ -54,11 +57,15 @@ class WebServer:
             focus_manager: Focus manager for state sync
             host: Bind address
             port: Bind port
+            auth_password: Optional HTTP Basic Auth password (user: bigbrain).
+                          If None, checks BIGBRAIN_WEB_PASSWORD env var.
+                          If neither set, no auth is required.
         """
         self.bus = bus
         self.focus_manager = focus_manager
         self.host = host
         self.port = port
+        self._auth_password = auth_password or os.environ.get("BIGBRAIN_WEB_PASSWORD")
 
         self._app: Optional[web.Application] = None
         self._runner: Optional[web.AppRunner] = None
@@ -71,7 +78,12 @@ class WebServer:
         if self._running:
             return
 
-        self._app = web.Application()
+        middlewares = []
+        if self._auth_password:
+            middlewares.append(self._auth_middleware)
+            logger.info("WebServer: Basic Auth enabled (user: bigbrain)")
+
+        self._app = web.Application(middlewares=middlewares)
         self._setup_routes()
 
         # Subscribe to ALL bus messages to forward to WebSocket clients
@@ -126,6 +138,39 @@ class WebServer:
     # ================================================================
     # ROUTES
     # ================================================================
+
+    # ================================================================
+    # AUTH MIDDLEWARE
+    # ================================================================
+
+    @web.middleware
+    async def _auth_middleware(self, request: web.Request, handler):
+        """HTTP Basic Auth middleware. Skips if no password configured."""
+        if not self._auth_password:
+            return await handler(request)
+
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Basic "):
+            try:
+                decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
+                user, passwd = decoded.split(":", 1)
+                if user == "bigbrain" and passwd == self._auth_password:
+                    return await handler(request)
+            except Exception:
+                pass
+
+        # WebSocket upgrade requests pass auth via query param (browsers
+        # can't set custom headers on WebSocket connections)
+        if request.path == "/ws":
+            token = request.query.get("token")
+            if token == self._auth_password:
+                return await handler(request)
+
+        return web.Response(
+            status=401,
+            headers={"WWW-Authenticate": 'Basic realm="BigBrain"'},
+            text="Authentication required",
+        )
 
     def _setup_routes(self) -> None:
         """Configure HTTP routes."""
