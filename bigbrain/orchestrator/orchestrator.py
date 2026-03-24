@@ -495,9 +495,8 @@ Example — "research async patterns then build a scraper using what you find":
         # Also map message ID → subtask ID for lookup
         subtask._dispatch_msg_id = task_message.id
         
-        await self.bus.send(task_message)
-        
-        # Announce subtask started
+        # Announce subtask started BEFORE dispatching (bus.send delivers
+        # synchronously in-loop, so the brain may complete before we return)
         await self.bus.broadcast_event(
             source=self.name,
             event_type="subtask.started",
@@ -510,6 +509,8 @@ Example — "research async patterns then build a scraper using what you find":
             workspace=self.workspace,
             priority=Priority.NORMAL
         )
+        
+        await self.bus.send(task_message)
     
     async def _resolve_payload_references(self, payload: Dict[str, Any], 
                                         plan: TaskPlan) -> Dict[str, Any]:
