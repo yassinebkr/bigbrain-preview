@@ -35,6 +35,15 @@ try:
 except ImportError:
     TEXTUAL_AVAILABLE = False
 
+# Try to import Web UI
+try:
+    from .web.server import WebServer
+    from .web.adapter import WebAdapter
+    from .web.focus_bridge import FocusBridge
+    AIOHTTP_AVAILABLE = True
+except ImportError:
+    AIOHTTP_AVAILABLE = False
+
 
 class BigBrainSystem:
     """
@@ -44,20 +53,22 @@ class BigBrainSystem:
     Creates the bus, registers brains, starts orchestrator, and launches TUI.
     """
     
-    def __init__(self, workspace: str = "demo", log_dir: Path = None, ui_mode: str = "tui", mock_voice: bool = False):
+    def __init__(self, workspace: str = "demo", log_dir: Path = None, ui_mode: str = "tui", mock_voice: bool = False, web_port: int = 8080):
         """
         Initialize BigBrain system.
         
         Args:
             workspace: Name of the primary workspace
             log_dir: Directory for message logs (defaults to ./logs)
-            ui_mode: UI mode ("tui" or "simple")
+            ui_mode: UI mode ("tui", "simple", or "web")
             mock_voice: Force mock STT/TTS even if API keys are available
+            web_port: Port for web UI server (default 8080)
         """
         self.workspace = workspace
         self.log_dir = log_dir or Path("logs")
         self.ui_mode = ui_mode
         self.mock_voice = mock_voice
+        self.web_port = web_port
         
         # Core components
         self.bus: Optional[MessageBus] = None
@@ -74,6 +85,9 @@ class BigBrainSystem:
         self.voice_brain: Optional[VoiceBrain] = None
         self.verification: Optional[VerificationPipeline] = None
         self.memory_manager: Optional[MemoryManager] = None
+        self.web_server: Optional['WebServer'] = None
+        self.web_adapter: Optional['WebAdapter'] = None
+        self.focus_bridge: Optional['FocusBridge'] = None
         
         # Brain registry
         self.brains: Dict[str, Any] = {}
@@ -324,7 +338,28 @@ class BigBrainSystem:
     
     async def _create_ui(self) -> None:
         """Create UI based on mode."""
-        if self.ui_mode == "tui" and TEXTUAL_AVAILABLE:
+        if self.ui_mode == "web" and AIOHTTP_AVAILABLE:
+            print("🌐 Starting Morphable Web UI...")
+            self.web_server = WebServer(
+                bus=self.bus,
+                focus_manager=self.focus_manager,
+                port=self.web_port,
+            )
+            self.web_adapter = WebAdapter(
+                bus=self.bus,
+                web_server=self.web_server,
+                workspace=self.workspace,
+            )
+            self.focus_bridge = FocusBridge(
+                bus=self.bus,
+                focus_manager=self.focus_manager,
+            )
+            self.ui = self.web_adapter
+        elif self.ui_mode == "web" and not AIOHTTP_AVAILABLE:
+            print("⚠️  aiohttp not available for web UI. Install: pip install aiohttp")
+            print("    Falling back to simple mode.")
+            self.ui = RichAdapter()
+        elif self.ui_mode == "tui" and TEXTUAL_AVAILABLE:
             print("🖥️  Starting Textual TUI...")
             self.tui_app = BigBrainApp(bigbrain_system=self)
         else:
@@ -394,6 +429,12 @@ class BigBrainSystem:
             if self.tui_app:
                 # TUI mode will be started separately
                 pass
+            elif self.web_server:
+                await self.web_server.start()
+                await self.web_adapter.start()
+                await self.focus_bridge.start()
+                print(f"🌐 Web UI: {self.web_server.url}")
+                print(f"   WebSocket: {self.web_server.ws_url}")
             else:
                 if self.ui:
                     await self.ui.start()
@@ -476,10 +517,15 @@ class BigBrainSystem:
             if self.orchestrator:
                 await self.orchestrator.stop()
             
+            # Stop web server + bridge
+            if self.focus_bridge:
+                await self.focus_bridge.stop()
+            if self.web_server:
+                await self.web_server.stop()
+            
             # Stop UI
             if self.ui:
-                if self.ui:
-                    await self.ui.stop()
+                await self.ui.stop()
             
             # Close message bus
             if self.bus:
@@ -698,6 +744,12 @@ print(f"✓ Files in directory: {python_files}")
             if self.tui_app:
                 # TUI mode — system starts inside TUI's event loop (on_mount)
                 await self.run_tui()
+            elif self.web_server:
+                # Web mode — start system, serve UI, wait for shutdown
+                await self.start()
+                print(f"\n🧠 BigBrain Morphable UI running at {self.web_server.url}")
+                print("   Press Ctrl+C to stop.\n")
+                await self._shutdown_event.wait()
             else:
                 # Simple mode — start system, then REPL
                 await self.start()
@@ -720,6 +772,10 @@ async def main() -> None:
     parser.add_argument("--log-dir", default="logs", help="Log directory (default: logs)")
     parser.add_argument("--simple", action="store_true", default=False,
                        help="Use simple Rich console interface instead of TUI")
+    parser.add_argument("--web", action="store_true", default=False,
+                       help="Launch Morphable Web UI (browser-based, port 8080)")
+    parser.add_argument("--web-port", type=int, default=8080,
+                       help="Port for web UI server (default: 8080)")
     parser.add_argument("--mock-voice", action="store_true", default=False,
                        help="Force mock STT/TTS (skip real Deepgram/Cartesia)")
     parser.add_argument("--login", action="store_true", default=False,
@@ -759,10 +815,18 @@ async def main() -> None:
         return
     
     # Determine UI mode
-    ui_mode = "simple" if args.simple else "tui"
-    if ui_mode == "tui" and not TEXTUAL_AVAILABLE:
-        print("⚠️  Textual not available, using simple mode")
+    if args.web:
+        ui_mode = "web"
+        if not AIOHTTP_AVAILABLE:
+            print("⚠️  aiohttp not installed. Run: pip install aiohttp")
+            ui_mode = "simple"
+    elif args.simple:
         ui_mode = "simple"
+    else:
+        ui_mode = "tui"
+        if not TEXTUAL_AVAILABLE:
+            print("⚠️  Textual not available, using simple mode")
+            ui_mode = "simple"
     
     if not args.simple:
         print(f"🧠 Starting BigBrain (workspace: {args.workspace})...")
@@ -773,6 +837,7 @@ async def main() -> None:
         log_dir=Path(args.log_dir),
         ui_mode=ui_mode,
         mock_voice=args.mock_voice,
+        web_port=args.web_port,
     )
     
     try:

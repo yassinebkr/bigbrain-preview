@@ -1,0 +1,274 @@
+"""Tests for WebServer — HTTP + WebSocket bridge."""
+
+import asyncio
+import json
+import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from bigbrain.bus.bus import MessageBus
+from bigbrain.bus.message import BusMessage, MessageType, Priority
+from bigbrain.web.server import WebServer
+
+
+# ================================================================
+# FIXTURES
+# ================================================================
+
+
+@pytest.fixture
+def bus():
+    """Create a MessageBus without auth for testing."""
+    return MessageBus(auth=None)
+
+
+@pytest.fixture
+def server(bus):
+    """Create a WebServer (not started)."""
+    return WebServer(bus=bus, host="127.0.0.1", port=0)
+
+
+# ================================================================
+# INITIALIZATION
+# ================================================================
+
+
+class TestInit:
+    def test_create_server(self, bus):
+        srv = WebServer(bus=bus, host="0.0.0.0", port=8080)
+        assert srv.bus is bus
+        assert srv.host == "0.0.0.0"
+        assert srv.port == 8080
+        assert srv.client_count == 0
+
+    def test_default_urls(self, server):
+        assert "127.0.0.1" in server.url
+        assert "ws://" in server.ws_url
+
+    def test_focus_manager_optional(self, bus):
+        srv = WebServer(bus=bus)
+        assert srv.focus_manager is None
+
+
+# ================================================================
+# BUS MESSAGE FORWARDING
+# ================================================================
+
+
+class TestBusForwarding:
+    @pytest.mark.asyncio
+    async def test_on_bus_message_no_clients(self, server):
+        """Should not error when no clients connected."""
+        msg = BusMessage(
+            type=MessageType.EVENT,
+            source="test",
+            target="*",
+            payload={"event": "test.event"},
+        )
+        # Should not raise
+        await server._on_bus_message(msg)
+
+    @pytest.mark.asyncio
+    async def test_on_bus_message_with_client(self, server):
+        """Should forward message to connected client."""
+        mock_ws = AsyncMock()
+        mock_ws.send_json = AsyncMock()
+        server._ws_clients.add(mock_ws)
+
+        msg = BusMessage(
+            type=MessageType.EVENT,
+            source="test_brain",
+            target="*",
+            payload={"event": "brain.complete"},
+        )
+
+        await server._on_bus_message(msg)
+
+        mock_ws.send_json.assert_called_once()
+        sent_data = mock_ws.send_json.call_args[0][0]
+        assert sent_data["source"] == "test_brain"
+        assert sent_data["payload"]["event"] == "brain.complete"
+
+    @pytest.mark.asyncio
+    async def test_on_bus_message_cleans_closed(self, server):
+        """Should clean up clients that raise ConnectionResetError."""
+        bad_ws = AsyncMock()
+        bad_ws.send_json = AsyncMock(side_effect=ConnectionResetError)
+        good_ws = AsyncMock()
+        good_ws.send_json = AsyncMock()
+
+        server._ws_clients.add(bad_ws)
+        server._ws_clients.add(good_ws)
+
+        msg = BusMessage(
+            type=MessageType.EVENT,
+            source="test",
+            target="*",
+            payload={},
+        )
+
+        await server._on_bus_message(msg)
+
+        # Bad client should be removed
+        assert bad_ws not in server._ws_clients
+        # Good client should remain
+        assert good_ws in server._ws_clients
+
+    @pytest.mark.asyncio
+    async def test_multiple_clients_receive(self, server):
+        """All connected clients should receive the message."""
+        clients = []
+        for _ in range(3):
+            ws = AsyncMock()
+            ws.send_json = AsyncMock()
+            server._ws_clients.add(ws)
+            clients.append(ws)
+
+        msg = BusMessage(
+            type=MessageType.TASK,
+            source="orchestrator",
+            target="python_brain",
+            payload={"type": "execute_code"},
+        )
+
+        await server._on_bus_message(msg)
+
+        for ws in clients:
+            ws.send_json.assert_called_once()
+
+
+# ================================================================
+# WEBSOCKET MESSAGE HANDLING
+# ================================================================
+
+
+class TestWsMessageHandling:
+    @pytest.mark.asyncio
+    async def test_handle_ws_message_sends_to_bus(self, server, bus):
+        """Messages from WS client should be forwarded to bus."""
+        received = []
+        bus.subscribe("front_brain", lambda msg: received.append(msg))
+
+        mock_ws = AsyncMock()
+
+        raw = json.dumps({
+            "type": "task",
+            "source": "should_be_overridden",
+            "target": "front_brain",
+            "payload": {"type": "user_message", "text": "hello"},
+        })
+
+        await server._handle_ws_message(mock_ws, raw)
+        await asyncio.sleep(0.05)
+
+        assert len(received) == 1
+        # Source should be forced to morphable_ui (security)
+        assert received[0].source == "morphable_ui"
+        assert received[0].target == "front_brain"
+        assert received[0].payload["text"] == "hello"
+
+    @pytest.mark.asyncio
+    async def test_handle_ws_invalid_json(self, server):
+        """Invalid JSON should be ignored, not crash."""
+        mock_ws = AsyncMock()
+        await server._handle_ws_message(mock_ws, "not json{{{")
+        # Should not raise
+
+    @pytest.mark.asyncio
+    async def test_handle_ws_source_forced(self, server, bus):
+        """Source is always forced to morphable_ui to prevent spoofing."""
+        received = []
+        bus.subscribe("*", lambda msg: received.append(msg))
+
+        mock_ws = AsyncMock()
+        raw = json.dumps({
+            "type": "event",
+            "source": "admin",  # Attempted spoof
+            "target": "*",
+            "payload": {"event": "evil.command"},
+        })
+
+        await server._handle_ws_message(mock_ws, raw)
+        await asyncio.sleep(0.05)
+
+        # Source should be morphable_ui, not "admin"
+        assert all(m.source == "morphable_ui" for m in received)
+
+
+# ================================================================
+# INITIAL STATE
+# ================================================================
+
+
+class TestInitialState:
+    @pytest.mark.asyncio
+    async def test_send_initial_state(self, server):
+        """New clients should receive focus + status."""
+        mock_ws = AsyncMock()
+        mock_ws.send_json = AsyncMock()
+
+        await server._send_initial_state(mock_ws)
+
+        # Should send at least 2 messages: focus + status
+        assert mock_ws.send_json.call_count == 2
+
+        # First message should be focus state
+        first = mock_ws.send_json.call_args_list[0][0][0]
+        assert first["payload"]["event"] == "focus.initial"
+
+        # Second should be system status
+        second = mock_ws.send_json.call_args_list[1][0][0]
+        assert second["payload"]["event"] == "system.status"
+
+    @pytest.mark.asyncio
+    async def test_send_initial_state_with_focus_manager(self, bus):
+        """Focus state should include manager data if available."""
+        from bigbrain.front.focus_manager import FocusManager
+
+        fm = FocusManager()
+        srv = WebServer(bus=bus, focus_manager=fm)
+
+        mock_ws = AsyncMock()
+        mock_ws.send_json = AsyncMock()
+
+        await srv._send_initial_state(mock_ws)
+
+        first = mock_ws.send_json.call_args_list[0][0][0]
+        assert "mode" in first["payload"] or "workspaces" in first["payload"]
+
+
+# ================================================================
+# FOCUS ENDPOINT
+# ================================================================
+
+
+class TestFocusEndpoint:
+    def test_get_focus_no_manager(self, server):
+        """Without FocusManager, should return defaults."""
+        result = server._get_focus_snapshot()
+        assert result["workspaces"] == {}
+        assert result["mode"] == "normal"
+
+    def test_get_focus_with_manager(self, bus):
+        from bigbrain.front.focus_manager import FocusManager, FocusMode
+
+        fm = FocusManager()
+        fm.set_focus_mode(FocusMode.DEEP_FOCUS, "test")
+        srv = WebServer(bus=bus, focus_manager=fm)
+
+        result = srv._get_focus_snapshot()
+        assert "focus_mode" in result or "mode" in result
+
+
+# ================================================================
+# CLIENT COUNT
+# ================================================================
+
+
+class TestClientCount:
+    def test_empty(self, server):
+        assert server.client_count == 0
+
+    def test_with_clients(self, server):
+        server._ws_clients.add(MagicMock())
+        server._ws_clients.add(MagicMock())
+        assert server.client_count == 2

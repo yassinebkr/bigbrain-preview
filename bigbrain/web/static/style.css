@@ -1,0 +1,679 @@
+/*
+ * style.css — BigBrain Morphable UI Styles
+ *
+ * Layout catalog CSS grid definitions.
+ * Panel styles with collapse/expand support.
+ * Dark theme with indigo accent.
+ * Geist font (matches Scratchy).
+ */
+
+/* ============================================================
+   CSS CUSTOM PROPERTIES
+   ============================================================ */
+
+:root {
+  /* Colors — dark theme */
+  --bg: #0a0a0f;
+  --bg-panel: #12121a;
+  --bg-panel-hover: #1a1a25;
+  --bg-title-bar: #16162080;
+  --bg-input: #1a1a25;
+  --border: #2a2a3a;
+  --border-focus: #4f46e5;
+  --text: #e4e4e7;
+  --text-muted: #71717a;
+  --text-dim: #52525b;
+
+  /* Accent — indigo */
+  --accent: #6366f1;
+  --accent-soft: #6366f120;
+  --accent-glow: #6366f140;
+
+  /* Status colors */
+  --green: #22c55e;
+  --yellow: #eab308;
+  --red: #ef4444;
+  --blue: #3b82f6;
+
+  /* Sizing */
+  --title-bar-height: 36px;
+  --status-strip-height: 40px;
+  --input-height: 48px;
+  --gap: 8px;
+  --radius: 8px;
+  --radius-sm: 4px;
+
+  /* Transitions */
+  --transition-fast: 150ms ease;
+  --transition-normal: 250ms ease;
+}
+
+/* ============================================================
+   BASE + RESET
+   ============================================================ */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ============================================================
+   APP SHELL
+   ============================================================ */
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* Top bar — workspace selector + connection status */
+#top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 44px;
+  padding: 0 16px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+#top-bar .logo {
+  font-weight: 600;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#workspace-selector {
+  display: flex;
+  gap: 4px;
+}
+
+.ws-btn {
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.ws-btn:hover {
+  background: var(--accent-soft);
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.ws-btn-active {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
+/* Connection indicator */
+#connection-status {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  transition: background var(--transition-normal);
+}
+
+.connection-connected {
+  background: var(--green);
+  box-shadow: 0 0 6px var(--green);
+}
+
+.connection-disconnected {
+  background: var(--red);
+  box-shadow: 0 0 6px var(--red);
+  animation: pulse-red 2s infinite;
+}
+
+@keyframes pulse-red {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* ============================================================
+   GRID CONTAINER — holds the panel grid
+   ============================================================ */
+
+#grid-container {
+  flex: 1;
+  display: grid;
+  gap: var(--gap);
+  padding: var(--gap);
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ============================================================
+   LAYOUT CATALOG — CSS Grid templates
+   ============================================================ */
+
+/* Focus: single panel */
+[data-layout="focus"] {
+  grid-template: "primary" 1fr / 1fr;
+}
+
+/* Split: two equal columns */
+[data-layout="split"] {
+  grid-template: "left right" 1fr / 1fr 1fr;
+}
+
+/* Focus-Left: wide primary + sidebar */
+[data-layout="focus-left"] {
+  grid-template: "primary side" 1fr / 2fr 1fr;
+}
+
+/* Tri-Left: primary + two stacked right panels */
+[data-layout="tri-left"] {
+  grid-template:
+    "primary side-top" 1fr
+    "primary side-bottom" 1fr
+    / 2fr 1fr;
+}
+
+/* Quad: four equal panels */
+[data-layout="quad"] {
+  grid-template:
+    "tl tr" 1fr
+    "bl br" 1fr
+    / 1fr 1fr;
+}
+
+/* Primary-Dock: large top + 3 dock panels at bottom */
+[data-layout="primary-dock"] {
+  grid-template:
+    "primary primary primary" 3fr
+    "dock1 dock2 dock3" 1fr
+    / 1fr 1fr 1fr;
+}
+
+/* Tri-Bottom: two columns + wide bottom */
+[data-layout="tri-bottom"] {
+  grid-template:
+    "left right" 2fr
+    "bottom bottom" 1fr
+    / 1fr 1fr;
+}
+
+/* ============================================================
+   PANEL STYLES
+   ============================================================ */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  min-height: 0;
+  transition: box-shadow var(--transition-normal);
+}
+
+.panel:hover {
+  border-color: var(--border-focus);
+}
+
+/* Title bar */
+.panel-title-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--title-bar-height);
+  padding: 0 12px;
+  background: var(--bg-title-bar);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+  flex-shrink: 0;
+  backdrop-filter: blur(8px);
+}
+
+.panel-icon {
+  font-size: 14px;
+}
+
+.panel-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  flex: 1;
+}
+
+.panel-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.panel-btn {
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-fast);
+}
+
+.panel-btn:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* Content area */
+.panel-content {
+  flex: 1;
+  overflow: auto;
+  padding: 12px;
+  min-height: 0;
+}
+
+/* ============================================================
+   COLLAPSED PANEL — shrinks to title bar only
+   ============================================================ */
+
+.panel-collapsed {
+  /* Title bar stays visible, content hidden */
+}
+
+.panel-collapsed .panel-content {
+  display: none;
+}
+
+.panel-collapsed .panel-btn-collapse {
+  transform: rotate(-90deg);
+}
+
+/* In collapsed state, panel has a fixed min-height */
+.panel-collapsed {
+  min-height: var(--title-bar-height);
+  max-height: var(--title-bar-height);
+}
+
+/* ============================================================
+   STATUS STRIP — persistent bar below grid
+   ============================================================ */
+
+#status-strip {
+  height: var(--status-strip-height);
+  border-top: 1px solid var(--border);
+  background: var(--bg-panel);
+  padding: 0 16px;
+  flex-shrink: 0;
+}
+
+#status-strip .panel {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+#status-strip .panel-title-bar {
+  display: none;
+}
+
+#status-strip .panel-content {
+  padding: 0;
+  display: flex;
+  align-items: center;
+}
+
+.status-strip-content {
+  display: flex;
+  align-items: center;
+}
+
+.status-items {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+  height: 100%;
+}
+
+.status-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.status-icon {
+  font-size: 14px;
+}
+
+.status-label {
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+.status-value {
+  color: var(--text);
+}
+
+/* ============================================================
+   CHAT INPUT
+   ============================================================ */
+
+#input-area {
+  display: flex;
+  padding: var(--gap);
+  gap: var(--gap);
+  border-top: 1px solid var(--border);
+  background: var(--bg-panel);
+  flex-shrink: 0;
+}
+
+#chat-input {
+  flex: 1;
+  height: var(--input-height);
+  padding: 0 16px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color var(--transition-fast);
+}
+
+#chat-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+#chat-input::placeholder {
+  color: var(--text-dim);
+}
+
+/* ============================================================
+   PANEL CONTENT — chat messages
+   ============================================================ */
+
+.chat-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-msg {
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  line-height: 1.5;
+  max-width: 85%;
+  word-wrap: break-word;
+}
+
+.chat-msg-user {
+  background: var(--accent);
+  color: white;
+  align-self: flex-end;
+  border-bottom-right-radius: 2px;
+}
+
+.chat-msg-assistant {
+  background: var(--bg-panel-hover);
+  color: var(--text);
+  align-self: flex-start;
+  border-bottom-left-radius: 2px;
+}
+
+.chat-msg-system {
+  background: var(--accent-soft);
+  color: var(--text-muted);
+  font-size: 12px;
+  align-self: center;
+  text-align: center;
+}
+
+/* ============================================================
+   PANEL CONTENT — brain status
+   ============================================================ */
+
+.brain-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.brain-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  font-size: 13px;
+}
+
+.brain-indicator {
+  font-size: 10px;
+}
+
+.brain-name {
+  font-weight: 500;
+  flex: 1;
+}
+
+.brain-task {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.brain-idle { border-left: 2px solid var(--green); }
+.brain-busy { border-left: 2px solid var(--yellow); }
+.brain-error { border-left: 2px solid var(--red); }
+
+/* ============================================================
+   PANEL CONTENT — task list
+   ============================================================ */
+
+.task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.task-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  font-size: 13px;
+}
+
+.task-item > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.task-icon {
+  font-size: 12px;
+}
+
+.task-type {
+  font-weight: 500;
+  flex: 1;
+}
+
+.task-target {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.task-progress-bar {
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.task-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 300ms ease;
+}
+
+.task-running .task-progress-fill { background: var(--accent); }
+.task-complete .task-progress-fill { background: var(--green); width: 100% !important; }
+.task-failed .task-progress-fill { background: var(--red); }
+
+/* ============================================================
+   PANEL CONTENT — bus monitor
+   ============================================================ */
+
+.bus-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-family: 'Geist Mono', 'SF Mono', 'Fira Code', monospace;
+  font-size: 11px;
+}
+
+.bus-msg {
+  display: flex;
+  gap: 8px;
+  padding: 2px 4px;
+  border-radius: 2px;
+}
+
+.bus-type {
+  font-weight: 600;
+  min-width: 60px;
+}
+
+.bus-route {
+  color: var(--text-muted);
+  min-width: 150px;
+}
+
+.bus-event {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bus-msg-task .bus-type { color: var(--blue); }
+.bus-msg-result .bus-type { color: var(--green); }
+.bus-msg-event .bus-type { color: var(--yellow); }
+.bus-msg-state .bus-type { color: var(--accent); }
+.bus-msg-progress .bus-type { color: var(--text-muted); }
+
+/* ============================================================
+   PIPELINE DATA
+   ============================================================ */
+
+.pipeline-data {
+  font-size: 13px;
+}
+
+.pipeline-item {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.pipeline-item:last-child {
+  border-bottom: none;
+}
+
+.pipeline-kv {
+  padding: 2px 0;
+}
+
+.pipeline-kv strong {
+  color: var(--text-muted);
+}
+
+/* ============================================================
+   FOCUS MODE OVERRIDES
+   ============================================================ */
+
+/* Deep focus — dim non-primary panels */
+[data-focus-mode="deep_focus"] .panel:not([data-slot="primary"]) {
+  opacity: 0.4;
+  transition: opacity var(--transition-normal);
+}
+
+[data-focus-mode="deep_focus"] .panel:not([data-slot="primary"]):hover {
+  opacity: 1;
+}
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+
+@media (max-width: 768px) {
+  /* Stack everything vertically on small screens */
+  #grid-container {
+    grid-template: none !important;
+    grid-template-columns: 1fr !important;
+    grid-auto-rows: minmax(200px, 1fr) !important;
+  }
+
+  .panel {
+    grid-area: auto !important;
+  }
+
+  .ws-btn {
+    font-size: 11px;
+    padding: 2px 8px;
+  }
+}
+
+/* ============================================================
+   SCROLLBAR STYLING
+   ============================================================ */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-dim);
+}
