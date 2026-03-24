@@ -478,19 +478,22 @@ Type 'quit' or 'exit' to stop."""
                 response = await self.llm_provider.chat_complete(
                     messages=[
                         {"role": "system", "content": (
-                            "You are summarizing a task result for the user. "
-                            "The user asked a question, a brain executed code or research, "
-                            "and now you need to give a direct, conversational answer. "
-                            "Rules:\n"
-                            "- Answer the question directly — don't describe what happened\n"
-                            "- Be concise (1-3 sentences max)\n"
-                            "- Don't show code or raw output\n"
-                            "- If the output contains the answer, extract it\n"
-                            "- Start with the answer, not 'The result is' or 'Here's what I found'"
+                            "You are summarizing task results for the user. "
+                            "The user asked a question, brains executed research and/or code, "
+                            "and now you need to give a direct, accurate answer.\n\n"
+                            "CRITICAL RULES:\n"
+                            "- ONLY state facts that appear in the actual output below\n"
+                            "- If code output shows specific numbers/results, use THOSE exact numbers\n"
+                            "- Do NOT mix research findings with code output — code results are ground truth\n"
+                            "- If the code tested different algorithms than the research suggested, say so\n"
+                            "- Be concise (2-4 sentences max)\n"
+                            "- Don't show raw code or say 'the output shows'\n"
+                            "- Start with the answer, not 'Based on' or 'The result is'\n"
+                            "- If output was truncated or incomplete, say 'partial results' — don't fabricate"
                         )},
                         {"role": "user", "content": (
                             f"User's question: {user_question}\n\n"
-                            f"Task output:\n{output_text[:2000]}"
+                            f"Task output:\n{output_text[:3000]}"
                         )},
                     ],
                     stream=False,

@@ -571,13 +571,38 @@ class TaskListPanel extends BasePanel {
           }
         }
         if (task) {
-          if (typeof p.progress === 'number') task.progress = p.progress;
+          // Use explicit progress if provided, otherwise estimate from stage
+          if (typeof p.progress === 'number') {
+            task.progress = p.progress;
+          } else if (p.stage) {
+            task.progress = TaskListPanel._estimateProgress(p.stage);
+          }
           if (p.stage) task.stage = p.stage;
           task.status = 'running';
           this._renderTasks();
         }
       }
     );
+  }
+
+  /** Map brain stage names to approximate progress percentages. */
+  static _estimateProgress(stage) {
+    const stageMap = {
+      // Researcher stages
+      'planning': 15,
+      'searching': 35,
+      'search_complete': 55,
+      'triangulated': 65,
+      'summarizing': 80,
+      // PythonBrain stages
+      'generating_code': 25,
+      'executing': 60,
+      'completed': 90,
+      'succeeded': 95,
+      'retrying': 40,
+      'failed_after_retries': 100,
+    };
+    return stageMap[stage] || -1;  // -1 = indeterminate for unknown stages
   }
 
   _renderTasks() {
