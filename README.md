@@ -2,7 +2,7 @@
 
 A modular, async AI agent system built on a **3-layer architecture** with specialized brain topologies, event-driven orchestration, and focus-managed attention.
 
-> **Preview Implementation** — Full reference codebase with 311 tests. The [real project](https://github.com/yassinebkr/bigbrain) is built incrementally by hand.
+> **Preview Implementation** — Full reference codebase with 523 tests. The [real project](https://github.com/yassinebkr/bigbrain) is built incrementally by hand.
 
 ## Quick Start
 
@@ -146,8 +146,25 @@ User ←→ Front Brain ←→ Bus ←→ Orchestrator(s) ←→ Sub-brains
 ### UI
 | Feature | Status | Description |
 |---------|--------|-------------|
+| Morphable UI (Web) | ✅ | Glassmorphic workspace-based UI with FLIP animations, 7 layout grids, 9 panel types |
 | Textual TUI | ✅ | 4-panel layout: chat, brains, tasks, bus/focus |
 | Rich Fallback | ✅ | Console output when Textual unavailable |
+
+### Morphable UI — Web Interface
+| Feature | Status | Description |
+|---------|--------|-------------|
+| Spring FLIP Engine | ✅ | Custom WAAPI + CSS `linear()` spring physics, 5 presets, zero deps |
+| Layout Catalog | ✅ | 7 pre-designed grids (focus, split, tri-left, quad, etc.) — agent never creates layouts |
+| Workspace Tabs | ✅ | 6 domain-tailored workspaces: Home, Python, Research, Web, 3D Print, Electronics |
+| Autonomous Panels | ✅ | Panels self-update via bus subscription. 9 types: chat, brain-status, task-list, code-output, research-results, bus-monitor, pipeline, placeholder, status-strip |
+| Persistent Panels | ✅ | Chat, Tasks, Brain Status survive workspace switches — no state loss |
+| Global Result Buffer | ✅ | Results captured even when target workspace panel doesn't exist yet |
+| LLM Result Summary | ✅ | Front Brain uses LLM to turn raw stdout into a conversational answer |
+| Data Pipelines | ✅ | Agent-defined sources (bus/http-poll/websocket) + JSON path transforms |
+| WebSocket Bridge | ✅ | aiohttp WS server bridges browser ↔ Python MessageBus, anti-spoof source forcing |
+| Focus Sync | ✅ | Bidirectional: UI workspace switch ↔ FocusManager, rate-limited broadcasts |
+| Auth | ✅ | HTTP Basic Auth + WS token query param (Cloudflare tunnel compatible) |
+| Design | ✅ | Glassmorphism, SVG noise grain, WCAG AA contrast, Geist font, indigo accent |
 
 ## Brain Loop Topologies
 
@@ -201,7 +218,15 @@ Execution modes control which layers run per brain:
 
 ## Usage
 
-### Interactive Mode (default)
+### Web Mode (Morphable UI)
+```bash
+python -m bigbrain --web --web-port 3007
+```
+Opens the Morphable UI web interface. Access at `http://localhost:3007`.
+
+Set `BIGBRAIN_WEB_PASSWORD` env var to enable Basic Auth.
+
+### Interactive Mode (TUI)
 ```bash
 python -m bigbrain
 ```
@@ -219,13 +244,34 @@ python -m bigbrain --login    # Authenticate with Claude
 python -m bigbrain --logout   # Clear stored token
 ```
 
+### Deployment (systemd)
+```bash
+# Create a systemd user service
+cat > ~/.config/systemd/user/bigbrain-web.service << EOF
+[Unit]
+Description=BigBrain Web UI
+
+[Service]
+WorkingDirectory=/path/to/bigbrain-preview
+ExecStart=/usr/bin/python3 -m bigbrain --web --web-port 3007 --mock-voice
+Environment=PYTHONUNBUFFERED=1
+Environment=BIGBRAIN_WEB_PASSWORD=your-password
+Restart=always
+
+[Install]
+WantedBy=default.target
+EOF
+
+systemctl --user enable --now bigbrain-web
+```
+
 ### Run in Separate Terminal
 **Important**: Run BigBrain in a standalone PowerShell/terminal, NOT VS Code's integrated terminal. VS Code captures keyboard shortcuts that conflict with the TUI.
 
 ## Tests
 
 ```bash
-# Full suite (311 tests)
+# Full suite (523 tests)
 python -m pytest tests/ -v
 
 # By module
@@ -292,6 +338,20 @@ bigbrain/
 │   ├── app.py            # Main 4-panel application
 │   ├── app.css           # Dark theme styling
 │   └── widgets/          # Chat, brains, tasks, bus, focus panels
+├── web/                  # Morphable UI (Phase 3 WebAdapter)
+│   ├── server.py         # aiohttp WS bridge, Basic Auth, static serving
+│   ├── adapter.py        # WebAdapter (UIAdapter implementation)
+│   ├── focus_bridge.py   # Bidirectional Focus ↔ UI sync
+│   ├── pipeline_manager.py # Server-side pipeline validation
+│   └── static/           # Client-side (zero dependencies)
+│       ├── app.js        # MorphableUI orchestrator, workspace switching
+│       ├── morph.js      # Spring FLIP engine, CSS linear() generator
+│       ├── layout.js     # 7 layout grids, SlotManager, workspace configs
+│       ├── panel.js      # 9 panel types (chat, code-output, research, etc.)
+│       ├── bus-client.js # WebSocket bus client, auto-reconnect
+│       ├── pipeline.js   # 3 pipeline runners (bus/http-poll/websocket)
+│       ├── style.css     # Glassmorphic dark theme, 24 sections
+│       └── index.html    # App shell
 ├── ui/                   # Rich fallback UI
 │   ├── ui_adapter.py     # ABC for UI adapters
 │   └── rich_adapter.py   # Rich console implementation
@@ -314,7 +374,9 @@ bigbrain/
 | TTS | Cartesia Sonic (REST + WebSocket, sub-100ms) |
 | Terminal UI | Textual 8.x (dark theme, 4-panel layout) |
 | Fallback UI | Rich (console panels) |
-| Tests | pytest + pytest-asyncio (311 tests) |
+| Tests | pytest + pytest-asyncio (523 tests) |
+| Web Server | aiohttp (async WS bridge to MessageBus) |
+| Web UI | Vanilla JS + WAAPI (zero dependencies) |
 
 ## Design Philosophy
 
