@@ -278,6 +278,7 @@ Example — "research async patterns then build a scraper using what you find":
         )
         
         # Start executing ready subtasks
+        plan.status = TaskStatus.RUNNING
         await self._execute_ready_subtasks(plan)
     
     async def _create_task_plan(self, message: BusMessage) -> TaskPlan:
@@ -451,6 +452,10 @@ Example — "research async patterns then build a scraper using what you find":
     
     async def _execute_ready_subtasks(self, plan: TaskPlan) -> None:
         """Execute all subtasks that are ready (dependencies satisfied)."""
+        # Don't dispatch if plan is already complete/failed
+        if plan.status in (TaskStatus.COMPLETE, TaskStatus.FAILED, TaskStatus.CANCELLED):
+            return
+        
         ready_subtasks = plan.get_ready_subtasks()
         
         for subtask in ready_subtasks:
@@ -644,12 +649,12 @@ Example — "research async patterns then build a scraper using what you find":
             priority=Priority.NORMAL
         )
         
-        # Check if we can start more subtasks
-        if subtask.status == TaskStatus.COMPLETE:
-            await self._execute_ready_subtasks(plan)
-        
-        # Check if entire plan is complete
+        # Check if entire plan is complete FIRST (before trying to start more)
         await self._check_plan_completion(plan)
+        
+        # Only start more subtasks if plan is still running
+        if subtask.status == TaskStatus.COMPLETE and plan.status == TaskStatus.RUNNING:
+            await self._execute_ready_subtasks(plan)
     
     async def _check_plan_completion(self, plan: TaskPlan) -> None:
         """Check if a task plan is complete and send final result."""
