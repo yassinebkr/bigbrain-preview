@@ -356,17 +356,40 @@ class BrainStatusPanel extends BasePanel {
 
   _handleBrainEvent(msg) {
     const event = msg.payload?.event || '';
+    const msgType = msg.type || '';
     const brainName = msg.payload?.brain || msg.payload?.target_brain || msg.source;
-    let status = 'idle';
+    
+    if (!brainName || brainName === '*') return;
 
-    if (event.includes('started') || event.includes('received')) status = 'busy';
-    else if (event.includes('complete')) status = 'idle';
-    else if (event.includes('error') || event.includes('failed')) status = 'error';
-    else if (event.includes('progress')) status = 'busy';
+    let status = 'idle';
+    let stage = '';
+
+    // PROGRESS messages always mean the brain is busy
+    if (msgType === 'progress') {
+      status = 'busy';
+      stage = msg.payload?.stage || '';
+    } else if (event.includes('started') || event.includes('received')) {
+      status = 'busy';
+    } else if (event.includes('complete') && !event.includes('task.complete')) {
+      // subtask.complete / brain.complete → brain goes idle
+      status = 'idle';
+    } else if (event.includes('error') || event.includes('failed')) {
+      status = 'error';
+    } else if (event.includes('task.complete') || event.includes('task.failed')) {
+      // task-level events: update orchestrator status, not individual brains
+      const orch = msg.source || 'orchestrator';
+      this.brains.set(orch, {
+        status: event.includes('failed') ? 'error' : 'idle',
+        stage: '',
+        updated: Date.now(),
+      });
+      this._renderBrains();
+      return;
+    }
 
     this.brains.set(brainName, {
       status,
-      task: msg.payload?.task_type || '',
+      stage,
       updated: Date.now(),
     });
 
@@ -381,12 +404,15 @@ class BrainStatusPanel extends BasePanel {
     for (const [name, info] of this.brains) {
       const statusLabel = { idle: 'Idle', busy: 'Working', error: 'Error' }[info.status] || 'Unknown';
 
+      const prettyName = name.replace(/_/g, ' ');
+      const stageText = info.stage ? info.stage.replace(/_/g, ' ') : '';
+
       const item = document.createElement('div');
       item.className = `brain-item brain-${info.status}`;
       item.innerHTML = `
         <span class="brain-indicator"></span>
-        <span class="brain-name">${_escapeHtml(name)}</span>
-        ${info.task ? `<span class="brain-task">${_escapeHtml(info.task)}</span>` : ''}
+        <span class="brain-name">${_escapeHtml(prettyName)}</span>
+        ${stageText ? `<span class="brain-task">${_escapeHtml(stageText)}</span>` : ''}
         <span class="brain-status-badge">${statusLabel}</span>
       `;
       list.appendChild(item);

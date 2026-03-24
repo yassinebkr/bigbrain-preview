@@ -365,6 +365,14 @@ class WebServer:
         """
         if not self._ws_clients:
             return
+        
+        # Debug: log progress and subtask events
+        msg_type = message.type if isinstance(message.type, str) else message.type.value
+        if msg_type in ("progress", "event"):
+            event = (message.payload or {}).get("event", "")
+            if msg_type == "progress" or "subtask" in event or "brain" in event:
+                logger.info("WS→browser: type=%s event=%s src=%s clients=%d",
+                           msg_type, event, message.source, len(self._ws_clients))
 
         # Serialize to JSON-safe dict
         try:
