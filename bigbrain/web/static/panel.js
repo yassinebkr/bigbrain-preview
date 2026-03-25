@@ -861,8 +861,8 @@ class ResearchResultsPanel extends BasePanel {
     if (empty) empty.remove();
 
     const summary = data.summary || data.text || data.content || '';
-    const sources = data.sources || [];
-    const query = data.query || '';
+    const sources = data.sources || data.top_sources || [];
+    const query = data.query || data.queries_used?.[0] || '';
     const time = _timestamp('HH:mm:ss');
 
     const finding = document.createElement('div');
