@@ -314,9 +314,14 @@ class TestWorkspaceOrchestrator:
     @pytest.mark.asyncio
     async def test_llm_powered_decomposition(self, mock_bus):
         """Test LLM-powered task decomposition with dependencies."""
-        # Create a mock LLM that returns a multi-step plan
+        # Create a mock LLM that returns different responses for each call:
+        # Call 1: complexity assessment (returns script mode with research)
+        # Call 2: simple planner (returns 2-step plan)
         mock_llm = AsyncMock()
-        mock_llm.chat_complete = AsyncMock(return_value='[{"id": "s1", "description": "Research quantum computing", "brain_target": "researcher", "payload": {"type": "research", "query": "quantum computing"}, "dependencies": []}, {"id": "s2", "description": "Write summary code", "brain_target": "python_brain", "payload": {"type": "generate_and_execute", "user_request": "summarize findings"}, "dependencies": ["s1"]}]')
+        mock_llm.chat_complete = AsyncMock(side_effect=[
+            '{"mode": "script", "needs_research": true, "research_queries": ["quantum computing basics"], "reason": "research then code"}',
+            '[{"id": "s1", "description": "Research quantum computing", "brain_target": "researcher", "payload": {"type": "research", "query": "quantum computing"}, "dependencies": []}, {"id": "s2", "description": "Write summary code", "brain_target": "python_brain", "payload": {"type": "generate_and_execute", "user_request": "summarize findings"}, "dependencies": ["s1"]}]',
+        ])
         
         orch = WorkspaceOrchestrator("test_workspace", mock_bus, llm_provider=mock_llm)
         await orch.start()
@@ -345,10 +350,11 @@ class TestWorkspaceOrchestrator:
         s1_id = plan.subtasks[0].id
         assert s1_id in plan.subtasks[1].dependencies
         
-        # Verify LLM was called with proper system prompt
-        mock_llm.chat_complete.assert_called_once()
-        call_kwargs = mock_llm.chat_complete.call_args
-        messages = call_kwargs.kwargs.get("messages") or call_kwargs[1].get("messages") or call_kwargs[0][0] if call_kwargs[0] else call_kwargs.kwargs["messages"]
+        # Verify LLM was called (twice: assessment + planning)
+        assert mock_llm.chat_complete.call_count == 2
+        # Check second call (planner) has the right system prompt
+        planner_call = mock_llm.chat_complete.call_args_list[1]
+        messages = planner_call.kwargs.get("messages", [])
         assert any("task planner" in m["content"].lower() for m in messages if m["role"] == "system")
         
         await orch.stop()

@@ -120,8 +120,46 @@ class WorkspaceOrchestrator(BusParticipant):
     - Sends RESULT back when complete
     """
     
-    # System prompt for the planner LLM
-    PLANNER_SYSTEM_PROMPT = """You are a task planner for a multi-brain AI system.
+    # System prompt for complexity assessment
+    COMPLEXITY_SYSTEM_PROMPT = """You are a project complexity assessor. Given a user request, determine if it needs:
+1. "script" — a single Python file can handle it (utility, algorithm, simple tool)
+2. "project" — multiple files needed (backend+frontend, library+tests, multi-concern app)
+
+Also determine if research is needed before coding (new APIs, best practices, state of the art).
+
+Respond with ONLY a JSON object, no explanation:
+{{"mode": "script"|"project", "needs_research": true|false, "research_queries": ["query1"], "reason": "brief reason"}}
+
+Examples:
+- "write a fibonacci function" → {{"mode": "script", "needs_research": false, "research_queries": [], "reason": "single algorithm"}}
+- "build a chat app with auth and websockets" → {{"mode": "project", "needs_research": true, "research_queries": ["python websocket server best practices 2026", "lightweight python auth JWT"], "reason": "multiple concerns: backend, auth, websockets, frontend"}}
+- "create a REST API with database" → {{"mode": "project", "needs_research": false, "research_queries": [], "reason": "multiple files: models, routes, app setup"}}"""
+
+    # System prompt for project file planning (only used in project mode)
+    PROJECT_PLANNER_PROMPT = """You are a software architect. Given a user request, plan the file structure for the project.
+
+Rules:
+- Each file = one concern. Don't cram everything into one file.
+- List dependencies between files (which file needs which other file's exports).
+- Use Python standard library only (no numpy, pandas, matplotlib, etc.).
+- Keep it practical — 3-8 files for most projects. Don't over-engineer.
+- Include a main entry point file that wires everything together.
+- For web apps: separate backend, frontend (HTML), and data layer.
+
+Respond with ONLY a JSON object:
+{{
+  "project_name": "short-name",
+  "files": [
+    {{"path": "models.py", "purpose": "Database models for users and messages", "exports": ["User", "Message", "init_db"], "dependencies": []}},
+    {{"path": "auth.py", "purpose": "JWT authentication middleware", "exports": ["create_token", "verify_token", "auth_required"], "dependencies": ["models.py"]}},
+    {{"path": "app.py", "purpose": "FastAPI/Flask routes and WebSocket handlers", "exports": [], "dependencies": ["models.py", "auth.py"]}},
+    {{"path": "templates/index.html", "purpose": "Frontend UI", "exports": [], "dependencies": []}},
+    {{"path": "main.py", "purpose": "Entry point — starts the server", "exports": [], "dependencies": ["app.py"]}}
+  ]
+}}"""
+
+    # System prompt for simple single-task planning
+    SIMPLE_PLANNER_PROMPT = """You are a task planner for a multi-brain AI system.
 
 Your job: decompose a user's request into concrete subtasks, each assigned to the right brain.
 
@@ -131,22 +169,17 @@ Available brains (use exactly these names as brain_target):
 CRITICAL RULES:
 - Each subtask has: id, description, brain_target, payload (with "type" and "user_request"), dependencies
 - Use dependencies to enforce ordering when one subtask needs another's output
-- **PREFER FEWER SUBTASKS.** Most requests need just 1 subtask. Only decompose when the user explicitly asks for multiple distinct actions.
-- If the request is about writing/running code, generating something, or building something → python_brain (1 subtask)
-- Only use researcher when the user explicitly asks to research, look up, or gather information
-- **Do NOT add a "research" step before coding tasks** — python_brain can handle the full request on its own
+- For simple code tasks: 1 subtask to python_brain
 - The "type" field in payload should be "generate_and_execute" for code tasks, "research" for research tasks
+- If research is needed, add a researcher subtask BEFORE the coding subtask with a dependency
 
 Respond with ONLY a JSON array. No explanation, no markdown fences.
 
-Example — "write a fibonacci function":
-[{{"id": "s1", "description": "Generate and execute fibonacci code", "brain_target": "python_brain", "payload": {{"type": "generate_and_execute", "user_request": "write a fibonacci function"}}, "dependencies": []}}]
+Example — single task:
+[{{"id": "s1", "description": "Generate fibonacci code", "brain_target": "python_brain", "payload": {{"type": "generate_and_execute", "user_request": "write a fibonacci function"}}, "dependencies": []}}]
 
-Example — "create a wind simulation in python":
-[{{"id": "s1", "description": "Create wind simulation with physics and logging", "brain_target": "python_brain", "payload": {{"type": "generate_and_execute", "user_request": "create a realistic wind simulation in python with logs and useful results"}}, "dependencies": []}}]
-
-Example — "research async patterns then build a scraper using what you find":
-[{{"id": "s1", "description": "Research async programming patterns", "brain_target": "researcher", "payload": {{"type": "research", "query": "async programming patterns Python aiohttp asyncio"}}, "dependencies": []}}, {{"id": "s2", "description": "Build async web scraper using findings", "brain_target": "python_brain", "payload": {{"type": "generate_and_execute", "user_request": "build an async web scraper", "context_ref": "#s1"}}, "dependencies": ["s1"]}}]"""
+Example — research then code:
+[{{"id": "s1", "description": "Research WebSocket libraries", "brain_target": "researcher", "payload": {{"type": "research", "query": "python websocket server libraries comparison 2026"}}, "dependencies": []}}, {{"id": "s2", "description": "Build WebSocket server", "brain_target": "python_brain", "payload": {{"type": "generate_and_execute", "user_request": "build a websocket chat server", "context_ref": "#s1"}}, "dependencies": ["s1"]}}]"""
 
     def __init__(self, workspace: str, bus: MessageBus, llm_provider=None,
                  planner_model: str = None):
@@ -286,9 +319,11 @@ Example — "research async patterns then build a scraper using what you find":
         """
         Decompose a task into executable subtasks using LLM planning.
         
-        Uses the planner LLM (Opus-class) to analyze the user's request and
-        break it into subtasks with correct brain targets and dependencies.
-        Falls back to simple routing if no LLM is available.
+        Planning pipeline:
+        1. Assess complexity (script vs project, research needed?)
+        2. If project mode → plan file structure → build DAG
+        3. If script mode → simple single-task routing
+        4. Falls back to deterministic routing if no LLM available
         """
         plan_id = str(uuid.uuid4())
         plan = TaskPlan(id=plan_id, original_task=message)
@@ -302,13 +337,41 @@ Example — "research async patterns then build a scraper using what you find":
             or str(task_data)
         )
         
-        # Try LLM-powered planning
+        # Try LLM-powered planning with complexity assessment
         if self.llm_provider:
             try:
-                subtasks = await self._llm_decompose(plan_id, user_request, task_data)
+                # Step 1: Assess complexity
+                assessment = await self._assess_complexity(user_request)
+                logger.info("Complexity assessment: mode=%s, research=%s, reason=%s",
+                           assessment.get("mode"), assessment.get("needs_research"),
+                           assessment.get("reason", ""))
+                
+                await self.bus.broadcast_event(
+                    source=self.name,
+                    event_type="planning.assessment",
+                    payload={"assessment": assessment, "request": user_request[:100]},
+                    workspace=self.workspace,
+                    priority=Priority.LOW
+                )
+                
+                mode = assessment.get("mode", "script")
+                needs_research = assessment.get("needs_research", False)
+                research_queries = assessment.get("research_queries", [])
+                
+                if mode == "project":
+                    # Step 2a: Project mode — plan file structure, build DAG
+                    subtasks = await self._plan_project(plan_id, user_request, 
+                                                         needs_research, research_queries)
+                else:
+                    # Step 2b: Script mode — simple decomposition
+                    subtasks = await self._llm_decompose(plan_id, user_request, 
+                                                          task_data, needs_research,
+                                                          research_queries)
+                
                 if subtasks:
                     plan.subtasks = subtasks
                     return plan
+                    
             except Exception as e:
                 logger.warning("LLM planning failed, falling back to simple routing: %s", e)
         
@@ -316,8 +379,196 @@ Example — "research async patterns then build a scraper using what you find":
         plan.subtasks = self._simple_decompose(plan_id, task_data)
         return plan
     
+    async def _assess_complexity(self, user_request: str) -> dict:
+        """Assess task complexity: script vs project, research needed."""
+        messages = [
+            {"role": "system", "content": self.COMPLEXITY_SYSTEM_PROMPT},
+            {"role": "user", "content": user_request},
+        ]
+        
+        raw = await self.llm_provider.chat_complete(
+            messages=messages,
+            model=self.planner_model,
+            stream=False,
+            max_tokens=256,
+            temperature=0.1,
+        )
+        
+        # Parse JSON response
+        text = raw.strip()
+        if text.startswith("```"):
+            first_nl = text.index("\n")
+            text = text[first_nl + 1:]
+            if "```" in text:
+                text = text[:text.rindex("```")]
+            text = text.strip()
+        
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            # Try to find JSON object in text
+            start = text.find("{")
+            end = text.rfind("}")
+            if start >= 0 and end > start:
+                try:
+                    return json.loads(text[start:end + 1])
+                except json.JSONDecodeError:
+                    pass
+            # Default: simple script, no research
+            return {"mode": "script", "needs_research": False, "research_queries": [], "reason": "parse error"}
+    
+    async def _plan_project(self, plan_id: str, user_request: str,
+                            needs_research: bool, research_queries: list) -> List[SubTask]:
+        """Plan a multi-file project and build a task DAG.
+        
+        Returns subtasks ordered by dependency:
+        1. Research tasks (if needed)
+        2. File tasks (ordered by dependency DAG)
+        3. Assembler task (wires everything together + runs)
+        """
+        subtasks = []
+        task_idx = 0
+        research_dep_ids = []
+        
+        # Step 1: Add research subtasks if needed
+        if needs_research and research_queries:
+            for query in research_queries[:3]:  # Cap at 3 research queries
+                sid = f"{plan_id}_s{task_idx}"
+                subtasks.append(SubTask(
+                    id=sid,
+                    description=f"Research: {query[:80]}",
+                    brain_target="researcher",
+                    payload={"type": "research", "query": query},
+                    dependencies=set(),
+                ))
+                research_dep_ids.append(sid)
+                task_idx += 1
+        
+        # Step 2: Plan file structure
+        messages = [
+            {"role": "system", "content": self.PROJECT_PLANNER_PROMPT},
+            {"role": "user", "content": user_request},
+        ]
+        
+        raw = await self.llm_provider.chat_complete(
+            messages=messages,
+            model=self.planner_model,
+            stream=False,
+            max_tokens=1024,
+            temperature=0.2,
+        )
+        
+        file_plan = self._parse_plan_json_object(raw)
+        files = file_plan.get("files", [])
+        project_name = file_plan.get("project_name", "project")
+        
+        if not files:
+            raise ValueError("Project planner returned no files")
+        
+        logger.info("Project plan: %s — %d files", project_name, len(files))
+        
+        await self.bus.broadcast_event(
+            source=self.name,
+            event_type="planning.project_structure",
+            payload={
+                "project_name": project_name,
+                "files": [f.get("path") for f in files],
+                "total_files": len(files),
+            },
+            workspace=self.workspace,
+            priority=Priority.NORMAL
+        )
+        
+        # Step 3: Build subtask DAG from file dependencies
+        # Map file paths to subtask IDs
+        file_to_sid = {}
+        for f in files:
+            sid = f"{plan_id}_s{task_idx}"
+            file_to_sid[f["path"]] = sid
+            task_idx += 1
+        
+        # Create file-writing subtasks with proper dependencies
+        for f in files:
+            sid = file_to_sid[f["path"]]
+            
+            # Resolve dependencies: file deps + research deps
+            deps = set(research_dep_ids)  # All file tasks wait for research
+            for dep_path in f.get("dependencies", []):
+                dep_sid = file_to_sid.get(dep_path)
+                if dep_sid:
+                    deps.add(dep_sid)
+            
+            subtasks.append(SubTask(
+                id=sid,
+                description=f"Write {f['path']}: {f.get('purpose', '')}",
+                brain_target="python_brain",
+                payload={
+                    "type": "write_project_file",
+                    "user_request": user_request,
+                    "project_name": project_name,
+                    "file_path": f["path"],
+                    "purpose": f.get("purpose", ""),
+                    "exports": f.get("exports", []),
+                    "dependencies": f.get("dependencies", []),
+                    "all_files": files,  # Full file tree for context
+                },
+                dependencies=deps,
+            ))
+        
+        # Step 4: Add assembler task — wires everything together and runs
+        all_file_sids = set(file_to_sid.values())
+        assembler_sid = f"{plan_id}_s{task_idx}"
+        subtasks.append(SubTask(
+            id=assembler_sid,
+            description=f"Assemble and run {project_name}",
+            brain_target="python_brain",
+            payload={
+                "type": "assemble_and_run",
+                "user_request": user_request,
+                "project_name": project_name,
+                "all_files": files,
+            },
+            dependencies=all_file_sids,
+        ))
+        
+        return subtasks
+    
+    def _parse_plan_json_object(self, raw: str) -> dict:
+        """Parse LLM output as a JSON object (for project plan)."""
+        text = raw.strip()
+        if text.startswith("```"):
+            first_nl = text.index("\n")
+            text = text[first_nl + 1:]
+            if "```" in text:
+                text = text[:text.rindex("```")]
+            text = text.strip()
+        
+        try:
+            result = json.loads(text)
+            if isinstance(result, dict):
+                return result
+        except json.JSONDecodeError:
+            pass
+        
+        start = text.find("{")
+        if start >= 0:
+            depth = 0
+            for i in range(start, len(text)):
+                if text[i] == "{":
+                    depth += 1
+                elif text[i] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        try:
+                            return json.loads(text[start:i + 1])
+                        except json.JSONDecodeError:
+                            break
+        
+        raise ValueError(f"Could not parse project plan JSON: {text[:200]}")
+    
     async def _llm_decompose(self, plan_id: str, user_request: str,
-                             task_data: dict) -> List[SubTask]:
+                             task_data: dict, needs_research: bool = False,
+                             research_queries: list = None) -> List[SubTask]:
         """Use LLM to decompose a task into subtasks with dependencies."""
         # Build brain list for the system prompt
         brain_descriptions = []
@@ -332,7 +583,12 @@ Example — "research async patterns then build a scraper using what you find":
             ]
         
         brain_list = "\n".join(brain_descriptions)
-        system = self.PLANNER_SYSTEM_PROMPT.format(brain_list=brain_list)
+        system = self.SIMPLE_PLANNER_PROMPT.format(brain_list=brain_list)
+        
+        # If complexity assessment says research is needed, add hint
+        if needs_research and research_queries:
+            research_hint = "\n\nIMPORTANT: This task needs research first. Add researcher subtask(s) for: " + ", ".join(research_queries[:3])
+            user_request = user_request + research_hint
         
         messages = [
             {"role": "system", "content": system},

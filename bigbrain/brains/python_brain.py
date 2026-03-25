@@ -84,6 +84,12 @@ class PythonBrain(BaseBrain):
         if task_type == "generate_and_execute":
             # LLM generates code from natural language, then we execute it
             return await self._generate_and_execute(payload)
+        elif task_type == "write_project_file":
+            # Write a single file as part of a multi-file project
+            return await self._write_project_file(payload)
+        elif task_type == "assemble_and_run":
+            # Assemble all project files and run the entry point
+            return await self._assemble_and_run(payload)
         elif task_type == "execute_code":
             code = payload.get("code")
             if not code:
@@ -94,6 +100,250 @@ class PythonBrain(BaseBrain):
         else:
             raise ValueError(f"Unknown task type: {task_type}")
     
+    # --- Project Mode: Write individual files ---
+
+    async def _write_project_file(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Write a single file as part of a multi-file project.
+        
+        The Orchestrator has already planned the file structure. This method
+        generates code for ONE specific file based on its purpose, exports,
+        and dependencies (content of upstream files).
+        """
+        if not self.llm_provider:
+            return {"success": False, "error": "No LLM provider", "stdout": "", "stderr": "", "exit_code": -1}
+        
+        project_name = payload.get("project_name", "project")
+        file_path = payload.get("file_path", "main.py")
+        purpose = payload.get("purpose", "")
+        exports = payload.get("exports", [])
+        dependencies = payload.get("dependencies", [])
+        all_files = payload.get("all_files", [])
+        user_request = payload.get("user_request", "")
+        
+        # Get upstream context (completed dependency files)
+        upstream_context = payload.get("upstream_context", {})
+        
+        # Build dependency content section
+        dep_content = ""
+        if upstream_context:
+            dep_parts = []
+            for source, result in upstream_context.items():
+                if isinstance(result, dict):
+                    code = result.get("file_content", result.get("generated_code", ""))
+                    fpath = result.get("file_path", source)
+                    if code:
+                        dep_parts.append(f"=== {fpath} ===\n{code[:2000]}")
+            if dep_parts:
+                dep_content = "\n\nContent of dependency files (import from these):\n" + "\n\n".join(dep_parts)
+        
+        # Build file tree overview
+        file_tree = "\n".join(f"  - {f['path']}: {f.get('purpose', '')}" for f in all_files)
+        
+        prompt = f"""Write the file `{file_path}` for the project "{project_name}".
+
+Overall project goal: {user_request}
+
+Project file structure:
+{file_tree}
+
+THIS FILE's purpose: {purpose}
+THIS FILE must export: {', '.join(exports) if exports else 'N/A (entry point or template)'}
+THIS FILE depends on: {', '.join(dependencies) if dependencies else 'nothing'}
+{dep_content}
+
+Rules:
+- Output ONLY the file content, no explanation before or after
+- Write ONLY this file — do not include other files
+- If this file depends on other files, import from them correctly
+- Use Python standard library only (no numpy, pandas, etc.)
+- Make the code clean, well-structured, with docstrings
+- If this is an HTML file, output the full HTML (not Python)
+- Include proper error handling"""
+
+        await self.send_progress({
+            "stage": "writing_file",
+            "file_path": file_path,
+            "purpose": purpose,
+        })
+        
+        generated = await self.llm_provider.complete(prompt, stream=False)
+        code = self._extract_code(generated)
+        
+        if not code.strip():
+            return {
+                "success": False,
+                "error": f"LLM returned empty content for {file_path}",
+                "stdout": "", "stderr": "", "exit_code": -1,
+                "file_path": file_path,
+            }
+        
+        # Write the file to the project directory
+        project_dir = self.work_dir / project_name
+        project_dir.mkdir(exist_ok=True, parents=True)
+        
+        # Handle subdirectories in file path
+        full_path = project_dir / file_path
+        full_path.parent.mkdir(exist_ok=True, parents=True)
+        full_path.write_text(code, encoding="utf-8")
+        self._temp_files.add(full_path)
+        
+        await self.send_progress({
+            "stage": "file_written",
+            "file_path": file_path,
+            "lines": code.count("\n") + 1,
+        })
+        
+        return {
+            "success": True,
+            "file_path": file_path,
+            "file_content": code,
+            "lines": code.count("\n") + 1,
+            "stdout": f"Written {file_path} ({code.count(chr(10)) + 1} lines)",
+            "stderr": "",
+            "exit_code": 0,
+        }
+    
+    async def _assemble_and_run(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Assemble all project files and run the entry point.
+        
+        This is the final step after all individual files have been written.
+        It verifies all files exist, then runs the main entry point.
+        """
+        project_name = payload.get("project_name", "project")
+        all_files = payload.get("all_files", [])
+        user_request = payload.get("user_request", "")
+        upstream_context = payload.get("upstream_context", {})
+        
+        project_dir = self.work_dir / project_name
+        
+        await self.send_progress({
+            "stage": "assembling",
+            "project_name": project_name,
+            "total_files": len(all_files),
+        })
+        
+        # Verify all files exist
+        missing = []
+        written_files = {}
+        for f in all_files:
+            fpath = project_dir / f["path"]
+            if fpath.exists():
+                written_files[f["path"]] = fpath.read_text(encoding="utf-8")
+            else:
+                missing.append(f["path"])
+        
+        if missing:
+            # Some files are missing — they might be in upstream_context
+            for source, result in upstream_context.items():
+                if isinstance(result, dict):
+                    content = result.get("file_content", "")
+                    fp = result.get("file_path", "")
+                    if fp and content and fp in missing:
+                        full_path = project_dir / fp
+                        full_path.parent.mkdir(exist_ok=True, parents=True)
+                        full_path.write_text(content, encoding="utf-8")
+                        written_files[fp] = content
+                        missing.remove(fp)
+        
+        if missing:
+            return {
+                "success": False,
+                "error": f"Missing project files: {', '.join(missing)}",
+                "stdout": "", "stderr": f"Files not found: {missing}",
+                "exit_code": -1,
+            }
+        
+        # Find the entry point (main.py, app.py, or last file in the list)
+        entry_point = None
+        for f in all_files:
+            path = f["path"]
+            if path in ("main.py", "run.py", "server.py", "app.py"):
+                entry_point = path
+                break
+        if not entry_point:
+            # Use the last Python file
+            py_files = [f["path"] for f in all_files if f["path"].endswith(".py")]
+            entry_point = py_files[-1] if py_files else all_files[-1]["path"]
+        
+        await self.send_progress({
+            "stage": "running",
+            "entry_point": entry_point,
+            "files_verified": len(written_files),
+        })
+        
+        # Execute the entry point
+        entry_path = project_dir / entry_point
+        timeout = payload.get("timeout", self.timeout)
+        
+        import time
+        start_time = time.time()
+        
+        try:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, str(entry_path),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(project_dir),
+                env=self._get_execution_env()
+            )
+            
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(), timeout=timeout
+                )
+                exit_code = process.returncode
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.wait()
+                stdout = b""
+                stderr = f"Execution timed out after {timeout} seconds".encode()
+                exit_code = -1
+                
+        except Exception as e:
+            end_time = time.time()
+            return {
+                "success": False,
+                "error": str(e),
+                "stdout": "", "stderr": str(e), "exit_code": -2,
+                "execution_time": end_time - start_time,
+            }
+        
+        end_time = time.time()
+        stdout_str = stdout.decode("utf-8", errors="replace")
+        stderr_str = stderr.decode("utf-8", errors="replace")
+        success = exit_code == 0
+        
+        # Build project summary
+        file_summary = "\n".join(f"  {f['path']} ({len(written_files.get(f['path'], ''))} chars)"
+                                  for f in all_files)
+        
+        result = {
+            "success": success,
+            "stdout": stdout_str,
+            "stderr": stderr_str,
+            "exit_code": exit_code,
+            "execution_time": end_time - start_time,
+            "entry_point": entry_point,
+            "project_name": project_name,
+            "files_written": list(written_files.keys()),
+            "project_summary": file_summary,
+        }
+        
+        if not success:
+            result["error"] = f"Entry point {entry_point} failed with exit code {exit_code}"
+            if stderr_str:
+                result["error"] += f": {stderr_str[:200]}"
+        
+        await self.send_progress({
+            "stage": "completed",
+            "success": success,
+            "entry_point": entry_point,
+            "exit_code": exit_code,
+            "execution_time": end_time - start_time,
+        })
+        
+        return result
+
     # --- Honk Pattern: Inner Loop (generate → execute → verify → fix → repeat) ---
 
     MAX_RETRIES = 5  # Inner loop iterations before giving up
