@@ -731,6 +731,18 @@ class CodeOutputPanel extends BasePanel {
       if (src.includes('python')) {
         this._addResult(msg);
       }
+      // Also catch orchestrator-aggregated results containing python data
+      // (handles WS reconnect replays where the direct brain result was missed)
+      if (src.includes('orchestrator') && msg.payload?.results) {
+        for (const [, val] of Object.entries(msg.payload.results)) {
+          if (!val || typeof val !== 'object') continue;
+          const data = val.data || val;
+          if (data.stdout || data.generated_code) {
+            const synth = { ...msg, payload: data, source: 'python_brain', _synthetic: true };
+            this._addResult(synth);
+          }
+        }
+      }
     });
 
     // Listen for progress updates
@@ -835,6 +847,17 @@ class ResearchResultsPanel extends BasePanel {
       const src = (msg.source || '').toLowerCase();
       if (src.includes('research')) {
         this._addFinding(msg);
+      }
+      // Also catch orchestrator-aggregated results containing research data
+      if (src.includes('orchestrator') && msg.payload?.results) {
+        for (const [, val] of Object.entries(msg.payload.results)) {
+          if (!val || typeof val !== 'object') continue;
+          const data = val.data || val;
+          if (data.summary || data.answer || data.top_sources) {
+            const synth = { ...msg, payload: data, source: 'researcher', _synthetic: true };
+            this._addFinding(synth);
+          }
+        }
       }
     });
 

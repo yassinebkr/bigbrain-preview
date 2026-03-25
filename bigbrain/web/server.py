@@ -73,6 +73,18 @@ class WebServer:
         self._ws_clients: Set[web.WebSocketResponse] = set()
         self._running = False
 
+        # Replay buffer: stores recent important messages so reconnecting
+        # clients don't miss results (fixes WS disconnect data loss)
+        self._replay_buffer: list = []  # List of (timestamp, serialized_msg)
+        self._replay_max_age = 300  # 5 minutes
+        self._replay_max_size = 100
+        self._REPLAY_TYPES = {"result", "progress"}
+        self._REPLAY_EVENTS = {
+            "task.received", "task.complete", "task.failed",
+            "subtask.started", "subtask.complete", "subtask.failed",
+            "brain.started", "brain.complete",
+        }
+
     async def start(self) -> None:
         """Start the web server."""
         if self._running:
@@ -319,6 +331,21 @@ class WebServer:
                     "stats": self.bus.get_stats(),
                 },
             })
+
+            # Replay buffered messages (results, task/subtask events, progress)
+            # so reconnecting clients don't lose data from WS drops
+            replayed = 0
+            for _ts, data in self._replay_buffer:
+                try:
+                    # Mark as replay so client can handle dedup
+                    replay_msg = {**data, "_replay": True}
+                    await ws.send_json(replay_msg)
+                    replayed += 1
+                except Exception:
+                    break  # Client probably disconnected again
+            if replayed:
+                logger.info("Replayed %d buffered messages to reconnecting client", replayed)
+
         except Exception as e:
             logger.warning("Failed to send initial state: %s", e)
 
@@ -398,6 +425,9 @@ class WebServer:
                 "timestamp": message.timestamp,
             }
 
+        # Buffer important messages for replay on reconnect
+        self._maybe_buffer(msg_type, event, data)
+
         # Broadcast to all clients
         closed = []
         for ws in self._ws_clients:
@@ -412,6 +442,33 @@ class WebServer:
         # Clean up closed connections
         for ws in closed:
             self._ws_clients.discard(ws)
+
+    # ================================================================
+    # REPLAY BUFFER
+    # ================================================================
+
+    def _maybe_buffer(self, msg_type: str, event: str, data: dict) -> None:
+        """Store important messages for replay on reconnect."""
+        should_buffer = (
+            msg_type in self._REPLAY_TYPES
+            or event in self._REPLAY_EVENTS
+        )
+        if not should_buffer:
+            return
+
+        now = time.time()
+
+        # Prune old entries
+        cutoff = now - self._replay_max_age
+        self._replay_buffer = [
+            (ts, d) for ts, d in self._replay_buffer if ts > cutoff
+        ]
+
+        # Trim to max size (drop oldest)
+        while len(self._replay_buffer) >= self._replay_max_size:
+            self._replay_buffer.pop(0)
+
+        self._replay_buffer.append((now, data))
 
     # ================================================================
     # HELPERS
