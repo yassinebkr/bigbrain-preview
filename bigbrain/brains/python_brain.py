@@ -477,7 +477,7 @@ Rules:
             "patched_port": patched,
         })
         
-        # Install dependencies if requirements.txt exists
+        # Install dependencies
         requirements = project_dir / "requirements.txt"
         if requirements.exists():
             try:
@@ -491,6 +491,51 @@ Rules:
                 await asyncio.wait_for(pip_proc.communicate(), timeout=60)
             except (asyncio.TimeoutError, Exception) as e:
                 pass  # Best effort — server may still work
+        else:
+            # No requirements.txt — auto-detect common web framework imports
+            # and install them so the preview server can actually start
+            all_code = "\n".join(written_files.values())
+            auto_deps = []
+            dep_map = {
+                r"from\s+fastapi\b|import\s+fastapi": "fastapi uvicorn",
+                r"from\s+flask\b|import\s+flask": "flask",
+                r"from\s+flask_socketio\b|import\s+flask_socketio": "flask-socketio",
+                r"import\s+socketio|from\s+socketio\b": "python-socketio",
+                r"import\s+uvicorn": "uvicorn",
+                r"from\s+starlette\b": "starlette",
+                r"import\s+aiohttp|from\s+aiohttp\b": "aiohttp",
+                r"from\s+pydantic\b": "pydantic",
+                r"import\s+jwt|from\s+jose\b": "python-jose[cryptography]",
+                r"from\s+passlib\b": "passlib[bcrypt]",
+                r"import\s+bcrypt|from\s+bcrypt\b": "bcrypt",
+                r"from\s+sqlalchemy\b": "sqlalchemy",
+                r"import\s+peewee|from\s+peewee\b": "peewee",
+                r"from\s+jinja2\b": "jinja2",
+                r"import\s+websockets|from\s+websockets\b": "websockets",
+                r"from\s+motor\b": "motor",
+                r"import\s+pymongo|from\s+pymongo\b": "pymongo",
+            }
+            for pattern, packages in dep_map.items():
+                if re.search(pattern, all_code):
+                    auto_deps.extend(packages.split())
+            
+            if auto_deps:
+                # Deduplicate
+                auto_deps = list(dict.fromkeys(auto_deps))
+                await self.send_progress({
+                    "stage": "installing_deps",
+                    "packages": auto_deps,
+                })
+                try:
+                    pip_proc = await asyncio.create_subprocess_exec(
+                        sys.executable, "-m", "pip", "install", "-q",
+                        *auto_deps,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    await asyncio.wait_for(pip_proc.communicate(), timeout=90)
+                except (asyncio.TimeoutError, Exception):
+                    pass  # Best effort
         
         # Start the server process
         try:
