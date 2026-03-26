@@ -42,6 +42,7 @@ class BaseBrain(BusParticipant, ABC):
         self.workspace = workspace
         self._current_task: Optional[BusMessage] = None
         self._cancelled = False
+        self._background_task: Optional[asyncio.Task] = None
         
         # Bind message handler to this instance
         self._message_handler = self._handle_message_wrapper
@@ -82,6 +83,15 @@ class BaseBrain(BusParticipant, ABC):
         # Cancel current task gracefully
         if self._current_task:
             await self._cancel_current_task()
+        
+        # Cancel background task if running
+        if self._background_task and not self._background_task.done():
+            self._background_task.cancel()
+            try:
+                await self._background_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._background_task = None
         
         # Unregister from bus
         self.bus.unsubscribe(self.name, self._message_handler)
@@ -153,10 +163,13 @@ class BaseBrain(BusParticipant, ABC):
             }, priority=Priority.HIGH)
     
     async def _handle_task_message(self, message: BusMessage) -> None:
-        """Handle incoming task messages."""
+        """Handle incoming task messages.
+        
+        Spawns task execution as a background coroutine so bus.send()
+        returns immediately, enabling parallel dispatch to multiple brains.
+        """
         if self._current_task:
-            # Brain is busy - could queue or reject
-            # For now, reject with busy status
+            # Brain is busy - reject with busy status
             await self.send_result({
                 "success": False,
                 "error": "Brain is busy with another task",
@@ -167,14 +180,24 @@ class BaseBrain(BusParticipant, ABC):
         self._current_task = message
         self._cancelled = False
         
-        # Announce task start
-        await self.send_event("brain.started", {
-            "brain": self.name,
-            "task_id": message.id,
-            "task_type": message.payload.get("type", "unknown")
-        })
-        
+        # Spawn task execution in background so bus.send() returns immediately.
+        # This is critical for parallel dispatch — without it, the orchestrator's
+        # dispatch loop blocks on each task completion.
+        self._background_task = asyncio.create_task(
+            self._execute_task_background(message),
+            name=f"{self.name}:task:{message.id[:8]}"
+        )
+    
+    async def _execute_task_background(self, message: BusMessage) -> None:
+        """Execute a task in the background after bus handler returns."""
         try:
+            # Announce task start
+            await self.send_event("brain.started", {
+                "brain": self.name,
+                "task_id": message.id,
+                "task_type": message.payload.get("type", "unknown")
+            })
+            
             # Delegate to subclass
             result = await self.handle_task(message)
             
@@ -190,8 +213,23 @@ class BaseBrain(BusParticipant, ABC):
                     "task_id": message.id
                 })
         
+        except Exception as e:
+            # Error during background execution — send error result
+            await self.send_result({
+                "success": False,
+                "error": str(e),
+                "error_type": type(e).__name__
+            }, message.id)
+            
+            await self.send_event("brain.error", {
+                "brain": self.name,
+                "error": str(e),
+                "message_id": message.id
+            }, priority=Priority.HIGH)
+        
         finally:
             self._current_task = None
+            self._background_task = None
     
     async def _handle_cancel_message(self, message: BusMessage) -> None:
         """Handle task cancellation requests."""

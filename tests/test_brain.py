@@ -116,6 +116,10 @@ class TestBaseBrain:
         
         await test_brain._handle_message_wrapper(task_message)
         
+        # Task execution is now in a background asyncio task — await it
+        if test_brain._background_task:
+            await test_brain._background_task
+        
         # Check task was handled
         assert len(test_brain.handled_tasks) == 1
         assert test_brain.handled_tasks[0].id == task_message.id
@@ -157,14 +161,14 @@ class TestBaseBrain:
         )
         
         # Start first task and immediately send second
-        async def send_tasks():
-            await test_brain._handle_message_wrapper(task1)
-        
-        task_future = asyncio.create_task(send_tasks())
-        await asyncio.sleep(0.01)  # Let first task start
+        await test_brain._handle_message_wrapper(task1)
+        await asyncio.sleep(0.01)  # Let background task start processing
         
         await test_brain._handle_message_wrapper(task2)
-        await task_future  # Wait for first task to complete
+        
+        # Wait for first task's background execution to finish
+        if test_brain._background_task:
+            await test_brain._background_task
         
         # Check that two results were sent
         assert mock_bus.send_result.call_count == 2
@@ -190,9 +194,11 @@ class TestBaseBrain:
         
         await test_brain._handle_message_wrapper(task_message)
         
-        # Should send error result back to the caller (orchestrator)
-        # even though _handle_task_message's finally cleared _current_task,
-        # the wrapper uses the original message as fallback.
+        # Task execution is now in background — await it
+        if test_brain._background_task:
+            await test_brain._background_task
+        
+        # Should send error result from background task execution
         assert mock_bus.send_result.called
         result_call = mock_bus.send_result.call_args
         assert result_call[1]["result_data"]["success"] is False
