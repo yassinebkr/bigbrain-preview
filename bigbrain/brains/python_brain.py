@@ -2,10 +2,13 @@
 
 import asyncio
 import os
+import re
+import signal
+import socket
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from .base import BaseBrain
 from ..bus.message import BusMessage, Priority
@@ -53,6 +56,48 @@ class PythonBrain(BaseBrain):
         
         # Track created temp files for cleanup
         self._temp_files: set[Path] = set()
+        
+        # Preview server tracking (class-level shared across instances)
+        self._preview_process: Optional[asyncio.subprocess.Process] = None
+    
+    # Port range for preview servers (shared across all PythonBrain instances)
+    PREVIEW_PORT_MIN = 3100
+    PREVIEW_PORT_MAX = 3199
+    # Active previews: {port: process} — class-level so all workers share
+    _active_previews: Dict[int, asyncio.subprocess.Process] = {}
+    
+    @classmethod
+    def _find_free_preview_port(cls) -> Optional[int]:
+        """Find an available port in the preview range."""
+        for port in range(cls.PREVIEW_PORT_MIN, cls.PREVIEW_PORT_MAX + 1):
+            if port in cls._active_previews:
+                continue
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                try:
+                    s.bind(("127.0.0.1", port))
+                    return port
+                except OSError:
+                    continue
+        return None
+    
+    @classmethod
+    def _is_web_project(cls, written_files: Dict[str, str]) -> bool:
+        """Detect if the project is a web server (FastAPI, Flask, etc.)."""
+        web_patterns = [
+            r"from\s+fastapi\s+import",
+            r"from\s+flask\s+import",
+            r"from\s+starlette",
+            r"from\s+sanic\s+import",
+            r"import\s+uvicorn",
+            r"import\s+gunicorn",
+            r"\.run\s*\(.*host\s*=",
+            r"\.run\s*\(.*port\s*=",
+            r"app\.listen\(",
+            r"socketio",
+            r"websocket",
+        ]
+        all_code = "\n".join(written_files.values())
+        return any(re.search(p, all_code, re.IGNORECASE) for p in web_patterns)
     
     async def handle_task(self, message: BusMessage) -> Dict[str, Any]:
         """
@@ -265,19 +310,30 @@ Rules:
             py_files = [f["path"] for f in all_files if f["path"].endswith(".py")]
             entry_point = py_files[-1] if py_files else all_files[-1]["path"]
         
+        # Detect if this is a web server project
+        is_web = self._is_web_project(written_files)
+        
         await self.send_progress({
             "stage": "running",
             "entry_point": entry_point,
             "files_verified": len(written_files),
+            "is_web_app": is_web,
         })
         
-        # Execute the entry point
         entry_path = project_dir / entry_point
         timeout = payload.get("timeout", self.timeout)
         
         import time
         start_time = time.time()
         
+        if is_web:
+            # --- Web app: start as background preview server ---
+            return await self._start_preview_server(
+                project_dir, entry_path, project_name, all_files,
+                written_files, start_time
+            )
+        
+        # --- Regular script: run to completion ---
         try:
             process = await asyncio.create_subprocess_exec(
                 sys.executable, str(entry_path),
@@ -340,6 +396,173 @@ Rules:
             "entry_point": entry_point,
             "exit_code": exit_code,
             "execution_time": end_time - start_time,
+        })
+        
+        return result
+    
+    async def _start_preview_server(
+        self, project_dir: Path, entry_path: Path, project_name: str,
+        all_files: list, written_files: dict, start_time: float,
+    ) -> Dict[str, Any]:
+        """Start a web app as a local preview server on a free port."""
+        import time
+        
+        port = self._find_free_preview_port()
+        if port is None:
+            return {
+                "success": False,
+                "error": "No free preview ports available (3100-3199 all in use)",
+                "stdout": "", "stderr": "", "exit_code": -1,
+                "execution_time": time.time() - start_time,
+            }
+        
+        # Kill any previous preview from this brain
+        if self._preview_process and self._preview_process.returncode is None:
+            try:
+                self._preview_process.terminate()
+                await asyncio.wait_for(self._preview_process.wait(), timeout=3)
+            except (ProcessLookupError, asyncio.TimeoutError):
+                try:
+                    self._preview_process.kill()
+                except ProcessLookupError:
+                    pass
+        
+        # Patch the entry point to use our port (inject PORT env var)
+        env = self._get_execution_env()
+        env["PORT"] = str(port)
+        env["HOST"] = "0.0.0.0"
+        
+        # Also try to patch common port patterns in the entry file
+        entry_code = entry_path.read_text(encoding="utf-8")
+        patched = False
+        
+        # Patch uvicorn.run(..., port=XXXX) → use env PORT
+        if "uvicorn.run" in entry_code and "os.environ" not in entry_code:
+            patched_code = re.sub(
+                r'(uvicorn\.run\([^)]*?)port\s*=\s*\d+',
+                rf'\1port=int(os.environ.get("PORT", {port}))',
+                entry_code
+            )
+            if patched_code != entry_code:
+                if "import os" not in patched_code:
+                    patched_code = "import os\n" + patched_code
+                entry_path.write_text(patched_code, encoding="utf-8")
+                patched = True
+        
+        # Patch Flask/generic .run(port=XXXX)
+        if not patched and ".run(" in entry_code and "os.environ" not in entry_code:
+            patched_code = re.sub(
+                r'(\.run\([^)]*?)port\s*=\s*\d+',
+                rf'\1port=int(os.environ.get("PORT", {port}))',
+                entry_code
+            )
+            if patched_code != entry_code:
+                if "import os" not in patched_code:
+                    patched_code = "import os\n" + patched_code
+                entry_path.write_text(patched_code, encoding="utf-8")
+                patched = True
+        
+        await self.send_progress({
+            "stage": "starting_server",
+            "port": port,
+            "entry_point": str(entry_path.name),
+            "patched_port": patched,
+        })
+        
+        # Install dependencies if requirements.txt exists
+        requirements = project_dir / "requirements.txt"
+        if requirements.exists():
+            try:
+                pip_proc = await asyncio.create_subprocess_exec(
+                    sys.executable, "-m", "pip", "install", "-q",
+                    "-r", str(requirements),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=str(project_dir),
+                )
+                await asyncio.wait_for(pip_proc.communicate(), timeout=60)
+            except (asyncio.TimeoutError, Exception) as e:
+                pass  # Best effort — server may still work
+        
+        # Start the server process
+        try:
+            self._preview_process = await asyncio.create_subprocess_exec(
+                sys.executable, str(entry_path),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(project_dir),
+                env=env,
+            )
+            PythonBrain._active_previews[port] = self._preview_process
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to start server: {e}",
+                "stdout": "", "stderr": str(e), "exit_code": -2,
+                "execution_time": time.time() - start_time,
+            }
+        
+        # Wait a few seconds for the server to start, then check if it's alive
+        await asyncio.sleep(2)
+        
+        if self._preview_process.returncode is not None:
+            # Server crashed on startup
+            stdout = await self._preview_process.stdout.read()
+            stderr = await self._preview_process.stderr.read()
+            PythonBrain._active_previews.pop(port, None)
+            return {
+                "success": False,
+                "error": f"Server crashed on startup (exit {self._preview_process.returncode})",
+                "stdout": stdout.decode("utf-8", errors="replace")[:2000],
+                "stderr": stderr.decode("utf-8", errors="replace")[:2000],
+                "exit_code": self._preview_process.returncode,
+                "execution_time": time.time() - start_time,
+            }
+        
+        # Verify port is responding
+        server_up = False
+        for _ in range(5):
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(1)
+                try:
+                    s.connect(("127.0.0.1", port))
+                    server_up = True
+                    break
+                except (ConnectionRefusedError, OSError):
+                    await asyncio.sleep(1)
+        
+        file_summary = "\n".join(
+            f"  {f['path']} ({len(written_files.get(f['path'], ''))} chars)"
+            for f in all_files
+        )
+        
+        local_url = f"http://127.0.0.1:{port}"
+        
+        result = {
+            "success": server_up,
+            "preview_url": local_url,
+            "preview_port": port,
+            "server_running": True,
+            "server_pid": self._preview_process.pid,
+            "entry_point": entry_path.name,
+            "project_name": project_name,
+            "files_written": list(written_files.keys()),
+            "project_summary": file_summary,
+            "execution_time": time.time() - start_time,
+            "stdout": "",
+            "stderr": "",
+            "exit_code": 0,
+        }
+        
+        if not server_up:
+            result["success"] = False
+            result["error"] = f"Server started (PID {self._preview_process.pid}) but port {port} not responding after 7s"
+        
+        await self.send_progress({
+            "stage": "server_running" if server_up else "server_failed",
+            "port": port,
+            "url": local_url,
+            "pid": self._preview_process.pid,
         })
         
         return result
@@ -862,7 +1085,24 @@ Rules:
         return env
     
     async def cleanup(self) -> None:
-        """Clean up temporary files and working directory."""
+        """Clean up temporary files, preview servers, and working directory."""
+        # Kill preview server if running
+        if self._preview_process and self._preview_process.returncode is None:
+            try:
+                self._preview_process.terminate()
+                await asyncio.wait_for(self._preview_process.wait(), timeout=3)
+            except (ProcessLookupError, asyncio.TimeoutError):
+                try:
+                    self._preview_process.kill()
+                except ProcessLookupError:
+                    pass
+            # Remove from active previews
+            for port, proc in list(PythonBrain._active_previews.items()):
+                if proc is self._preview_process:
+                    del PythonBrain._active_previews[port]
+                    break
+            self._preview_process = None
+        
         # Remove tracked temp files
         for temp_file in self._temp_files:
             try:
