@@ -275,20 +275,26 @@ class ChatPanel extends BasePanel {
   _setupSubscriptions() {
     this._addSubscription(
       { type: 'event', event: 'chat.message' },
-      (msg) => this.addMessage(msg.payload)
+      (msg) => this.addMessage(msg.payload, !!msg._replay)
     );
   }
 
-  addMessage(data) {
+  addMessage(data, isReplay = false) {
     const container = this.el?.querySelector('.chat-messages');
     if (!container) return;
+
+    const role = data.role || 'system';
+    const text = data.text || data.content || '';
+
+    // Dedup: skip replay messages that match the last displayed message
+    if (isReplay || data._replay) {
+      const lastMsg = container.querySelector('.chat-msg:last-child .chat-msg-body');
+      if (lastMsg && lastMsg.textContent === text) return;
+    }
 
     // Clear empty state on first message
     const empty = container.querySelector('.panel-empty');
     if (empty) empty.remove();
-
-    const role = data.role || 'system';
-    const text = data.text || data.content || '';
     const time = _timestamp('HH:mm');
 
     const msgEl = document.createElement('div');

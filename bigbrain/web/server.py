@@ -83,6 +83,7 @@ class WebServer:
             "task.received", "task.complete", "task.failed",
             "subtask.started", "subtask.complete", "subtask.failed",
             "brain.started", "brain.complete",
+            "chat.message",  # Front brain summary / chat responses
         }
 
     async def start(self) -> None:
