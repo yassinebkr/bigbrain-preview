@@ -567,15 +567,18 @@ Rules:
         venv_bin = str(project_dir / ".venv" / "bin")
         env["PATH"] = f"{venv_bin}:{env.get('PATH', '')}"
 
-        # Also try to patch common port patterns in the entry file
+        # Patch the entry file to use our PORT env var.
+        # Strategy: replace port= in .run() calls — handles both literal numbers
+        # (port=5000) and variable references (port=port, port=args.port).
         entry_code = entry_path.read_text(encoding="utf-8")
         patched = False
+        env_port_expr = f'int(os.environ.get("PORT", {port}))'
 
-        # Patch uvicorn.run(..., port=XXXX) → use env PORT
-        if "uvicorn.run" in entry_code and "os.environ" not in entry_code:
+        # Patch uvicorn.run(..., port=...) → use env PORT
+        if "uvicorn.run" in entry_code and f'os.environ.get("PORT"' not in entry_code:
             patched_code = re.sub(
-                r'(uvicorn\.run\([^)]*?)port\s*=\s*\d+',
-                rf'\1port=int(os.environ.get("PORT", {port}))',
+                r'(uvicorn\.run\([^)]*?)port\s*=\s*[^,\)]+',
+                rf'\1port={env_port_expr}',
                 entry_code
             )
             if patched_code != entry_code:
@@ -584,16 +587,40 @@ Rules:
                 entry_path.write_text(patched_code, encoding="utf-8")
                 patched = True
 
-        # Patch Flask/generic .run(port=XXXX)
-        if not patched and ".run(" in entry_code and "os.environ" not in entry_code:
+        # Patch socketio.run(..., port=...) → use env PORT
+        if not patched and "socketio.run" in entry_code and f'os.environ.get("PORT"' not in entry_code:
             patched_code = re.sub(
-                r'(\.run\([^)]*?)port\s*=\s*\d+',
-                rf'\1port=int(os.environ.get("PORT", {port}))',
+                r'(socketio\.run\([^)]*?)port\s*=\s*[^,\)]+',
+                rf'\1port={env_port_expr}',
                 entry_code
             )
             if patched_code != entry_code:
                 if "import os" not in patched_code:
                     patched_code = "import os\n" + patched_code
+                entry_path.write_text(patched_code, encoding="utf-8")
+                patched = True
+
+        # Patch Flask/generic .run(..., port=...) → use env PORT
+        if not patched and ".run(" in entry_code and f'os.environ.get("PORT"' not in entry_code:
+            patched_code = re.sub(
+                r'(\.run\([^)]*?)port\s*=\s*[^,\)]+',
+                rf'\1port={env_port_expr}',
+                entry_code
+            )
+            if patched_code != entry_code:
+                if "import os" not in patched_code:
+                    patched_code = "import os\n" + patched_code
+                entry_path.write_text(patched_code, encoding="utf-8")
+                patched = True
+
+        # Fallback: if argparse sets port default, patch the default too
+        if not patched and "argparse" in entry_code and "default=" in entry_code:
+            patched_code = re.sub(
+                r"(--port['\"].*?default\s*=\s*)\d+",
+                rf"\g<1>{port}",
+                entry_code
+            )
+            if patched_code != entry_code:
                 entry_path.write_text(patched_code, encoding="utf-8")
                 patched = True
 

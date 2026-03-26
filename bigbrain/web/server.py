@@ -16,6 +16,7 @@ import base64
 import json
 import logging
 import os
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Set, TYPE_CHECKING
@@ -195,6 +196,7 @@ class WebServer:
         self._app.router.add_get("/api/focus", self._handle_focus_get)
         self._app.router.add_post("/api/focus", self._handle_focus_set)
         self._app.router.add_get("/api/status", self._handle_status)
+        self._app.router.add_get("/api/preview-logs", self._handle_preview_logs)
 
         # Static files (JS, CSS, images) — with no-cache for dev
         if STATIC_DIR.exists():
@@ -236,6 +238,49 @@ class WebServer:
             "clients": self.client_count,
             "bus_stats": self.bus.get_stats(),
             "focus": self._get_focus_snapshot(),
+        })
+
+    async def _handle_preview_logs(self, request: web.Request) -> web.Response:
+        """Preview server diagnostics — shows active previews, project files, and errors."""
+        from ..brains.python_brain import PythonBrain
+        import glob
+
+        previews = []
+        for port, proc in PythonBrain._active_previews.items():
+            previews.append({
+                "port": port,
+                "pid": proc.pid if proc else None,
+                "alive": proc.returncode is None if proc else False,
+                "exit_code": proc.returncode if proc and proc.returncode is not None else None,
+            })
+
+        # Scan for project dirs and their files
+        projects = []
+        pool_dir = Path(tempfile.gettempdir()) / "bigbrain_python_pool"
+        if pool_dir.exists():
+            for proj in sorted(pool_dir.iterdir()):
+                if proj.is_dir() and not proj.name.startswith("."):
+                    files = [
+                        str(f.relative_to(proj))
+                        for f in proj.rglob("*")
+                        if f.is_file() and ".venv" not in f.parts
+                    ]
+                    # Try to read any error logs
+                    error_log = ""
+                    for log_name in ["chat_app.log", "error.log", "app.log"]:
+                        log_file = proj / log_name
+                        if log_file.exists():
+                            error_log += log_file.read_text(errors="replace")[-3000:]
+                    projects.append({
+                        "name": proj.name,
+                        "files": files,
+                        "has_venv": (proj / ".venv").exists(),
+                        "error_log": error_log or None,
+                    })
+
+        return web.json_response({
+            "active_previews": previews,
+            "projects": projects,
         })
 
     async def _handle_focus_get(self, request: web.Request) -> web.Response:
