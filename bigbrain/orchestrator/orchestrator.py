@@ -205,6 +205,10 @@ Example — research then code:
         self.registered_brains: Dict[str, Dict[str, Any]] = {}
         self.brain_load: Dict[str, int] = {}  # brain -> active task count
         
+        # Brain pools: logical name → list of worker names
+        # e.g. "python_brain" → ["python_brain_0", "python_brain_1", "python_brain_2"]
+        self.brain_pools: Dict[str, List[str]] = {}
+        
         # Execution mode configs per brain
         self.execution_configs: Dict[str, BrainExecutionConfig] = {}
     
@@ -570,11 +574,30 @@ Example — research then code:
                              task_data: dict, needs_research: bool = False,
                              research_queries: list = None) -> List[SubTask]:
         """Use LLM to decompose a task into subtasks with dependencies."""
-        # Build brain list for the system prompt
+        # Build brain list for the system prompt.
+        # Show logical pool names (e.g. "python_brain") not individual workers
+        # so the planner uses the pool name and the orchestrator resolves to a worker.
         brain_descriptions = []
+        pool_logicals_shown = set()
+        
         for name, caps in self.registered_brains.items():
-            desc = caps.get("description", name)
-            brain_descriptions.append(f"- {name}: {desc}")
+            # Check if this brain belongs to a pool
+            pool_logical = None
+            for logical, workers in self.brain_pools.items():
+                if name in workers:
+                    pool_logical = logical
+                    break
+            
+            if pool_logical:
+                # Only show the logical name once, with pool size hint
+                if pool_logical not in pool_logicals_shown:
+                    desc = caps.get("description", pool_logical)
+                    pool_size = len(self.brain_pools[pool_logical])
+                    brain_descriptions.append(f"- {pool_logical}: {desc} (pool of {pool_size} — can handle {pool_size} tasks in parallel)")
+                    pool_logicals_shown.add(pool_logical)
+            else:
+                desc = caps.get("description", name)
+                brain_descriptions.append(f"- {name}: {desc}")
         
         if not brain_descriptions:
             brain_descriptions = [
@@ -737,16 +760,21 @@ Example — research then code:
                     print(f"[ORCH] Stopping dispatch: plan {plan.id[-8:]} became {plan.status.value}")
                     break
                 
-                # Respect brain capacity — don't dispatch if brain is already busy
-                brain = subtask.brain_target
-                current_load = self.brain_load.get(brain, 0)
-                max_concurrent = 1  # Brains handle 1 task at a time
+                # Resolve logical brain name to actual worker (pool-aware)
+                resolved_brain = self._resolve_brain_target(subtask.brain_target)
+                
+                # Respect brain capacity — don't dispatch if ALL workers are busy
+                current_load = self.brain_load.get(resolved_brain, 0)
+                max_concurrent = 1  # Each worker handles 1 task at a time
                 if current_load >= max_concurrent:
-                    print(f"[ORCH] Deferring {subtask.id[-12:]} — {brain} at capacity ({current_load}/{max_concurrent})")
+                    print(f"[ORCH] Deferring {subtask.id[-12:]} — {resolved_brain} at capacity ({current_load}/{max_concurrent})")
                     deferred += 1
                     continue
                 
-                print(f"[ORCH] Dispatching subtask {subtask.id[-12:]} → brain={subtask.brain_target} type={subtask.payload.get('type')} desc={subtask.description[:60]}")
+                # Override brain_target with resolved worker name for dispatch
+                subtask.brain_target = resolved_brain
+                
+                print(f"[ORCH] Dispatching subtask {subtask.id[-12:]} → brain={resolved_brain} type={subtask.payload.get('type')} desc={subtask.description[:60]}")
                 await self._dispatch_subtask(plan, subtask)
             
             if deferred > 0:
@@ -1132,6 +1160,44 @@ Example — research then code:
         """Unregister a brain from this orchestrator."""
         self.registered_brains.pop(brain_name, None)
         self.brain_load.pop(brain_name, None)
+    
+    def register_brain_pool(self, logical_name: str, worker_names: List[str]) -> None:
+        """Register a pool of workers under a logical brain name.
+        
+        When the LLM planner targets 'python_brain', the orchestrator resolves
+        it to the least-loaded worker from the pool. This enables parallel
+        execution of independent subtasks (e.g. writing 5 files at once).
+        
+        Args:
+            logical_name: The name the planner uses (e.g. "python_brain")
+            worker_names: List of actual worker names (e.g. ["python_brain_0", ...])
+        """
+        self.brain_pools[logical_name] = list(worker_names)
+        print(f"[ORCH] Brain pool '{logical_name}' → {worker_names}")
+    
+    def _resolve_brain_target(self, logical_name: str) -> str:
+        """Resolve a logical brain name to the least-loaded worker from its pool.
+        
+        If the name isn't in a pool, returns it unchanged.
+        If all workers are busy, returns the one with lowest load (will queue).
+        """
+        if logical_name not in self.brain_pools:
+            return logical_name
+        
+        workers = self.brain_pools[logical_name]
+        if not workers:
+            return logical_name
+        
+        # Pick the worker with the lowest load
+        best = workers[0]
+        best_load = self.brain_load.get(best, 0)
+        for w in workers[1:]:
+            load = self.brain_load.get(w, 0)
+            if load < best_load:
+                best = w
+                best_load = load
+        
+        return best
     
     def set_execution_mode(self, brain_name: str, mode: ExecutionMode, **kwargs) -> BrainExecutionConfig:
         """

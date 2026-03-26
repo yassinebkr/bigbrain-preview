@@ -207,9 +207,11 @@ class BigBrainSystem:
         # 10. Front brain — register available brains so it knows how to delegate
         self.front_brain = FrontBrain(self.bus, llm_provider=self.llm_provider)
         brain_descriptions = {
-            "python_brain": "Generates and executes Python code, scripts, simulations, calculations",
             "researcher": "Web search via Brave API, parallel queries, source triangulation, LLM-powered summarization. Use for fact-finding, research, data gathering, current events",
         }
+        # Register pool workers with same description
+        for name in python_pool_names:
+            brain_descriptions[name] = "Generates and executes Python code, scripts, simulations, calculations"
         for brain_name in self.brains:
             desc = brain_descriptions.get(brain_name, brain_name)
             self.front_brain.register_brain(brain_name, desc)
@@ -266,13 +268,20 @@ class BigBrainSystem:
     
     def _configure_execution_modes(self) -> None:
         """Configure execution modes for each brain."""
-        # PythonBrain: Lightning (auto) by default — V4 + V1 only
-        self.orchestrator.set_execution_mode(
-            "python_brain",
-            ExecutionMode.LIGHTNING,
-            requires_approval=False,
-            max_retries=3,
-        )
+        # PythonBrain workers: Lightning (auto) by default — V4 + V1 only
+        for brain_name in self.brains:
+            if brain_name.startswith("python_brain"):
+                self.orchestrator.set_execution_mode(
+                    brain_name,
+                    ExecutionMode.LIGHTNING,
+                    requires_approval=False,
+                    max_retries=3,
+                )
+        
+        # Register brain pool so orchestrator can resolve "python_brain" → least-loaded worker
+        python_workers = [n for n in self.brains if n.startswith("python_brain")]
+        if python_workers:
+            self.orchestrator.register_brain_pool("python_brain", python_workers)
         
         # Researcher: Lightning — auto-approve research results
         self.orchestrator.set_execution_mode(
@@ -282,7 +291,7 @@ class BigBrainSystem:
             max_retries=2,
         )
         
-        print("⚡ Execution modes: Lightning (auto) for all brains")
+        print(f"⚡ Execution modes: Lightning (auto) for all brains")
     
     def _setup_focus_filtering(self) -> None:
         """Wire the system's focus manager into Front Brain.
@@ -296,16 +305,27 @@ class BigBrainSystem:
     
     async def _create_brains(self) -> None:
         """Create and register execution brains."""
+        import os
+        
         # Python execution brain (with LLM for code generation)
-        python_brain = PythonBrain(
-            name="python_brain",
-            bus=self.bus,
-            workspace=self.workspace,
-            timeout=30,
-            work_dir=None,  # Uses tempdir (cross-platform safe)
-            llm_provider=self.llm_provider
-        )
-        self.brains["python_brain"] = python_brain
+        # Create a pool of PythonBrain workers for parallel file writes.
+        # The orchestrator resolves logical "python_brain" → least-loaded worker.
+        python_pool_size = int(os.environ.get("BIGBRAIN_PYTHON_POOL", "3"))
+        python_pool_names = []
+        for i in range(python_pool_size):
+            worker_name = f"python_brain_{i}"
+            worker = PythonBrain(
+                name=worker_name,
+                bus=self.bus,
+                workspace=self.workspace,
+                timeout=30,
+                work_dir=None,  # Uses tempdir (cross-platform safe)
+                llm_provider=self.llm_provider
+            )
+            self.brains[worker_name] = worker
+            python_pool_names.append(worker_name)
+        
+        print(f"🐍 PythonBrain pool: {python_pool_size} workers ({', '.join(python_pool_names)})")
         
         # Research brain — real Brave search + shared LLM
         try:
