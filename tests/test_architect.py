@@ -479,3 +479,128 @@ class TestArchitectPhase:
         spec = await architect.design("test")
         assert len(spec.file_specs[0].data_models) == 1
         assert spec.file_specs[0].data_models[0].name == "Item"
+
+
+# ---------------------------------------------------------------------------
+# Integration tests — Artifact flow through orchestrator
+# ---------------------------------------------------------------------------
+
+class TestArtifactFlow:
+    """Tests that upstream code is properly passed to downstream workers."""
+
+    def test_upstream_context_keyed_by_filepath(self):
+        """Orchestrator should key upstream_context by file_path when available."""
+        from bigbrain.orchestrator.orchestrator import (
+            WorkspaceOrchestrator, TaskPlan, SubTask, TaskStatus
+        )
+        from bigbrain.bus.bus import MessageBus
+
+        bus = MessageBus()
+        orch = WorkspaceOrchestrator("test", bus)
+
+        plan = TaskPlan(
+            id="plan1",
+            original_task=None,
+            subtasks=[
+                SubTask(
+                    id="s1",
+                    description="Write models.py",
+                    brain_target="python_brain",
+                    payload={"type": "write_project_file"},
+                    status=TaskStatus.COMPLETE,
+                    result={
+                        "success": True,
+                        "file_path": "models.py",
+                        "file_content": "class User:\n    pass\n",
+                    },
+                ),
+                SubTask(
+                    id="s2",
+                    description="Write auth.py",
+                    brain_target="python_brain",
+                    payload={
+                        "type": "write_project_file",
+                        "file_path": "auth.py",
+                    },
+                    dependencies={"s1"},
+                    status=TaskStatus.PENDING,
+                ),
+            ],
+        )
+
+        import asyncio
+        resolved = asyncio.get_event_loop().run_until_complete(
+            orch._resolve_payload_references(plan.subtasks[1].payload, plan)
+        )
+
+        # upstream_context should be keyed by file_path, not brain:description
+        assert "upstream_context" in resolved
+        assert "models.py" in resolved["upstream_context"]
+        upstream_models = resolved["upstream_context"]["models.py"]
+        assert upstream_models["file_content"] == "class User:\n    pass\n"
+
+    def test_render_with_actual_code(self):
+        """FileSpec.render_for_worker should show interface contracts."""
+        models = FileSpec(
+            path="models.py",
+            purpose="Data models",
+            exports=[
+                FunctionContract(
+                    "create_user",
+                    [{"name": "name", "type": "str"}],
+                    "User",
+                    "Create a user",
+                ),
+            ],
+            data_models=[
+                DataModelSpec(
+                    "User", "A user",
+                    fields=[FieldDef("name", "str"), FieldDef("email", "str")],
+                ),
+            ],
+        )
+        auth = FileSpec(
+            path="auth.py",
+            purpose="Auth module",
+            imports_from={"models.py": ["create_user", "User"]},
+            dependencies=["models.py"],
+            exports=[
+                FunctionContract("login", [{"name": "u", "type": "str"}], "bool"),
+            ],
+        )
+
+        prompt = auth.render_for_worker(upstream_specs=[models])
+
+        # Should contain auth's exports
+        assert "def login" in prompt
+        # Should contain upstream interface
+        assert "create_user" in prompt
+        assert "class User" in prompt
+        # Should contain import instruction
+        assert "from models import create_user, User" in prompt
+
+    def test_dependency_order_complex(self):
+        """Topological order with diamond dependency pattern."""
+        #   models (no deps)
+        #   ├── auth (depends on models)
+        #   ├── ws (depends on models)
+        #   └── app (depends on auth + ws)
+        models = FileSpec(path="models.py", purpose="M", dependencies=[])
+        auth = FileSpec(path="auth.py", purpose="A", dependencies=["models.py"])
+        ws = FileSpec(path="ws.py", purpose="W", dependencies=["models.py"])
+        app = FileSpec(path="app.py", purpose="App", dependencies=["auth.py", "ws.py"])
+
+        spec = ProjectSpec(
+            project_name="test",
+            description="test",
+            file_specs=[app, ws, auth, models],  # reverse order
+        )
+        order = spec.dependency_order()
+        paths = [fs.path for fs in order]
+
+        # models must come before auth and ws
+        assert paths.index("models.py") < paths.index("auth.py")
+        assert paths.index("models.py") < paths.index("ws.py")
+        # auth and ws must come before app
+        assert paths.index("auth.py") < paths.index("app.py")
+        assert paths.index("ws.py") < paths.index("app.py")

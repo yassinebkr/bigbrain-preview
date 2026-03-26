@@ -1096,14 +1096,23 @@ Example — research then code:
                     resolved[key] = result_lookup[ref_id]
         
         # Inject upstream context — all completed subtask results
-        # so downstream brains have full picture even without explicit refs
+        # so downstream brains have full picture even without explicit refs.
+        # Key by file_path when available (for write_project_file results)
+        # so PythonBrain can match upstream code to dependency file paths.
         if results:
             upstream = {}
             for st in plan.subtasks:
                 if st.status == TaskStatus.COMPLETE and st.result:
-                    # Use a human-readable key
-                    brain_name = st.assigned_brain or st.brain_target
-                    upstream[f"{brain_name}:{st.description[:80]}"] = st.result
+                    result = st.result
+                    # Use file_path as key if available (file-writing tasks)
+                    key = None
+                    if isinstance(result, dict) and result.get("file_path"):
+                        key = result["file_path"]
+                    if not key:
+                        # Fallback: brain_name:description
+                        brain_name = st.assigned_brain or st.brain_target
+                        key = f"{brain_name}:{st.description[:80]}"
+                    upstream[key] = result
             if upstream:
                 resolved["upstream_context"] = upstream
         

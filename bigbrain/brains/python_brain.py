@@ -263,7 +263,8 @@ class PythonBrain(BaseBrain):
         # Get upstream context (completed dependency files)
         upstream_context = payload.get("upstream_context", {})
         
-        # Build dependency content section
+        # Build dependency content section from ACTUAL completed code
+        # (not just architect spec — the real code that was generated)
         dep_content = ""
         if upstream_context:
             dep_parts = []
@@ -272,9 +273,15 @@ class PythonBrain(BaseBrain):
                     code = result.get("file_content", result.get("generated_code", ""))
                     fpath = result.get("file_path", source)
                     if code:
-                        dep_parts.append(f"=== {fpath} ===\n{code[:2000]}")
+                        # Show full code up to 8000 chars — enough for most files.
+                        # Truncation was 2000 before, causing workers to miss
+                        # critical parts of dependency implementations.
+                        truncated = code[:8000]
+                        if len(code) > 8000:
+                            truncated += f"\n... (truncated, {len(code)} total chars)"
+                        dep_parts.append(f"=== {fpath} ===\n{truncated}")
             if dep_parts:
-                dep_content = "\n\nContent of dependency files (import from these):\n" + "\n\n".join(dep_parts)
+                dep_content = "\n\nActual code of completed dependency files (import from these):\n" + "\n\n".join(dep_parts)
         
         # Build file tree overview
         file_tree = "\n".join(f"  - {f['path']}: {f.get('purpose', '')}" for f in all_files)
@@ -290,12 +297,24 @@ class PythonBrain(BaseBrain):
             if edge_cases:
                 edge_cases_text = "\n\nEdge cases to handle:\n" + "\n".join(f"- {ec}" for ec in edge_cases)
 
+            # When actual dependency code is available, it takes priority
+            # over the architect spec's interface descriptions
+            actual_code_note = ""
+            if dep_content:
+                actual_code_note = """
+
+IMPORTANT: The "Actual code" section below shows the REAL implementation
+of your dependencies (written by other workers). Use these exact class names,
+function signatures, and import paths. If the actual code differs from the
+architect spec above, follow the ACTUAL CODE — it's what will be on disk."""
+
             prompt = f"""Write the file `{file_path}` for the project "{project_name}".
 
 Overall project goal: {user_request}
 
 ## Architect Specification for this file:
 {architect_spec}
+{actual_code_note}
 {dep_content}
 {edge_cases_text}
 
@@ -303,7 +322,7 @@ Rules:
 - Output ONLY the file content, no explanation before or after
 - Write ONLY this file — do not include other files
 - Implement ALL exports listed in the spec with EXACT signatures
-- Import from dependencies using the EXACT names in the spec
+- Import from dependencies using the EXACT names from their actual code
 - If this is an HTML file, output the full HTML (not Python)
 - Include proper error handling for all edge cases listed
 - Add docstrings to all public functions and classes
