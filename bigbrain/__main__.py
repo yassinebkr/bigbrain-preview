@@ -3,6 +3,7 @@
 import asyncio
 import sys
 import signal
+import tempfile
 import time
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -309,7 +310,13 @@ class BigBrainSystem:
         # Python execution brain (with LLM for code generation)
         # Create a pool of PythonBrain workers for parallel file writes.
         # The orchestrator resolves logical "python_brain" → least-loaded worker.
+        #
+        # IMPORTANT: All pool workers share the SAME work_dir so files written
+        # by worker 1 are visible to worker 0 during assemble_and_run.
+        # Each worker still has isolated temp scripts (script_*.py uses unique names).
         python_pool_size = int(os.environ.get("BIGBRAIN_PYTHON_POOL", "3"))
+        shared_work_dir = Path(tempfile.gettempdir()) / "bigbrain_python_pool"
+        shared_work_dir.mkdir(exist_ok=True, parents=True)
         python_pool_names = []
         for i in range(python_pool_size):
             worker_name = f"python_brain_{i}"
@@ -318,7 +325,7 @@ class BigBrainSystem:
                 bus=self.bus,
                 workspace=self.workspace,
                 timeout=30,
-                work_dir=None,  # Uses tempdir (cross-platform safe)
+                work_dir=shared_work_dir,
                 llm_provider=self.llm_provider
             )
             self.brains[worker_name] = worker

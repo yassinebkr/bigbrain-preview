@@ -51,7 +51,12 @@ class PythonBrain(BaseBrain):
         super().__init__(name, bus, workspace)
         self.timeout = timeout
         self.llm_provider = llm_provider
-        self.work_dir = Path(work_dir or tempfile.gettempdir()) / f"bigbrain_python_{name}"
+        if work_dir:
+            # Explicit work_dir: use as-is (shared pool directory)
+            self.work_dir = Path(work_dir)
+        else:
+            # Default: per-brain isolated directory
+            self.work_dir = Path(tempfile.gettempdir()) / f"bigbrain_python_{name}"
         self.work_dir.mkdir(exist_ok=True, parents=True)
         
         # Track created temp files for cleanup
