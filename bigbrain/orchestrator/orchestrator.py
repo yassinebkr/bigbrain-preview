@@ -767,18 +767,37 @@ Example — research then code:
                     print(f"[ORCH] Stopping dispatch: plan {plan.id[-8:]} became {plan.status.value}")
                     break
                 
-                # Resolve logical brain name to actual worker (pool-aware)
-                resolved_brain = self._resolve_brain_target(subtask.brain_target)
+                # Resolve logical brain name to actual worker (pool-aware).
+                # Use the ORIGINAL logical name (stored on first encounter) so we
+                # always resolve fresh against the pool, not a previously assigned worker.
+                logical_name = getattr(subtask, '_logical_brain', None) or subtask.brain_target
+                if not hasattr(subtask, '_logical_brain'):
+                    subtask._logical_brain = subtask.brain_target
                 
-                # Respect brain capacity — don't dispatch if ALL workers are busy
+                resolved_brain = self._resolve_brain_target(logical_name)
+                
+                # Respect brain capacity — don't dispatch if this worker is busy
                 current_load = self.brain_load.get(resolved_brain, 0)
                 max_concurrent = 1  # Each worker handles 1 task at a time
                 if current_load >= max_concurrent:
-                    print(f"[ORCH] Deferring {subtask.id[-12:]} — {resolved_brain} at capacity ({current_load}/{max_concurrent})")
-                    deferred += 1
-                    continue
+                    # Try other workers in the pool before deferring
+                    if logical_name in self.brain_pools:
+                        found_free = False
+                        for w in self.brain_pools[logical_name]:
+                            if self.brain_load.get(w, 0) < max_concurrent:
+                                resolved_brain = w
+                                found_free = True
+                                break
+                        if not found_free:
+                            print(f"[ORCH] Deferring {subtask.id[-12:]} — all {logical_name} workers busy")
+                            deferred += 1
+                            continue
+                    else:
+                        print(f"[ORCH] Deferring {subtask.id[-12:]} — {resolved_brain} at capacity ({current_load}/{max_concurrent})")
+                        deferred += 1
+                        continue
                 
-                # Override brain_target with resolved worker name for dispatch
+                # Set the resolved worker for dispatch
                 subtask.brain_target = resolved_brain
                 
                 print(f"[ORCH] Dispatching subtask {subtask.id[-12:]} → brain={resolved_brain} type={subtask.payload.get('type')} desc={subtask.description[:60]}")
@@ -792,7 +811,9 @@ Example — research then code:
         # Synchronous bus delivery means subtasks may have completed DURING the
         # loop above (via re-entrant result handlers that were blocked by the guard).
         # Their completions may have unlocked NEW ready subtasks. Re-check once.
-        if plan.status == TaskStatus.RUNNING:
+        # BUT: only recurse if we actually dispatched something (not all deferred).
+        # Otherwise we spin forever trying to dispatch to busy brains.
+        if plan.status == TaskStatus.RUNNING and deferred < len(ready_subtasks):
             new_ready = plan.get_ready_subtasks()
             if new_ready:
                 print(f"[ORCH] Post-loop: {len(new_ready)} new subtask(s) became ready during dispatch")
