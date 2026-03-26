@@ -354,7 +354,7 @@ Rules:
         # For Python files: syntax check after each generation.
         # If syntax error: feed error back to LLM for fix.
         # For non-Python files (HTML, CSS, etc.): no syntax check needed.
-        MAX_FILE_RETRIES = 3
+        MAX_FILE_RETRIES = 4  # 1 initial + up to 3 fix/continuation attempts
         is_python_file = file_path.endswith(".py")
         
         project_dir = self.work_dir / project_name
@@ -376,14 +376,36 @@ Rules:
 
             if attempt == 1:
                 # First attempt: use the original prompt
-                generated = await self.llm_provider.complete(prompt, stream=False)
-            else:
-                # Fix attempt: include previous errors
-                fix_prompt = self._build_file_fix_prompt(
-                    file_path, project_name, user_request,
-                    code, attempt_history, prompt,
+                generated = await self.llm_provider.complete(
+                    prompt, stream=False, max_tokens=8192
                 )
-                generated = await self.llm_provider.complete(fix_prompt, stream=False)
+            else:
+                last_error = attempt_history[-1]["error"] if attempt_history else ""
+                is_truncation = self._is_truncation_error(last_error, code)
+                
+                if is_truncation and code.strip():
+                    # Truncation: don't rewrite — continue from where it stopped
+                    cont_prompt = self._build_continuation_prompt(
+                        file_path, project_name, code
+                    )
+                    continuation = await self.llm_provider.complete(
+                        cont_prompt, stream=False, max_tokens=4096
+                    )
+                    new_code = self._extract_code(continuation)
+                    if new_code.strip():
+                        code = code.rstrip() + "\n" + new_code
+                        generated = code  # skip extract_code below
+                    else:
+                        generated = code  # keep trying with fix prompt
+                else:
+                    # Real syntax error: fix prompt
+                    fix_prompt = self._build_file_fix_prompt(
+                        file_path, project_name, user_request,
+                        code, attempt_history, prompt,
+                    )
+                    generated = await self.llm_provider.complete(
+                        fix_prompt, stream=False, max_tokens=8192
+                    )
 
             code = self._extract_code(generated)
 
@@ -1274,6 +1296,67 @@ Rules:
                 if e.offset:
                     parts.append(f"  {' ' * (e.offset - 1)}^")
             return "\n".join(parts)
+
+    @staticmethod
+    def _is_truncation_error(error: str, code: str) -> bool:
+        """Detect if a syntax error is caused by truncated LLM output.
+        
+        Truncation signs: unexpected EOF, unclosed brackets/quotes at the
+        very end of the file, or the error is on the last line.
+        """
+        if not error or not code:
+            return False
+        error_lower = error.lower()
+        truncation_markers = [
+            "unexpected eof",
+            "eof while scanning",
+            "was never closed",
+            "unexpected end of input",
+            "expected an indented block",
+        ]
+        if any(marker in error_lower for marker in truncation_markers):
+            return True
+        # Error on the very last line is often truncation
+        lines = code.strip().split("\n")
+        if lines:
+            try:
+                # Extract line number from error
+                for part in error.split("\n"):
+                    if "line " in part.lower():
+                        import re as _re
+                        m = _re.search(r"line\s+(\d+)", part, _re.IGNORECASE)
+                        if m:
+                            err_line = int(m.group(1))
+                            if err_line >= len(lines) - 2:
+                                return True
+            except (ValueError, AttributeError):
+                pass
+        return False
+
+    def _build_continuation_prompt(
+        self, file_path: str, project_name: str, truncated_code: str,
+    ) -> str:
+        """Build a prompt to continue truncated code from where it stopped.
+        
+        Sends the last 80 lines and asks the LLM to write ONLY the
+        remaining code — not the whole file again.
+        """
+        lines = truncated_code.split("\n")
+        # Show last 80 lines for context
+        context_start = max(0, len(lines) - 80)
+        context = "\n".join(lines[context_start:])
+        
+        return f"""The file `{file_path}` in project "{project_name}" was truncated.
+Here are the last {len(lines) - context_start} lines (of {len(lines)} total):
+
+```python
+{context}
+```
+
+Continue writing from EXACTLY where it stopped. Output ONLY the remaining
+code that completes this file. Do NOT repeat any of the code above.
+Do NOT include the opening ``` fence. Just the raw Python code that comes next.
+Make sure to close ALL open brackets, strings, and function definitions."""
 
     def _build_file_fix_prompt(
         self,
