@@ -784,16 +784,25 @@ class CodeOutputPanel extends BasePanel {
     </div>`;
 
     if (code) {
-      html += `<pre class="code-block"><code>${_escapeHtml(code)}</code></pre>`;
+      // Detect language from content heuristics
+      const lang = CodeOutputPanel._detectLang(code);
+      html += `<div class="code-block-wrap">
+        <div class="code-block-header">
+          <span class="code-lang-badge">${lang}</span>
+          <button class="code-copy-btn" title="Copy code">📋</button>
+        </div>
+        <pre class="code-block"><code class="language-${lang}">${_escapeHtml(code)}</code></pre>
+      </div>`;
     }
 
     if (stdout) {
       html += `<div class="code-stdout-label">Output</div>
-               <pre class="code-stdout">${_escapeHtml(stdout)}</pre>`;
+               <pre class="code-stdout"><code class="language-text">${_escapeHtml(stdout)}</code></pre>`;
     }
 
     if (stderr) {
-      html += `<pre class="code-stderr">${_escapeHtml(stderr)}</pre>`;
+      html += `<div class="code-stderr-label">Errors</div>
+               <pre class="code-stderr">${_escapeHtml(stderr)}</pre>`;
     }
 
     if (!code && !stdout && !stderr) {
@@ -801,7 +810,27 @@ class CodeOutputPanel extends BasePanel {
     }
 
     result.innerHTML = html;
+
+    // Wire up copy button
+    const copyBtn = result.querySelector('.code-copy-btn');
+    if (copyBtn) {
+      copyBtn.addEventListener('click', () => {
+        navigator.clipboard.writeText(code).then(() => {
+          copyBtn.textContent = '✅';
+          setTimeout(() => { copyBtn.textContent = '📋'; }, 1500);
+        });
+      });
+    }
+
     container.appendChild(result);
+
+    // Run Prism highlighting on the new code blocks
+    if (window.Prism) {
+      result.querySelectorAll('pre code[class*="language-"]').forEach(el => {
+        window.Prism.highlightElement(el);
+      });
+    }
+
     container.scrollTop = container.scrollHeight;
 
     this.results.push({ code, stdout, stderr, success, time: Date.now() });
@@ -819,6 +848,31 @@ class CodeOutputPanel extends BasePanel {
       const label = stage.replace(/_/g, ' ');
       this.setTitle(`Code Output — ${label}`);
     }
+  }
+
+  /** Detect programming language from code content. */
+  static _detectLang(code) {
+    const trimmed = code.trim();
+    // Shebang
+    if (trimmed.startsWith('#!/usr/bin/env python') || trimmed.startsWith('#!/usr/bin/python')) return 'python';
+    if (trimmed.startsWith('#!/bin/bash') || trimmed.startsWith('#!/bin/sh')) return 'bash';
+    // Python signals
+    if (/^(import |from |def |class |async def |if __name__)/m.test(trimmed)) return 'python';
+    if (/^\s*(print\(|raise |yield |lambda )/m.test(trimmed)) return 'python';
+    // JavaScript/Node
+    if (/^(const |let |var |function |import |export |require\(|module\.exports)/m.test(trimmed)) return 'javascript';
+    // HTML
+    if (/^<!DOCTYPE|^<html|^<div|^<head/im.test(trimmed)) return 'markup';
+    // CSS
+    if (/^[.#@][\w-]+\s*\{|^body\s*\{|^:root\s*\{/m.test(trimmed)) return 'css';
+    // JSON
+    if ((trimmed.startsWith('{') || trimmed.startsWith('[')) && (trimmed.endsWith('}') || trimmed.endsWith(']'))) {
+      try { JSON.parse(trimmed); return 'json'; } catch { /* not json */ }
+    }
+    // Bash signals
+    if (/^(echo |curl |wget |apt |pip |npm |cd |ls |mkdir |chmod )/m.test(trimmed)) return 'bash';
+    // Default: Python (BigBrain's primary brain)
+    return 'python';
   }
 }
 

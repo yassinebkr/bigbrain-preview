@@ -1130,10 +1130,66 @@ body::after {
   overflow-x: auto;
   white-space: pre;
   color: var(--text-2);
+}
+
+/* Code block wrapper with header (language badge + copy button) */
+.code-block-wrap {
   border-bottom: 1px solid var(--border-subtle);
 }
 
-.code-block code { font-family: inherit; }
+.code-block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 12px;
+  background: rgba(0,0,0,0.2);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.code-lang-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  padding: 2px 8px;
+  border-radius: var(--radius-xs);
+}
+
+.code-copy-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 6px;
+  border-radius: var(--radius-xs);
+  transition: background 150ms ease;
+}
+.code-copy-btn:hover {
+  background: var(--surface-3);
+}
+
+/* Prism.js overrides to match dark UI */
+.code-block code[class*="language-"],
+.code-block pre[class*="language-"] {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+  background: none;
+  text-shadow: none;
+}
+.code-block code { font-family: inherit; background: none; }
+
+.code-stderr-label {
+  padding: 6px 12px 2px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--red);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
 
 .code-stdout-label {
   padding: 6px 12px 2px;
