@@ -467,6 +467,10 @@ Type 'quit' or 'exit' to stop."""
                 output_text += f"Code execution output:\n{content}\n\n"
             elif kind == "code_only":
                 output_text += f"Generated code (no output):\n{content[:500]}\n\n"
+            elif kind == "preview":
+                output_text += f"Deployment: {content}\n\n"
+            elif kind == "files":
+                output_text += f"{content}\n\n"
         
         # Find the user's original question from conversation history
         user_question = ""
@@ -491,6 +495,9 @@ Type 'quit' or 'exit' to stop."""
                             "- Don't show raw code or describe the process\n"
                             "- Start with the main answer, then add supporting details\n"
                             "- If output was truncated or incomplete, say so — don't fabricate results\n"
+                            "- NEVER invent URLs, domains, or deployment links. Only mention a URL if one appears in the task output\n"
+                            "- If a preview_url is provided in the output, use EXACTLY that URL — do not modify it\n"
+                            "- If files were written but no preview is running, say the code was generated (not deployed)\n"
                             "- Mention which algorithms/items were actually tested vs what research found"
                         )},
                         {"role": "user", "content": (
@@ -804,6 +811,12 @@ Type 'quit' or 'exit' to stop."""
                     elif data.get("generated_code"):
                         raw_outputs.append(("code_only", data["generated_code"]))
                         workspace_hint = workspace_hint or "python-dev"
+                    # Capture preview URL if server started
+                    if data.get("preview_port") and data.get("server_running"):
+                        raw_outputs.append(("preview", f"Preview server running at https://preview.clawos.fr (port {data['preview_port']})"))
+                    elif data.get("files_written"):
+                        files = data.get("files_written", [])
+                        raw_outputs.append(("files", f"Project files written: {', '.join(files)}"))
             elif "summary" in result:
                 raw_outputs.append(("research", result["summary"]))
                 workspace_hint = "research"
