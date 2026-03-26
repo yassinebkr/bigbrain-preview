@@ -708,17 +708,51 @@ Example — research then code:
         return "python_brain"  # Last resort fallback
     
     async def _execute_ready_subtasks(self, plan: TaskPlan) -> None:
-        """Execute all subtasks that are ready (dependencies satisfied)."""
+        """Execute all subtasks that are ready (dependencies satisfied).
+        
+        Respects brain capacity: only dispatches to brains that aren't at max load.
+        Re-checks plan status between dispatches to avoid sending tasks after failure.
+        Deferred subtasks (brain busy) are retried on next _execute_ready_subtasks call.
+        """
         # Don't dispatch if plan is already complete/failed
         if plan.status in (TaskStatus.COMPLETE, TaskStatus.FAILED, TaskStatus.CANCELLED):
             print(f"[ORCH] Skipping _execute_ready_subtasks: plan {plan.id[-8:]} is {plan.status.value}")
             return
         
-        ready_subtasks = plan.get_ready_subtasks()
-        print(f"[ORCH] _execute_ready_subtasks: plan={plan.id[-8:]} status={plan.status.value} ready={len(ready_subtasks)} total={len(plan.subtasks)}")
+        # Prevent re-entrant execution (bus delivers synchronously, so a dispatched
+        # task can complete and trigger another _execute_ready_subtasks before we return)
+        if getattr(plan, '_dispatching', False):
+            return
+        plan._dispatching = True
         
-        for subtask in ready_subtasks:
-            await self._dispatch_subtask(plan, subtask)
+        try:
+            ready_subtasks = plan.get_ready_subtasks()
+            print(f"[ORCH] _execute_ready_subtasks: plan={plan.id[-8:]} status={plan.status.value} ready={len(ready_subtasks)} total={len(plan.subtasks)}")
+            
+            deferred = 0
+            for subtask in ready_subtasks:
+                # Re-check plan status — a prior dispatch may have caused a failure
+                # via synchronous bus delivery (brain rejects → result → plan fails)
+                if plan.status in (TaskStatus.COMPLETE, TaskStatus.FAILED, TaskStatus.CANCELLED):
+                    print(f"[ORCH] Stopping dispatch: plan {plan.id[-8:]} became {plan.status.value}")
+                    break
+                
+                # Respect brain capacity — don't dispatch if brain is already busy
+                brain = subtask.brain_target
+                current_load = self.brain_load.get(brain, 0)
+                max_concurrent = 1  # Brains handle 1 task at a time
+                if current_load >= max_concurrent:
+                    print(f"[ORCH] Deferring {subtask.id[-12:]} — {brain} at capacity ({current_load}/{max_concurrent})")
+                    deferred += 1
+                    continue
+                
+                print(f"[ORCH] Dispatching subtask {subtask.id[-12:]} → brain={subtask.brain_target} type={subtask.payload.get('type')} desc={subtask.description[:60]}")
+                await self._dispatch_subtask(plan, subtask)
+            
+            if deferred > 0:
+                print(f"[ORCH] {deferred} subtask(s) deferred — will retry when brains free up")
+        finally:
+            plan._dispatching = False
     
     async def _dispatch_subtask(self, plan: TaskPlan, subtask: SubTask) -> None:
         """Dispatch a subtask to the appropriate brain."""
@@ -828,6 +862,8 @@ Example — research then code:
         if not dispatch_msg_id or dispatch_msg_id not in self.active_subtasks:
             return  # Not our subtask
         
+        print(f"[ORCH] Result from {message.source}: success={message.payload.get('success')}, error={message.payload.get('error', 'none')}, reply_to={dispatch_msg_id[:8]}")
+        
         plan_id = self.active_subtasks[dispatch_msg_id]
         plan = self.task_plans.get(plan_id)
         if not plan:
@@ -877,7 +913,37 @@ Example — research then code:
                 priority=Priority.HIGH,
             )
         
-        # Update subtask with result
+        # ── Handle "busy" rejections: re-queue instead of failing ──
+        # Brain was occupied — this isn't a real failure, just bad timing.
+        # Reset subtask to PENDING so it gets picked up on next dispatch cycle.
+        if (not message.payload.get("success", False) 
+                and message.payload.get("busy", False)):
+            print(f"[ORCH] Brain {message.source} busy — re-queuing {subtask.id[-12:]}")
+            
+            # Update brain load BEFORE clearing assigned_brain
+            if subtask.assigned_brain:
+                current_load = self.brain_load.get(subtask.assigned_brain, 0)
+                self.brain_load[subtask.assigned_brain] = max(0, current_load - 1)
+            
+            # Reset subtask to PENDING for re-dispatch
+            subtask.status = TaskStatus.PENDING
+            subtask.start_time = None
+            subtask.end_time = None
+            subtask.assigned_brain = None
+            subtask.result = None
+            subtask.error = None
+            if hasattr(subtask, '_dispatch_msg_id'):
+                delattr(subtask, '_dispatch_msg_id')
+            
+            # Remove from active tracking
+            del self.active_subtasks[dispatch_msg_id]
+            
+            # Don't announce failure or check plan completion — just return.
+            # The subtask will be retried when the next subtask completes
+            # and triggers _execute_ready_subtasks.
+            return
+        
+        # ── Normal result handling ──
         subtask.end_time = time.time()
         subtask.result = message.payload
         
@@ -912,7 +978,8 @@ Example — research then code:
         # Check if entire plan is complete FIRST (before trying to start more)
         await self._check_plan_completion(plan)
         
-        # Only start more subtasks if plan is still running
+        # Start more subtasks if plan is still running
+        # (includes previously deferred/busy-rejected subtasks that are now PENDING again)
         if subtask.status == TaskStatus.COMPLETE and plan.status == TaskStatus.RUNNING:
             await self._execute_ready_subtasks(plan)
     
