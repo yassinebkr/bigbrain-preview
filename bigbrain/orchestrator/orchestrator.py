@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import uuid
+from datetime import datetime
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Set
@@ -120,8 +121,10 @@ class WorkspaceOrchestrator(BusParticipant):
     - Sends RESULT back when complete
     """
     
-    # System prompt for complexity assessment
-    COMPLEXITY_SYSTEM_PROMPT = """You are a project complexity assessor. Given a user request, determine if it needs:
+    # System prompt for complexity assessment (year injected at runtime)
+    COMPLEXITY_SYSTEM_PROMPT = """The current year is {current_year}. Always use {current_year} in research queries.
+
+You are a project complexity assessor. Given a user request, determine if it needs:
 1. "script" — a single Python file can handle it (utility, algorithm, simple tool)
 2. "project" — multiple files needed (backend+frontend, library+tests, multi-concern app)
 
@@ -159,7 +162,9 @@ Respond with ONLY a JSON object:
 }}"""
 
     # System prompt for simple single-task planning
-    SIMPLE_PLANNER_PROMPT = """You are a task planner for a multi-brain AI system.
+    SIMPLE_PLANNER_PROMPT = """The current year is {current_year}.
+
+You are a task planner for a multi-brain AI system.
 
 Your job: decompose a user's request into concrete subtasks, each assigned to the right brain.
 
@@ -386,7 +391,8 @@ Example — research then code:
     async def _assess_complexity(self, user_request: str) -> dict:
         """Assess task complexity: script vs project, research needed."""
         messages = [
-            {"role": "system", "content": self.COMPLEXITY_SYSTEM_PROMPT},
+            {"role": "system", "content": self.COMPLEXITY_SYSTEM_PROMPT.format(
+                current_year=datetime.now().year)},
             {"role": "user", "content": user_request},
         ]
         
@@ -451,7 +457,7 @@ Example — research then code:
         # Step 2: Plan file structure
         messages = [
             {"role": "system", "content": self.PROJECT_PLANNER_PROMPT},
-            {"role": "user", "content": user_request},
+            {"role": "user", "content": f"[Current year: {datetime.now().year}] {user_request}"},
         ]
         
         raw = await self.llm_provider.chat_complete(
@@ -606,7 +612,8 @@ Example — research then code:
             ]
         
         brain_list = "\n".join(brain_descriptions)
-        system = self.SIMPLE_PLANNER_PROMPT.format(brain_list=brain_list)
+        system = self.SIMPLE_PLANNER_PROMPT.format(
+            brain_list=brain_list, current_year=datetime.now().year)
         
         # If complexity assessment says research is needed, add hint
         if needs_research and research_queries:
@@ -781,6 +788,15 @@ Example — research then code:
                 print(f"[ORCH] {deferred} subtask(s) deferred — will retry when brains free up")
         finally:
             plan._dispatching = False
+        
+        # Synchronous bus delivery means subtasks may have completed DURING the
+        # loop above (via re-entrant result handlers that were blocked by the guard).
+        # Their completions may have unlocked NEW ready subtasks. Re-check once.
+        if plan.status == TaskStatus.RUNNING:
+            new_ready = plan.get_ready_subtasks()
+            if new_ready:
+                print(f"[ORCH] Post-loop: {len(new_ready)} new subtask(s) became ready during dispatch")
+                await self._execute_ready_subtasks(plan)
     
     async def _dispatch_subtask(self, plan: TaskPlan, subtask: SubTask) -> None:
         """Dispatch a subtask to the appropriate brain."""
