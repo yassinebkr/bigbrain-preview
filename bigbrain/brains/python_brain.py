@@ -230,7 +230,10 @@ Rules:
         full_path = project_dir / file_path
         full_path.parent.mkdir(exist_ok=True, parents=True)
         full_path.write_text(code, encoding="utf-8")
-        self._temp_files.add(full_path)
+        # NOTE: project files are NOT tracked as temp files — they persist
+        # across restarts so preview servers can be restarted and projects
+        # can be inspected after completion. Only script_*.py temp files
+        # are tracked for cleanup.
         
         await self.send_progress({
             "stage": "file_written",
