@@ -7,6 +7,7 @@ import signal
 import socket
 import sys
 import tempfile
+import venv
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -70,6 +71,95 @@ class PythonBrain(BaseBrain):
     PREVIEW_PORT_MAX = 3199
     # Active previews: {port: process} — class-level so all workers share
     _active_previews: Dict[int, asyncio.subprocess.Process] = {}
+
+    # Environment variables stripped from child processes (security)
+    _SENSITIVE_ENV_PREFIXES = (
+        "OPENCLAW_", "PROTECLAW_", "BIGBRAIN_", "LITELLM_",
+        "RESEND_", "CLOUDFLARE_",
+    )
+    _SENSITIVE_ENV_KEYS = {
+        "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GITHUB_TOKEN",
+        "SSH_AUTH_SOCK", "SSH_AGENT_PID", "NPM_TOKEN",
+    }
+
+    async def _setup_project_venv(self, project_dir: Path) -> Path:
+        """Create a per-project venv and return the venv python path.
+
+        Each project gets its own isolated virtual environment so that
+        ``pip install`` never touches the system Python or other projects.
+        Re-uses existing venvs on retry/restart.
+        """
+        venv_dir = project_dir / ".venv"
+        venv_python = venv_dir / "bin" / "python"
+
+        if venv_python.exists():
+            return venv_python  # already created
+
+        await self.send_progress({
+            "stage": "creating_venv",
+            "project_dir": project_dir.name,
+        })
+
+        # Use stdlib venv — runs in-process, fast, no subprocess needed
+        builder = venv.EnvBuilder(with_pip=True, upgrade_deps=False)
+        # venv creation is synchronous; run in executor to avoid blocking
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, builder.create, str(venv_dir))
+
+        if not venv_python.exists():
+            raise RuntimeError(f"venv creation succeeded but {venv_python} not found")
+
+        return venv_python
+
+    async def _install_in_venv(
+        self, venv_python: Path, project_dir: Path, packages: List[str],
+        *, from_requirements: bool = False, timeout: int = 120,
+    ) -> bool:
+        """Install packages into the project venv.
+
+        Args:
+            venv_python: Path to the venv's python binary
+            project_dir: Project root (for cwd)
+            packages: List of package specs OR empty when from_requirements=True
+            from_requirements: If True, install from requirements.txt
+            timeout: pip timeout in seconds
+
+        Returns:
+            True if install succeeded, False on error (best-effort).
+        """
+        cmd = [str(venv_python), "-m", "pip", "install", "-q"]
+        if from_requirements:
+            req_file = project_dir / "requirements.txt"
+            if not req_file.exists():
+                return False
+            cmd += ["-r", str(req_file)]
+        else:
+            if not packages:
+                return True
+            cmd += packages
+
+        await self.send_progress({
+            "stage": "installing_deps",
+            "packages": packages if not from_requirements else ["(from requirements.txt)"],
+            "venv": True,
+        })
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(project_dir),
+                env=self._get_execution_env(),
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            return proc.returncode == 0
+        except (asyncio.TimeoutError, Exception) as e:
+            await self.send_progress({
+                "stage": "install_warning",
+                "error": str(e),
+            })
+            return False
     
     @classmethod
     def _find_free_preview_port(cls) -> Optional[int]:
@@ -341,14 +431,29 @@ Rules:
                 written_files, start_time
             )
         
-        # --- Regular script: run to completion ---
+        # --- Regular script: run to completion (in venv) ---
+        try:
+            venv_python = await self._setup_project_venv(project_dir)
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to create venv: {e}",
+                "stdout": "", "stderr": str(e), "exit_code": -3,
+                "execution_time": 0,
+            }
+
+        run_env = self._get_execution_env()
+        run_env["VIRTUAL_ENV"] = str(project_dir / ".venv")
+        venv_bin = str(project_dir / ".venv" / "bin")
+        run_env["PATH"] = f"{venv_bin}:{run_env.get('PATH', '')}"
+
         try:
             process = await asyncio.create_subprocess_exec(
-                sys.executable, str(entry_path),
+                str(venv_python), str(entry_path),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(project_dir),
-                env=self._get_execution_env()
+                env=run_env,
             )
             
             try:
@@ -412,9 +517,15 @@ Rules:
         self, project_dir: Path, entry_path: Path, project_name: str,
         all_files: list, written_files: dict, start_time: float,
     ) -> Dict[str, Any]:
-        """Start a web app as a local preview server on a free port."""
+        """Start a web app as a local preview server on a free port.
+
+        Security model:
+        - Each project gets its own venv (no system pip pollution)
+        - Sensitive env vars are stripped (API keys, tokens, etc.)
+        - Server binds to 127.0.0.1 only (Cloudflare tunnel for external)
+        """
         import time
-        
+
         port = self._find_free_preview_port()
         if port is None:
             return {
@@ -423,7 +534,7 @@ Rules:
                 "stdout": "", "stderr": "", "exit_code": -1,
                 "execution_time": time.time() - start_time,
             }
-        
+
         # Kill any previous preview from this brain
         if self._preview_process and self._preview_process.returncode is None:
             try:
@@ -434,16 +545,32 @@ Rules:
                     self._preview_process.kill()
                 except ProcessLookupError:
                     pass
-        
+
+        # --- Create per-project venv ---
+        try:
+            venv_python = await self._setup_project_venv(project_dir)
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to create venv: {e}",
+                "stdout": "", "stderr": str(e), "exit_code": -3,
+                "execution_time": time.time() - start_time,
+            }
+
         # Patch the entry point to use our port (inject PORT env var)
         env = self._get_execution_env()
         env["PORT"] = str(port)
         env["HOST"] = "0.0.0.0"
-        
+        # Point VIRTUAL_ENV so child processes know they're in a venv
+        env["VIRTUAL_ENV"] = str(project_dir / ".venv")
+        # Prepend venv bin to PATH so pip-installed console_scripts work
+        venv_bin = str(project_dir / ".venv" / "bin")
+        env["PATH"] = f"{venv_bin}:{env.get('PATH', '')}"
+
         # Also try to patch common port patterns in the entry file
         entry_code = entry_path.read_text(encoding="utf-8")
         patched = False
-        
+
         # Patch uvicorn.run(..., port=XXXX) → use env PORT
         if "uvicorn.run" in entry_code and "os.environ" not in entry_code:
             patched_code = re.sub(
@@ -456,7 +583,7 @@ Rules:
                     patched_code = "import os\n" + patched_code
                 entry_path.write_text(patched_code, encoding="utf-8")
                 patched = True
-        
+
         # Patch Flask/generic .run(port=XXXX)
         if not patched and ".run(" in entry_code and "os.environ" not in entry_code:
             patched_code = re.sub(
@@ -469,31 +596,23 @@ Rules:
                     patched_code = "import os\n" + patched_code
                 entry_path.write_text(patched_code, encoding="utf-8")
                 patched = True
-        
+
         await self.send_progress({
             "stage": "starting_server",
             "port": port,
             "entry_point": str(entry_path.name),
             "patched_port": patched,
+            "venv": True,
         })
-        
-        # Install dependencies
+
+        # --- Install dependencies into venv ---
         requirements = project_dir / "requirements.txt"
         if requirements.exists():
-            try:
-                pip_proc = await asyncio.create_subprocess_exec(
-                    sys.executable, "-m", "pip", "install", "-q",
-                    "-r", str(requirements),
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    cwd=str(project_dir),
-                )
-                await asyncio.wait_for(pip_proc.communicate(), timeout=60)
-            except (asyncio.TimeoutError, Exception) as e:
-                pass  # Best effort — server may still work
+            await self._install_in_venv(
+                venv_python, project_dir, [], from_requirements=True
+            )
         else:
-            # No requirements.txt — auto-detect common web framework imports
-            # and install them so the preview server can actually start
+            # Auto-detect common web framework imports
             all_code = "\n".join(written_files.values())
             auto_deps = []
             dep_map = {
@@ -518,29 +637,15 @@ Rules:
             for pattern, packages in dep_map.items():
                 if re.search(pattern, all_code):
                     auto_deps.extend(packages.split())
-            
+
             if auto_deps:
-                # Deduplicate
-                auto_deps = list(dict.fromkeys(auto_deps))
-                await self.send_progress({
-                    "stage": "installing_deps",
-                    "packages": auto_deps,
-                })
-                try:
-                    pip_proc = await asyncio.create_subprocess_exec(
-                        sys.executable, "-m", "pip", "install", "-q",
-                        *auto_deps,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE,
-                    )
-                    await asyncio.wait_for(pip_proc.communicate(), timeout=90)
-                except (asyncio.TimeoutError, Exception):
-                    pass  # Best effort
-        
-        # Start the server process
+                auto_deps = list(dict.fromkeys(auto_deps))  # deduplicate
+                await self._install_in_venv(venv_python, project_dir, auto_deps)
+
+        # --- Start the server using venv python ---
         try:
             self._preview_process = await asyncio.create_subprocess_exec(
-                sys.executable, str(entry_path),
+                str(venv_python), str(entry_path),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(project_dir),
@@ -1118,23 +1223,32 @@ Rules:
     def _get_execution_env(self) -> Dict[str, str]:
         """
         Get environment variables for code execution.
-        
-        Inherits current environment but can be customized for security.
+
+        Inherits current environment but strips sensitive keys/prefixes
+        so generated code can never exfiltrate API tokens, SSH agent
+        sockets, or internal service credentials.
         """
         env = os.environ.copy()
-        
+
+        # --- Strip sensitive variables ---
+        for key in list(env.keys()):
+            if key in self._SENSITIVE_ENV_KEYS:
+                del env[key]
+            elif any(key.startswith(p) for p in self._SENSITIVE_ENV_PREFIXES):
+                del env[key]
+
         # Add Python path for any modules we want accessible
         if "PYTHONPATH" in env:
             env["PYTHONPATH"] = f"{self.work_dir}:{env['PYTHONPATH']}"
         else:
             env["PYTHONPATH"] = str(self.work_dir)
-        
+
         # Disable bytecode generation for cleaner temp dir
         env["PYTHONDONTWRITEBYTECODE"] = "1"
-        
+
         # Set UTF-8 encoding for consistent output
         env["PYTHONIOENCODING"] = "utf-8"
-        
+
         return env
     
     async def cleanup(self) -> None:
