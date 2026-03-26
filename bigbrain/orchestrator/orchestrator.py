@@ -499,7 +499,8 @@ Example — research then code:
             logger.warning("Architect phase failed, falling back to legacy planner: %s", exc)
             return await self._plan_project_legacy(plan_id, user_request,
                                                     needs_research, research_queries,
-                                                    task_idx, research_dep_ids)
+                                                    task_idx, research_dep_ids,
+                                                    existing_subtasks=subtasks)
 
         project_name = spec.project_name
         
@@ -612,7 +613,8 @@ Example — research then code:
     async def _plan_project_legacy(self, plan_id: str, user_request: str,
                                     needs_research: bool, research_queries: list,
                                     task_idx: int = 0,
-                                    research_dep_ids: list = None) -> List[SubTask]:
+                                    research_dep_ids: list = None,
+                                    existing_subtasks: list = None) -> List[SubTask]:
         """Legacy project planner (fallback if architect phase fails).
         
         Uses the simpler PROJECT_PLANNER_PROMPT that only produces
@@ -620,7 +622,8 @@ Example — research then code:
         """
         if research_dep_ids is None:
             research_dep_ids = []
-        subtasks = list()  # research subtasks already added by caller
+        # Carry over research subtasks created by _plan_project before fallback
+        subtasks = list(existing_subtasks) if existing_subtasks else []
 
         # Plan file structure (legacy prompt)
         messages = [

@@ -366,8 +366,12 @@ class BrainStatusPanel extends BasePanel {
     const brainName = msg.payload?.brain || msg.payload?.target_brain || msg.source;
     
     if (!brainName || brainName === '*') return;
-    // Don't show orchestrators in brain status — they're coordinators, not workers
+    // Don't show internal components — only worker brains (python_brain_*, researcher)
     if (brainName.startsWith('orchestrator')) return;
+    if (brainName === 'front_brain') return;
+    if (brainName === 'bigbrain_system') return;
+    if (brainName === 'focus_bridge') return;
+    if (brainName === 'web_adapter' || brainName === 'morphable_ui') return;
 
     let status = 'idle';
     let stage = '';
