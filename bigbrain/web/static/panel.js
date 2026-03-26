@@ -286,11 +286,12 @@ class ChatPanel extends BasePanel {
     const role = data.role || 'system';
     const text = data.text || data.content || '';
 
-    // Dedup: skip replay messages that match the last displayed message
-    if (isReplay || data._replay) {
-      const lastMsg = container.querySelector('.chat-msg:last-child .chat-msg-body');
-      if (lastMsg && lastMsg.textContent === text) return;
-    }
+    // Dedup: use a set of content hashes to prevent duplicate messages
+    // (from WS reconnect replays, buffer replays, etc.)
+    if (!this._seenHashes) this._seenHashes = new Set();
+    const hash = `${role}:${text.slice(0, 200)}`;
+    if (this._seenHashes.has(hash)) return;
+    this._seenHashes.add(hash);
 
     // Clear empty state on first message
     const empty = container.querySelector('.panel-empty');

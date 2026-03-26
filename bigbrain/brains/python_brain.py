@@ -500,6 +500,26 @@ Rules:
                 "exit_code": -1,
             }
         
+        # Syntax-check all Python files before running
+        syntax_errors = []
+        for fpath, content in written_files.items():
+            if fpath.endswith(".py"):
+                try:
+                    compile(content, fpath, "exec")
+                except SyntaxError as e:
+                    syntax_errors.append(f"{fpath}:{e.lineno}: {e.msg}")
+        
+        if syntax_errors:
+            error_list = "\n".join(syntax_errors)
+            return {
+                "success": False,
+                "error": f"Syntax errors in {len(syntax_errors)} file(s):\n{error_list}",
+                "stdout": "",
+                "stderr": error_list,
+                "exit_code": -4,
+                "files_with_errors": syntax_errors,
+            }
+        
         # Find the entry point (main.py, app.py, or last file in the list)
         entry_point = None
         for f in all_files:
