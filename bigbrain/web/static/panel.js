@@ -571,6 +571,8 @@ class TaskListPanel extends BasePanel {
           }
         }
         if (task) {
+          // Don't overwrite completed/failed tasks with late progress events
+          if (task.status === 'complete' || task.status === 'failed') return;
           // Use explicit progress if provided, otherwise estimate from stage
           if (typeof p.progress === 'number') {
             task.progress = p.progress;

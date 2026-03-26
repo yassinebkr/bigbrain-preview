@@ -767,6 +767,7 @@ Example — research then code:
             print(f"[ORCH] _execute_ready_subtasks: plan={plan.id[-8:]} status={plan.status.value} ready={len(ready_subtasks)} total={len(plan.subtasks)}")
             
             deferred = 0
+            busy_rejected = 0  # Track dispatches that got busy-rejected (synchronous)
             for subtask in ready_subtasks:
                 # Re-check plan status — a prior dispatch may have caused a failure
                 # via synchronous bus delivery (brain rejects → result → plan fails)
@@ -827,20 +828,27 @@ Example — research then code:
                 
                 print(f"[ORCH] Dispatching subtask {subtask.id[-12:]} → brain={resolved_brain} type={subtask.payload.get('type')} desc={subtask.description[:60]}")
                 await self._dispatch_subtask(plan, subtask)
+                
+                # Check if the subtask was busy-rejected (synchronous bus delivery
+                # means the busy handler already reset it to PENDING before we get here)
+                if subtask.status == TaskStatus.PENDING:
+                    busy_rejected += 1
             
             if deferred > 0:
                 print(f"[ORCH] {deferred} subtask(s) deferred — will retry when brains free up")
+            if busy_rejected > 0:
+                print(f"[ORCH] {busy_rejected} subtask(s) busy-rejected — will retry when brains free up")
         finally:
             plan._dispatching = False
         
         # Synchronous bus delivery means subtasks may have completed DURING the
         # loop above (via re-entrant result handlers that were blocked by the guard).
         # Their completions may have unlocked NEW ready subtasks. Re-check once.
-        # BUT: only re-check if we actually dispatched something (not all deferred).
-        # Otherwise we spin forever trying to dispatch to busy brains.
+        # BUT: only re-check if we actually dispatched something (not all deferred
+        # or busy-rejected). Otherwise we spin forever trying to dispatch to busy brains.
         # Safety: limit recursion depth to 3 to prevent infinite busy→re-queue loops
         # (can happen if _current_task clear races with result delivery).
-        dispatched_count = len(ready_subtasks) - deferred
+        dispatched_count = len(ready_subtasks) - deferred - busy_rejected
         if plan.status == TaskStatus.RUNNING and dispatched_count > 0 and _depth < 3:
             new_ready = plan.get_ready_subtasks()
             if new_ready:
@@ -848,7 +856,12 @@ Example — research then code:
                 await self._execute_ready_subtasks(plan, _depth=_depth + 1)
     
     async def _dispatch_subtask(self, plan: TaskPlan, subtask: SubTask) -> None:
-        """Dispatch a subtask to the appropriate brain."""
+        """Dispatch a subtask to the appropriate brain.
+        
+        Only broadcasts subtask.started once per subtask (not on re-dispatch
+        after busy rejection). This prevents WS flooding when a brain is busy
+        and the orchestrator retries in a tight loop.
+        """
         import time
         
         # Update subtask status
@@ -878,20 +891,23 @@ Example — research then code:
         # Also map message ID → subtask ID for lookup
         subtask._dispatch_msg_id = task_message.id
         
-        # Announce subtask started BEFORE dispatching (bus.send delivers
-        # synchronously in-loop, so the brain may complete before we return)
-        await self.bus.broadcast_event(
-            source=self.name,
-            event_type="subtask.started",
-            payload={
-                "task_id": plan.id,
-                "subtask_id": subtask.id,
-                "brain": subtask.brain_target,
-                "description": subtask.description
-            },
-            workspace=self.workspace,
-            priority=Priority.NORMAL
-        )
+        # Only broadcast subtask.started ONCE per subtask. Re-dispatches after
+        # busy rejection should NOT re-announce — otherwise the WS client gets
+        # flooded with thousands of started events in a tight retry loop.
+        if not getattr(subtask, '_started_announced', False):
+            subtask._started_announced = True
+            await self.bus.broadcast_event(
+                source=self.name,
+                event_type="subtask.started",
+                payload={
+                    "task_id": plan.id,
+                    "subtask_id": subtask.id,
+                    "brain": subtask.brain_target,
+                    "description": subtask.description
+                },
+                workspace=self.workspace,
+                priority=Priority.NORMAL
+            )
         
         await self.bus.send(task_message)
     
