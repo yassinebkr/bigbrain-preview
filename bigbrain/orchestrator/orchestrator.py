@@ -214,6 +214,9 @@ Example — research then code:
         # e.g. "python_brain" → ["python_brain_0", "python_brain_1", "python_brain_2"]
         self.brain_pools: Dict[str, List[str]] = {}
         
+        # Track which brains are alive (responded to start or sent events recently)
+        self._alive_brains: set = set()
+        
         # Execution mode configs per brain
         self.execution_configs: Dict[str, BrainExecutionConfig] = {}
     
@@ -267,6 +270,10 @@ Example — research then code:
             return
         
         try:
+            # Track brain liveness — any message from a brain means it's alive
+            if message.source and message.source != self.name:
+                self._alive_brains.add(message.source)
+            
             if message.type == MessageType.TASK:
                 await self._handle_task_request(message)
             
@@ -776,6 +783,23 @@ Example — research then code:
                 
                 resolved_brain = self._resolve_brain_target(logical_name)
                 
+                # For pool workers: skip dead brains to avoid dispatching into the void.
+                # Only applies to pools — direct brain targets are trusted.
+                if (logical_name in self.brain_pools and 
+                    self._alive_brains and 
+                    resolved_brain not in self._alive_brains):
+                    # Try other alive workers in the pool
+                    found_alive = False
+                    for w in self.brain_pools[logical_name]:
+                        if w in self._alive_brains and self.brain_load.get(w, 0) < 1:
+                            resolved_brain = w
+                            found_alive = True
+                            break
+                    if not found_alive:
+                        print(f"[ORCH] Deferring {subtask.id[-12:]} — no alive {logical_name} workers available")
+                        deferred += 1
+                        continue
+                
                 # Respect brain capacity — don't dispatch if this worker is busy
                 current_load = self.brain_load.get(resolved_brain, 0)
                 max_concurrent = 1  # Each worker handles 1 task at a time
@@ -784,7 +808,8 @@ Example — research then code:
                     if logical_name in self.brain_pools:
                         found_free = False
                         for w in self.brain_pools[logical_name]:
-                            if self.brain_load.get(w, 0) < max_concurrent:
+                            if (w in self._alive_brains or not self._alive_brains) and \
+                               self.brain_load.get(w, 0) < max_concurrent:
                                 resolved_brain = w
                                 found_free = True
                                 break
@@ -1050,6 +1075,17 @@ Example — research then code:
         # (includes previously deferred/busy-rejected subtasks that are now PENDING again)
         if subtask.status == TaskStatus.COMPLETE and plan.status == TaskStatus.RUNNING:
             await self._execute_ready_subtasks(plan)
+        
+        # Also check OTHER running plans — a freed worker may unblock deferred
+        # subtasks in plans that were starved while this brain was busy.
+        for other_plan in list(self.task_plans.values()):
+            if other_plan.id == plan.id:
+                continue
+            if other_plan.status != TaskStatus.RUNNING:
+                continue
+            other_ready = other_plan.get_ready_subtasks()
+            if other_ready:
+                await self._execute_ready_subtasks(other_plan)
     
     async def _check_plan_completion(self, plan: TaskPlan) -> None:
         """Check if a task plan is complete and send final result."""
@@ -1181,25 +1217,36 @@ Example — research then code:
             )
     
     async def _forward_brain_event(self, message: BusMessage) -> None:
-        """Forward brain events to interested parties (like Front Brain).
+        """Forward brain events and track brain liveness.
         
-        Note: Disabled in preview to prevent broadcast loops.
-        In production, use targeted sends instead of re-broadcasting.
+        Note: Re-broadcasting disabled to prevent loops.
+        But we track alive/stopped brains for pool resilience.
         """
-        # Don't re-broadcast — causes infinite loops when multiple
-        # components all listen on wildcard and forward events.
-        # The original event is already visible to all subscribers.
-        pass
+        event_type = message.payload.get("event_type") or ""
+        # Also check the BusMessage metadata for event type
+        if not event_type and hasattr(message, 'type') and message.type == MessageType.EVENT:
+            event_type = message.payload.get("event_type", "")
+        
+        # Track brain liveness from events
+        brain_name = message.source
+        if brain_name and brain_name != self.name:
+            event_name = (message.payload or {}).get("event", "")
+            if event_name == "brain.stopped":
+                self._alive_brains.discard(brain_name)
+            else:
+                self._alive_brains.add(brain_name)
     
     def register_brain(self, brain_name: str, capabilities: Dict[str, Any] = None) -> None:
         """Register a brain with this orchestrator."""
         self.registered_brains[brain_name] = capabilities or {}
         self.brain_load[brain_name] = 0
+        self._alive_brains.add(brain_name)
     
     def unregister_brain(self, brain_name: str) -> None:
         """Unregister a brain from this orchestrator."""
         self.registered_brains.pop(brain_name, None)
         self.brain_load.pop(brain_name, None)
+        self._alive_brains.discard(brain_name)
     
     def register_brain_pool(self, logical_name: str, worker_names: List[str]) -> None:
         """Register a pool of workers under a logical brain name.
@@ -1213,13 +1260,16 @@ Example — research then code:
             worker_names: List of actual worker names (e.g. ["python_brain_0", ...])
         """
         self.brain_pools[logical_name] = list(worker_names)
+        # Assume all registered pool workers are alive until proven otherwise
+        for w in worker_names:
+            self._alive_brains.add(w)
         print(f"[ORCH] Brain pool '{logical_name}' → {worker_names}")
     
     def _resolve_brain_target(self, logical_name: str) -> str:
         """Resolve a logical brain name to the least-loaded worker from its pool.
         
         If the name isn't in a pool, returns it unchanged.
-        If all workers are busy, returns the one with lowest load (will queue).
+        Prefers alive workers. If all workers are dead, falls back to least-loaded.
         """
         if logical_name not in self.brain_pools:
             return logical_name
@@ -1228,10 +1278,14 @@ Example — research then code:
         if not workers:
             return logical_name
         
+        # Filter to alive workers if we have liveness info
+        alive_workers = [w for w in workers if w in self._alive_brains]
+        candidates = alive_workers if alive_workers else workers
+        
         # Pick the worker with the lowest load
-        best = workers[0]
+        best = candidates[0]
         best_load = self.brain_load.get(best, 0)
-        for w in workers[1:]:
+        for w in candidates[1:]:
             load = self.brain_load.get(w, 0)
             if load < best_load:
                 best = w
