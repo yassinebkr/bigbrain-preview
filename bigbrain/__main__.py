@@ -279,10 +279,8 @@ class BigBrainSystem:
                     max_retries=3,
                 )
         
-        # Register brain pool so orchestrator can resolve "python_brain" → least-loaded worker
-        python_workers = [n for n in self.brains if n.startswith("python_brain")]
-        if python_workers:
-            self.orchestrator.register_brain_pool("python_brain", python_workers)
+        # NOTE: Brain pool registration moved to end of _create_brains()
+        # (self.brains is empty at this point — brains are created later)
         
         # Researcher: Lightning — auto-approve research results
         self.orchestrator.set_execution_mode(
@@ -327,6 +325,11 @@ class BigBrainSystem:
             python_pool_names.append(worker_name)
         
         print(f"🐍 PythonBrain pool: {python_pool_size} workers ({', '.join(python_pool_names)})")
+        
+        # Register brain pool AFTER workers exist so orchestrator can resolve
+        # "python_brain" → least-loaded worker from the pool
+        if python_pool_names:
+            self.orchestrator.register_brain_pool("python_brain", python_pool_names)
         
         # Research brain — real Brave search + shared LLM
         try:

@@ -811,9 +811,10 @@ Example — research then code:
         # Synchronous bus delivery means subtasks may have completed DURING the
         # loop above (via re-entrant result handlers that were blocked by the guard).
         # Their completions may have unlocked NEW ready subtasks. Re-check once.
-        # BUT: only recurse if we actually dispatched something (not all deferred).
+        # BUT: only re-check if we actually dispatched something (not all deferred).
         # Otherwise we spin forever trying to dispatch to busy brains.
-        if plan.status == TaskStatus.RUNNING and deferred < len(ready_subtasks):
+        dispatched_count = len(ready_subtasks) - deferred
+        if plan.status == TaskStatus.RUNNING and dispatched_count > 0:
             new_ready = plan.get_ready_subtasks()
             if new_ready:
                 print(f"[ORCH] Post-loop: {len(new_ready)} new subtask(s) became ready during dispatch")
