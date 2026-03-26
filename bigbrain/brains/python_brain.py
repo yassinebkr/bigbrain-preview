@@ -754,6 +754,7 @@ Rules:
                 r"import\s+uvicorn": "uvicorn",
                 r"from\s+starlette\b": "starlette",
                 r"import\s+aiohttp|from\s+aiohttp\b": "aiohttp",
+                r"from\s+aiohttp_session\b": "aiohttp-session",
                 r"from\s+pydantic\b": "pydantic",
                 r"import\s+jwt|from\s+jose\b": "python-jose[cryptography]",
                 r"from\s+passlib\b": "passlib[bcrypt]",
@@ -764,10 +765,40 @@ Rules:
                 r"import\s+websockets|from\s+websockets\b": "websockets",
                 r"from\s+motor\b": "motor",
                 r"import\s+pymongo|from\s+pymongo\b": "pymongo",
+                r"import\s+redis|from\s+redis\b": "redis",
+                r"from\s+cryptography\b": "cryptography",
+                r"import\s+httpx|from\s+httpx\b": "httpx",
+                r"from\s+tortoise\b": "tortoise-orm",
+                r"from\s+databases\b": "databases",
             }
             for pattern, packages in dep_map.items():
                 if re.search(pattern, all_code):
                     auto_deps.extend(packages.split())
+            
+            # Generic fallback: catch remaining third-party imports
+            # by scanning for ModuleNotFoundError-prone patterns
+            stdlib_modules = {
+                "os", "sys", "json", "re", "time", "datetime", "pathlib",
+                "asyncio", "typing", "dataclasses", "hashlib", "secrets",
+                "uuid", "logging", "collections", "functools", "itertools",
+                "contextlib", "abc", "enum", "sqlite3", "http", "html",
+                "urllib", "base64", "hmac", "struct", "io", "math",
+                "random", "string", "textwrap", "copy", "shutil",
+                "tempfile", "glob", "fnmatch", "stat", "socket",
+                "email", "mimetypes", "csv", "configparser", "argparse",
+                "subprocess", "threading", "multiprocessing", "signal",
+                "traceback", "inspect", "importlib", "pkgutil",
+            }
+            import_re = re.compile(
+                r"(?:from\s+(\w+)|import\s+(\w+))"
+            )
+            for m in import_re.finditer(all_code):
+                mod = m.group(1) or m.group(2)
+                if mod and mod not in stdlib_modules and mod not in auto_deps:
+                    # Convert underscores to dashes (common PyPI convention)
+                    pkg = mod.replace("_", "-")
+                    if pkg not in auto_deps:
+                        auto_deps.append(pkg)
 
             if auto_deps:
                 auto_deps = list(dict.fromkeys(auto_deps))  # deduplicate
