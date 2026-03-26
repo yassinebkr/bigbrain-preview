@@ -350,40 +350,92 @@ Rules:
 - If this is an HTML file, output the full HTML (not Python)
 - Include proper error handling"""
 
-        await self.send_progress({
-            "stage": "writing_file",
-            "file_path": file_path,
-            "purpose": purpose,
-        })
+        # --- Generate → Verify → Fix loop (up to MAX_FILE_RETRIES) ---
+        # For Python files: syntax check after each generation.
+        # If syntax error: feed error back to LLM for fix.
+        # For non-Python files (HTML, CSS, etc.): no syntax check needed.
+        MAX_FILE_RETRIES = 3
+        is_python_file = file_path.endswith(".py")
         
-        generated = await self.llm_provider.complete(prompt, stream=False)
-        code = self._extract_code(generated)
-        
-        if not code.strip():
-            return {
-                "success": False,
-                "error": f"LLM returned empty content for {file_path}",
-                "stdout": "", "stderr": "", "exit_code": -1,
-                "file_path": file_path,
-            }
-        
-        # Write the file to the project directory
         project_dir = self.work_dir / project_name
         project_dir.mkdir(exist_ok=True, parents=True)
-        
-        # Handle subdirectories in file path
         full_path = project_dir / file_path
         full_path.parent.mkdir(exist_ok=True, parents=True)
+
+        attempt_history = []
+        code = ""
+
+        for attempt in range(1, MAX_FILE_RETRIES + 1):
+            await self.send_progress({
+                "stage": "writing_file",
+                "file_path": file_path,
+                "purpose": purpose,
+                "attempt": attempt,
+                "max_attempts": MAX_FILE_RETRIES,
+            })
+
+            if attempt == 1:
+                # First attempt: use the original prompt
+                generated = await self.llm_provider.complete(prompt, stream=False)
+            else:
+                # Fix attempt: include previous errors
+                fix_prompt = self._build_file_fix_prompt(
+                    file_path, project_name, user_request,
+                    code, attempt_history, prompt,
+                )
+                generated = await self.llm_provider.complete(fix_prompt, stream=False)
+
+            code = self._extract_code(generated)
+
+            if not code.strip():
+                attempt_history.append({
+                    "attempt": attempt,
+                    "error": "LLM returned empty content",
+                })
+                if attempt == MAX_FILE_RETRIES:
+                    return {
+                        "success": False,
+                        "error": f"LLM returned empty content for {file_path} after {attempt} attempts",
+                        "stdout": "", "stderr": "", "exit_code": -1,
+                        "file_path": file_path,
+                        "attempt_history": attempt_history,
+                    }
+                continue
+
+            # Syntax check for Python files
+            if is_python_file:
+                syntax_error = self._check_syntax(code, file_path)
+                if syntax_error:
+                    attempt_history.append({
+                        "attempt": attempt,
+                        "error": syntax_error,
+                        "code_snippet": code[:500],
+                    })
+                    await self.send_progress({
+                        "stage": "syntax_error",
+                        "file_path": file_path,
+                        "attempt": attempt,
+                        "error": syntax_error[:200],
+                    })
+                    if attempt < MAX_FILE_RETRIES:
+                        continue  # Retry with fix prompt
+                    # Final attempt still has syntax error — write anyway
+                    # (assembler may still be able to use it)
+
+            # Code is good (or non-Python) — write it
+            break
+
         full_path.write_text(code, encoding="utf-8")
         # NOTE: project files are NOT tracked as temp files — they persist
         # across restarts so preview servers can be restarted and projects
-        # can be inspected after completion. Only script_*.py temp files
-        # are tracked for cleanup.
+        # can be inspected after completion.
         
         await self.send_progress({
             "stage": "file_written",
             "file_path": file_path,
             "lines": code.count("\n") + 1,
+            "attempts": attempt,
+            "had_errors": len(attempt_history) > 0,
         })
         
         return {
@@ -394,6 +446,8 @@ Rules:
             "stdout": f"Written {file_path} ({code.count(chr(10)) + 1} lines)",
             "stderr": "",
             "exit_code": 0,
+            "attempts": attempt,
+            "attempt_history": attempt_history if attempt_history else None,
         }
     
     async def _assemble_and_run(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -1148,6 +1202,62 @@ Rules:
         
         return result if applied > 0 else None
     
+    @staticmethod
+    @staticmethod
+    def _check_syntax(code: str, filename: str = "<code>") -> Optional[str]:
+        """Check Python code for syntax errors.
+        
+        Returns None if syntax is valid, or an error message string if not.
+        """
+        try:
+            compile(code, filename, "exec")
+            return None
+        except SyntaxError as e:
+            parts = [f"SyntaxError in {filename}"]
+            if e.lineno:
+                parts.append(f"line {e.lineno}")
+            if e.msg:
+                parts.append(e.msg)
+            if e.text:
+                parts.append(f"  {e.text.rstrip()}")
+                if e.offset:
+                    parts.append(f"  {' ' * (e.offset - 1)}^")
+            return "\n".join(parts)
+
+    def _build_file_fix_prompt(
+        self,
+        file_path: str,
+        project_name: str,
+        user_request: str,
+        previous_code: str,
+        attempt_history: list,
+        original_prompt: str,
+    ) -> str:
+        """Build a fix prompt for a file that failed syntax check.
+        
+        Includes the original spec, the broken code, and the errors —
+        following the Reflexion pattern from the Honk loop.
+        """
+        error_summary = "\n".join(
+            f"Attempt {h['attempt']}: {h['error']}" for h in attempt_history
+        )
+
+        return f"""Fix the file `{file_path}` for project "{project_name}".
+
+The previous version had errors. Here is what went wrong:
+
+{error_summary}
+
+Previous broken code:
+```
+{previous_code[:4000]}
+```
+
+{original_prompt}
+
+CRITICAL: Fix ALL syntax errors. Do not repeat the same mistakes.
+Output ONLY the corrected file content, no explanation."""
+
     @staticmethod
     def _extract_code(text: str) -> str:
         """Extract Python code from LLM response (handles markdown fences)."""

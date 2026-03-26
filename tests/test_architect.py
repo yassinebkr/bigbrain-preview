@@ -579,6 +579,49 @@ class TestArtifactFlow:
         # Should contain import instruction
         assert "from models import create_user, User" in prompt
 
+    def test_syntax_check_valid(self):
+        """Valid Python passes syntax check."""
+        from bigbrain.brains.python_brain import PythonBrain
+        result = PythonBrain._check_syntax("x = 1\nprint(x)\n", "test.py")
+        assert result is None
+
+    def test_syntax_check_invalid(self):
+        """Invalid Python returns error message."""
+        from bigbrain.brains.python_brain import PythonBrain
+        result = PythonBrain._check_syntax("def foo(\n", "test.py")
+        assert result is not None
+        assert "SyntaxError" in result
+        assert "test.py" in result
+
+    def test_syntax_check_html_not_checked(self):
+        """HTML files don't go through Python syntax check."""
+        # This is tested implicitly by the file_path.endswith(".py") check
+        # in _write_project_file, but let's verify the check method works
+        from bigbrain.brains.python_brain import PythonBrain
+        # HTML is not valid Python but we shouldn't check it
+        result = PythonBrain._check_syntax("<html></html>", "index.html")
+        # Actually this would fail Python syntax check but the method
+        # is only CALLED for .py files in the write loop
+        assert result is not None  # It IS a syntax error for Python
+
+    def test_build_file_fix_prompt(self):
+        """Fix prompt includes errors and original code."""
+        from bigbrain.brains.python_brain import PythonBrain
+        brain = PythonBrain.__new__(PythonBrain)  # skip __init__
+
+        prompt = brain._build_file_fix_prompt(
+            file_path="auth.py",
+            project_name="chat",
+            user_request="build chat",
+            previous_code="def foo(\n    pass",
+            attempt_history=[{"attempt": 1, "error": "SyntaxError line 1: unexpected EOF"}],
+            original_prompt="Write auth.py...",
+        )
+        assert "auth.py" in prompt
+        assert "SyntaxError" in prompt
+        assert "def foo(" in prompt
+        assert "Fix ALL syntax errors" in prompt
+
     def test_dependency_order_complex(self):
         """Topological order with diamond dependency pattern."""
         #   models (no deps)
