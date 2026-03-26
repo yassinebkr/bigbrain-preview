@@ -98,6 +98,9 @@ class WebServer:
         self._app = web.Application(middlewares=middlewares)
         self._setup_routes()
 
+        # Clear replay buffer on start — stale events from previous runs are invalid
+        self._replay_buffer.clear()
+
         # Subscribe to ALL bus messages to forward to WebSocket clients
         self.bus.subscribe("*", self._on_bus_message)
 
@@ -451,8 +454,23 @@ class WebServer:
     # REPLAY BUFFER
     # ================================================================
 
+    # Events where a later event supersedes the earlier one for the same source.
+    # e.g. brain.complete cancels brain.started for the same brain.
+    _SUPERSEDE_PAIRS = {
+        "brain.complete": "brain.started",
+        "brain.started": "brain.complete",  # new task supersedes idle
+        "subtask.complete": "subtask.started",
+        "subtask.failed": "subtask.started",
+        "task.complete": "task.received",
+        "task.failed": "task.received",
+    }
+
     def _maybe_buffer(self, msg_type: str, event: str, data: dict) -> None:
-        """Store important messages for replay on reconnect."""
+        """Store important messages for replay on reconnect.
+        
+        Uses supersede logic: brain.complete removes buffered brain.started
+        for the same source, preventing stale "WORKING" state on reconnect.
+        """
         should_buffer = (
             msg_type in self._REPLAY_TYPES
             or event in self._REPLAY_EVENTS
@@ -467,6 +485,18 @@ class WebServer:
         self._replay_buffer = [
             (ts, d) for ts, d in self._replay_buffer if ts > cutoff
         ]
+
+        # Supersede: remove conflicting earlier events for the same source
+        supersedes = self._SUPERSEDE_PAIRS.get(event)
+        if supersedes:
+            source = data.get("source", "")
+            self._replay_buffer = [
+                (ts, d) for ts, d in self._replay_buffer
+                if not (
+                    (d.get("payload") or {}).get("event") == supersedes
+                    and d.get("source") == source
+                )
+            ]
 
         # Trim to max size (drop oldest)
         while len(self._replay_buffer) >= self._replay_max_size:
