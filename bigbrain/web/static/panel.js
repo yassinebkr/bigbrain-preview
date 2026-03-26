@@ -380,7 +380,11 @@ class BrainStatusPanel extends BasePanel {
     if (msgType === 'progress') {
       status = 'busy';
       stage = msg.payload?.stage || '';
+    } else if (event === 'brain.started' || event === 'brain.stopped') {
+      // Registration/shutdown events — brain is idle (available) or gone
+      status = event === 'brain.started' ? 'idle' : 'offline';
     } else if (event.includes('started') || event.includes('received')) {
+      // subtask.started, task.received — brain is actually working
       status = 'busy';
     } else if (event.includes('complete') && !event.includes('task.complete')) {
       // subtask.complete / brain.complete → brain goes idle
@@ -414,7 +418,7 @@ class BrainStatusPanel extends BasePanel {
 
     list.innerHTML = '';
     for (const [name, info] of this.brains) {
-      const statusLabel = { idle: 'Idle', busy: 'Working', error: 'Error' }[info.status] || 'Unknown';
+      const statusLabel = { idle: 'Ready', busy: 'Working', error: 'Error', offline: 'Offline' }[info.status] || 'Unknown';
 
       const prettyName = name.replace(/_/g, ' ');
       const stageText = info.stage ? info.stage.replace(/_/g, ' ') : '';
