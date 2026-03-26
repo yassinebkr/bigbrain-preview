@@ -737,7 +737,7 @@ Example — research then code:
             return min(available, key=lambda b: self.brain_load.get(b, 0))
         return "python_brain"  # Last resort fallback
     
-    async def _execute_ready_subtasks(self, plan: TaskPlan) -> None:
+    async def _execute_ready_subtasks(self, plan: TaskPlan, _depth: int = 0) -> None:
         """Execute all subtasks that are ready (dependencies satisfied).
         
         Respects brain capacity: only dispatches to brains that aren't at max load.
@@ -813,12 +813,14 @@ Example — research then code:
         # Their completions may have unlocked NEW ready subtasks. Re-check once.
         # BUT: only re-check if we actually dispatched something (not all deferred).
         # Otherwise we spin forever trying to dispatch to busy brains.
+        # Safety: limit recursion depth to 3 to prevent infinite busy→re-queue loops
+        # (can happen if _current_task clear races with result delivery).
         dispatched_count = len(ready_subtasks) - deferred
-        if plan.status == TaskStatus.RUNNING and dispatched_count > 0:
+        if plan.status == TaskStatus.RUNNING and dispatched_count > 0 and _depth < 3:
             new_ready = plan.get_ready_subtasks()
             if new_ready:
                 print(f"[ORCH] Post-loop: {len(new_ready)} new subtask(s) became ready during dispatch")
-                await self._execute_ready_subtasks(plan)
+                await self._execute_ready_subtasks(plan, _depth=_depth + 1)
     
     async def _dispatch_subtask(self, plan: TaskPlan, subtask: SubTask) -> None:
         """Dispatch a subtask to the appropriate brain."""

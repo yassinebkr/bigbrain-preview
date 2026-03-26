@@ -198,7 +198,14 @@ class BaseBrain(BusParticipant, ABC):
         )
     
     async def _execute_task_background(self, message: BusMessage) -> None:
-        """Execute a task in the background after bus handler returns."""
+        """Execute a task in the background after bus handler returns.
+        
+        Critical: _current_task is cleared BEFORE sending the result.
+        Because bus delivery is synchronous (asyncio.gather), the orchestrator
+        receives our result and dispatches the next task within our send_result()
+        call. If _current_task is still set at that point, the brain rejects
+        the new task as "busy" — creating an infinite re-dispatch loop.
+        """
         try:
             # Announce task start
             await self.send_event("brain.started", {
@@ -211,34 +218,56 @@ class BaseBrain(BusParticipant, ABC):
             result = await self.handle_task(message)
             
             if not self._cancelled:
-                # Send successful result
-                await self.send_result({
-                    "success": True,
-                    "data": result
-                }, message.id)
+                # Save reply info before clearing task state.
+                # We must clear BEFORE send_result because bus delivery is
+                # synchronous — the orchestrator dispatches the next task within
+                # our send_result call. If _current_task is still set, the brain
+                # rejects the new task as "busy" → infinite re-dispatch loop.
+                reply_to = message.id
+                reply_target = message.source
+                self._current_task = None
+                self._background_task = None
+                
+                await self.bus.send_result(
+                    source=self.name,
+                    result_data={"success": True, "data": result},
+                    reply_to=reply_to,
+                    workspace=self.workspace,
+                    target=reply_target,
+                )
                 
                 await self.send_event("brain.complete", {
                     "brain": self.name,
                     "task_id": message.id
                 })
+            else:
+                self._current_task = None
+                self._background_task = None
         
         except Exception as e:
-            # Error during background execution — send error result
-            await self.send_result({
-                "success": False,
-                "error": str(e),
-                "error_type": type(e).__name__
-            }, message.id)
+            # Save reply info before clearing task state (same reason as above)
+            reply_to = message.id
+            reply_target = message.source
+            self._current_task = None
+            self._background_task = None
+            
+            await self.bus.send_result(
+                source=self.name,
+                result_data={
+                    "success": False,
+                    "error": str(e),
+                    "error_type": type(e).__name__
+                },
+                reply_to=reply_to,
+                workspace=self.workspace,
+                target=reply_target,
+            )
             
             await self.send_event("brain.error", {
                 "brain": self.name,
                 "error": str(e),
                 "message_id": message.id
             }, priority=Priority.HIGH)
-        
-        finally:
-            self._current_task = None
-            self._background_task = None
     
     async def _handle_cancel_message(self, message: BusMessage) -> None:
         """Handle task cancellation requests."""
