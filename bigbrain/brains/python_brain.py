@@ -485,6 +485,16 @@ Rules:
         
         project_dir = self.work_dir / project_name
         
+        # Clean stale files from previous runs that aren't in the current plan.
+        # This prevents old broken files from poisoning new builds.
+        if project_dir.exists():
+            expected_paths = {f["path"] for f in all_files}
+            for existing in project_dir.glob("*.py"):
+                rel = existing.name
+                if rel not in expected_paths and rel != "run_preview.py":
+                    existing.unlink(missing_ok=True)
+                    logger.info("Cleaned stale file: %s", rel)
+        
         await self.send_progress({
             "stage": "assembling",
             "project_name": project_name,
