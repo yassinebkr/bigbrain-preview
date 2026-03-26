@@ -10,11 +10,11 @@
  *   - Focus state (shared between Front Brain and UI)
  */
 
-import { snapshotPanels, flipPanels, highlightPanel, MorphThrottle, getSpringCSS } from './morph.js?v=20260325c';
-import { LAYOUT_CATALOG, SlotManager, WORKSPACE_DEFAULTS, WORKSPACE_LABELS } from './layout.js?v=20260325c';
-import { createPanel, registerPanelType, StatusStripPanel } from './panel.js?v=20260325c';
-import { BusClient } from './bus-client.js?v=20260325c';
-import { PipelineManager } from './pipeline.js?v=20260325c';
+import { snapshotPanels, flipPanels, highlightPanel, MorphThrottle, getSpringCSS } from './morph.js?v=20260326b';
+import { LAYOUT_CATALOG, SlotManager, WORKSPACE_DEFAULTS, WORKSPACE_LABELS } from './layout.js?v=20260326b';
+import { createPanel, registerPanelType, StatusStripPanel } from './panel.js?v=20260326b';
+import { BusClient } from './bus-client.js?v=20260326b';
+import { PipelineManager } from './pipeline.js?v=20260326b';
 
 // ============================================================
 // APPLICATION STATE
