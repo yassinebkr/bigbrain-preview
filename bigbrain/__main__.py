@@ -210,8 +210,9 @@ class BigBrainSystem:
             "researcher": "Web search via Brave API, parallel queries, source triangulation, LLM-powered summarization. Use for fact-finding, research, data gathering, current events",
         }
         # Register pool workers with same description
-        for name in python_pool_names:
-            brain_descriptions[name] = "Generates and executes Python code, scripts, simulations, calculations"
+        for name in self.brains:
+            if name.startswith("python_brain"):
+                brain_descriptions[name] = "Generates and executes Python code, scripts, simulations, calculations"
         for brain_name in self.brains:
             desc = brain_descriptions.get(brain_name, brain_name)
             self.front_brain.register_brain(brain_name, desc)
