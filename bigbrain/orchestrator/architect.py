@@ -24,6 +24,7 @@ seeing the full project.
 Reference: MetaGPT's structured artifact passing, ChatDev's waterfall phases.
 """
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
@@ -378,12 +379,15 @@ class ArchitectPhase:
             {"role": "user", "content": "\n".join(user_parts)},
         ]
 
-        raw = await self.llm_provider.chat_complete(
-            messages=messages,
-            model=self.model,
-            stream=False,
-            max_tokens=4096,
-            temperature=0.2,
+        raw = await asyncio.wait_for(
+            self.llm_provider.chat_complete(
+                messages=messages,
+                model=self.model,
+                stream=False,
+                max_tokens=8192,
+                temperature=0.2,
+            ),
+            timeout=45,  # Fail fast to legacy planner if architect is too slow
         )
 
         return self._extract_json(raw)

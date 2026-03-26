@@ -492,6 +492,47 @@ class TaskListPanel extends BasePanel {
       }
     });
 
+    // Planning phase events (assessment, architect, project_structure)
+    this._addSubscription({ type: 'event', event: 'planning.' }, (msg) => {
+      const event = msg.payload?.event || '';
+      const planningId = msg.id || 'planning';
+      if (event === 'planning.assessment') {
+        this.tasks.set(planningId, {
+          id: planningId,
+          planId: planningId,
+          label: 'Analyzing task...',
+          target: msg.source,
+          status: 'running',
+          progress: -1,
+          started: Date.now(),
+        });
+        this._renderTasks();
+      } else if (event === 'planning.architect_started') {
+        // Update or create planning entry
+        const existing = this.tasks.get(planningId) || [...this.tasks.values()].find(t => t.label === 'Analyzing task...');
+        const id = existing?.id || planningId;
+        this.tasks.set(id, {
+          ...(existing || {}),
+          id,
+          planId: id,
+          label: 'Designing architecture...',
+          target: msg.source,
+          status: 'running',
+          progress: -1,
+          started: existing?.started || Date.now(),
+        });
+        this._renderTasks();
+      } else if (event === 'planning.project_structure') {
+        // Architecture done — remove planning entry (task.received will replace it)
+        for (const [tid, task] of this.tasks) {
+          if (task.label === 'Designing architecture...' || task.label === 'Analyzing task...') {
+            this.tasks.delete(tid);
+          }
+        }
+        this._renderTasks();
+      }
+    });
+
     // Orchestrator events (task.received, task.complete, task.failed)
     this._addSubscription({ type: 'event', event: 'task.' }, (msg) => {
       const event = msg.payload?.event || '';
