@@ -353,10 +353,12 @@ Type 'quit' or 'exit' to stop."""
                 reply_text = parsed.get("reply", "Working on it...")
                 await self._emit_chat_message("assistant", reply_text)
                 
-                # Send ONE compound task to the orchestrator
-                # The orchestrator's _llm_decompose() will break it into
-                # subtasks with proper dependencies (ReWOO-style #E1 → #E2)
-                ws = self.focus_manager.get_active_workspace() or "default"
+                # Send ONE compound task to the orchestrator.
+                # Always route to "default" workspace — the system only creates
+                # one orchestrator (orchestrator_default). Using the focus
+                # manager's active workspace caused tasks to be sent to
+                # non-existent orchestrators (e.g. orchestrator_python-dev).
+                ws = "default"
                 task_request = parsed["task"]
                 description = task_request[:60] + "..." if len(task_request) > 60 else task_request
                 await self.bus.send_task(
@@ -380,7 +382,7 @@ Type 'quit' or 'exit' to stop."""
                 combined_request = "; then ".join(
                     t.get("request", t.get("description", "")) for t in tasks
                 )
-                ws = self.focus_manager.get_active_workspace() or "default"
+                ws = "default"  # Always route to the single orchestrator
                 description = combined_request[:60] + "..." if len(combined_request) > 60 else combined_request
                 await self.bus.send_task(
                     source=self.name,

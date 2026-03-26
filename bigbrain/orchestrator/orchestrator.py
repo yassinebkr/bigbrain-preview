@@ -266,6 +266,9 @@ Example — research then code:
         Processes different message types and updates task state accordingly.
         Never blocks - all operations are async and return quickly.
         """
+        import sys
+        print(f"[ORCH] handle_message: type={message.type} source={message.source} target={message.target}", flush=True, file=sys.stderr)
+        
         # Skip our own messages to prevent infinite broadcast loops
         if message.source == self.name:
             return
@@ -292,6 +295,9 @@ Example — research then code:
                 await self._forward_brain_event(message)
         
         except Exception as e:
+            import sys, traceback
+            print(f"[ORCH] ERROR in handle_message: {e}", flush=True, file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
             await self.bus.broadcast_event(
                 source=self.name,
                 event_type="orchestrator.error",
