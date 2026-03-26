@@ -279,7 +279,38 @@ class PythonBrain(BaseBrain):
         # Build file tree overview
         file_tree = "\n".join(f"  - {f['path']}: {f.get('purpose', '')}" for f in all_files)
         
-        prompt = f"""Write the file `{file_path}` for the project "{project_name}".
+        # Use architect spec if available (rich context with interfaces + data models)
+        architect_spec = payload.get("architect_spec", "")
+        implementation_notes = payload.get("implementation_notes", "")
+        edge_cases = payload.get("edge_cases", [])
+
+        if architect_spec:
+            # Architect-powered prompt: rich context with exact interfaces
+            edge_cases_text = ""
+            if edge_cases:
+                edge_cases_text = "\n\nEdge cases to handle:\n" + "\n".join(f"- {ec}" for ec in edge_cases)
+
+            prompt = f"""Write the file `{file_path}` for the project "{project_name}".
+
+Overall project goal: {user_request}
+
+## Architect Specification for this file:
+{architect_spec}
+{dep_content}
+{edge_cases_text}
+
+Rules:
+- Output ONLY the file content, no explanation before or after
+- Write ONLY this file — do not include other files
+- Implement ALL exports listed in the spec with EXACT signatures
+- Import from dependencies using the EXACT names in the spec
+- If this is an HTML file, output the full HTML (not Python)
+- Include proper error handling for all edge cases listed
+- Add docstrings to all public functions and classes
+- Make the code production-quality, not a sketch"""
+        else:
+            # Legacy prompt (no architect spec available)
+            prompt = f"""Write the file `{file_path}` for the project "{project_name}".
 
 Overall project goal: {user_request}
 

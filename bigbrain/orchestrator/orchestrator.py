@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Set
 from ..bus.bus import MessageBus
 from ..bus.message import BusMessage, MessageType, Priority
 from ..bus.participant import BusParticipant
+from .architect import ArchitectPhase, ProjectSpec
 from .execution_modes import BrainExecutionConfig, ExecutionMode
 
 logger = logging.getLogger(__name__)
@@ -436,12 +437,20 @@ Example — research then code:
     
     async def _plan_project(self, plan_id: str, user_request: str,
                             needs_research: bool, research_queries: list) -> List[SubTask]:
-        """Plan a multi-file project and build a task DAG.
+        """Plan a multi-file project using the Architect Phase and build a task DAG.
         
-        Returns subtasks ordered by dependency:
-        1. Research tasks (if needed)
-        2. File tasks (ordered by dependency DAG)
-        3. Assembler task (wires everything together + runs)
+        Pipeline:
+        1. Research tasks (if needed) — dispatched to researcher brain
+        2. Architect Phase — produces detailed ProjectSpec with data models,
+           interface contracts, and per-file specs
+        3. File-writing tasks — each worker gets rich context (its FileSpec +
+           upstream dependency specs rendered as readable text)
+        4. Assembler task — wires everything together and runs
+
+        The architect phase is the key improvement: instead of telling a worker
+        "write auth.py with purpose: authentication", we tell it exactly which
+        functions to implement, what signatures they need, what data models
+        exist, and what the upstream dependencies export.
         """
         subtasks = []
         task_idx = 0
@@ -461,7 +470,153 @@ Example — research then code:
                 research_dep_ids.append(sid)
                 task_idx += 1
         
-        # Step 2: Plan file structure
+        # Step 2: Architect Phase — produce detailed ProjectSpec
+        # NOTE: Research results are not available yet at planning time
+        # (they're async subtasks). The architect works from the user request.
+        # Future: two-phase planning where research feeds into architect.
+        architect = ArchitectPhase(
+            llm_provider=self.llm_provider,
+            model=self.planner_model,
+        )
+
+        await self.bus.broadcast_event(
+            source=self.name,
+            event_type="planning.architect_started",
+            payload={"request": user_request[:200]},
+            workspace=self.workspace,
+            priority=Priority.NORMAL,
+        )
+
+        try:
+            spec: ProjectSpec = await architect.design(user_request)
+        except (ValueError, Exception) as exc:
+            logger.warning("Architect phase failed, falling back to legacy planner: %s", exc)
+            return await self._plan_project_legacy(plan_id, user_request,
+                                                    needs_research, research_queries,
+                                                    task_idx, research_dep_ids)
+
+        project_name = spec.project_name
+        
+        logger.info("Architect spec: %s — %d files, %d data models",
+                     project_name, len(spec.file_specs), len(spec.data_models))
+        
+        await self.bus.broadcast_event(
+            source=self.name,
+            event_type="planning.project_structure",
+            payload={
+                "project_name": project_name,
+                "files": [fs.path for fs in spec.file_specs],
+                "total_files": len(spec.file_specs),
+                "data_models": [dm.name for dm in spec.data_models],
+                "tech_decisions": spec.tech_decisions,
+                "entry_point": spec.entry_point,
+            },
+            workspace=self.workspace,
+            priority=Priority.NORMAL,
+        )
+        
+        # Step 3: Build subtask DAG from architect spec
+        # Use topological order so dependencies are dispatched first
+        ordered_specs = spec.dependency_order()
+
+        # Map file paths to subtask IDs
+        file_to_sid = {}
+        for fs in ordered_specs:
+            sid = f"{plan_id}_s{task_idx}"
+            file_to_sid[fs.path] = sid
+            task_idx += 1
+        
+        # Create file-writing subtasks with RICH context from architect
+        for fs in ordered_specs:
+            sid = file_to_sid[fs.path]
+            
+            # Resolve dependencies: file deps + research deps
+            deps = set(research_dep_ids)  # All file tasks wait for research
+            for dep_path in fs.dependencies:
+                dep_sid = file_to_sid.get(dep_path)
+                if dep_sid:
+                    deps.add(dep_sid)
+            
+            # Render rich worker prompt from the FileSpec + upstream specs
+            upstream_specs = spec.get_upstream_specs(fs)
+            worker_spec_text = fs.render_for_worker(upstream_specs=upstream_specs)
+
+            # Build all_files summary for backward compat with PythonBrain
+            all_files = [
+                {
+                    "path": f.path,
+                    "purpose": f.purpose,
+                    "exports": [e.name for e in f.exports],
+                    "dependencies": f.dependencies,
+                }
+                for f in spec.file_specs
+            ]
+
+            subtasks.append(SubTask(
+                id=sid,
+                description=f"Write {fs.path}: {fs.purpose}",
+                brain_target="python_brain",
+                payload={
+                    "type": "write_project_file",
+                    "user_request": user_request,
+                    "project_name": project_name,
+                    "file_path": fs.path,
+                    "purpose": fs.purpose,
+                    "exports": [e.name for e in fs.exports],
+                    "dependencies": fs.dependencies,
+                    "all_files": all_files,
+                    # NEW: rich architect spec for the worker
+                    "architect_spec": worker_spec_text,
+                    "implementation_notes": fs.implementation_notes,
+                    "edge_cases": fs.edge_cases,
+                },
+                dependencies=deps,
+            ))
+        
+        # Step 4: Add assembler task — wires everything together and runs
+        all_file_sids = set(file_to_sid.values())
+        assembler_sid = f"{plan_id}_s{task_idx}"
+
+        all_files_summary = [
+            {"path": f.path, "purpose": f.purpose, "dependencies": f.dependencies}
+            for f in spec.file_specs
+        ]
+
+        subtasks.append(SubTask(
+            id=assembler_sid,
+            description=f"Assemble and run {project_name}",
+            brain_target="python_brain",
+            payload={
+                "type": "assemble_and_run",
+                "user_request": user_request,
+                "project_name": project_name,
+                "all_files": all_files_summary,
+                "entry_point": spec.entry_point,
+                "execution_strategy": spec.execution_strategy,
+            },
+            dependencies=all_file_sids,
+        ))
+        
+        # Store spec on the plan for later reference (integration/review phases)
+        # Attached as instance attribute on the plan after creation in caller
+        self._last_project_spec = spec
+        
+        return subtasks
+
+    async def _plan_project_legacy(self, plan_id: str, user_request: str,
+                                    needs_research: bool, research_queries: list,
+                                    task_idx: int = 0,
+                                    research_dep_ids: list = None) -> List[SubTask]:
+        """Legacy project planner (fallback if architect phase fails).
+        
+        Uses the simpler PROJECT_PLANNER_PROMPT that only produces
+        file paths + purposes without detailed interface contracts.
+        """
+        if research_dep_ids is None:
+            research_dep_ids = []
+        subtasks = list()  # research subtasks already added by caller
+
+        # Plan file structure (legacy prompt)
         messages = [
             {"role": "system", "content": self.PROJECT_PLANNER_PROMPT},
             {"role": "user", "content": f"[Current year: {datetime.now().year}] {user_request}"},
@@ -480,9 +635,9 @@ Example — research then code:
         project_name = file_plan.get("project_name", "project")
         
         if not files:
-            raise ValueError("Project planner returned no files")
+            raise ValueError("Legacy project planner returned no files")
         
-        logger.info("Project plan: %s — %d files", project_name, len(files))
+        logger.info("Legacy project plan: %s — %d files", project_name, len(files))
         
         await self.bus.broadcast_event(
             source=self.name,
@@ -493,23 +648,19 @@ Example — research then code:
                 "total_files": len(files),
             },
             workspace=self.workspace,
-            priority=Priority.NORMAL
+            priority=Priority.NORMAL,
         )
         
-        # Step 3: Build subtask DAG from file dependencies
-        # Map file paths to subtask IDs
+        # Build subtask DAG
         file_to_sid = {}
         for f in files:
             sid = f"{plan_id}_s{task_idx}"
             file_to_sid[f["path"]] = sid
             task_idx += 1
         
-        # Create file-writing subtasks with proper dependencies
         for f in files:
             sid = file_to_sid[f["path"]]
-            
-            # Resolve dependencies: file deps + research deps
-            deps = set(research_dep_ids)  # All file tasks wait for research
+            deps = set(research_dep_ids)
             for dep_path in f.get("dependencies", []):
                 dep_sid = file_to_sid.get(dep_path)
                 if dep_sid:
@@ -527,12 +678,11 @@ Example — research then code:
                     "purpose": f.get("purpose", ""),
                     "exports": f.get("exports", []),
                     "dependencies": f.get("dependencies", []),
-                    "all_files": files,  # Full file tree for context
+                    "all_files": files,
                 },
                 dependencies=deps,
             ))
         
-        # Step 4: Add assembler task — wires everything together and runs
         all_file_sids = set(file_to_sid.values())
         assembler_sid = f"{plan_id}_s{task_idx}"
         subtasks.append(SubTask(
