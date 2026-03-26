@@ -169,12 +169,21 @@ class BaseBrain(BusParticipant, ABC):
         returns immediately, enabling parallel dispatch to multiple brains.
         """
         if self._current_task:
-            # Brain is busy - reject with busy status
-            await self.send_result({
-                "success": False,
-                "error": "Brain is busy with another task",
-                "busy": True
-            }, message.id)
+            # Brain is busy - reject with busy status.
+            # Use bus.send_result with EXPLICIT target (message.source) to avoid
+            # the log-search fallback in send_result(), which raises ValueError
+            # when the message isn't found — killing the busy rejection silently.
+            await self.bus.send_result(
+                source=self.name,
+                result_data={
+                    "success": False,
+                    "error": "Brain is busy with another task",
+                    "busy": True
+                },
+                reply_to=message.id,
+                workspace=self.workspace,
+                target=message.source,
+            )
             return
         
         self._current_task = message
