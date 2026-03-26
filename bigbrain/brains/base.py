@@ -376,7 +376,13 @@ class BaseBrain(BusParticipant, ABC):
             reply_to=self._current_task.id if self._current_task else None,
             priority=Priority.LOW
         )
+        try:
+            ws_count = len(self.bus._wildcard_subscribers)
+        except (TypeError, AttributeError):
+            ws_count = "?"
+        print(f"[BRAIN-DBG] {self.name} send_progress stage={progress_data.get('stage','?')} ws_subs={ws_count}")
         await self.bus.send(message)
+        print(f"[BRAIN-DBG] {self.name} send_progress DONE stage={progress_data.get('stage','?')}")
     
     @abstractmethod
     async def handle_task(self, message: BusMessage) -> Any:

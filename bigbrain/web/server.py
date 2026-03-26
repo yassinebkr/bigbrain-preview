@@ -402,18 +402,12 @@ class WebServer:
         This is the bridge: every message on the Python MessageBus
         gets serialized and sent to every browser tab.
         """
-        if not self._ws_clients:
-            return
-        
-        # Debug: log ALL forwarded messages (temporary)
+        # Extract metadata for logging and buffering
         msg_type = message.type if isinstance(message.type, str) else message.type.value
         event = (message.payload or {}).get("event", "")
         stage = (message.payload or {}).get("stage", "")
-        # Skip noisy focus state broadcasts
-        if not (msg_type == "state" and "focus" in event):
-            print(f"[WS→{len(self._ws_clients)}] {msg_type:10} {event:25} src={message.source} {f'stage={stage}' if stage else ''}")
 
-        # Serialize to JSON-safe dict
+        # Serialize to JSON-safe dict (always — needed for buffering)
         try:
             data = message.to_log_dict()
         except Exception:
@@ -425,8 +419,18 @@ class WebServer:
                 "timestamp": message.timestamp,
             }
 
-        # Buffer important messages for replay on reconnect
+        # Buffer important messages BEFORE checking for clients.
+        # This ensures events are captured even when no browser is connected,
+        # so reconnecting clients get the full replay.
         self._maybe_buffer(msg_type, event, data)
+
+        if not self._ws_clients:
+            return
+        
+        # Debug: log ALL forwarded messages (temporary)
+        # Skip noisy focus state broadcasts
+        if not (msg_type == "state" and "focus" in event):
+            print(f"[WS→{len(self._ws_clients)}] {msg_type:10} {event:25} src={message.source} {f'stage={stage}' if stage else ''}")
 
         # Broadcast to all clients
         closed = []
