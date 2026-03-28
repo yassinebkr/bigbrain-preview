@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import time
 import uuid
 from datetime import datetime
 from dataclasses import dataclass, field
@@ -14,6 +15,9 @@ from ..bus.message import BusMessage, MessageType, Priority
 from ..bus.participant import BusParticipant
 from .architect import ArchitectPhase, ProjectSpec
 from .execution_modes import BrainExecutionConfig, ExecutionMode
+from .task_tracker import TaskTracker
+from .checkpoint import FileCheckpoint
+from .risk import classify_risk, RiskLevel, get_risk_description
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +63,8 @@ class TaskPlan:
     status: TaskStatus = TaskStatus.PENDING
     result: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+    tracker: Optional['TaskTracker'] = None
+    execution_mode: str = "dag"  # "todo" or "dag"
     
     def get_ready_subtasks(self) -> List[SubTask]:
         """Get subtasks that are ready to execute (dependencies satisfied)."""
@@ -220,6 +226,9 @@ Example — research then code:
         
         # Execution mode configs per brain
         self.execution_configs: Dict[str, BrainExecutionConfig] = {}
+        
+        # File checkpointing system
+        self.checkpoint_manager = FileCheckpoint(max_checkpoints=10)
     
     async def start(self) -> None:
         """Start the orchestrator and register with message bus."""
@@ -334,6 +343,9 @@ Example — research then code:
             priority=Priority.NORMAL
         )
         
+        # Auto-checkpoint before execution (for file-based projects)
+        await self._auto_checkpoint_before_execution(plan)
+        
         # Start executing ready subtasks
         plan.status = TaskStatus.RUNNING
         await self._execute_ready_subtasks(plan)
@@ -393,6 +405,10 @@ Example — research then code:
                 
                 if subtasks:
                     plan.subtasks = subtasks
+                    # Analyze complexity and choose execution mode
+                    plan.execution_mode = self._analyze_execution_mode(subtasks, user_request)
+                    # Create TaskTracker from subtasks
+                    plan.tracker = TaskTracker.create_from_plan(subtasks)
                     return plan
                     
             except Exception as e:
@@ -400,6 +416,10 @@ Example — research then code:
         
         # Fallback: simple deterministic routing
         plan.subtasks = self._simple_decompose(plan_id, task_data)
+        # Analyze complexity and choose execution mode
+        plan.execution_mode = self._analyze_execution_mode(plan.subtasks, user_request)
+        # Create TaskTracker from subtasks
+        plan.tracker = TaskTracker.create_from_plan(plan.subtasks)
         return plan
     
     async def _assess_complexity(self, user_request: str) -> dict:
@@ -925,6 +945,17 @@ Example — research then code:
             ready_subtasks = plan.get_ready_subtasks()
             print(f"[ORCH] _execute_ready_subtasks: plan={plan.id[-8:]} status={plan.status.value} ready={len(ready_subtasks)} total={len(plan.subtasks)}")
             
+            # Handle execution mode: "todo" mode executes sequentially (one task at a time)
+            if plan.execution_mode == "todo" and ready_subtasks:
+                # In todo mode: respect dependency order but don't parallelize
+                # Only dispatch the first ready task (or one that's already running)
+                running_count = sum(1 for st in plan.subtasks if st.status == TaskStatus.RUNNING)
+                if running_count > 0:
+                    print(f"[ORCH] Todo mode: {running_count} task(s) running, waiting for completion")
+                    return  # Wait for current task to finish
+                ready_subtasks = ready_subtasks[:1]  # Only first ready task
+                print(f"[ORCH] Todo mode: dispatching single task: {ready_subtasks[0].description[:60]}")
+            
             deferred = 0
             busy_rejected = 0  # Track dispatches that got busy-rejected (synchronous)
             for subtask in ready_subtasks:
@@ -1028,11 +1059,34 @@ Example — research then code:
         subtask.start_time = time.time()
         subtask.assigned_brain = subtask.brain_target
         
+        # Classify risk level
+        risk_level = classify_risk(subtask.payload)
+        risk_description = get_risk_description(risk_level)
+        
+        logger.info("Subtask %s risk level: %s (%s)", subtask.id[-12:], risk_level.value, risk_description)
+        
+        # Update TaskTracker
+        if plan.tracker:
+            from .task_tracker import TaskStatus as TrackerStatus
+            plan.tracker.update_status(subtask.id, TrackerStatus.IN_PROGRESS)
+        
         # Update brain load
         self.brain_load[subtask.brain_target] = self.brain_load.get(subtask.brain_target, 0) + 1
         
         # Resolve any variable references in payload
         resolved_payload = await self._resolve_payload_references(subtask.payload, plan)
+        
+        # Inject current task tracker state so brain knows full context
+        if plan.tracker:
+            resolved_payload["_task_state"] = plan.tracker.render_for_prompt()
+        
+        # Inject user interjections if any
+        if hasattr(plan, "user_interjections") and plan.user_interjections:
+            # Include most recent interjection
+            latest_interjection = plan.user_interjections[-1]["message"]
+            resolved_payload["_user_interjection"] = latest_interjection
+            # Clear interjections after inclusion
+            plan.user_interjections.clear()
         
         # Send task to brain
         task_message = BusMessage(
@@ -1062,7 +1116,9 @@ Example — research then code:
                     "task_id": plan.id,
                     "subtask_id": subtask.id,
                     "brain": subtask.brain_target,
-                    "description": subtask.description
+                    "description": subtask.description,
+                    "risk_level": risk_level.value,
+                    "risk_description": risk_description
                 },
                 workspace=self.workspace,
                 priority=Priority.NORMAL
@@ -1212,6 +1268,11 @@ Example — research then code:
             if hasattr(subtask, '_dispatch_msg_id'):
                 delattr(subtask, '_dispatch_msg_id')
             
+            # Update TaskTracker - reset to PENDING
+            if plan.tracker:
+                from .task_tracker import TaskStatus as TrackerStatus
+                plan.tracker.update_status(subtask.id, TrackerStatus.PENDING)
+            
             # Remove from active tracking
             del self.active_subtasks[dispatch_msg_id]
             
@@ -1229,6 +1290,31 @@ Example — research then code:
         else:
             subtask.status = TaskStatus.FAILED
             subtask.error = message.payload.get("error", "Unknown error")
+        
+        # Update TaskTracker
+        if plan.tracker:
+            from .task_tracker import TaskStatus as TrackerStatus
+            if subtask.status == TaskStatus.COMPLETE:
+                result_summary = None
+                if subtask.result and isinstance(subtask.result, dict):
+                    if 'stdout' in subtask.result:
+                        result_summary = subtask.result['stdout'][:100] if subtask.result['stdout'] else "completed"
+                    elif 'file_path' in subtask.result:
+                        result_summary = f"wrote {subtask.result['file_path']}"
+                    else:
+                        result_summary = "completed"
+                plan.tracker.update_status(subtask.id, TrackerStatus.COMPLETE, result_summary)
+            else:
+                plan.tracker.update_status(subtask.id, TrackerStatus.FAILED, subtask.error)
+            
+            # Broadcast task tracker update for UI
+            await self.bus.broadcast_event(
+                source=self.name,
+                event_type="task_tracker.updated",
+                payload=plan.tracker.to_ws_event()["data"],
+                workspace=self.workspace,
+                priority=Priority.LOW
+            )
         
         # Update brain load
         if subtask.assigned_brain:
@@ -1251,6 +1337,9 @@ Example — research then code:
             workspace=self.workspace,
             priority=Priority.NORMAL
         )
+        
+        # Check context limits and compact if needed
+        self._check_context_limits(plan)
         
         # Check if entire plan is complete FIRST (before trying to start more)
         await self._check_plan_completion(plan)
@@ -1302,6 +1391,9 @@ Example — research then code:
                 workspace=self.workspace,
                 project=plan.original_task.project
             )
+            
+            # Extract learnings from the completed plan
+            await self._extract_learnings(plan)
             
             # Announce plan completion
             await self.bus.broadcast_event(
@@ -1531,3 +1623,377 @@ Example — research then code:
                 for name, config in self.execution_configs.items()
             }
         }
+    
+    async def _auto_checkpoint_before_execution(self, plan: TaskPlan) -> None:
+        """
+        Auto-checkpoint project directory before executing subtasks.
+        
+        Creates a snapshot for file-based projects so we can recover from errors
+        or compare changes after task completion.
+        """
+        # Only checkpoint for projects that will write files
+        has_file_tasks = any(
+            subtask.payload.get("type") in ("write_project_file", "assemble_and_run")
+            for subtask in plan.subtasks
+        )
+        
+        if not has_file_tasks:
+            return  # Skip checkpoint for code-only tasks
+        
+        # Determine project directory from subtasks
+        project_name = None
+        for subtask in plan.subtasks:
+            payload = subtask.payload
+            if payload.get("project_name"):
+                project_name = payload["project_name"]
+                break
+        
+        if not project_name:
+            return  # No project name found
+        
+        # Assume project directory is in a standard location
+        # (This would need to be configured based on brain setup)
+        import tempfile
+        from pathlib import Path
+        
+        # For this implementation, assume projects are in temp dir
+        # In production, this would use the actual PythonBrain work_dir
+        project_dir = Path(tempfile.gettempdir()) / f"bigbrain_python_python_brain" / project_name
+        
+        if not project_dir.exists():
+            return  # Project directory doesn't exist yet
+        
+        try:
+            checkpoint_id = self.checkpoint_manager.snapshot(project_dir)
+            
+            # Store checkpoint info on the plan for later reference
+            if not hasattr(plan, 'metadata'):
+                plan.metadata = {}
+            plan.metadata['pre_execution_checkpoint'] = checkpoint_id
+            
+            await self.bus.broadcast_event(
+                source=self.name,
+                event_type="checkpoint.created",
+                payload={
+                    "task_id": plan.id,
+                    "checkpoint_id": checkpoint_id,
+                    "project_name": project_name,
+                    "type": "pre_execution"
+                },
+                workspace=self.workspace,
+                priority=Priority.LOW
+            )
+            
+            logger.info("Created pre-execution checkpoint %s for project %s", 
+                       checkpoint_id[:8], project_name)
+            
+        except Exception as e:
+            # Don't fail task execution if checkpointing fails
+            logger.warning("Failed to create pre-execution checkpoint for %s: %s", 
+                          project_name, e)
+            
+            await self.bus.broadcast_event(
+                source=self.name,
+                event_type="checkpoint.failed",
+                payload={
+                    "task_id": plan.id,
+                    "project_name": project_name,
+                    "error": str(e),
+                    "type": "pre_execution"
+                },
+                workspace=self.workspace,
+                priority=Priority.LOW
+            )
+    
+    def _analyze_execution_mode(self, subtasks: List[SubTask], user_request: str) -> str:
+        """
+        Analyze task complexity and choose execution mode.
+        
+        "plan first, analyze second" approach:
+        - ≤2 independent tasks OR ≤4 total tasks → "todo" mode (sequential, single brain)
+        - >2 independent AND >4 total → "dag" mode (parallel, multi-brain)
+        
+        Args:
+            subtasks: List of planned subtasks
+            user_request: Original user request for context
+            
+        Returns:
+            "todo" or "dag" execution mode
+        """
+        if not subtasks:
+            return "todo"
+        
+        total_tasks = len(subtasks)
+        
+        # Count independent tasks (no dependencies)
+        independent_count = sum(1 for st in subtasks if not st.dependencies)
+        
+        # Apply decision rules
+        if independent_count <= 2 or total_tasks <= 4:
+            mode = "todo"
+            reason = f"{independent_count} independent tasks, {total_tasks} total (≤2 indep OR ≤4 total)"
+        else:
+            mode = "dag"
+            reason = f"{independent_count} independent tasks, {total_tasks} total (>2 indep AND >4 total)"
+        
+        logger.info("Execution mode: %s (%s)", mode, reason)
+        
+        # Emit planning event with mode selection (best-effort)
+        try:
+            asyncio.create_task(self.bus.broadcast_event(
+                source=self.name,
+                event_type="planning.mode_selected",
+                payload={
+                    "mode": mode,
+                    "reasoning": reason,
+                    "independent_tasks": independent_count,
+                    "total_tasks": total_tasks,
+                    "request_summary": user_request[:100] if user_request else ""
+                },
+                workspace=self.workspace,
+                priority=Priority.LOW
+            ))
+        except RuntimeError:
+            pass  # No event loop — testing or non-async context
+        
+        return mode
+
+    
+    def inject_user_message(self, plan_id: str, message: str) -> bool:
+        """
+        Inject a user message into an active task plan.
+        
+        The message will be included in the payload of the next dispatched subtask
+        as _user_interjection, allowing the brain to see and respond to user input
+        mid-execution.
+        
+        Args:
+            plan_id: ID of the task plan to inject message into
+            message: User message to inject
+            
+        Returns:
+            True if message was injected, False if plan not found or not active
+        """
+        plan = self.task_plans.get(plan_id)
+        if not plan or plan.status != TaskStatus.RUNNING:
+            return False
+        
+        # Store the message on the plan
+        if not hasattr(plan, "user_interjections"):
+            plan.user_interjections = []
+        
+        plan.user_interjections.append({
+            "message": message,
+            "timestamp": time.time(),
+            "injected_at": time.strftime("%Y-%m-%d %H:%M:%S")
+        })
+        
+        logger.info("Injected user message into plan %s: %s", plan_id[:8], message[:100])
+        
+        # Broadcast event (best-effort)
+        try:
+            asyncio.create_task(self.bus.broadcast_event(
+                source=self.name,
+                event_type="task.user_interjection",
+                payload={
+                    "task_id": plan_id,
+                    "message": message,
+                    "timestamp": time.time()
+                },
+                workspace=self.workspace,
+                priority=Priority.NORMAL
+            ))
+        except RuntimeError:
+            pass  # No event loop — testing or non-async context
+        
+        return True
+
+    
+    def _check_context_limits(self, plan: TaskPlan) -> None:
+        """
+        Check if context window is approaching limits and trigger compaction.
+        
+        This is a lightweight implementation that tracks message history length
+        and compacts when approaching 92% of estimated context window.
+        """
+        # Simple estimation: count total characters in subtask payloads and results
+        total_chars = 0
+        
+        for subtask in plan.subtasks:
+            # Count payload size
+            if subtask.payload:
+                total_chars += len(str(subtask.payload))
+            # Count result size
+            if subtask.result:
+                total_chars += len(str(subtask.result))
+        
+        # Rough context limit estimation (assuming ~4 chars per token, 100k token limit)
+        CONTEXT_LIMIT = 400000  # chars
+        COMPACTION_THRESHOLD = int(CONTEXT_LIMIT * 0.92)  # 92%
+        
+        if total_chars > COMPACTION_THRESHOLD:
+            logger.info("Context approaching limit (%d chars > %d), triggering compaction", 
+                       total_chars, COMPACTION_THRESHOLD)
+            self._compact_plan_context(plan)
+    
+    def _compact_plan_context(self, plan: TaskPlan) -> None:
+        """
+        Compact plan context by summarizing completed subtask results.
+        
+        Replaces verbose results with concise summaries to free up context space.
+        """
+        compacted_count = 0
+        
+        for subtask in plan.subtasks:
+            if (subtask.status == TaskStatus.COMPLETE and 
+                subtask.result and 
+                not (isinstance(subtask.result, dict) and subtask.result.get("_compacted", False))):
+                
+                # Extract key information for summary
+                result = subtask.result
+                if isinstance(result, dict):
+                    summary = {
+                        "success": result.get("success", False),
+                        "status": "completed",
+                        "type": subtask.payload.get("type", "unknown")
+                    }
+                    
+                    # Preserve key outputs but truncate verbose content
+                    if "file_path" in result:
+                        summary["file_path"] = result["file_path"]
+                    if "stdout" in result:
+                        summary["stdout"] = result["stdout"][:100] + "..." if len(result.get("stdout", "")) > 100 else result.get("stdout", "")
+                    if "lines" in result:
+                        summary["lines"] = result["lines"]
+                    
+                    # Mark as compacted and replace
+                    summary["_compacted"] = True
+                    subtask.result = summary
+                    compacted_count += 1
+        
+        if compacted_count > 0:
+            logger.info("Compacted %d subtask results for plan %s", 
+                       compacted_count, plan.id[:8])
+
+    
+    async def _extract_learnings(self, plan: TaskPlan) -> None:
+        """
+        Extract learnings from completed task plan.
+        
+        Analyzes failed and successful subtasks to extract patterns and insights
+        for future task planning improvements.
+        """
+        if not plan.subtasks:
+            return
+        
+        learnings = []
+        
+        # Analyze failed subtasks for common error patterns
+        failed_subtasks = [st for st in plan.subtasks if st.status == TaskStatus.FAILED]
+        for subtask in failed_subtasks:
+            if subtask.error:
+                error_type = self._classify_error_type(subtask.error)
+                learning = {
+                    "type": "failure_pattern",
+                    "pattern": error_type,
+                    "context": subtask.description[:100],
+                    "error": subtask.error[:200],
+                    "timestamp": time.time()
+                }
+                learnings.append(learning)
+        
+        # Analyze successful patterns
+        successful_subtasks = [st for st in plan.subtasks if st.status == TaskStatus.COMPLETE]
+        if len(successful_subtasks) > 0:
+            # Extract successful strategies
+            task_types = {}
+            for subtask in successful_subtasks:
+                task_type = subtask.payload.get("type", "unknown")
+                if task_type not in task_types:
+                    task_types[task_type] = 0
+                task_types[task_type] += 1
+            
+            # Record successful task type patterns
+            for task_type, count in task_types.items():
+                if count > 1:  # Multiple successes indicate a good pattern
+                    learning = {
+                        "type": "success_pattern",
+                        "pattern": f"{task_type}_works_well",
+                        "context": f"Successfully completed {count} {task_type} tasks",
+                        "timestamp": time.time()
+                    }
+                    learnings.append(learning)
+        
+        # Save learnings if any were extracted
+        if learnings:
+            await self._save_learnings(learnings)
+    
+    def _classify_error_type(self, error: str) -> str:
+        """Classify error into common patterns."""
+        error_lower = error.lower()
+        
+        if "syntax" in error_lower or "syntaxerror" in error_lower:
+            return "syntax_error"
+        elif "import" in error_lower or "modulenotfounderror" in error_lower:
+            return "import_error" 
+        elif "permission" in error_lower or "access" in error_lower:
+            return "permission_error"
+        elif "timeout" in error_lower or "timed out" in error_lower:
+            return "timeout_error"
+        elif "file not found" in error_lower or "no such file" in error_lower:
+            return "file_not_found"
+        else:
+            return "other_error"
+    
+    async def _save_learnings(self, learnings: List[Dict[str, Any]]) -> None:
+        """Save learnings to persistent storage."""
+        try:
+            import json
+            from pathlib import Path
+            
+            # Create memory directory structure
+            memory_dir = Path("memory") / "long_term"
+            memory_dir.mkdir(parents=True, exist_ok=True)
+            
+            learnings_file = memory_dir / "learnings.json"
+            
+            # Load existing learnings
+            existing_learnings = []
+            if learnings_file.exists():
+                with open(learnings_file, "r", encoding="utf-8") as f:
+                    existing_learnings = json.load(f)
+            
+            # Add new learnings
+            existing_learnings.extend(learnings)
+            
+            # Keep only the most recent 50 learnings (FIFO)
+            MAX_LEARNINGS = 50
+            if len(existing_learnings) > MAX_LEARNINGS:
+                # Sort by timestamp and keep the newest ones
+                existing_learnings.sort(key=lambda x: x.get("timestamp", 0), reverse=True)
+                existing_learnings = existing_learnings[:MAX_LEARNINGS]
+            
+            # Save back to file
+            with open(learnings_file, "w", encoding="utf-8") as f:
+                json.dump(existing_learnings, f, indent=2)
+            
+            logger.info("Saved %d learnings to %s", len(learnings), learnings_file)
+            
+        except Exception as e:
+            logger.warning("Failed to save learnings: %s", e)
+    
+    def load_learnings(self) -> List[Dict[str, Any]]:
+        """Load learnings for brain startup."""
+        try:
+            import json
+            from pathlib import Path
+            
+            learnings_file = Path("memory") / "long_term" / "learnings.json"
+            if learnings_file.exists():
+                with open(learnings_file, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            return []
+            
+        except Exception as e:
+            logger.warning("Failed to load learnings: %s", e)
+            return []

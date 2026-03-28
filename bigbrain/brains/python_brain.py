@@ -230,6 +230,15 @@ class PythonBrain(BaseBrain):
         elif task_type == "assemble_and_run":
             # Assemble all project files and run the entry point
             return await self._assemble_and_run(payload)
+        elif task_type == "batch_write_files":
+            # Write multiple files concurrently
+            return await self._batch_write_files(payload)
+        elif task_type == "edit_file":
+            # Edit existing file using diff-based approach
+            return await self._edit_file(payload)
+        elif task_type == "search_project":
+            # Search across project files using regex or glob patterns
+            return await self._search_project(payload)
         elif task_type == "execute_code":
             code = payload.get("code")
             if not code:
@@ -308,10 +317,22 @@ of your dependencies (written by other workers). Use these exact class names,
 function signatures, and import paths. If the actual code differs from the
 architect spec above, follow the ACTUAL CODE — it's what will be on disk."""
 
+            # Check for task state from orchestrator's TaskTracker
+            task_state_section = ""
+            if "_task_state" in payload:
+                task_state = payload["_task_state"]
+                task_state_section = f"\n\n## Current Project Progress\n{task_state}\n"
+            
+            # Check for user interjection
+            user_interjection_section = ""
+            if "_user_interjection" in payload:
+                user_message = payload["_user_interjection"]
+                user_interjection_section = f"\n\n## User Message (Mid-Task)\nThe user just said: \"{user_message}\"\nTake this into account when writing this file.\n"
+
             prompt = f"""Write the file `{file_path}` for the project "{project_name}".
 
 Overall project goal: {user_request}
-
+{user_interjection_section}{task_state_section}
 ## Architect Specification for this file:
 {architect_spec}
 {actual_code_note}
@@ -332,7 +353,7 @@ Rules:
             prompt = f"""Write the file `{file_path}` for the project "{project_name}".
 
 Overall project goal: {user_request}
-
+{user_interjection_section}{task_state_section}
 Project file structure:
 {file_tree}
 
@@ -472,6 +493,565 @@ Rules:
             "attempt_history": attempt_history if attempt_history else None,
         }
     
+    async def _batch_write_files(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Write multiple files concurrently using asyncio.gather.
+        
+        This is for when the orchestrator knows multiple files can be written
+        simultaneously without dependencies between them.
+        
+        Expected payload:
+        {
+            "type": "batch_write_files",
+            "files": [
+                {"path": "file1.py", "content": "print('file1')"},
+                {"path": "file2.py", "content": "print('file2')"}
+            ]
+        }
+        
+        Returns:
+        {
+            "success": True,
+            "results": [
+                {"path": "file1.py", "success": True, "bytes_written": 18},
+                {"path": "file2.py", "success": False, "error": "Permission denied"}
+            ]
+        }
+        """
+        files_to_write = payload.get("files", [])
+        if not files_to_write:
+            return {
+                "success": False, 
+                "error": "No files provided",
+                "results": []
+            }
+        
+        # Progress update
+        await self.send_progress({
+            "stage": "batch_write_start",
+            "total_files": len(files_to_write)
+        })
+        
+        async def write_single_file(file_spec: Dict[str, str]) -> Dict[str, Any]:
+            """Write a single file and return result."""
+            file_path = file_spec.get("path", "")
+            content = file_spec.get("content", "")
+            
+            if not file_path:
+                return {
+                    "path": file_path,
+                    "success": False,
+                    "error": "No file path provided"
+                }
+            
+            try:
+                # Ensure we're writing to the work directory
+                full_path = self.work_dir / file_path
+                full_path.parent.mkdir(parents=True, exist_ok=True)
+                
+                # Use asyncio.to_thread for the actual I/O to avoid blocking
+                await asyncio.to_thread(full_path.write_text, content, encoding="utf-8")
+                
+                return {
+                    "path": file_path,
+                    "success": True,
+                    "bytes_written": len(content.encode("utf-8")),
+                    "lines": content.count("\n") + 1 if content else 0
+                }
+            except Exception as e:
+                return {
+                    "path": file_path,
+                    "success": False,
+                    "error": str(e)
+                }
+        
+        # Write all files concurrently
+        try:
+            results = await asyncio.gather(
+                *[write_single_file(file_spec) for file_spec in files_to_write],
+                return_exceptions=True
+            )
+            
+            # Handle any exceptions that weren't caught by write_single_file
+            processed_results = []
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    processed_results.append({
+                        "path": files_to_write[i].get("path", f"file_{i}"),
+                        "success": False,
+                        "error": str(result)
+                    })
+                else:
+                    processed_results.append(result)
+            
+            # Calculate overall success
+            successful_writes = [r for r in processed_results if r.get("success")]
+            total_bytes = sum(r.get("bytes_written", 0) for r in successful_writes)
+            
+            await self.send_progress({
+                "stage": "batch_write_complete",
+                "successful": len(successful_writes),
+                "failed": len(processed_results) - len(successful_writes),
+                "total_bytes": total_bytes
+            })
+            
+            return {
+                "success": len(successful_writes) > 0,  # Success if any file was written
+                "results": processed_results,
+                "summary": {
+                    "total_files": len(files_to_write),
+                    "successful": len(successful_writes),
+                    "failed": len(processed_results) - len(successful_writes),
+                    "total_bytes": total_bytes
+                },
+                "stdout": f"Batch write: {len(successful_writes)}/{len(files_to_write)} files written",
+                "stderr": "",
+                "exit_code": 0 if len(successful_writes) > 0 else 1
+            }
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Batch write failed: {str(e)}",
+                "results": [],
+                "stdout": "",
+                "stderr": str(e),
+                "exit_code": 1
+            }
+    
+    async def _edit_file(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Edit an existing file using LLM-generated SEARCH/REPLACE diffs.
+        
+        Falls back to full rewrite if diff application fails.
+        
+        Expected payload:
+        {
+            "type": "edit_file",
+            "file_path": "path/to/file.py",
+            "instructions": "Add error handling to the parse_config function",
+            "project_name": "my_project"  # optional
+        }
+        
+        Returns:
+        {
+            "success": True,
+            "file_path": "path/to/file.py",
+            "file_content": "updated content...",
+            "method": "diff" | "rewrite",
+            "diff_summary": "Applied 3 changes: added try-catch, updated docstring, fixed typo"
+        }
+        """
+        if not self.llm_provider:
+            return {
+                "success": False, 
+                "error": "No LLM provider available for editing",
+                "stdout": "", "stderr": "", "exit_code": -1
+            }
+        
+        file_path = payload.get("file_path", "")
+        instructions = payload.get("instructions", "")
+        project_name = payload.get("project_name", "")
+        
+        if not file_path or not instructions:
+            return {
+                "success": False,
+                "error": "file_path and instructions are required",
+                "stdout": "", "stderr": "", "exit_code": -1
+            }
+        
+        # Determine full path
+        if project_name:
+            project_dir = self.work_dir / project_name
+            full_path = project_dir / file_path
+        else:
+            full_path = self.work_dir / file_path
+        
+        if not full_path.exists():
+            return {
+                "success": False,
+                "error": f"File not found: {file_path}",
+                "stdout": "", "stderr": "", "exit_code": -1
+            }
+        
+        # Read existing file content
+        try:
+            original_content = full_path.read_text(encoding="utf-8")
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Could not read file: {str(e)}",
+                "stdout": "", "stderr": "", "exit_code": -1
+            }
+        
+        await self.send_progress({
+            "stage": "editing_file",
+            "file_path": file_path,
+            "instructions": instructions[:100],
+            "original_lines": original_content.count("\n") + 1
+        })
+        
+        # First attempt: Generate SEARCH/REPLACE diffs
+        diff_result = await self._try_diff_edit(full_path, original_content, instructions, payload)
+        
+        if diff_result["success"]:
+            return diff_result
+        
+        await self.send_progress({
+            "stage": "diff_failed_fallback",
+            "file_path": file_path,
+            "diff_error": diff_result.get("error", "unknown"),
+        })
+        
+        # Fallback: Full rewrite
+        rewrite_result = await self._try_full_rewrite(full_path, original_content, instructions, payload)
+        return rewrite_result
+    
+    async def _try_diff_edit(self, full_path: Path, original_content: str, 
+                            instructions: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Attempt to edit file using LLM-generated SEARCH/REPLACE diffs."""
+        
+        # Check for task state injection
+        task_state_section = ""
+        if "_task_state" in payload:
+            task_state = payload["_task_state"]
+            task_state_section = f"\n\n## Current Project Progress\n{task_state}\n"
+        
+        # Check for user interjection
+        user_interjection_section = ""
+        if "_user_interjection" in payload:
+            user_message = payload["_user_interjection"]
+            user_interjection_section = f"\n\n## User Message (Mid-Task)\nThe user just said: \"{user_message}\"\nConsider this when editing the file.\n"
+        
+        # Number the lines for precise references
+        numbered_content = "\n".join(
+            f"{i+1:4d} | {line}" for i, line in enumerate(original_content.split("\n"))
+        )
+        
+        prompt = f"""Edit the file using SEARCH/REPLACE blocks.
+
+Instructions: {instructions}
+{user_interjection_section}{task_state_section}
+Current file content (numbered):
+{numbered_content}
+
+Generate SEARCH/REPLACE blocks to make the requested changes:
+- Use EXACT text from the file (including whitespace)
+- Make minimal changes to achieve the goal
+- Provide multiple blocks if needed
+- Include line numbers for context
+
+Format:
+SEARCH
+exact text to find
+REPLACE
+new text to replace it with
+
+Be precise with indentation and whitespace."""
+
+        try:
+            response = await self.llm_provider.complete(
+                prompt, stream=False, max_tokens=4096, temperature=0.2
+            )
+            
+            # Apply the search/replace operations
+            updated_content, changes = self._apply_search_replace(original_content, response)
+            
+            if not changes:
+                return {
+                    "success": False,
+                    "error": "No valid SEARCH/REPLACE blocks found in LLM response",
+                    "method": "diff"
+                }
+            
+            # Write the updated content
+            full_path.write_text(updated_content, encoding="utf-8")
+            
+            diff_summary = f"Applied {len(changes)} change(s): {', '.join(changes[:3])}"
+            if len(changes) > 3:
+                diff_summary += f" (and {len(changes) - 3} more)"
+            
+            return {
+                "success": True,
+                "file_path": str(full_path.name),
+                "file_content": updated_content,
+                "method": "diff",
+                "diff_summary": diff_summary,
+                "changes_applied": len(changes),
+                "stdout": f"Applied {len(changes)} diff changes to {full_path.name}",
+                "stderr": "",
+                "exit_code": 0
+            }
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Diff edit failed: {str(e)}",
+                "method": "diff"
+            }
+    
+    async def _try_full_rewrite(self, full_path: Path, original_content: str,
+                               instructions: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Fallback: Generate completely new file content."""
+        
+        # Check for task state injection
+        task_state_section = ""
+        if "_task_state" in payload:
+            task_state = payload["_task_state"]
+            task_state_section = f"\n\n## Current Project Progress\n{task_state}\n"
+        
+        # Check for user interjection
+        user_interjection_section = ""
+        if "_user_interjection" in payload:
+            user_message = payload["_user_interjection"]
+            user_interjection_section = f"\n\n## User Message (Mid-Task)\nThe user just said: \"{user_message}\"\nConsider this when rewriting the file.\n"
+        
+        prompt = f"""Rewrite the entire file to incorporate the requested changes.
+
+Instructions: {instructions}
+{user_interjection_section}{task_state_section}
+Original file content:
+{original_content}
+
+Rules:
+- Output the COMPLETE file content with the requested changes
+- Preserve existing functionality while making the requested modifications
+- Maintain the same code style and structure
+- Output ONLY the file content, no explanations"""
+
+        try:
+            new_content = await self.llm_provider.complete(
+                prompt, stream=False, max_tokens=8192, temperature=0.3
+            )
+            
+            # Extract code if wrapped in markdown
+            new_content = self._extract_code(new_content)
+            
+            if not new_content.strip():
+                return {
+                    "success": False,
+                    "error": "LLM returned empty content for file rewrite",
+                    "method": "rewrite",
+                    "stdout": "", "stderr": "", "exit_code": -1
+                }
+            
+            # Write the new content
+            full_path.write_text(new_content, encoding="utf-8")
+            
+            return {
+                "success": True,
+                "file_path": str(full_path.name),
+                "file_content": new_content,
+                "method": "rewrite",
+                "diff_summary": "Complete file rewrite",
+                "lines": new_content.count("\n") + 1,
+                "stdout": f"Rewrote {full_path.name} ({new_content.count(chr(10)) + 1} lines)",
+                "stderr": "",
+                "exit_code": 0
+            }
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"File rewrite failed: {str(e)}",
+                "method": "rewrite",
+                "stdout": "", "stderr": str(e), "exit_code": -1
+            }
+    
+    async def _search_project(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Search across project files using regex or glob patterns.
+        
+        Expected payload:
+        {
+            "type": "search_project",
+            "pattern": "def\\s+\\w+\\(",  # regex pattern
+            "mode": "regex",  # "regex" or "glob"
+            "project_dir": "path/to/project",  # optional, defaults to work_dir
+            "file_extensions": [".py", ".txt"]  # optional, defaults to common extensions
+        }
+        
+        Returns:
+        {
+            "success": True,
+            "matches": [
+                {
+                    "file": "module.py",
+                    "line": 15,
+                    "match": "def my_function(param):",
+                    "context": "    def my_function(param):\n        return param * 2"
+                }
+            ],
+            "total_matches": 3,
+            "files_searched": 12
+        }
+        """
+        pattern = payload.get("pattern", "")
+        mode = payload.get("mode", "regex")
+        project_dir_path = payload.get("project_dir", "")
+        file_extensions = payload.get("file_extensions", [".py", ".js", ".html", ".css", ".txt", ".md"])
+        
+        if not pattern:
+            return {
+                "success": False,
+                "error": "No search pattern provided",
+                "matches": [],
+                "total_matches": 0,
+                "files_searched": 0
+            }
+        
+        # Determine search directory
+        if project_dir_path:
+            search_dir = Path(project_dir_path)
+        else:
+            search_dir = self.work_dir
+        
+        if not search_dir.exists():
+            return {
+                "success": False,
+                "error": f"Search directory not found: {search_dir}",
+                "matches": [],
+                "total_matches": 0,
+                "files_searched": 0
+            }
+        
+        await self.send_progress({
+            "stage": "searching",
+            "pattern": pattern[:50],
+            "mode": mode,
+            "directory": str(search_dir)
+        })
+        
+        if mode == "regex":
+            return await self._search_regex(search_dir, pattern, file_extensions)
+        elif mode == "glob":
+            return await self._search_glob(search_dir, pattern, file_extensions)
+        else:
+            return {
+                "success": False,
+                "error": f"Unknown search mode: {mode}",
+                "matches": [],
+                "total_matches": 0,
+                "files_searched": 0
+            }
+    
+    async def _search_regex(self, search_dir: Path, pattern: str, file_extensions: List[str]) -> Dict[str, Any]:
+        """Search files using regex pattern."""
+        import re
+        
+        try:
+            compiled_pattern = re.compile(pattern, re.MULTILINE)
+        except re.error as e:
+            return {
+                "success": False,
+                "error": f"Invalid regex pattern: {str(e)}",
+                "matches": [],
+                "total_matches": 0,
+                "files_searched": 0
+            }
+        
+        matches = []
+        files_searched = 0
+        
+        # Search all files with matching extensions
+        for file_path in search_dir.rglob("*"):
+            if not file_path.is_file():
+                continue
+                
+            # Skip hidden files and .checkpoints
+            if any(part.startswith('.') for part in file_path.parts):
+                continue
+                
+            # Check file extension
+            if file_extensions and file_path.suffix not in file_extensions:
+                continue
+                
+            files_searched += 1
+            
+            try:
+                content = file_path.read_text(encoding="utf-8", errors="ignore")
+                
+                # Find all matches in the file
+                for match in compiled_pattern.finditer(content):
+                    line_num = content[:match.start()].count('\n') + 1
+                    
+                    # Get context (line containing the match + surrounding lines)
+                    lines = content.split('\n')
+                    start_line = max(0, line_num - 2)
+                    end_line = min(len(lines), line_num + 1)
+                    context_lines = lines[start_line:end_line]
+                    context = '\n'.join(context_lines)
+                    
+                    match_info = {
+                        "file": str(file_path.relative_to(search_dir)),
+                        "line": line_num,
+                        "match": match.group(),
+                        "context": context,
+                        "start": match.start(),
+                        "end": match.end()
+                    }
+                    matches.append(match_info)
+                    
+            except (UnicodeDecodeError, PermissionError):
+                # Skip files that can't be read
+                continue
+        
+        return {
+            "success": True,
+            "matches": matches,
+            "total_matches": len(matches),
+            "files_searched": files_searched,
+            "pattern": pattern,
+            "mode": "regex"
+        }
+    
+    async def _search_glob(self, search_dir: Path, pattern: str, file_extensions: List[str]) -> Dict[str, Any]:
+        """Search files using glob pattern."""
+        from pathlib import Path
+        
+        matches = []
+        files_searched = 0
+        
+        try:
+            # Use glob pattern to find matching files
+            for file_path in search_dir.rglob(pattern):
+                if not file_path.is_file():
+                    continue
+                    
+                # Check file extension if specified
+                if file_extensions and file_path.suffix not in file_extensions:
+                    continue
+                
+                files_searched += 1
+                
+                # For glob mode, we return file matches rather than content matches
+                match_info = {
+                    "file": str(file_path.relative_to(search_dir)),
+                    "line": 1,  # No line-specific match for glob
+                    "match": file_path.name,
+                    "context": f"File: {file_path.name}",
+                    "size": file_path.stat().st_size if file_path.exists() else 0
+                }
+                matches.append(match_info)
+                
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Glob search failed: {str(e)}",
+                "matches": [],
+                "total_matches": 0,
+                "files_searched": 0
+            }
+        
+        return {
+            "success": True,
+            "matches": matches,
+            "total_matches": len(matches),
+            "files_searched": files_searched,
+            "pattern": pattern,
+            "mode": "glob"
+        }
+    
     async def _assemble_and_run(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Assemble all project files and run the entry point.
         
@@ -513,16 +1093,40 @@ Rules:
         
         if missing:
             # Some files are missing — they might be in upstream_context
+            # Collect files to write concurrently
+            files_to_write = []
             for source, result in upstream_context.items():
                 if isinstance(result, dict):
                     content = result.get("file_content", "")
                     fp = result.get("file_path", "")
                     if fp and content and fp in missing:
-                        full_path = project_dir / fp
+                        files_to_write.append((fp, content))
+            
+            if files_to_write:
+                # Write missing files concurrently using asyncio.gather
+                async def write_missing_file(file_path: str, content: str) -> tuple[str, bool]:
+                    try:
+                        full_path = project_dir / file_path
                         full_path.parent.mkdir(exist_ok=True, parents=True)
-                        full_path.write_text(content, encoding="utf-8")
-                        written_files[fp] = content
-                        missing.remove(fp)
+                        await asyncio.to_thread(full_path.write_text, content, encoding="utf-8")
+                        return file_path, True
+                    except Exception:
+                        return file_path, False
+                
+                # Write all missing files concurrently
+                write_results = await asyncio.gather(
+                    *[write_missing_file(fp, content) for fp, content in files_to_write],
+                    return_exceptions=True
+                )
+                
+                # Process results
+                for i, result in enumerate(write_results):
+                    if isinstance(result, tuple):
+                        fp, success = result
+                        if success:
+                            written_files[fp] = files_to_write[i][1]  # content
+                            missing.remove(fp)
+                    # If result is an exception, file remains missing
         
         if missing:
             return {
@@ -985,7 +1589,7 @@ Rules:
             try:
                 # Generate (or fix) code
                 if attempt == 1:
-                    code = await self._generate_initial_code(user_request, upstream_context)
+                    code = await self._generate_initial_code(user_request, upstream_context, payload)
                 else:
                     code = await self._fix_code(user_request, attempt_history)
 
@@ -1109,10 +1713,24 @@ Rules:
         }
 
     async def _generate_initial_code(self, user_request: str, 
-                                     upstream_context: dict = None) -> str:
+                                     upstream_context: dict = None,
+                                     payload: dict = None) -> str:
         """Generate initial code from natural language (attempt 1)."""
         # Build context from upstream brain results (e.g., researcher findings)
         context_section = ""
+        
+        # Check for task state from orchestrator's TaskTracker
+        task_state_section = ""
+        if payload and "_task_state" in payload:
+            task_state = payload["_task_state"]
+            task_state_section = f"\n\n## Current Project Progress\n{task_state}\n"
+        
+        # Check for user interjection
+        user_interjection_section = ""
+        if payload and "_user_interjection" in payload:
+            user_message = payload["_user_interjection"]
+            user_interjection_section = f"\n\n## User Message (Mid-Task)\nThe user just said: \"{user_message}\"\nTake this into account when generating the code.\n"
+        
         if upstream_context:
             context_parts = []
             for source, result in upstream_context.items():
@@ -1132,7 +1750,7 @@ Rules:
         prompt = f"""Write a Python script that does the following:
 
 {user_request}
-{context_section}
+{user_interjection_section}{task_state_section}{context_section}
 Rules:
 - Output ONLY the Python code, no explanation before or after
 - The code must be self-contained and runnable as a script
