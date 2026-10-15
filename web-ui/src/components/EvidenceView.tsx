@@ -142,9 +142,15 @@ export function EvidenceView() {
             <span className="text-[11.5px]" style={{ color: 'var(--text-tertiary)' }}>
               {stats.tasks} task{stats.tasks > 1 ? 's' : ''} · {stats.runs} recorded run{stats.runs > 1 ? 's' : ''}
               {' · '}
-              <span style={{ color: 'var(--success, #34c759)' }}>{stats.passed} passed</span>
-              {' / '}
-              <span style={{ color: 'var(--warning, #ff9500)' }}>{stats.failed} failed</span>
+              <span style={{ color: 'var(--success, #34c759)' }}>
+                {stats.passed}/{stats.tasks} passing
+              </span>
+              {stats.failed > 0 && (
+                <>
+                  {' · '}
+                  <span style={{ color: 'var(--warning, #ff9500)' }}>{stats.failed} failing</span>
+                </>
+              )}
             </span>
           )}
         </div>
