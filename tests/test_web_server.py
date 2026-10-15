@@ -684,3 +684,50 @@ class TestPlugins:
         from bigbrain.plugins import set_enabled
         with pytest.raises(ValueError, match="unknown plugin"):
             set_enabled("nope", True)
+
+
+class TestStreamingFrames:
+    """chat.delta is transient; chat.done finalizes and is captured."""
+
+    @pytest.mark.asyncio
+    async def test_chat_delta_not_buffered_chat_done_is(self, server):
+        # chat.delta: transient — not replay-buffered, not history.
+        delta = BusMessage(
+            type=MessageType.EVENT, source="front_brain", target="morphable_ui",
+            payload={"event": "chat.delta", "delta": "Hel"},
+        )
+        await server._on_bus_message(delta)
+        assert server._chat_history == []
+        assert all(e != "chat.delta" for _, e in
+                   [(ts, d.get("payload", {}).get("event")) for ts, d in server._replay_buffer])
+
+        # chat.done: final streamed text → history + replay buffer.
+        done = BusMessage(
+            type=MessageType.EVENT, source="front_brain", target="morphable_ui",
+            payload={"event": "chat.done", "text": "Hello streamed world"},
+        )
+        await server._on_bus_message(done)
+        assert server._chat_history[-1]["text"] == "Hello streamed world"
+        assert server._replay_buffer[-1][1]["payload"]["event"] == "chat.done"
+
+
+class TestCompoundFallback:
+    def test_compound_converted_to_generate_and_execute(self):
+        from bigbrain.orchestrator.orchestrator import WorkspaceOrchestrator
+        orch = WorkspaceOrchestrator.__new__(WorkspaceOrchestrator)
+        subtasks = orch._simple_decompose("plan1", {
+            "type": "compound",
+            "request": "crée un script hello.py",
+            "user_request": "crée un script hello.py",
+        })
+        assert len(subtasks) == 1
+        assert subtasks[0].payload["type"] == "generate_and_execute"
+        assert subtasks[0].payload["user_request"] == "crée un script hello.py"
+        assert subtasks[0].brain_target == "python_brain"
+
+    def test_known_types_pass_through(self):
+        from bigbrain.orchestrator.orchestrator import WorkspaceOrchestrator
+        orch = WorkspaceOrchestrator.__new__(WorkspaceOrchestrator)
+        subtasks = orch._simple_decompose("plan2", {"type": "research", "query": "x"})
+        assert subtasks[0].payload["type"] == "research"
+        assert subtasks[0].brain_target == "researcher"

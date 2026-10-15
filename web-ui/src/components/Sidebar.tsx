@@ -1,6 +1,7 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
+  Plus,
   Search,
   Home,
   Briefcase,
@@ -14,6 +15,7 @@ import { Tooltip } from './Tooltip';
 
 const sidebarItems: { id: string; icon: React.ComponentType<{ size?: number; strokeWidth?: number; style?: React.CSSProperties }> | null; tooltip?: string; isAvatar?: boolean; isSpacer?: boolean }[] = [
   { id: 'avatar', icon: null, tooltip: 'New Chat', isAvatar: true },
+  { id: 'newchat', icon: Plus, tooltip: 'New conversation' },
   { id: 'search', icon: Search, tooltip: 'Search (Ctrl+K)' },
   { id: 'home', icon: Home, tooltip: 'Home' },
   { id: 'briefcase', icon: Briefcase, tooltip: 'Workspace' },
@@ -39,6 +41,7 @@ function SidebarContent({ onItemClick }: { onItemClick?: () => void }) {
     onItemClick?.();
     switch (id) {
       case 'avatar':
+      case 'newchat':
         // A new conversation — clear the transcript (the server keeps its
         // own history; sessions restore it later).
         useAppStore.getState().clearMessages();

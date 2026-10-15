@@ -374,7 +374,17 @@ export const useAppStore = create<AppState>()(
         const text = state.inputText.trim();
         if (!text && state.attachments.length === 0) return;
         const userMessage: Message = { id: `user-${Date.now()}`, role: 'user', content: text, timestamp: Date.now(), attachments: state.attachments.length > 0 ? [...state.attachments] : undefined };
-        set((s) => ({ messages: [...s.messages, userMessage], inputText: '', attachments: [], view: 'chat', isStreaming: true, streamingText: '' }));
+        // Sending from the home page ALWAYS starts a new conversation —
+        // the previous transcript must not bleed into it.
+        const isNewConversation = state.view === 'welcome';
+        set((s) => ({
+          messages: isNewConversation ? [userMessage] : [...s.messages, userMessage],
+          inputText: '',
+          attachments: [],
+          view: 'chat',
+          isStreaming: true,
+          streamingText: '',
+        }));
         state.connection?.send(text, state.attachments);
       },
     }),

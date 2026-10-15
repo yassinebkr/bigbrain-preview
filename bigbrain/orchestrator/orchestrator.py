@@ -896,7 +896,12 @@ Example — research then code:
         raise ValueError(f"Could not parse plan JSON from LLM output: {text[:200]}")
 
     def _simple_decompose(self, plan_id: str, task_data: dict) -> List[SubTask]:
-        """Fallback: simple deterministic task routing (no LLM needed)."""
+        """Fallback: simple deterministic task routing (no LLM needed).
+
+        Compound or unknown types must NOT be forwarded raw — brains reject
+        what they don't know ('Unknown task type: compound'). Convert them
+        to a generate_and_execute request the python brain handles.
+        """
         task_type = task_data.get("type", "unknown")
         
         brain_map = {
@@ -906,13 +911,32 @@ Example — research then code:
             "web_search": "researcher",
         }
         
-        target = brain_map.get(task_type, self._choose_brain_for_task(task_type))
+        if task_type in brain_map:
+            target = brain_map[task_type]
+            payload = task_data
+        else:
+            # Compound / unknown: let the python brain generate + run code
+            # from the natural-language request instead of crashing.
+            request = (
+                task_data.get("user_request")
+                or task_data.get("request")
+                or task_data.get("query")
+                or task_data.get("description")
+                or str(task_data)
+            )
+            target = "python_brain"
+            payload = {
+                "type": "generate_and_execute",
+                "user_request": request,
+                "description": request[:120],
+                "reply_to_ui": task_data.get("reply_to_ui", False),
+            }
         
         return [SubTask(
             id=f"{plan_id}_s0",
-            description=f"Execute {task_type} task",
+            description=f"Execute {payload.get('type', task_type)} task",
             brain_target=target,
-            payload=task_data,
+            payload=payload,
         )]
 
     def _choose_brain_for_task(self, task_type: str) -> str:

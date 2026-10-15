@@ -209,6 +209,22 @@ export class BigBrainConnection implements ConnectionLike {
     const event = payload.event;
     const isReplay = frame._replay === true;
 
+    if (event === 'chat.delta') {
+      this.callbacks.onStreamDelta?.({
+        text: payload.delta || '',
+        role: 'assistant',
+        source: frame.source || 'bigbrain',
+      });
+      return;
+    }
+
+    if (event === 'chat.done') {
+      // Streamed reply complete: finalize the streaming bubble; the text
+      // must NOT be re-added as a new message (it was already shown live).
+      this.callbacks.onRunEnd?.();
+      return;
+    }
+
     if (event === 'chat.message') {
       // Replayed chat messages are skipped: loadHistory() already provides
       // them on connect (double-add otherwise).

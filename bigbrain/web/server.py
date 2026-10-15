@@ -98,6 +98,8 @@ class WebServer:
             "subtask.started", "subtask.complete", "subtask.failed",
             "brain.started", "brain.complete",
             "chat.message",  # Front brain summary / chat responses
+            "chat.done",    # Final text of a streamed reply
+            # NOTE: chat.delta is deliberately absent — transient chunks.
         }
 
         # Chat history for the Aplot UI (chat.history req/res + reconnect).
@@ -823,7 +825,14 @@ class WebServer:
         self._maybe_buffer(msg_type, event, data)
 
         # Chat history: capture assistant/system messages for chat.history.
-        if event == "chat.message":
+        # chat.done carries the full text of a STREAMED reply (the deltas
+        # themselves are transient and never stored).
+        if event == "chat.done":
+            payload = message.payload or {}
+            text = payload.get("text")
+            if isinstance(text, str) and text.strip():
+                self._append_chat_history("assistant", text)
+        elif event == "chat.message":
             payload = message.payload or {}
             role = payload.get("role", "assistant")
             text = payload.get("text")

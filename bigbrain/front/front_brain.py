@@ -203,13 +203,39 @@ class FrontBrain:
         messages.extend(history)
         
         try:
-            response = await self.llm_provider.chat_complete(
+            # STREAMING: consume the provider's delta stream and broadcast
+            # each chunk as chat.delta — the UI shows the reply live.
+            # Gate: if the model starts emitting delegation JSON, stop
+            # streaming (raw JSON has no business in the chat).
+            result = await self.llm_provider.chat_complete(
                 messages=messages,
-                stream=False
+                stream=True,
             )
-            
+            if hasattr(result, "__aiter__"):
+                parts: list[str] = []
+                emitting = False
+                async for delta in result:
+                    if not delta:
+                        continue
+                    parts.append(delta)
+                    if not emitting:
+                        # Decide once, from the first non-space content.
+                        head = "".join(parts).lstrip()[:8]
+                        looks_like_json = head.startswith("{") or head.startswith("```json")
+                        if looks_like_json:
+                            emitting = False
+                            continue
+                        emitting = True
+                    if emitting:
+                        await self._emit_chat_delta(delta)
+                response = "".join(parts)
+                self._last_response_streamed = emitting
+            else:
+                response = str(result)
+                self._last_response_streamed = False
             return response
         except Exception as e:
+            self._last_response_streamed = False
             return f"I encountered an error processing your request: {e}"
     
     # _execute_code_direct REMOVED — Front Brain must never execute code.
@@ -416,8 +442,13 @@ Type 'quit' or 'exit' to stop."""
                     priority=Priority.NORMAL,
                 )
             else:
-                # Plain text response — send to chat
-                await self._emit_chat_message("assistant", response)
+                # Plain text response — send to chat. If the reply was
+                # already streamed (chat.delta), signal completion only:
+                # re-sending the full text would duplicate the bubble.
+                if getattr(self, "_last_response_streamed", False):
+                    await self._emit_chat_done(response)
+                else:
+                    await self._emit_chat_message("assistant", response)
             
         except Exception as e:
             import traceback
@@ -541,6 +572,25 @@ Type 'quit' or 'exit' to stop."""
             else:
                 return "✅ Done — check the workspace tab for details."
         return "✅ Done."
+
+    async def _emit_chat_delta(self, delta: str) -> None:
+        """Stream one text chunk to the UI (chat.delta events)."""
+        await self.bus.broadcast_event(
+            source=self.name,
+            event_type="chat.delta",
+            payload={"delta": delta},
+            priority=Priority.NORMAL,
+        )
+
+    async def _emit_chat_done(self, text: str = "") -> None:
+        """End of a streamed reply: the UI finalizes the streaming bubble
+        WITHOUT re-adding the text as a new message (no duplicate)."""
+        await self.bus.broadcast_event(
+            source=self.name,
+            event_type="chat.done",
+            payload={"text": text},
+            priority=Priority.NORMAL,
+        )
 
     async def _emit_chat_message(self, role: str, text: str) -> None:
         """Emit a chat message event on the bus for the Morphable UI."""
