@@ -47,10 +47,10 @@ function SidebarContent({ onItemClick }: { onItemClick?: () => void }) {
         setCommandPaletteOpen(true);
         break;
       case 'home':
-        setView('workspace');
+        setView('welcome');
         break;
       case 'compass':
-        setView('welcome');
+        setView('workspace');
         break;
       case 'briefcase':
         setView('workspace');

@@ -40,8 +40,11 @@ export default function App() {
     });
 
     connection.on('onMessage', (msg) => {
-      // This is for non-streaming messages (like errors or direct responses)
-      // Streaming messages are handled by finalizeStreaming
+      // Skip empty payloads (e.g. system status frames): they used to
+      // render as a blank assistant bubble.
+      if (!msg.text || !msg.text.trim()) return;
+      // A reply arrived: any pending streaming state is over.
+      finalizeStreaming();
       addMessage({
         id: `msg-${Date.now()}`,
         role: 'assistant',
@@ -56,9 +59,18 @@ export default function App() {
 
     connection.on('onAgentActivity', (activity) => {
       useAppStore.getState().addAgentActivity(activity);
-      if (activity.type === 'done' && activity.phase === 'end') {
+      // Streaming only while a run is actually in flight. Startup frames
+      // (brain.status etc.) must not leave the typing indicator stuck on.
+      const runEvents = [
+        'task.received', 'subtask.started', 'brain.started', 'thinking',
+      ];
+      const endEvents = [
+        'task.complete', 'task.failed', 'subtask.complete', 'subtask.failed',
+        'brain.complete', 'done',
+      ];
+      if (endEvents.includes(activity.type) || activity.phase === 'end') {
         finalizeStreaming();
-      } else {
+      } else if (runEvents.includes(activity.type)) {
         setIsStreaming(true);
       }
     });
