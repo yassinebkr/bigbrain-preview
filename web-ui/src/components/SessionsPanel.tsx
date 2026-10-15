@@ -13,7 +13,7 @@ interface HistoryMessage {
 }
 
 export function SessionsPanel() {
-  const { sessions, activeSessionKey, switchSession, setSidebarPanel, connection } = useAppStore();
+  const { setSidebarPanel, connection } = useAppStore();
   const [searchQuery, setSearchQuery] = useState('');
   const [history, setHistory] = useState<HistoryMessage[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
@@ -38,22 +38,10 @@ export function SessionsPanel() {
     }
   }, [connection]);
 
-  // Combine mock sessions with real history
-  const historySessions = history.length > 0 ? [{
-    key: 'current',
-    title: history[0]?.content?.substring(0, 30) + '...' || 'Current Conversation',
-    timestamp: history[0]?.timestamp || Date.now(),
-    messageCount: history.length,
-  }] : sessions;
-
-  const filteredSessions = historySessions.filter((s) =>
-    s.title.toLowerCase().includes(searchQuery.toLowerCase())
+  // The real history is the current (single) conversation; search filters it.
+  const filteredHistory = history.filter((m) =>
+    (m.content || '').toLowerCase().includes(searchQuery.toLowerCase())
   );
-
-  const handleSwitchSession = (key: string) => {
-    switchSession(key);
-    setSidebarPanel(null);
-  };
 
   return (
     <motion.div
@@ -139,7 +127,7 @@ export function SessionsPanel() {
                 Current Conversation ({history.length} messages)
               </span>
             </div>
-            {history.slice(-10).map((msg) => (
+            {filteredHistory.slice(-15).reverse().map((msg) => (
               <button
                 key={msg.id}
                 onClick={() => {
@@ -177,66 +165,12 @@ export function SessionsPanel() {
           </>
         )}
 
-        {/* Mock Sessions */}
-        <div className="px-4 py-2 mt-2">
-          <span
-            className="text-xs font-medium uppercase tracking-wider"
-            style={{ color: 'var(--text-tertiary)' }}
-          >
-            Saved Sessions
-          </span>
-        </div>
-        {filteredSessions.map((session) => (
-          <button
-            key={session.key}
-            onClick={() => handleSwitchSession(session.key)}
-            className="flex items-center gap-2.5 w-full px-4 py-2.5 text-left transition-colors duration-150 relative cursor-pointer"
-            style={{
-              backgroundColor:
-                session.key === activeSessionKey
-                  ? 'var(--bg-button)'
-                  : 'transparent',
-            }}
-            onMouseEnter={(e) => {
-              if (session.key !== activeSessionKey) {
-                e.currentTarget.style.backgroundColor = 'var(--bg-button)';
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (session.key !== activeSessionKey) {
-                e.currentTarget.style.backgroundColor = 'transparent';
-              }
-            }}
-          >
-            {session.key === activeSessionKey && (
-              <div
-                className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-r-full"
-                style={{ backgroundColor: 'var(--accent-blue)' }}
-              />
-            )}
-            <MessageSquare size={16} style={{ color: 'var(--text-tertiary)' }} />
-            <div className="flex flex-col min-w-0">
-              <span
-                className="text-sm font-medium truncate"
-                style={{ color: 'var(--text-primary)' }}
-              >
-                {session.title}
-              </span>
-              <span
-                className="text-xs"
-                style={{ color: 'var(--text-tertiary)' }}
-              >
-                {new Date(session.timestamp).toLocaleDateString()} • {session.messageCount} messages
-              </span>
-            </div>
-          </button>
-        ))}
-
         {/* Empty state */}
-        {filteredSessions.length === 0 && history.length === 0 && !isLoadingHistory && (
+        {history.length === 0 && !isLoadingHistory && (
           <div className="px-4 py-8 text-center">
             <span className="text-sm" style={{ color: 'var(--text-tertiary)' }}>
-              No conversations yet
+              No messages yet — one continuous conversation for now;
+              saved sessions land with the sessions feature.
             </span>
           </div>
         )}

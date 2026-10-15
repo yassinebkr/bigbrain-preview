@@ -1395,7 +1395,19 @@ Example — research then code:
             # Extract learnings from the completed plan
             await self._extract_learnings(plan)
             
-            # Announce plan completion
+            # Announce plan completion. On failure, carry the real error
+            # detail — the UI surfaces it in the chat instead of a bare
+            # "Task failed" with no cause.
+            fail_payload = {}
+            if plan.status == TaskStatus.FAILED:
+                failed_subtasks = [st for st in plan.subtasks if st.status == TaskStatus.FAILED]
+                fail_payload = {
+                    "error": plan.error or "Unknown error",
+                    "failed_subtasks": [
+                        {"id": st.id, "error": st.error or "Unknown error"}
+                        for st in failed_subtasks
+                    ][:3],
+                }
             await self.bus.broadcast_event(
                 source=self.name,
                 event_type="task.complete" if plan.status == TaskStatus.COMPLETE else "task.failed",
@@ -1403,7 +1415,8 @@ Example — research then code:
                     "task_id": plan.id,
                     "status": plan.status.value,
                     "workspace": self.workspace,
-                    "subtasks_total": len(plan.subtasks)
+                    "subtasks_total": len(plan.subtasks),
+                    **fail_payload,
                 },
                 workspace=self.workspace,
                 priority=Priority.NORMAL

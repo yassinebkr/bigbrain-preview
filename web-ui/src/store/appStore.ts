@@ -205,6 +205,11 @@ export const useAppStore = create<AppState>()(
       setStreamingText: (streamingText) => set({ streamingText }),
       appendStreamingText: (text) => set((state) => ({ streamingText: state.streamingText + text })),
       finalizeStreaming: () => set((state) => {
+        // An empty streaming buffer must not render a blank bubble —
+        // repeated run events during a failed task used to stack empties.
+        if (!state.streamingText || !state.streamingText.trim()) {
+          return { isStreaming: false, streamingText: '' };
+        }
         const finalMessage: Message = { id: `ai-${Date.now()}`, role: 'assistant', content: state.streamingText, timestamp: Date.now() };
         return { isStreaming: false, streamingText: '', messages: [...state.messages, finalMessage] };
       }),

@@ -39,6 +39,9 @@ function SidebarContent({ onItemClick }: { onItemClick?: () => void }) {
     onItemClick?.();
     switch (id) {
       case 'avatar':
+        // A new conversation — clear the transcript (the server keeps its
+        // own history; sessions restore it later).
+        useAppStore.getState().clearMessages();
         setView('welcome');
         break;
       case 'search':

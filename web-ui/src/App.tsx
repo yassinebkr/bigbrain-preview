@@ -70,7 +70,21 @@ export default function App() {
         'task.complete', 'task.failed', 'subtask.complete', 'subtask.failed',
         'brain.complete', 'done',
       ];
-      if (endEvents.includes(activity.type) || activity.phase === 'end') {
+      if (activity.type === 'task.failed') {
+        finalizeStreaming();
+        const detail = activity.detail || {};
+        const subErrors = (detail.failed_subtasks || [])
+          .map((st: any) => st.error)
+          .filter(Boolean)
+          .slice(0, 2);
+        const reason = [detail.error, ...subErrors].filter(Boolean).join(' · ');
+        useAppStore.getState().addMessage({
+          id: `err-${Date.now()}`,
+          role: 'assistant',
+          content: `Task failed: ${reason || 'unknown error'}`,
+          timestamp: Date.now(),
+        });
+      } else if (endEvents.includes(activity.type) || activity.phase === 'end') {
         finalizeStreaming();
       } else if (runEvents.includes(activity.type)) {
         setIsStreaming(true);
