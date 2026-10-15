@@ -202,6 +202,23 @@ ci-dessus — les reconnectés ne perdent rien.
 
 ## Changelog UX récent
 
+- **UI honnête (zéro mock)** : les tâches seed du board ('Build GenUI
+  canvas', 'Implement auth flow'...), la fausse arborescence de fichiers
+  du store, les "recent searches" de la ResearchBar et les fichiers
+  fantômes créés par addFile sont supprimés. Le board démarre vide :
+  seules les vraies tâches agent (events bus) et les ajouts manuels
+  apparaissent. QuickActions.tsx supprimé (code mort après le passage
+  aux onglets dédiés).
+- **ResearchBar réelle** : GET /api/fs/search (parcours borné du
+  workspace, dot-entries ignorées, debounce 200ms) alimente les
+  suggestions de fichiers ; "Create" écrit via l'API FS ; /new et /open
+  (décoratifs) retirés. Cliquer un résultat ouvre le fichier dans le
+  CodeSurface inline de l'explorateur.
+- **Run panel persistant** : activeRun (étapes, fichiers, statut) est
+  persisté — le record du dernier run survit à un reload de page.
+- **Layout workspace** : explorateur pleine largeur sans fichier ouvert
+  (la colonne fixe 340px à côté d'un vide était le rendu cassé) ;
+  CodeSurface en carte paddée quand un fichier est ouvert.
 - **Onglets dédiés** : le TaskBoard (QuickActions + board) et le statut
   des brains (+ feed d'activité live) quittent le workspace pour leurs
   propres onglets sidebar (TasksView, BrainsView). Le workspace est
