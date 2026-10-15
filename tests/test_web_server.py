@@ -341,6 +341,41 @@ class TestAplotProtocol:
         assert sent_to_bus == []
 
     @pytest.mark.asyncio
+    async def test_chat_cancel_invokes_hook_and_never_reaches_bus(self, server, bus):
+        from bigbrain.web import server as server_module
+        sent_to_bus = []
+        bus.subscribe("*", lambda msg: sent_to_bus.append(msg))
+        mock_ws = AsyncMock()
+
+        calls = []
+        async def hook():
+            calls.append("cancelled")
+        original = server_module.CANCEL_HOOK
+        server_module.CANCEL_HOOK = hook
+        try:
+            await server._handle_ws_message(
+                mock_ws, json.dumps({"type": "chat.cancel", "payload": {}})
+            )
+            await asyncio.sleep(0.05)
+        finally:
+            server_module.CANCEL_HOOK = original
+
+        assert calls == ["cancelled"]
+        assert sent_to_bus == []  # control frame: never forwarded
+
+    @pytest.mark.asyncio
+    async def test_chat_cancel_without_hook_is_a_noop(self, server, bus):
+        sent_to_bus = []
+        bus.subscribe("*", lambda msg: sent_to_bus.append(msg))
+        mock_ws = AsyncMock()
+
+        await server._handle_ws_message(
+            mock_ws, json.dumps({"type": "chat.cancel", "payload": {}})
+        )
+        await asyncio.sleep(0.05)
+        assert sent_to_bus == []
+
+    @pytest.mark.asyncio
     async def test_chat_history_request_response(self, server):
         server._append_chat_history("user", "hi")
         server._append_chat_history("assistant", "hello")

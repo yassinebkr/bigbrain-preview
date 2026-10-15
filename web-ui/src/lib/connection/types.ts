@@ -29,6 +29,7 @@ export interface ConnectionLike {
   connect(): void;
   disconnect(): void;
   send(text: string, attachments?: any[]): string;
+  cancel?(): void;
   loadHistory(callback?: (frame: any) => void): void;
   switchSession(newSessionKey: string): void;
   forceReconnect(): void;

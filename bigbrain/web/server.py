@@ -45,6 +45,10 @@ PROJECT_CHANGE_HOOK = None
 # Set when a plugin is toggled — applies the change at runtime where feasible.
 PLUGINS_CHANGE_HOOK = None
 
+# Set when the user hits Stop — cancels the front brain stream and the
+# running orchestrated task (chat.cancel frame). Async hook.
+CANCEL_HOOK = None
+
 
 class WebServer:
     """
@@ -685,6 +689,16 @@ class WebServer:
 
         if data.get("type") == "chat.send":
             await self._handle_chat_send(ws, data)
+            return
+
+        if data.get("type") == "chat.cancel":
+            if CANCEL_HOOK is not None:
+                try:
+                    result = CANCEL_HOOK()
+                    if asyncio.iscoroutine(result):
+                        await result
+                except Exception as e:
+                    logger.warning("chat.cancel hook failed: %s", e)
             return
 
         if data.get("type") == "req":

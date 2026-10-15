@@ -13,8 +13,11 @@ export function WelcomeScreen() {
       {/* Robot Mascot with Speech Bubbles */}
       <RobotMascot />
 
-      {/* Pro Plan Banner */}
-      <ProPlanBanner />
+      {/* Pro Plan Banner — original compact width, independent of the
+          widened message column */}
+      <div className="w-full max-w-[720px]">
+        <ProPlanBanner />
+      </div>
 
       {/* Chat Input */}
       <div className="w-full px-1">

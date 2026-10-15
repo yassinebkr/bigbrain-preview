@@ -97,6 +97,12 @@ export class BigBrainConnection implements ConnectionLike {
     return messageId;
   }
 
+  cancel(): void {
+    try {
+      this.ws?.send(JSON.stringify({ type: 'chat.cancel', payload: {} }));
+    } catch (e) { /* best effort */ }
+  }
+
   loadHistory(callback?: (frame: any) => void): void {
     const id = this._request('chat.history', (frame) => {
       // Server entries: {id, role, text, timestamp}. Normalize to the
@@ -252,14 +258,14 @@ export class BigBrainConnection implements ConnectionLike {
     }
 
     const taskEvents = [
-      'task.received', 'task.complete', 'task.failed',
+      'task.received', 'task.complete', 'task.failed', 'task.cancelled',
       'subtask.started', 'subtask.complete', 'subtask.failed',
       'brain.started', 'brain.complete',
       'task.progress',
     ];
     if (event && taskEvents.includes(event)) {
       this.callbacks.onAgentActivity?.({ type: event, detail: payload });
-      if (event === 'task.complete' || event === 'task.failed') {
+      if (event === 'task.complete' || event === 'task.failed' || event === 'task.cancelled') {
         this.callbacks.onRunEnd?.();
       }
       return;

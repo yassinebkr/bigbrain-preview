@@ -60,6 +60,9 @@ class FrontBrain:
         self._running = False
         self._current_conversation_id: Optional[str] = None
         self._conversation_history: List[Dict[str, str]] = []
+        # Set by the stop button (chat.cancel): the current LLM stream
+        # breaks at the next delta and returns what it already has.
+        self._stop_requested = False
         
         # Brain registry for system prompt
         self._registered_brains: Dict[str, str] = {}
@@ -70,6 +73,14 @@ class FrontBrain:
     def register_brain(self, name: str, description: str) -> None:
         """Register a brain so the Front Brain knows how to delegate."""
         self._registered_brains[name] = description
+
+    def request_stop(self) -> None:
+        """Ask the current LLM stream to stop at the next delta.
+
+        The partial reply is kept: the stream loop breaks and the caller
+        broadcasts chat.done with whatever was already emitted.
+        """
+        self._stop_requested = True
     
     async def start(self) -> None:
         """Start the Front Brain and register with message bus."""
@@ -217,10 +228,13 @@ class FrontBrain:
                 messages=messages,
                 stream=True,
             )
+            self._stop_requested = False
             if hasattr(result, "__aiter__"):
                 parts: list[str] = []
                 emitting = False
                 async for delta in result:
+                    if self._stop_requested:
+                        break
                     if not delta:
                         continue
                     parts.append(delta)

@@ -1,6 +1,6 @@
 import { useRef, useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { Paperclip, Mic, Send } from 'lucide-react';
+import { Paperclip, Mic, Send, Square } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 import { ActionPill } from './ActionPill';
 import { AttachmentChip } from './AttachmentChip';
@@ -25,6 +25,8 @@ export function ChatInput({ onSend }: ChatInputProps) {
     sendMessage,
     isRecording,
     setRecording,
+    isStreaming,
+    stopGeneration,
   } = useAppStore();
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -49,7 +51,7 @@ export function ChatInput({ onSend }: ChatInputProps) {
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (hasContent) {
+      if (hasContent && !isStreaming) {
         handleSend();
       }
     }
@@ -204,22 +206,35 @@ export function ChatInput({ onSend }: ChatInputProps) {
             />
           </motion.button>
 
-          <motion.button
-            whileTap={{ scale: 0.9 }}
-            onClick={handleSend}
-            disabled={!hasContent}
-            className="flex items-center justify-center w-10 h-10 sm:w-9 sm:h-9 rounded-full transition-all duration-200 cursor-pointer"
-            style={{
-              backgroundColor: hasContent ? 'var(--accent-blue)' : 'var(--bg-button)',
-            }}
-            aria-label="Send message"
-          >
-            <Send
-              size={16}
-              className="sm:w-4 sm:h-4"
-              style={{ color: hasContent ? '#ffffff' : 'var(--text-tertiary)' }}
-            />
-          </motion.button>
+          {isStreaming ? (
+            <motion.button
+              whileTap={{ scale: 0.9 }}
+              onClick={stopGeneration}
+              className="flex items-center justify-center w-10 h-10 sm:w-9 sm:h-9 rounded-full transition-all duration-200 cursor-pointer"
+              style={{ backgroundColor: 'var(--accent-blue)' }}
+              aria-label="Stop generation"
+              title="Stop"
+            >
+              <Square size={13} className="fill-current" style={{ color: '#ffffff' }} />
+            </motion.button>
+          ) : (
+            <motion.button
+              whileTap={{ scale: 0.9 }}
+              onClick={handleSend}
+              disabled={!hasContent}
+              className="flex items-center justify-center w-10 h-10 sm:w-9 sm:h-9 rounded-full transition-all duration-200 cursor-pointer"
+              style={{
+                backgroundColor: hasContent ? 'var(--accent-blue)' : 'var(--bg-button)',
+              }}
+              aria-label="Send message"
+            >
+              <Send
+                size={16}
+                className="sm:w-4 sm:h-4"
+                style={{ color: hasContent ? '#ffffff' : 'var(--text-tertiary)' }}
+              />
+            </motion.button>
+          )}
         </div>
       </div>
 

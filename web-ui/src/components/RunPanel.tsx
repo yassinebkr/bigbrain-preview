@@ -21,6 +21,7 @@ import {
   ChevronUp,
   FolderOpen,
   AlertTriangle,
+  Ban,
 } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 
@@ -29,12 +30,14 @@ const LINGER_MS = 12_000;
 function StatusIcon({ status, size = 13 }: { status: string; size?: number }) {
   if (status === 'running') return <Loader2 size={size} className="animate-spin flex-shrink-0" />;
   if (status === 'done') return <CheckCircle2 size={size} className="flex-shrink-0" />;
+  if (status === 'cancelled') return <Ban size={size} className="flex-shrink-0" />;
   return <XCircle size={size} className="flex-shrink-0" />;
 }
 
 const statusColor = (status: string) =>
   status === 'running' ? 'var(--text-tertiary)'
   : status === 'done' ? 'var(--success, #34c759)'
+  : status === 'cancelled' ? 'var(--text-tertiary)'
   : 'var(--warning, #ff9500)';
 
 export function RunPanel() {
@@ -44,7 +47,7 @@ export function RunPanel() {
   const setView = useAppStore((s) => s.setView);
   const currentProject = useAppStore((s) => s.currentProject);
   const setCurrentProject = useAppStore((s) => s.setCurrentProject);
-  const setPendingOpenFile = useAppStore((s) => s.setPendingOpenFile);
+  const openFileViewer = useAppStore((s) => s.openFileViewer);
   const [dismissed, setDismissed] = useState(false);
 
   // The store's project mirror is only filled by the file explorer; when a
@@ -82,14 +85,15 @@ export function RunPanel() {
         : run.description
       : run.status === 'done'
         ? 'Run complete'
-        : run.error ? `Run failed — ${run.error}` : 'Run failed';
+        : run.status === 'cancelled'
+          ? 'Run cancelled'
+          : run.error ? `Run failed — ${run.error}` : 'Run failed';
 
   const sandboxNudge =
     currentProject === null && run.files.some((f) => f.path.startsWith('sandbox/'));
 
   const openFile = (path: string) => {
-    setPendingOpenFile(path);
-    setView('workspace');
+    openFileViewer(path);
   };
 
   return (
@@ -194,7 +198,7 @@ export function RunPanel() {
                           onClick={() => openFile(file.path)}
                           className="flex items-center gap-2 text-[11.5px] cursor-pointer px-1 py-0.5 rounded hover:brightness-125"
                           style={{ color: 'var(--accent-blue)' }}
-                          title="Open in workspace"
+                          title="View code"
                         >
                           <FileEdit size={11} className="flex-shrink-0" />
                           <span className="truncate">{file.path}</span>

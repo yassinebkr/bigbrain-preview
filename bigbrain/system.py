@@ -222,6 +222,32 @@ class BigBrainSystem:
         print(f"📂 Working project: {label} — {retargeted} brain(s) write to {target.name}/")
         return {"ok": True, "project": project, "retargeted": retargeted}
 
+    async def cancel_current(self) -> dict:
+        """Stop what is in flight: front brain LLM stream + orchestrated run.
+
+        The front brain breaks its delta loop at the next chunk (the
+        partial reply is kept); the orchestrator receives a CANCEL with
+        no task_id, which soft-cancels every running plan and broadcasts
+        task.cancelled — the UI's stop button uses this.
+        """
+        from .bus.message import BusMessage, MessageType, Priority
+
+        stopped = []
+        if self.front_brain is not None:
+            self.front_brain.request_stop()
+            stopped.append("front_brain")
+        if self.bus is not None:
+            await self.bus.send(BusMessage(
+                type=MessageType.CANCEL,
+                source="bigbrain_system",
+                target="*",
+                payload={"mode": "soft"},
+                priority=Priority.HIGH,
+            ))
+            stopped.append("orchestrator")
+        print(f"⏹️  Cancel requested: {', '.join(stopped) or 'nothing running'}")
+        return {"ok": True, "stopped": stopped}
+
     def apply_plugin_change(self, plugin_id: str, enabled: bool) -> dict:
         """Apply a plugin toggle at runtime where feasible.
 
@@ -352,6 +378,7 @@ class BigBrainSystem:
             web_server_module.PROVIDER_RELOAD_HOOK = self.reload_llm_provider
             web_server_module.PROJECT_CHANGE_HOOK = self.apply_current_project
             web_server_module.PLUGINS_CHANGE_HOOK = self.apply_plugin_change
+            web_server_module.CANCEL_HOOK = self.cancel_current
         
         print("✅ BigBrain system initialized successfully!")
     

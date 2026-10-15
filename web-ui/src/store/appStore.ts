@@ -25,7 +25,7 @@ export interface RunStep {
 export interface RunState {
   id: string;
   description: string;
-  status: 'running' | 'done' | 'failed';
+  status: 'running' | 'done' | 'failed' | 'cancelled';
   startedAt: number;
   finishedAt?: number;
   steps: RunStep[];
@@ -105,6 +105,11 @@ interface AppState {
   pendingOpenFile: string | null;
   setPendingOpenFile: (path: string | null) => void;
 
+  // In-chat code viewer (files written by the agent).
+  viewerFilePath: string | null;
+  openFileViewer: (path: string) => void;
+  closeFileViewer: () => void;
+
   // Sidebar
   sidebarOpen: boolean;
   sidebarPanel: SidebarPanel;
@@ -150,6 +155,7 @@ interface AppState {
 
   // Actions
   sendMessage: () => void;
+  stopGeneration: () => void;
 }
 
 export const useAppStore = create<AppState>()(
@@ -276,6 +282,9 @@ export const useAppStore = create<AppState>()(
       setCurrentProject: (currentProject) => set({ currentProject }),
       pendingOpenFile: null,
       setPendingOpenFile: (pendingOpenFile) => set({ pendingOpenFile }),
+      viewerFilePath: null,
+      openFileViewer: (path) => set({ viewerFilePath: path }),
+      closeFileViewer: () => set({ viewerFilePath: null }),
 
       // Fold bus events into the current run. Pure state machine:
       // task.received opens a run; subtask.* upsert steps;
@@ -332,12 +341,17 @@ export const useAppStore = create<AppState>()(
             return { activeRun: { ...run, files: [...run.files, { path, ts: Date.now() }] } };
           }
           case 'task.complete':
-          case 'task.failed': {
+          case 'task.failed':
+          case 'task.cancelled': {
             if (!run) return state;
+            const status =
+              activity.type === 'task.complete' ? 'done'
+              : activity.type === 'task.cancelled' ? 'cancelled'
+              : 'failed';
             return {
               activeRun: {
                 ...run,
-                status: activity.type === 'task.complete' ? 'done' : 'failed',
+                status,
                 finishedAt: Date.now(),
                 error: d.error ? String(d.error).slice(0, 200) : run.error,
               },
@@ -499,6 +513,14 @@ export const useAppStore = create<AppState>()(
           streamingText: '',
         }));
         state.connection?.send(text, state.attachments);
+      },
+
+      // Stop button: cancel server-side (front brain stream + orchestrated
+      // run), then close the streaming bubble locally with whatever text
+      // already arrived (finalizeStreaming keeps it as a message).
+      stopGeneration: () => {
+        get().connection?.cancel?.();
+        get().finalizeStreaming();
       },
     }),
     {

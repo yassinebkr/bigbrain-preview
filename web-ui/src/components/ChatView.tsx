@@ -7,6 +7,7 @@ import { TypingIndicator } from './TypingIndicator';
 import { ChatInput } from './ChatInput';
 import { GenUICanvas } from './GenUICanvas';
 import { RunPanel } from './RunPanel';
+import { CodeViewer } from './CodeViewer';
 
 export function ChatView() {
   const { messages, isStreaming } = useAppStore();
@@ -61,15 +62,22 @@ export function ChatView() {
       {/* GenUI Canvas - between messages and input */}
       <GenUICanvas />
 
-      {/* Chat Input - Fixed at bottom */}
+      {/* Chat Input - Fixed at bottom. Kept at the original compact width
+          (720px) even on wide screens — the messages column widened, but
+          the input reads better narrow. */}
       <div
         className="sticky bottom-0 pb-2 sm:pb-3 md:pb-4 pt-2 px-1 sm:px-0"
         style={{
           backgroundColor: 'var(--bg-primary)',
         }}
       >
-        <ChatInput />
+        <div className="max-w-[720px] mx-auto w-full">
+          <ChatInput />
+        </div>
       </div>
+
+      {/* Code viewer overlay — files written by the agent */}
+      <CodeViewer />
     </div>
   );
 }
