@@ -37,12 +37,20 @@ class BigBrainConfig:
     openai_api_key: Optional[str] = field(default_factory=lambda: os.getenv("OPENAI_API_KEY"))
     anthropic_api_key: Optional[str] = field(default_factory=lambda: os.getenv("ANTHROPIC_API_KEY"))
     google_api_key: Optional[str] = field(default_factory=lambda: os.getenv("GOOGLE_API_KEY"))
+    # Registry-backed API keys (Phase 3): one OpenRouter key covers all
+    # openrouter-* models; MISTRAL_API_KEY is set by the browser sign-in
+    # wizard (auth/mistral_oauth.py); KIMI_API_KEY is the direct Kimi endpoint.
+    openrouter_api_key: Optional[str] = field(default_factory=lambda: os.getenv("OPENROUTER_API_KEY"))
+    mistral_api_key: Optional[str] = field(default_factory=lambda: os.getenv("MISTRAL_API_KEY"))
+    kimi_api_key: Optional[str] = field(default_factory=lambda: os.getenv("KIMI_API_KEY"))
 
     # Model to use (litellm format: "gpt-4o", "claude-sonnet-4-20250514", "gemini/gemini-2.0-flash", etc.)
     default_model: str = field(default_factory=lambda: os.getenv("BIGBRAIN_MODEL", "gpt-4o-mini"))
     front_brain_model: str = field(default_factory=lambda: os.getenv("BIGBRAIN_FRONT_MODEL", ""))
     code_model: str = field(default_factory=lambda: os.getenv("BIGBRAIN_CODE_MODEL", ""))
     planner_model: str = field(default_factory=lambda: os.getenv("BIGBRAIN_PLANNER_MODEL", ""))
+    # Model for sub-brains / sub-agents (defaults to the front brain model).
+    subagent_model: str = field(default_factory=lambda: os.getenv("BIGBRAIN_SUBAGENT_MODEL", ""))
 
     # --- Workspace ---
     workspace: str = field(default_factory=lambda: os.getenv("BIGBRAIN_WORKSPACE", "demo"))
@@ -56,7 +64,14 @@ class BigBrainConfig:
     @property
     def has_api_key(self) -> bool:
         """Check if any LLM API key is configured (includes OAuth tokens)."""
-        if self.openai_api_key or self.anthropic_api_key or self.google_api_key:
+        if (
+            self.openai_api_key
+            or self.anthropic_api_key
+            or self.google_api_key
+            or self.openrouter_api_key
+            or self.mistral_api_key
+            or self.kimi_api_key
+        ):
             return True
         # Check for stored OAuth credentials
         try:
@@ -89,6 +104,11 @@ class BigBrainConfig:
     def effective_planner_model(self) -> str:
         """Model for orchestrator task planning (falls back to front brain model)."""
         return self.planner_model or self.effective_front_model
+
+    @property
+    def effective_subagent_model(self) -> str:
+        """Model for sub-brains / sub-agents (falls back to front brain model)."""
+        return self.subagent_model or self.effective_front_model
 
     def summary(self) -> str:
         """Human-readable config summary (no secrets)."""

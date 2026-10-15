@@ -108,8 +108,29 @@ class BigBrainSystem:
             print(f"{icons.get(msg_type, '📝')} {message}")
     
     def _create_llm_provider(self):
-        """Create the best available LLM provider."""
-        # Check for OAuth token first (Claude Pro/Max)
+        """Create the best available LLM provider.
+
+        Selection lives in auth.registry (single priority order, overridable
+        with BIGBRAIN_PROVIDER): Claude OAuth → OpenRouter → Mistral → Kimi
+        direct → Codex (ChatGPT subscription) → legacy litellm keys → mock.
+        """
+        from .auth.registry import build_provider, select_registry_key
+
+        try:
+            registry_key = select_registry_key()
+        except ValueError as exc:
+            print(f"⚠️  {exc}")
+            registry_key = None
+
+        if registry_key:
+            try:
+                provider = build_provider(registry_key)
+                print(f"🔑 LLM: {registry_key} (registry)")
+                return provider
+            except Exception as exc:
+                print(f"⚠️  Provider '{registry_key}' failed to build: {exc}")
+
+        # Legacy fallback: OAuth token first (Claude Pro/Max)
         oauth_key = config.resolve_anthropic_key()
         if oauth_key and not config.anthropic_api_key:
             # OAuth token — use dedicated provider with stealth headers

@@ -198,9 +198,82 @@ class WebServer:
         self._app.router.add_get("/api/status", self._handle_status)
         self._app.router.add_get("/api/preview-logs", self._handle_preview_logs)
 
+        # Provider registry + connection pipelines (Phase 3/4):
+        # the settings "buttons" poll these endpoints.
+        self._app.router.add_get("/api/models", self._handle_models)
+        self._app.router.add_get("/api/usage", self._handle_usage)
+        self._app.router.add_get("/api/auth/codex/status", self._handle_codex_status)
+        self._app.router.add_post("/api/auth/codex/login", self._handle_codex_login)
+        self._app.router.add_post("/api/auth/mistral/start", self._handle_mistral_start)
+        self._app.router.add_get("/api/auth/mistral/poll", self._handle_mistral_poll)
+        self._app.router.add_post("/api/auth/mistral/complete", self._handle_mistral_complete)
+
         # Static files (JS, CSS, images) — with no-cache for dev
         if STATIC_DIR.exists():
             self._app.router.add_get("/static/{filename:.+}", self._handle_static)
+
+    async def _handle_models(self, request: web.Request) -> web.Response:
+        """List registry models with availability flags (no secrets)."""
+        from ..llm.model_registry import list_models
+
+        return web.json_response({"models": list_models()})
+
+    async def _handle_usage(self, request: web.Request) -> web.Response:
+        """Aggregate token/cost ledger (Phase 5) — no message content."""
+        from ..llm.usage import get_tracker
+
+        return web.json_response(get_tracker().totals())
+
+    async def _handle_codex_status(self, request: web.Request) -> web.Response:
+        """Who is signed in to the codex app-server (poll target)."""
+        from ..llm.codex_provider import codex_auth_status
+
+        return web.json_response(await codex_auth_status())
+
+    async def _handle_codex_login(self, request: web.Request) -> web.Response:
+        """Start the Connect-with-ChatGPT flow; returns the authUrl.
+
+        codex owns the OAuth callback and credential storage (~/.codex);
+        the UI polls /api/auth/codex/status until the account appears.
+        """
+        from ..llm.codex_provider import codex_start_login
+
+        body = await request.json() if request.can_read_body else {}
+        try:
+            result = await codex_start_login(open_browser=body.get("open_browser", True))
+        except Exception as exc:
+            return web.json_response({"error": str(exc)}, status=502)
+        return web.json_response(result)
+
+    async def _handle_mistral_start(self, request: web.Request) -> web.Response:
+        """Start the PKCE browser sign-in; returns the sign_in_url."""
+        from ..auth.mistral_oauth import SetupError, start_browser_sign_in
+
+        try:
+            summary = await start_browser_sign_in()
+        except SetupError as exc:
+            return web.json_response({"error": str(exc)}, status=502)
+        return web.json_response(summary)
+
+    async def _handle_mistral_poll(self, request: web.Request) -> web.Response:
+        """Poll the in-flight browser sign-in once (client sets cadence)."""
+        from ..auth.mistral_oauth import poll_browser_sign_in
+
+        return web.json_response(await poll_browser_sign_in())
+
+    async def _handle_mistral_complete(self, request: web.Request) -> web.Response:
+        """Exchange the completed sign-in for an API key and store it.
+
+        The key never appears in the response — only the stored credential's
+        health (free GET /v1/models probe).
+        """
+        from ..auth.mistral_oauth import SetupError, complete_browser_sign_in
+
+        try:
+            result = await complete_browser_sign_in()
+        except SetupError as exc:
+            return web.json_response({"error": str(exc)}, status=409)
+        return web.json_response(result)
 
     async def _handle_static(self, request: web.Request) -> web.FileResponse:
         """Serve static files with no-cache headers."""
