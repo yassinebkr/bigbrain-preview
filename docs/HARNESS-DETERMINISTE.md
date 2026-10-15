@@ -98,14 +98,25 @@ Intégration :
 - Tests : `tests/test_evidence.py` (24) — roundtrip, immuabilité
   (même run_id), verdict conservateur, dédoublonnage, traversal refusé.
 
-### P2 — Stages déterministes + gate
-- `executors.py` : syntax, compile, run, tests, contracts (l'ordre =
-  du moins cher au plus cher ; échec court-circuite).
-- `gate.py` : verdict PASS/FAIL/INCONCLUSIVE, jamais de pass implicite.
-- Branchement dans `_generate_and_execute` : la boucle Honk utilise le
-  verdict ; le payload de résultat porte `verification`.
-- *Done :* « crée hello.py » qui compile pas → subtask failed avec le
-  détail syntaxique ; pytest présent → vraiment exécuté.
+### P2 — Stages déterministes + gate — ✅ FAIT
+- `executors.py` : stage_syntax (ast.parse), stage_compile (compile),
+  stage_run (verdict SUR l'exécution déjà faite — la gate ne rejoue
+  jamais le code), stage_tests (pytest si fichiers test présents ;
+  absents = not_applicable, pytest manquant = inconclusive),
+  stage_contracts (le fichier nommé dans la requête existe au bon
+  endroit — attrape le "hello.py créé sous un autre nom").
+- `gate.py` : RunGate.evaluate_attempt — spec + artefacts sha256
+  (code, stdout, stderr, sortie tests) + manifeste terminal immuable,
+  chaînage des tentatives via parent_run_id, verdict conservateur.
+- Branché dans la boucle Honk (`_generate_and_execute`) et
+  `_run_existing_file` : verdict failed → feedback au LLM (retry),
+  inconclusive → pas de retry (l'environnement n'est pas réparable par
+  le LLM) mais jamais revendiqué "verified" ; la gate ne casse JAMAIS
+  la génération (erreur interne → verdict None, comportage legacy).
+- Kill switch : BIGBRAIN_EVIDENCE=0.
+- Tests : `tests/test_harness_gate.py` (24) — stages unitaires, gate
+  end-to-end, chaînage des tentatives, intégration Honk (succès,
+  cassé→corrigé, run_file).
 
 ### P3 — Replay & différentiel (pattern golden models)
 - Rejouer un run depuis son manifeste (mêmes inputs → comparaison des
