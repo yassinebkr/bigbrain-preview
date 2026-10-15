@@ -131,9 +131,19 @@ export function SessionsPanel() {
               <button
                 key={msg.id}
                 onClick={() => {
-                  // Close panel and switch to chat view
+                  // Reopen the conversation: load its messages into the
+                  // chat (mapped to the store's Message shape), end any
+                  // stale streaming state, close the panel.
+                  const store = useAppStore.getState();
+                  store.setMessages(filteredHistory.map((m) => ({
+                    id: m.id,
+                    role: m.role,
+                    content: m.content,
+                    timestamp: m.timestamp,
+                  })));
+                  useAppStore.setState({ isStreaming: false, streamingText: '' });
                   setSidebarPanel(null);
-                  useAppStore.getState().setView('chat');
+                  store.setView('chat');
                 }}
                 className="flex items-center gap-2.5 w-full px-4 py-2.5 text-left transition-colors duration-150 relative cursor-pointer"
                 style={{ backgroundColor: 'transparent' }}

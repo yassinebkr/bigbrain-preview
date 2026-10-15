@@ -209,6 +209,12 @@ export class BigBrainConnection implements ConnectionLike {
     const event = payload.event;
     const isReplay = frame._replay === true;
 
+    // Replayed frames are HISTORY (buffered from a previous session). They
+    // must never drive live state — a replayed brain.started used to turn
+    // on the typing indicator and 'working' pills forever. The chat
+    // transcript on reconnect comes from loadHistory, not from replay.
+    if (isReplay) return;
+
     if (event === 'chat.delta') {
       this.callbacks.onStreamDelta?.({
         text: payload.delta || '',
@@ -226,9 +232,6 @@ export class BigBrainConnection implements ConnectionLike {
     }
 
     if (event === 'chat.message') {
-      // Replayed chat messages are skipped: loadHistory() already provides
-      // them on connect (double-add otherwise).
-      if (isReplay) return;
       const role = payload.role === 'system' ? 'system' : 'assistant';
       this.callbacks.onMessage?.({
         text: payload.text || '',
