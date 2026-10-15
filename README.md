@@ -2,7 +2,8 @@
 
 A modular, async AI agent system built on a **3-layer architecture** with specialized brain topologies, event-driven orchestration, and focus-managed attention.
 
-> **Preview Implementation** — Full reference codebase with 523 tests. The [real project](https://github.com/yassinebkr/bigbrain) is built incrementally by hand.
+> **Active development repo.** What started as the preview reference codebase
+> is now the working product (web UI, models/auth, deterministic harness).
 
 ## Quick Start
 
@@ -408,5 +409,4 @@ Dual license: AGPL-3.0 (core) + Commercial (contact for production use without o
 
 ## Links
 
-- **Real project**: [github.com/yassinebkr/bigbrain](https://github.com/yassinebkr/bigbrain) (private)
 - **Research**: MASS (Google ICLR 2026), Spotify Honk, LLMCompiler, ReWOO, Andrew Ng patterns

@@ -2306,15 +2306,20 @@ Output ONLY the corrected file content, no explanation."""
         and captures all output and exit status.
         """
         import time
+        import uuid
         start_time = time.time()
-        
+
         # Temp execution scripts live in a hidden .exec/ subfolder of the
         # work_dir so the user-visible workspace only contains real
         # generated files (script_<timestamp>.py used to clutter the
         # project folder — sandbox/, project dirs).
         exec_dir = self.work_dir / ".exec"
         exec_dir.mkdir(exist_ok=True)
-        script_file = exec_dir / f"script_{int(start_time)}.py"
+        # Unique per execution: int(start_time) alone collided for
+        # concurrent tasks started within the same second — all workers
+        # then executed the LAST written script (caught by the edge-case
+        # pass; the uuid fragment keeps names debuggable AND unique).
+        script_file = exec_dir / f"script_{int(start_time)}_{uuid.uuid4().hex[:8]}.py"
         script_file.write_text(code, encoding='utf-8')
         self._temp_files.add(script_file)
         

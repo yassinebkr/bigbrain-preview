@@ -700,6 +700,32 @@ class TestWorkspaceProjects:
         with pytest.raises(aioweb.HTTPBadRequest):
             fs_api.run_file("notes.txt")
 
+    def test_run_file_refuses_traversal(self, _ws_root):
+        from aiohttp import web as aioweb
+        from bigbrain.web import fs_api
+        _ws_root.mkdir(parents=True, exist_ok=True)
+        with pytest.raises(aioweb.HTTPBadRequest):
+            fs_api.run_file("../escape.py")
+
+    def test_run_file_timeout_is_bounded(self, _ws_root):
+        from bigbrain.web import fs_api
+        (_ws_root / "sandbox").mkdir(parents=True)
+        loop = _ws_root / "sandbox" / "loop.py"
+        loop.write_text("while True:\n    pass")
+        result = fs_api.run_file("sandbox/loop.py", timeout=1.0)
+        assert result["ok"] is False
+        assert result["timedOut"] is True
+
+    def test_write_file_creates_parent_dirs(self, _ws_root):
+        from bigbrain.web import fs_api
+        result = fs_api.write_file("sandbox/deep/nested/hello.py", "print(1)")
+        assert result["ok"] is True
+        assert (_ws_root / "sandbox" / "deep" / "nested" / "hello.py").is_file()
+
+    def test_search_files_empty_workspace(self, _ws_root):
+        from bigbrain.web import fs_api
+        assert fs_api.search_files("anything")["results"] == []
+
     def test_search_files_finds_and_skips_dots(self, _ws_root):
         from bigbrain.web import fs_api
         sandbox = _ws_root / "sandbox"

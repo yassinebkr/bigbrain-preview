@@ -25,9 +25,11 @@ from __future__ import annotations
 import ast
 import asyncio
 import importlib.util
+import os
 import platform
 import re
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -45,6 +47,55 @@ def extract_requested_file(user_request: str) -> str | None:
     """The file name the request mentions, if any."""
     match = REQUESTED_FILE_RE.search(user_request or "")
     return match.group(0) if match else None
+
+
+async def run_code(code: str, *, timeout: float = 30.0,
+                   cwd: Path | None = None,
+                   filename: str = "replay.py") -> dict[str, Any]:
+    """Execute code in a clean, side-effect-free subprocess.
+
+    Used by replay and the golden corpus: minimal environment (deterministic
+    locale/encoding, no secrets), stdin wired to /dev/null so ``input()``
+    returns EOF instead of hanging, and a scratch directory unless ``cwd``
+    is given. Returns the same shape as the brain's execution result.
+    """
+    work_dir = Path(cwd) if cwd is not None else Path(
+        tempfile.mkdtemp(prefix="bigbrain-replay-"))
+    script = work_dir / filename
+    script.write_text(code, encoding="utf-8")
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": str(work_dir),
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PYTHONIOENCODING": "utf-8",
+    }
+    process = await asyncio.create_subprocess_exec(
+        sys.executable, str(script),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        stdin=asyncio.subprocess.DEVNULL,
+        cwd=str(work_dir),
+        env=env,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        process.kill()
+        await process.wait()
+        return {
+            "stdout": "", "stderr": f"execution timed out after {timeout:.0f}s",
+            "exit_code": -1, "timed_out": True,
+        }
+    if cwd is None:
+        import shutil
+        shutil.rmtree(work_dir, ignore_errors=True)
+    return {
+        "stdout": stdout.decode(errors="replace"),
+        "stderr": stderr.decode(errors="replace"),
+        "exit_code": process.returncode,
+        "timed_out": False,
+    }
 
 
 def stage_syntax(code: str, *, filename: str = "<generated>") -> StageResult:

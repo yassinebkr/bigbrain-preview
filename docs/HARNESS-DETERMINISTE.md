@@ -118,12 +118,23 @@ Intégration :
   end-to-end, chaînage des tentatives, intégration Honk (succès,
   cassé→corrigé, run_file).
 
-### P3 — Replay & différentiel (pattern golden models)
-- Rejouer un run depuis son manifeste (mêmes inputs → comparaison des
-  outputs ; non-déterminisme détecté).
-- Corpus de cas de référence (hello, fibonacci, file IO) pour la
-  régression des brains eux-mêmes.
-- *Done :* un run rejoué produit un diff manifeste vs replay.
+### P3 — Replay & différentiel (pattern golden models) — ✅ FAIT
+- `replay.py` : `replay_run(run_id)` recharge le code depuis les
+  artefacts du manifeste, le ré-exécute dans un subprocess PROPRE
+  (`run_code` : env minimal, stdin /dev/null, scratch dir), compare
+  stdout/stderr/exit aux artefacts enregistrés → report
+  {deterministic, mismatches}. Le replay est lui-même persisté comme
+  manifeste chaîné (parent_run_id, metadata.replay_of) avec un stage
+  `replay_compare`. Seuls les runs terminaux sont rejouables ; le
+  replay d'un replay chaîne l'historique.
+- `golden.py` : corpus de référence (hello, fibonacci, file_io,
+  unicode) indépendant de tout LLM, exécuté via le même run_code —
+  régression de la machinerie d'exécution (env, encodage, timeouts,
+  stdin). `run_corpus()` pour tests et futur job schedulé.
+- Tests : `tests/test_harness_replay.py` (9) — replay déterministe,
+  non-déterminisme détecté (time.time), runs non-terminaux refusés,
+  chaînage, corpus complet, stdin EOF, boucle infinie bornée.
+- *Done atteint :* un run rejoué produit un diff manifeste vs replay.
 
 ### P4 — Surface UI
 - Event `verification.run_recorded` → RunPanel : verdict par étape,
