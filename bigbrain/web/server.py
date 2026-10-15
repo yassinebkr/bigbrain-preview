@@ -34,6 +34,11 @@ STATIC_DIR = Path(__file__).parent / "static"
 # Aplot-based React UI build output (web-ui/; see docs/WEBUI-APLOT-PORT.md).
 WEBUI_DIST = Path(__file__).resolve().parents[2] / "web-ui" / "dist"
 
+# Runtime provider-reload hook, set by BigBrainSystem when it wires the
+# web server (keeps WebServer free of a system dependency). Mirrored on the
+# class for convenient access in tests.
+PROVIDER_RELOAD_HOOK = None
+
 
 class WebServer:
     """
@@ -234,18 +239,48 @@ class WebServer:
         self._app.router.add_get("/api/models/roles", self._handle_model_roles)
         self._app.router.add_post("/api/models/roles", self._handle_model_role_set)
         self._app.router.add_post("/api/auth/openrouter/key", self._handle_openrouter_key)
+        self._app.router.add_post("/api/system/reload-provider", self._handle_reload_provider)
 
     async def _handle_models(self, request: web.Request) -> web.Response:
-        """List registry models with availability flags (no secrets)."""
+        """List registry models with TRUTHFUL availability (no secrets).
+
+        Availability is the free-probe health (60s cache), not mere env-key
+        presence — a stale or invalid key must not show a green pill.
+        """
+        from ..llm import model_registry
         from ..llm.model_registry import list_models
 
-        return web.json_response({"models": list_models()})
+        health = await model_registry.verify_all()
+        models = list_models()
+        for model in models:
+            model["available"] = health.get(model["key"]) == "ok"
+            model["health"] = health.get(model["key"], "unknown")
+        return web.json_response({"models": models})
 
     async def _handle_usage(self, request: web.Request) -> web.Response:
         """Aggregate token/cost ledger (Phase 5) — no message content."""
         from ..llm.usage import get_tracker
 
         return web.json_response(get_tracker().totals())
+
+    async def _handle_reload_provider(self, request: web.Request) -> web.Response:
+        """Rebuild the LLM provider at runtime (after connecting a key).
+
+        Without this, keys added at runtime never reach the chat — the
+        provider is built once at system start. The system registers the
+        reload hook when it wires the web server.
+        """
+        from ..llm import model_registry
+
+        hook = PROVIDER_RELOAD_HOOK
+        if hook is None:
+            return web.json_response(
+                {"error": "system not wired for provider reload"}, status=503
+            )
+        result = hook()
+        # Fresh health: the newly connected provider must light up at once.
+        model_registry._health_cache.clear()
+        return web.json_response(result)
 
     async def _handle_model_roles(self, request: web.Request) -> web.Response:
         """Current per-role model lineup (front/planner/code/subagent)."""

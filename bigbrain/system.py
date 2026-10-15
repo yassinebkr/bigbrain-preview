@@ -163,6 +163,35 @@ class BigBrainSystem:
         print("    Run: python -m bigbrain --login    (Claude Pro/Max OAuth)")
         print("    Or set OPENAI_API_KEY / ANTHROPIC_API_KEY in .env")
         return MockLLMProvider(token_delay_ms=50, realistic_responses=True)
+
+    def reload_llm_provider(self) -> dict:
+        """Rebuild the LLM provider at runtime and rewire every holder.
+
+        Called after a key is connected at runtime (Mistral wizard,
+        OpenRouter paste) — without this the chat keeps talking to the
+        provider built at system start (often the mock).
+        """
+        new_provider = self._create_llm_provider()
+        self.llm_provider = new_provider
+
+        holders = [self.front_brain, self.orchestrator, self.voice_brain,
+                   *self.brains.values()]
+        # Verification pipeline: V3 cross-check holds the provider too.
+        if self.verification is not None:
+            holders.extend(getattr(self.verification, "verifiers", []) or [])
+        rewired = 0
+        for holder in holders:
+            if holder is not None and hasattr(holder, "llm_provider"):
+                holder.llm_provider = new_provider
+                rewired += 1
+
+        print(f"🔁 LLM provider reloaded: {type(new_provider).__name__} "
+              f"({rewired} holders rewired)")
+        return {
+            "ok": True,
+            "provider": type(new_provider).__name__,
+            "rewired": rewired,
+        }
     
     async def initialize(self) -> None:
         """Initialize all BigBrain components."""
@@ -249,6 +278,12 @@ class BigBrainSystem:
         
         # 12. UI
         await self._create_ui()
+
+        # Runtime provider reload (keys connected via the web UI rebuild the
+        # provider without a restart).
+        if self.web_server is not None:
+            from .web import server as web_server_module
+            web_server_module.PROVIDER_RELOAD_HOOK = self.reload_llm_provider
         
         print("✅ BigBrain system initialized successfully!")
     

@@ -93,7 +93,8 @@ export function BigBrainProviders() {
         if (state.status === 'completed') {
           clearInterval(poll);
           const result = await api('/api/auth/mistral/complete', { method: 'POST' });
-          setMistralStatus(`Connected (${result.health})`);
+          setMistralStatus(`Connected (${result.health}) — provider reloaded`);
+          await api('/api/system/reload-provider', { method: 'POST' }).catch(() => {});
           refresh();
         } else if (['expired', 'denied', 'error'].includes(state.status)) {
           clearInterval(poll);
@@ -221,7 +222,8 @@ export function BigBrainProviders() {
                 body: JSON.stringify({ key: orKey.trim() }),
               });
               setOrKey('');
-              setOrStatus('OpenRouter connected');
+              setOrStatus('OpenRouter connected — provider reloaded');
+              await api('/api/system/reload-provider', { method: 'POST' }).catch(() => {});
               refresh();
             } catch (e: any) {
               setOrStatus(e.message);

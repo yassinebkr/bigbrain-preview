@@ -1,6 +1,6 @@
 import { useRef, useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { Paperclip, Lightbulb, Image, Search, Mic, Send } from 'lucide-react';
+import { Paperclip, Mic, Send } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 import { ActionPill } from './ActionPill';
 import { AttachmentChip } from './AttachmentChip';
@@ -9,9 +9,6 @@ const easeOut = [0, 0, 0.2, 1] as [number, number, number, number];
 
 const actionPills = [
   { icon: Paperclip, label: 'Attach File' },
-  { icon: Lightbulb, label: 'Reasoning' },
-  { icon: Image, label: 'Create Image' },
-  { icon: Search, label: 'Deep Research' },
 ];
 
 interface ChatInputProps {

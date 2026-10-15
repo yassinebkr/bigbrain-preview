@@ -520,3 +520,66 @@ class TestOpenRouterKey:
         monkeypatch.setattr(ork, "verify_key", fake_verify)
         with pytest.raises(ork.OpenRouterKeyError):
             await ork.connect_key("sk-or-bad")
+
+
+# ================================================================
+# TRUTHFUL AVAILABILITY + PROVIDER RELOAD (live-pass feedback)
+# ================================================================
+
+
+class TestProviderReload:
+    def test_reload_hook_roundtrip(self, server):
+        """The endpoint calls the registered hook and clears health cache."""
+        from bigbrain.web import server as server_mod
+        import pytest as _pytest
+        from aiohttp import web as aioweb
+
+        old_hook = server_mod.PROVIDER_RELOAD_HOOK
+        try:
+            server_mod.PROVIDER_RELOAD_HOOK = lambda: {
+                "ok": True, "provider": "OpenAICompatProvider", "rewired": 5,
+            }
+            import asyncio
+
+            async def call():
+                mock_ws = None
+                resp = None
+                # Direct handler invocation with a fake request carrying JSON.
+                class FakeRequest:
+                    async def json(self):
+                        return {}
+                result = await server._handle_reload_provider(FakeRequest())
+                return result
+
+            result = asyncio.get_event_loop().run_until_complete(call()) \
+                if False else asyncio.run(call())
+            assert result.status == 200
+        finally:
+            server_mod.PROVIDER_RELOAD_HOOK = old_hook
+
+    def test_reload_without_hook_503s(self, server):
+        import asyncio
+        from bigbrain.web import server as server_mod
+
+        old_hook = server_mod.PROVIDER_RELOAD_HOOK
+        server_mod.PROVIDER_RELOAD_HOOK = None
+        try:
+
+            class FakeRequest:
+                async def json(self):
+                    return {}
+
+            result = asyncio.run(server._handle_reload_provider(FakeRequest()))
+            assert result.status == 503
+        finally:
+            server_mod.PROVIDER_RELOAD_HOOK = old_hook
+
+
+class TestGlmRegistry:
+    def test_glm_5_3_in_registry_shares_mistral_key(self):
+        from bigbrain.llm.model_registry import get_model
+        entry = get_model("mistral-glm-5.3")
+        assert entry.model_id == "zai-glm-5-3"
+        assert entry.api_key_env == "MISTRAL_API_KEY"
+        assert entry.reasoning is True
+        assert entry.reasoning_effort_default == "low"

@@ -163,6 +163,24 @@ _REGISTRY: dict[str, ModelEntry] = {
         health_path="/models",
         reasoning=False,
     ),
+    "mistral-glm-5.3": ModelEntry(
+        key="mistral-glm-5.3",
+        display_name="GLM 5.3 (Mistral hosted)",
+        provider="openai_compat",
+        # Third-party model on the Mistral platform API (docs.mistral.ai),
+        # same MISTRAL_API_KEY as the vibe subscription.
+        model_id="zai-glm-5-3",
+        api_key_env="MISTRAL_API_KEY",
+        base_url="https://api.mistral.ai/v1",
+        health_path="/models",
+        # GLM 5.3 ALWAYS thinks (rejects effort "none"); thinking streams as
+        # typed chunks inside delta.content and shares the completion budget,
+        # so low effort by default (fpga's measured lesson: high burned ~30k
+        # thinking tokens on a small round).
+        reasoning=True,
+        reasoning_efforts=["low", "high", "max"],
+        reasoning_effort_default="low",
+    ),
     # -- Subscription-backed (no API key; local credential store) --------------
     "codex-chatgpt": ModelEntry(
         key="codex-chatgpt",

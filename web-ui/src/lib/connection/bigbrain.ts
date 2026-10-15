@@ -99,13 +99,24 @@ export class BigBrainConnection implements ConnectionLike {
 
   loadHistory(callback?: (frame: any) => void): void {
     const id = this._request('chat.history', (frame) => {
-      const messages = (frame.payload?.messages || []).slice(-HISTORY_LIMIT);
-      callback?.({ messages });
+      // Server entries: {id, role, text, timestamp}. Normalize to the
+      // gateway shape the panels expect ({content} strings).
+      const messages = (frame.payload?.messages || [])
+        .slice(-HISTORY_LIMIT)
+        .map((m: any) => ({
+          id: m.id,
+          role: m.role === 'user' ? 'user' : 'assistant',
+          content: m.text,
+          timestamp: typeof m.timestamp === 'number'
+            ? m.timestamp * 1000
+            : Date.parse(m.timestamp) || Date.now(),
+        }));
+      callback?.({ ok: true, payload: { messages } });
       // Also surface as catch-up so App can wire it later.
       this.callbacks.onResumeCatchUp?.(messages);
     });
     if (!id) {
-      callback?.({ messages: [] });
+      callback?.({ ok: false, payload: { messages: [] } });
     }
   }
 

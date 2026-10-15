@@ -86,7 +86,10 @@ export function TopBar({ children }: TopBarProps) {
         </div>
         <div className="relative flex-shrink-0">
           <button
-            onClick={() => setDropdownOpen(!dropdownOpen)}
+            onClick={() => {
+              setDropdownOpen(!dropdownOpen);
+              if (!dropdownOpen) refresh();
+            }}
             className="flex items-center gap-1.5 h-9 sm:h-8 pl-1.5 sm:pl-2 pr-2 sm:pr-3 rounded-full transition-all duration-200 cursor-pointer"
             style={{
               backgroundColor: 'var(--bg-surface)',
