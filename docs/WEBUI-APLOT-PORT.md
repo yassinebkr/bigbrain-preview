@@ -177,30 +177,43 @@ ci-dessus — les reconnectés ne perdent rien.
 
 ## Backlog (retours live, à traiter plus tard)
 
-1. **Feedback d'action agent** : quand l'agent crée un fichier, l'UI ne
-   propose rien — ouvrir/proposer le workspace ou une vue code, highlight
-   du bouton Workspace, lien vers le fichier écrit. C'est le job de la
-   Phase B (morphable).
-   - *Partiellement fait* : le RunPanel (v2 des pastilles, sous le chat)
-     liste les fichiers écrits d'un run — cliquables, ils ouvrent le
-     viewer du workspace. Reste le "proactive nudge" (highlight du bouton
-     Workspace, ouvrir une vue code sans changer de layout).
-2. **Port du harness déterministe fpga → python_brain** : la couche
+1. **Feedback d'action agent** : le RunPanel liste les fichiers écrits —
+   cliquables, le CodeViewer les affiche (highlight Python + Run avec
+   stdout/stderr). Reste le "proactive nudge" (highlight du bouton
+   Workspace, ouvrir une vue code sans changer de layout = Phase B).
+2. **Interface code dédiée** : le CodeViewer est read + run. Manquent :
+   édition de fichier (save via /api/fs/file), exécution d'un run
+   directement depuis le chat ("fais tourner hello.py"), multi-langages
+   au-delà de Python, et plus tard un vrai layout code (Phase B morphable).
+3. **Port du harness déterministe fpga → python_brain** : la couche
    vérification déterministe outillée comme sur ../fpga (typed tools,
    replay des runs, vérifs déterministes avant review LLM). À explorer
    dans fpga/backend puis planifier avant implémentation.
-3. Sessions persistées (l'historique est aujourd'hui mono-conversation).
-4. Drag/drop move dans l'explorateur (l'endpoint /api/fs/move existe).
-5. Premier plugin premium + paywall Stripe (billing scratchy à porter).
+4. Sessions persistées (l'historique est aujourd'hui mono-conversation).
+5. Drag/drop move dans l'explorateur (l'endpoint /api/fs/move existe).
+6. Premier plugin premium + paywall Stripe (billing scratchy à porter).
 
 ## Changelog UX récent
 
+- **CodeViewer v2** : syntax highlighting Python (highlight.js, language
+  python seulement), bouton Run qui exécute le fichier via
+  POST /api/fs/run (subprocess borné 30s, stdout/stderr/exit/durée
+  affichés sous le code), copier, saut workspace.
+- **Workspace propre** : les scripts d'exécution temporaires du PythonBrain
+  (script_<timestamp>.py) vont dans un sous-dossier caché `.exec/` ;
+  l'explorateur masque toutes les entrées en pointillé (.project.json,
+  .exec/). Le sandbox ne montre que les vrais fichiers générés.
 - **RunPanel v2** (`web-ui/src/components/RunPanel.tsx`) : remplace les
   pastilles d'activité. Visibilité dérivée de l'état du run
-  (task.received → task.complete/failed), pas d'un timer par événement —
-  corrige l'apparition/disparition périodique. Repliable : une ligne
-  (statut, progression x/y, nb fichiers) ; déplié : plan (étapes, brain,
-  durée), fichiers écrits cliquables, nudge sandbox, erreurs.
+  (task.received → task.complete/failed/cancelled), pas d'un timer par
+  événement — corrige l'apparition/disparition périodique. Le résumé
+  reste après la fin du run (X pour fermer). Repliable : une ligne
+  (statut, progression x/y, nb fichiers, largeur 720px alignée sur
+  l'input) ; déplié : plan (étapes, brain, durée), fichiers écrits
+  cliquables (CodeViewer), nudge sandbox, erreurs.
+- **Bouton Stop** : pendant un run, le bouton envoyer devient Stop —
+  frame chat.cancel → le front brain casse son stream (partiel conservé)
+  et l'orchestrateur soft-cancel les plans en cours (task.cancelled).
 - **Mode global = projet sandbox** : sans projet sélectionné, les écritures
   des brains vont dans `workspace/sandbox/` (projet auto-créé avec manifest,
   visible dans le sélecteur de projets) au lieu du pool `python/` en vrac.
@@ -208,5 +221,5 @@ ci-dessus — les reconnectés ne perdent rien.
   annonce le contexte sandbox au LLM. Le RunPanel affiche un nudge quand
   des fichiers atterrissent en sandbox sans projet sélectionné.
 - **Largeur du chat sur PC** : la colonne centrale passe de 720px à
-  1200px à partir de md (Layout.tsx) — la vue "téléphone" est réservée
-  aux vrais téléphones.
+  1200px à partir de md (Layout.tsx) — mais l'input et le bandeau
+  Upgrade restent à 720px (leur taille d'origine).

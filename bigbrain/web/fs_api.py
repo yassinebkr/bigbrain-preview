@@ -79,7 +79,9 @@ def list_dir(rel: str = "") -> Dict[str, Any]:
         raise web.HTTPBadRequest(text=json_error("not a folder"))
     entries: List[Dict[str, Any]] = [
         _entry_info(child, root) for child in sorted(target.iterdir())
-        if child.name != ".DS_Store"
+        # Dot-entries are internal: .project.json manifests, the brain's
+        # .exec/ temp scripts. They stay on disk but never clutter the UI.
+        if not child.name.startswith(".")
     ]
     return {"path": rel or "", "entries": entries}
 
@@ -173,6 +175,53 @@ def delete(rel: str) -> Dict[str, Any]:
     else:
         target.unlink()
     return {"ok": True, "path": rel}
+
+
+def run_file(rel: str, timeout: float = 30.0) -> Dict[str, Any]:
+    """Run a workspace Python file in a subprocess and capture its output.
+
+    Dev-tool counterpart of the code viewer's Run button: same trust model
+    as the write API (local single-user tool), bounded output, hard
+    timeout. The process runs with the file's parent as cwd so relative
+    writes behave as in the brain's execution model.
+    """
+    import subprocess
+    import sys
+
+    root = workspace_root()
+    target = _resolve(root, rel)
+    if not target.is_file():
+        raise web.HTTPNotFound(text=json_error("file not found"))
+    if target.suffix != ".py":
+        raise web.HTTPBadRequest(text=json_error("only .py files can be run"))
+    timeout = min(max(float(timeout), 1.0), 120.0)
+    start = time.time()
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(target)],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=str(target.parent),
+        )
+        return {
+            "ok": proc.returncode == 0,
+            "exitCode": proc.returncode,
+            "stdout": proc.stdout[-20000:],
+            "stderr": proc.stderr[-20000:],
+            "durationMs": int((time.time() - start) * 1000),
+            "timedOut": False,
+        }
+    except subprocess.TimeoutExpired as exc:
+        out = exc.stdout if isinstance(exc.stdout, str) else ""
+        return {
+            "ok": False,
+            "exitCode": -1,
+            "stdout": out[-20000:],
+            "stderr": f"timed out after {timeout:.0f}s",
+            "durationMs": int((time.time() - start) * 1000),
+            "timedOut": True,
+        }
 
 
 # ── projects (global workspace + per-project sub-workspaces) ───────────────
@@ -295,6 +344,7 @@ def setup_fs_routes(app: web.Application) -> None:
     app.router.add_post("/api/fs/mkdir", _handle_mkdir)
     app.router.add_post("/api/fs/rename", _handle_rename)
     app.router.add_post("/api/fs/move", _handle_move)
+    app.router.add_post("/api/fs/run", _handle_run)
 
 
 async def _handle_list(request: web.Request) -> web.Response:
@@ -327,6 +377,17 @@ async def _handle_rename(request: web.Request) -> web.Response:
 async def _handle_move(request: web.Request) -> web.Response:
     body = await request.json()
     return web.json_response(move(body.get("path", ""), body.get("destDir", "")))
+
+
+async def _handle_run(request: web.Request) -> web.Response:
+    """Execute a workspace .py file off the event loop."""
+    import asyncio
+
+    body = await request.json()
+    result = await asyncio.to_thread(
+        run_file, body.get("path", ""), body.get("timeout", 30.0)
+    )
+    return web.json_response(result)
 
 
 async def _handle_projects(request: web.Request) -> web.Response:

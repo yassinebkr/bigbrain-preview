@@ -672,6 +672,34 @@ class TestWorkspaceProjects:
         names = [p["name"] for p in fs_api.list_projects()["projects"]]
         assert "sandbox" in names
 
+    def test_list_dir_hides_dot_entries(self, _ws_root):
+        from bigbrain.web import fs_api
+        (_ws_root / ".exec").mkdir(parents=True)
+        (_ws_root / ".exec" / "script_123.py").write_text("print(1)")
+        (_ws_root / "hello.py").write_text("print('hello')")
+        names = [e["name"] for e in fs_api.list_dir("")["entries"]]
+        assert "hello.py" in names
+        assert not any(n.startswith(".") for n in names)
+
+    def test_run_file_executes_and_captures_output(self, _ws_root):
+        from bigbrain.web import fs_api
+        (_ws_root / "sandbox").mkdir(parents=True)
+        script = _ws_root / "sandbox" / "hello.py"
+        script.write_text("print('hello from sandbox')")
+        result = fs_api.run_file("sandbox/hello.py")
+        assert result["ok"] is True
+        assert result["exitCode"] == 0
+        assert "hello from sandbox" in result["stdout"]
+        assert result["timedOut"] is False
+
+    def test_run_file_refuses_non_python(self, _ws_root):
+        from aiohttp import web as aioweb
+        from bigbrain.web import fs_api
+        _ws_root.mkdir(parents=True, exist_ok=True)
+        (_ws_root / "notes.txt").write_text("not code")
+        with pytest.raises(aioweb.HTTPBadRequest):
+            fs_api.run_file("notes.txt")
+
 
 class TestCurrentProject:
     @pytest.fixture(autouse=True)

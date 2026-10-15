@@ -2123,8 +2123,13 @@ Output ONLY the corrected file content, no explanation."""
         import time
         start_time = time.time()
         
-        # Create temporary Python file
-        script_file = self.work_dir / f"script_{int(start_time)}.py"
+        # Temp execution scripts live in a hidden .exec/ subfolder of the
+        # work_dir so the user-visible workspace only contains real
+        # generated files (script_<timestamp>.py used to clutter the
+        # project folder — sandbox/, project dirs).
+        exec_dir = self.work_dir / ".exec"
+        exec_dir.mkdir(exist_ok=True)
+        script_file = exec_dir / f"script_{int(start_time)}.py"
         script_file.write_text(code, encoding='utf-8')
         self._temp_files.add(script_file)
         
@@ -2295,6 +2300,12 @@ Output ONLY the corrected file content, no explanation."""
             if self.work_dir.exists():
                 remaining_files = list(self.work_dir.glob("*"))
                 if not remaining_files:
+                    exec_dir = self.work_dir / ".exec"
+                    if exec_dir.is_dir():
+                        try:
+                            exec_dir.rmdir()
+                        except Exception:
+                            pass
                     self.work_dir.rmdir()
                 else:
                     # Log remaining files for debugging
