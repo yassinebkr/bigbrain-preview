@@ -153,6 +153,8 @@ interface AppState {
   // Workspace
   tasks: Task[];
   addTask: (task: Task) => void;
+  fetchBoardTasks: () => Promise<void>;
+  createBoardTask: (task: Partial<Task>) => Promise<void>;
   applyBusActivity: (activity: Omit<AgentActivity, 'ts'>) => void;
   updateTask: (id: string, updates: Partial<Task>) => void;
   deleteTask: (id: string) => void;
@@ -493,6 +495,55 @@ export const useAppStore = create<AppState>()(
       tasks: [],
       addTask: (task) => set((state) => ({ tasks: [...state.tasks, task] })),
 
+      // The persistent board lives server-side (data/tasks.json); the
+      // store is its view. Server sync is best effort — offline the
+      // local operations keep working.
+      fetchBoardTasks: async () => {
+        try {
+          const r = await fetch('/api/tasks');
+          if (!r.ok) return;
+          const body = await r.json();
+          const serverTasks = (body.tasks || []).map((t: any) => ({
+            id: t.id,
+            title: t.title,
+            description: t.description || '',
+            status: t.status,
+            tags: t.tags || [],
+            assignee: t.assignee || 'BigBrain',
+            priority: t.priority || 'medium',
+            createdAt: (t.createdAt || 0) * 1000,
+          }));
+          // Server tasks replace the local list, minus transient bus
+          // tasks (agent runs) that live only in this session.
+          const transient = get().tasks.filter((t) => !t.id.startsWith('task-'));
+          set({ tasks: [...transient, ...serverTasks] });
+        } catch { /* offline: keep the local view */ }
+      },
+      createBoardTask: async (task) => {
+        try {
+          const r = await fetch('/api/tasks', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(task),
+          });
+          if (r.ok) {
+            await get().fetchBoardTasks();
+            return;
+          }
+        } catch { /* fall through to local */ }
+        // Offline fallback: local task (honest — no fake server id).
+        get().addTask({
+          id: `local-${Date.now()}`,
+          title: task.title || 'Task',
+          description: task.description || '',
+          status: task.status || 'todo',
+          tags: task.tags || ['manual'],
+          assignee: task.assignee || 'You',
+          priority: task.priority || 'medium',
+          createdAt: Date.now(),
+        });
+      },
+
       // Bus task events (orchestrator) mapped onto the TaskBoard slice —
       // agent tasks live in the same board as manual ones; drag & drop
       // still works locally (updateTask overrides).
@@ -559,8 +610,24 @@ export const useAppStore = create<AppState>()(
             return state;
         }
       }),
-      updateTask: (id, updates) => set((state) => ({ tasks: state.tasks.map((t) => (t.id === id ? { ...t, ...updates } : t)) })),
-      deleteTask: (id) => set((state) => ({ tasks: state.tasks.filter((t) => t.id !== id) })),
+      updateTask: (id, updates) => {
+        set((state) => ({ tasks: state.tasks.map((t) => (t.id === id ? { ...t, ...updates } : t)) }));
+        // Persisted board task → sync the server (best effort).
+        if (id.startsWith('task-')) {
+          fetch('/api/tasks', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, updates }),
+          }).catch(() => { /* offline: local view already updated */ });
+        }
+      },
+      deleteTask: (id) => {
+        set((state) => ({ tasks: state.tasks.filter((t) => t.id !== id) }));
+        if (id.startsWith('task-')) {
+          fetch(`/api/tasks?id=${encodeURIComponent(id)}`, { method: 'DELETE' })
+            .catch(() => { /* offline: local view already updated */ });
+        }
+      },
       workspaceView: 'files',
       setWorkspaceView: (workspaceView) => set({ workspaceView }),
 

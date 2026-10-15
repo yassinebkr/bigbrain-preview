@@ -408,6 +408,13 @@ class TestAplotProtocol:
 
     @pytest.mark.asyncio
     async def test_chat_message_event_captured_in_history(self, server):
+        # An active session first (untagged replies capture into it).
+        from unittest.mock import AsyncMock
+
+        await server._handle_chat_send(AsyncMock(), {
+            "payload": {"text": "question", "messageId": "m1",
+                        "sessionId": "sess-live"},
+        })
         msg = BusMessage(
             type=MessageType.EVENT,
             source="front_brain",
@@ -415,11 +422,24 @@ class TestAplotProtocol:
             payload={"event": "chat.message", "role": "assistant", "text": "bonjour"},
         )
         await server._on_bus_message(msg)
-        # Untagged reply → captured into the (lazily created) active session.
-        session = server._sessions.get(server._active_session_id)
-        assert session is not None
+        session = server._sessions.get("sess-live")
         assert session["messages"][-1]["role"] == "assistant"
         assert session["messages"][-1]["text"] == "bonjour"
+
+    async def test_untagged_event_without_session_is_dropped(self, server):
+        """No active session → an untagged reply must NOT mint a junk
+        session (the startup banner used to create 'New conversation'
+        sessions holding only the system message)."""
+        msg = BusMessage(
+            type=MessageType.EVENT,
+            source="front_brain",
+            target="morphable_ui",
+            payload={"event": "chat.message", "role": "system",
+                      "text": "✅ BigBrain system started!"},
+        )
+        await server._on_bus_message(msg)
+        assert server._active_session_id is None
+        assert server._sessions.list() == []
 
     def test_chat_history_bounded(self, server):
         # Sessions bound their messages (500) — the legacy 200-entry
@@ -942,14 +962,22 @@ class TestStreamingFrames:
 
     @pytest.mark.asyncio
     async def test_chat_delta_not_buffered_chat_done_is(self, server):
+        from unittest.mock import AsyncMock
+
+        # An active session first (the streamed reply captures into it).
+        await server._handle_chat_send(AsyncMock(), {
+            "payload": {"text": "hello", "messageId": "m1",
+                        "sessionId": "sess-stream"},
+        })
+
         # chat.delta: transient — not replay-buffered, not history.
         delta = BusMessage(
             type=MessageType.EVENT, source="front_brain", target="morphable_ui",
             payload={"event": "chat.delta", "delta": "Hel"},
         )
         await server._on_bus_message(delta)
-        session = server._sessions.get(server._active_session_id)
-        assert session is None or session["messages"] == []
+        session = server._sessions.get("sess-stream")
+        assert len(session["messages"]) == 1  # only the user message
         assert all(e != "chat.delta" for _, e in
                    [(ts, d.get("payload", {}).get("event")) for ts, d in server._replay_buffer])
 
@@ -959,7 +987,7 @@ class TestStreamingFrames:
             payload={"event": "chat.done", "text": "Hello streamed world"},
         )
         await server._on_bus_message(done)
-        session = server._sessions.get(server._active_session_id)
+        session = server._sessions.get("sess-stream")
         assert session["messages"][-1]["text"] == "Hello streamed world"
         assert server._replay_buffer[-1][1]["payload"]["event"] == "chat.done"
 

@@ -355,6 +355,7 @@ class BigBrainSystem:
         self.front_brain = FrontBrain(self.bus, llm_provider=self.llm_provider)
         brain_descriptions = {
             "researcher": "Web search via Brave API, parallel queries, source triangulation, LLM-powered summarization. Use for fact-finding, research, data gathering, current events",
+            "taskboard": "Adds tasks to the user's persistent task board. Use when the user asks to add/create a task or todo (\"ajoute une tâche\", \"add a task to my board\"). The task lands on the board as a to-do by default and survives restarts",
         }
         # Register pool workers with same description
         for name in self.brains:
@@ -517,6 +518,18 @@ class BigBrainSystem:
         except Exception as e:
             print(f"⚠️  Research brain unavailable: {e}")
             print("    Code execution will still work, but research tasks may be limited.")
+
+        # TaskBoard brain — the agent's REAL capability to add tasks to
+        # the user's persistent board (data/tasks.json). Without it,
+        # "add a task to my board" routed to the python brain and the
+        # LLM would claim success while nothing persisted.
+        try:
+            from .brains.taskboard_brain import TaskBoardBrain
+            self.brains["taskboard"] = TaskBoardBrain(
+                name="taskboard", bus=self.bus, workspace=self.workspace)
+            print("📋 TaskBoard brain: persistent user task board")
+        except Exception as e:
+            print(f"⚠️  TaskBoard brain unavailable: {e}")
         
         # Register HMAC tokens for each brain
         for brain_name in self.brains:
@@ -641,6 +654,7 @@ class BigBrainSystem:
             brain_descriptions = {
                 "python_brain": "Generates and executes Python code, scripts, calculations, data processing",
                 "researcher": "Researches topics, gathers information, analyzes data, web searches",
+                "taskboard": "Adds tasks to the user's persistent task board. Use when the user asks to add/create a task or todo. Payload: {\"type\": \"board_task\", \"title\": \"...\", \"description\": \"...\", \"status\": \"todo|in-progress|review|done\"} — status defaults to todo",
             }
             for brain_name, brain in self.brains.items():
                 self.orchestrator.register_brain(brain_name, {

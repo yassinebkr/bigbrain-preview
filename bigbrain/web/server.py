@@ -251,6 +251,8 @@ class WebServer:
         setup_fs_routes(self._app)
         from .evidence_api import setup_evidence_routes
         setup_evidence_routes(self._app)
+        from .taskboard import setup_taskboard_routes
+        setup_taskboard_routes(self._app)
 
         # Per-role model lineup (the top-left dropdown) + OpenRouter key.
         self._app.router.add_get("/api/models/roles", self._handle_model_roles)
@@ -842,11 +844,16 @@ class WebServer:
 
     def _capture_to_session(self, session_id: str | None,
                             role: str, text: str) -> None:
-        """Persist a reply into its session (tagged, else active/new)."""
+        """Persist a reply into its session.
+
+        Untagged events (system announcements at startup, TUI replies)
+        capture into the ACTIVE session when one exists — they must
+        never CREATE a session: the old behavior minted junk
+        'New conversation' sessions holding only the startup banner.
+        """
         target = session_id or self._active_session_id
         if not target:
-            target = self._sessions.ensure(None)["id"]
-            self._active_session_id = target
+            return
         self._sessions.append_message(target, role, text)
 
     # ================================================================

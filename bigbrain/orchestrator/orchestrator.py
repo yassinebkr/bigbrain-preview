@@ -184,6 +184,7 @@ CRITICAL RULES:
 - For simple code tasks: 1 subtask to python_brain
 - The "type" field in payload should be "generate_and_execute" for code tasks, "research" for research tasks
 - To RUN an existing file (e.g. "run hello.py"), use type "run_file" with payload {{"type": "run_file", "file": "hello.py"}} — the file must already exist in the project
+- To ADD A TASK to the user's task board, use brain_target "taskboard" with payload {{"type": "board_task", "title": "<short task title>", "description": "<details>", "status": "todo"}} — a requested task is a TO-DO unless the user explicitly says it is done or in progress
 - If research is needed, add a researcher subtask BEFORE the coding subtask with a dependency
 
 Respond with ONLY a JSON array. No explanation, no markdown fences.
@@ -911,6 +912,8 @@ Example — research then code:
             "run_file": "python_brain",
             "research": "researcher",
             "web_search": "researcher",
+            "board_task": "taskboard",
+            "create_task": "taskboard",
         }
         
         if task_type in brain_map:
