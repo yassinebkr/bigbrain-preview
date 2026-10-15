@@ -122,6 +122,55 @@ bigbrain-preview/
 | Bugs connus d'Aplot (history cassée, streaming pop) | Listés dans le brief, corrigés en étapes 3-4 |
 | 87 tests pytest liés au vieil UI | Refactor à l'étape 6, pas avant |
 
-## Frames BigBrain (à remplir à l'étape 1)
+## Frames BigBrain (inventaire — étape 1, validé dans le code)
 
-*(section réservée : shapes exactes des frames émises/reçues, validées par fixtures)*
+### Serveur → client (toutes via `message.to_log_dict()`, forwardées à chaque tab)
+
+Envelope commune :
+
+```json
+{ "type": "state|event|task|result|progress",
+  "source": "...", "target": "...", "payload": { "event": "..." } }
+```
+
+À la connexion (dans cet ordre) : `focus.initial` (state), `system.status`
+(event, bus stats), puis le replay buffer (frames passées, `_replay: true`).
+
+Events applicatifs :
+
+| `payload.event` | Shape | Source |
+|---|---|---|
+| `chat.message` | `{role: "assistant"\|"system", text, type}` | WebAdapter.render_message ← front brain |
+| `task.progress` | `{task, progress?, status}` | WebAdapter.render_progress |
+| `brain.status` | `{brain, state: "idle"\|"offline", running, ...}` (state frame) | WebAdapter.render_brain_status |
+| `workspace.overview` | `{workspaces}` | WebAdapter.render_workspace_overview |
+| `task.received / task.complete / task.failed` | events tâches | orchestrateur |
+| `subtask.started / subtask.complete / subtask.failed` | events sous-tâches | orchestrateur |
+| `brain.started / brain.complete` | events exécution | orchestrateur |
+
+Replay buffer : 100 frames max, 5 min, types `result/progress` + les events
+ci-dessus — les reconnectés ne perdent rien.
+
+### Client → serveur (WS handler : source forcée `morphable_ui` → BusMessage)
+
+| Frame client | Devenu | Note |
+|---|---|---|
+| Chat (ancien UI) | `{type: "task", target: "front_brain", payload: {type: "user_message", text}}` | front brain écoute `*`, filtre `payload.type == "user_message"` |
+| Focus | `POST /api/focus` ou bus | — |
+
+### Limites constatées → décisions
+
+- **Pas de streaming** : front brain appelle `stream=False` partout ;
+  les réponses arrivent en `chat.message` complet. Phase A = pas de
+  `onStreamDelta` ; streaming en étape 7.
+- **Pas de handshake ack ni ping/pong applicatif** : à ajouter (étape 2).
+- **Pas d'historique chat serveur** : à ajouter (buffer simple, étape 2).
+- **Ack de message** : rien aujourd'hui ; `message.status` à ajouter pour
+  les statuts sending/queued/sent d'Aplot (étape 2).
+
+### Mapping adaptateur (étape 3)
+
+- `chat.send` → frame task user_message + ack `message.status`
+- `welcome` (à créer) → connecté ; `chat.history` (à créer) → `setMessages`
+- `chat.message` → `onMessage` ; `brain.status` + events brain → `onAgentActivity`
+- events task/subtask → `onAgentActivity` (TaskBoard) ; `_replay` → `onQueueReplay`
