@@ -10,7 +10,7 @@ const categories = [
   { icon: HeartPulse, label: 'Health' },
   { icon: MapPin, label: 'Trips' },
   { icon: Wrench, label: 'Troubleshoot' },
-  { icon: BarChart3, label: 'Troubleshoot' },
+  { icon: BarChart3, label: 'Data' },
 ];
 
 export function CategoryPills() {

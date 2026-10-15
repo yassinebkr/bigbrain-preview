@@ -67,17 +67,19 @@
 
   /* Light mode */
   [data-theme="light"] {
-    --bg-primary: #eef1f6;
-    --bg-sidebar: #e4e9f1;
-    --bg-surface: #ffffff;
-    --bg-input: #f5f7fa;
-    --bg-button: #e8ecf2;
-    --bg-pill: #ffffff;
-    --bg-pill-hover: #eef1f6;
+    /* Softened light theme: no pure whites — a quiet blue-gray scale
+       (the original #eef1f6/#ffffff was eye-searing). */
+    --bg-primary: #e3e6ed;
+    --bg-sidebar: #dde1ea;
+    --bg-surface: #f2f3f7;
+    --bg-input: #e9ebf1;
+    --bg-button: #dfe3eb;
+    --bg-pill: #f2f3f7;
+    --bg-pill-hover: #e6e9f0;
     --bg-icon: transparent;
-    --bg-icon-hover: #d8dee8;
-    --border-subtle: #d4d8e0;
-    --border-input: #d8dce4;
+    --bg-icon-hover: #d2d7e2;
+    --border-subtle: #c9ced9;
+    --border-input: #ccd1dc;
     --text-primary: #1d1d1f;
     --text-secondary: #6e6e73;
     --text-tertiary: #86868b;

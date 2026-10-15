@@ -224,6 +224,10 @@ class WebServer:
         if WEBUI_DIST.exists():
             self._app.router.add_get("/assets/{filename:.+}", self._handle_webui_asset)
 
+        # Real workspace filesystem API (replaces the UI's mock file tree).
+        from .fs_api import setup_fs_routes
+        setup_fs_routes(self._app)
+
     async def _handle_models(self, request: web.Request) -> web.Response:
         """List registry models with availability flags (no secrets)."""
         from ..llm.model_registry import list_models

@@ -1,552 +1,323 @@
-import React, { useState, useMemo } from 'react';
+// FileExplorer — real workspace files via the BigBrain FS API
+// (GET/POST/DELETE /api/fs/*). Replaces the original mock tree: listing,
+// navigation, reading, creating, renaming and deleting are actual
+// filesystem operations inside the server's workspace root. The agent
+// (PythonBrain) writes into the same root, so agent-created files show up
+// here on refresh.
+
+import { useCallback, useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Folder,
   FileText,
-  Image,
-  Code,
-  File,
+  Code2,
+  Image as ImageIcon,
+  File as FileIcon,
   ChevronRight,
-  ChevronDown,
   Home,
   Trash2,
-  Download,
-  FolderOpen,
-  Search,
-  ArrowLeft,
-  ExternalLink,
+  FolderPlus,
+  FilePlus2,
+  Pencil,
+  RefreshCw,
+  X,
 } from 'lucide-react';
-import { useAppStore } from '@/store/appStore';
-import type { FileItem } from '@/types';
 
-const folderIcons: Record<string, React.ReactNode> = {
-  root: <Home size={16} strokeWidth={1.5} />,
-  docs: <Folder size={16} strokeWidth={1.5} />,
-  proj: <Folder size={16} strokeWidth={1.5} />,
-  research: <Folder size={16} strokeWidth={1.5} />,
-  dl: <Download size={16} strokeWidth={1.5} />,
-  trash: <Trash2 size={16} strokeWidth={1.5} />,
-};
+const easeOut = [0, 0, 0.2, 1] as [number, number, number, number];
 
-const fileIcons: Record<string, React.ReactNode> = {
-  'file-text': <FileText size={18} strokeWidth={1.5} />,
-  code: <Code size={18} strokeWidth={1.5} />,
-  image: <Image size={18} strokeWidth={1.5} />,
-  file: <File size={18} strokeWidth={1.5} />,
-};
-
-const fileColors: Record<string, string> = {
-  'file-text': '#5ac8fa',
-  code: '#34c759',
-  image: '#ff9500',
-  file: '#a1a1aa',
-};
-
-function formatBytes(bytes?: number): string {
-  if (bytes === undefined) return '--';
-  if (bytes < 1024) return bytes + ' B';
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+interface FsEntry {
+  name: string;
+  path: string;
+  type: 'folder' | 'file';
+  size: number | null;
+  modified: number;
+  extension: string | null;
 }
 
-function formatDate(timestamp: number): string {
-  const d = new Date(timestamp);
-  const now = new Date();
-  const diffMs = now.getTime() - d.getTime();
-  const diffHrs = Math.floor(diffMs / 3600000);
-  const diffDays = Math.floor(diffMs / 86400000);
-
-  if (diffHrs < 1) return 'Just now';
-  if (diffHrs < 24) return diffHrs + 'h ago';
-  if (diffDays < 7) return diffDays + 'd ago';
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+async function fsApi<T>(path: string, opts?: RequestInit): Promise<T> {
+  const response = await fetch(path, opts);
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error((body as any).error || `HTTP ${response.status}`);
+  return body as T;
 }
 
-// Tree item component
-function TreeItem({
-  folder,
-  depth,
-  isOpen,
-  onToggle,
-  isSelected,
-  onSelect,
-}: {
-  folder: FileItem;
-  depth: number;
-  isOpen: boolean;
-  onToggle: () => void;
-  isSelected: boolean;
-  onSelect: () => void;
-}) {
-  const icon = folderIcons[folder.id] || <Folder size={16} strokeWidth={1.5} />;
-
-  return (
-    <div>
-      <motion.button
-        whileTap={{ scale: 0.98 }}
-        onClick={() => {
-          onSelect();
-          onToggle();
-        }}
-        className="flex items-center w-full py-1.5 pr-2 text-sm transition-colors duration-150 cursor-pointer relative"
-        style={{
-          paddingLeft: `${depth * 12 + 8}px`,
-          backgroundColor: isSelected ? 'rgba(0,113,227,0.1)' : 'transparent',
-          borderLeft: isSelected ? '2px solid var(--accent-blue)' : '2px solid transparent',
-          color: isSelected ? 'var(--text-primary)' : 'var(--text-secondary)',
-        }}
-        onMouseEnter={(e) => {
-          if (!isSelected) {
-            e.currentTarget.style.backgroundColor = 'var(--bg-icon-hover)';
-            e.currentTarget.style.color = 'var(--text-primary)';
-          }
-        }}
-        onMouseLeave={(e) => {
-          if (!isSelected) {
-            e.currentTarget.style.backgroundColor = 'transparent';
-            e.currentTarget.style.color = 'var(--text-secondary)';
-          }
-        }}
-      >
-        <span
-          className="flex items-center justify-center w-4 h-4 mr-1 flex-shrink-0"
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggle();
-          }}
-          style={{ color: 'var(--text-tertiary)' }}
-        >
-          {isOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-        </span>
-        <span
-          className="mr-2 flex-shrink-0"
-          style={{
-            color: folder.id === 'trash' ? '#ff453a' : folder.id === 'dl' ? '#5ac8fa' : '#0071e3',
-          }}
-        >
-          {isOpen && (folder.id === 'docs' || folder.id === 'proj' || folder.id === 'research' || folder.id === 'dl' || folder.id === 'trash' || folder.id === 'root')
-            ? <FolderOpen size={16} strokeWidth={1.5} />
-            : icon}
-        </span>
-        <span className="truncate">{folder.name}</span>
-      </motion.button>
-    </div>
+const listDir = (path: string) =>
+  fsApi<{ path: string; entries: FsEntry[] }>(
+    `/api/fs/list?path=${encodeURIComponent(path)}`
   );
+
+const readFile = (path: string) =>
+  fsApi<{ content: string; binary: boolean; truncated: boolean }>(
+    `/api/fs/file?path=${encodeURIComponent(path)}`
+  );
+
+const writeFile = (path: string, content: string) =>
+  fsApi<{ ok: boolean }>(`/api/fs/file`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, content }),
+  });
+
+const mkdir = (path: string) =>
+  fsApi<{ ok: boolean }>(`/api/fs/mkdir`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  });
+
+const rename = (path: string, newName: string) =>
+  fsApi<{ ok: boolean }>(`/api/fs/rename`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, newName }),
+  });
+
+const deleteEntry = (path: string) =>
+  fsApi<{ ok: boolean }>(`/api/fs/file?path=${encodeURIComponent(path)}`, {
+    method: 'DELETE',
+  });
+
+function iconFor(entry: FsEntry, size = 15) {
+  if (entry.type === 'folder') return <Folder size={size} strokeWidth={1.5} />;
+  const ext = (entry.extension || '').toLowerCase();
+  if (['ts', 'tsx', 'js', 'mjs', 'py', 'json', 'css', 'html'].includes(ext))
+    return <Code2 size={size} strokeWidth={1.5} />;
+  if (['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'].includes(ext))
+    return <ImageIcon size={size} strokeWidth={1.5} />;
+  if (['md', 'txt', 'log'].includes(ext))
+    return <FileText size={size} strokeWidth={1.5} />;
+  return <FileIcon size={size} strokeWidth={1.5} />;
 }
 
-// Context menu component
-function ContextMenu({
-  x,
-  y,
-  onClose,
-  onAction,
-}: {
-  x: number;
-  y: number;
-  onClose: () => void;
-  onAction: (action: string) => void;
-}) {
-  const items = [
-    { id: 'open', label: 'Open' },
-    { id: 'rename', label: 'Rename' },
-    { id: 'copy', label: 'Copy' },
-    { id: 'move', label: 'Move to...' },
-    { id: 'delete', label: 'Move to Trash' },
-  ];
-
-  return (
-    <>
-      <div className="fixed inset-0 z-40" onClick={onClose} />
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        exit={{ opacity: 0, scale: 0.95 }}
-        transition={{ duration: 0.1 }}
-        className="fixed z-50 py-1 rounded-lg shadow-lg border"
-        style={{
-          top: y,
-          left: x,
-          backgroundColor: 'var(--bg-surface)',
-          borderColor: 'var(--border-subtle)',
-          minWidth: '160px',
-        }}
-      >
-        {items.map((item) => (
-          <button
-            key={item.id}
-            onClick={() => {
-              onAction(item.id);
-              onClose();
-            }}
-            className="w-full text-left px-3 py-1.5 text-sm transition-colors duration-100 cursor-pointer"
-            style={{
-              color: item.id === 'delete' ? '#ff453a' : 'var(--text-primary)',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = 'var(--bg-icon-hover)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = 'transparent';
-            }}
-          >
-            {item.label}
-          </button>
-        ))}
-      </motion.div>
-    </>
-  );
+function formatSize(bytes: number | null): string {
+  if (bytes == null) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 export function FileExplorer() {
-  const { files, selectedFileId, setSelectedFileId, setWorkspaceView } = useAppStore();
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(['root', 'docs', 'proj']));
-  const [searchQuery, setSearchQuery] = useState('');
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
-  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
-  const [viewingFile, setViewingFile] = useState<FileItem | null>(null);
+  const [dir, setDir] = useState('');
+  const [entries, setEntries] = useState<FsEntry[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [viewing, setViewing] = useState<{ path: string; content: string } | null>(null);
+  const [busy, setBusy] = useState(false);
 
-  const rootFolders = useMemo(() => files.filter((f) => f.type === 'folder'), [files]);
-
-  const currentFiles = useMemo(() => {
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      return files.filter(
-        (f) =>
-          f.type === 'file' &&
-          f.name.toLowerCase().includes(q)
-      );
+  const refresh = useCallback(async (path = dir) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await listDir(path);
+      setEntries(result.entries);
+      setDir(path);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
     }
-    return files.filter((f) => f.parentId === currentFolderId);
-  }, [files, currentFolderId, searchQuery]);
+  }, [dir]);
 
-  const breadcrumb = useMemo(() => {
-    const path: FileItem[] = [];
-    let current = currentFolderId;
-    while (current) {
-      const folder = files.find((f) => f.id === current);
-      if (folder) {
-        path.unshift(folder);
-        current = folder.parentId;
-      } else {
-        break;
-      }
+  useEffect(() => {
+    refresh('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const crumbs = dir ? dir.split('/') : [];
+
+  const guard = async (action: () => Promise<unknown>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await action();
+      await refresh(dir);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
     }
-    return path;
-  }, [currentFolderId, files]);
-
-  const toggleFolder = (id: string) => {
-    setExpandedFolders((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
   };
 
-  const navigateToFolder = (id: string | null) => {
-    setCurrentFolderId(id);
-    setViewingFile(null);
-    setWorkspaceView('files');
+  const handleNewFolder = () => {
+    const name = prompt('New folder name');
+    if (!name) return;
+    guard(() => mkdir(dir ? `${dir}/${name}` : name));
   };
 
-  const openFile = (file: FileItem) => {
-    setSelectedFileId(file.id);
-    setViewingFile(file);
-    setWorkspaceView('files');
+  const handleNewFile = () => {
+    const name = prompt('New file name (e.g. notes.md)');
+    if (!name) return;
+    guard(() => writeFile(dir ? `${dir}/${name}` : name, ''));
   };
 
-  const openFolder = (folder: FileItem) => {
-    setCurrentFolderId(folder.id);
-    setExpandedFolders((prev) => new Set([...prev, folder.id]));
-    setViewingFile(null);
-    setWorkspaceView('files');
+  const handleRename = (entry: FsEntry) => {
+    const newName = prompt('Rename to', entry.name);
+    if (!newName || newName === entry.name) return;
+    guard(() => rename(entry.path, newName));
   };
 
-  const handleContextMenu = (e: React.MouseEvent) => {
-    e.preventDefault();
-    setContextMenu({ x: e.clientX, y: e.clientY });
+  const handleDelete = (entry: FsEntry) => {
+    const label = entry.type === 'folder' ? 'folder and ALL its contents' : 'file';
+    if (!confirm(`Delete ${label} "${entry.name}"?`)) return;
+    guard(() => deleteEntry(entry.path));
   };
 
-  // If viewing a file, show file viewer
-  if (viewingFile) {
-    return (
-      <div className="flex h-full w-full flex-col" style={{ backgroundColor: 'var(--bg-primary)' }}>
-        {/* File viewer header */}
-        <div
-          className="flex items-center px-3 py-2 border-b gap-2 flex-shrink-0"
-          style={{ borderColor: 'var(--border-subtle)' }}
-        >
-          <button
-            onClick={() => setViewingFile(null)}
-            className="p-1 rounded transition-colors duration-100 cursor-pointer flex-shrink-0"
-            style={{ color: 'var(--text-secondary)' }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = 'var(--bg-icon-hover)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = 'transparent';
-            }}
-          >
-            <ArrowLeft size={16} />
-          </button>
-          <div
-            className="flex-shrink-0"
-            style={{
-              color: viewingFile.type === 'folder' ? '#0071e3' : fileColors[viewingFile.icon || 'file'] || 'var(--text-secondary)',
-            }}
-          >
-            {viewingFile.type === 'folder'
-              ? <Folder size={18} strokeWidth={1.5} />
-              : (fileIcons[viewingFile.icon || 'file'] || <File size={18} strokeWidth={1.5} />)}
-          </div>
-          <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-            {viewingFile.name}
-          </span>
-          <span className="ml-auto text-xs flex-shrink-0" style={{ color: 'var(--text-tertiary)' }}>
-            {formatBytes(viewingFile.size)}
-          </span>
-        </div>
-        {/* File content preview */}
-        <div className="flex-1 overflow-y-auto p-4">
-          <div
-            className="rounded-lg border p-4 min-h-[200px]"
-            style={{
-              backgroundColor: 'var(--bg-surface)',
-              borderColor: 'var(--border-subtle)',
-            }}
-          >
-            <div className="flex items-center gap-2 mb-4">
-              <ExternalLink size={14} style={{ color: 'var(--text-tertiary)' }} />
-              <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
-                File preview
-              </span>
-            </div>
-            <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-              {viewingFile.name}
-            </p>
-            <p className="text-xs mt-2" style={{ color: 'var(--text-tertiary)' }}>
-              Size: {formatBytes(viewingFile.size)}
-            </p>
-            <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
-              Modified: {formatDate(viewingFile.modifiedAt)}
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const openFile = async (entry: FsEntry) => {
+    setError(null);
+    try {
+      const data = await readFile(entry.path);
+      setViewing({ path: entry.path, content: data.content });
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
 
   return (
-    <div className="flex h-full w-full">
-      {/* Left sidebar - folder tree (desktop only, hidden on very narrow) */}
-      <div
-        className="hidden xl:flex w-[200px] flex-shrink-0 flex flex-col overflow-hidden border-r"
-        style={{
-          backgroundColor: 'var(--bg-sidebar)',
-          borderColor: 'var(--border-subtle)',
-        }}
-      >
-        <div
-          className="px-3 py-2 text-xs font-medium uppercase tracking-wider"
+    <div className="flex flex-col h-full min-h-0">
+      {/* Header: breadcrumbs + actions */}
+      <div className="flex items-center gap-1.5 px-3 h-11 flex-shrink-0 border-b"
+           style={{ borderColor: 'var(--border-subtle)' }}>
+        <button
+          onClick={() => refresh('')}
+          className="p-1.5 rounded-md cursor-pointer"
           style={{ color: 'var(--text-tertiary)' }}
+          aria-label="Root"
         >
-          Folders
-        </div>
-        <div className="flex-1 overflow-y-auto">
-          <AnimatePresence initial={false}>
-            {rootFolders.map((folder) => (
-              <TreeItem
-                key={folder.id}
-                folder={folder}
-                depth={0}
-                isOpen={expandedFolders.has(folder.id)}
-                onToggle={() => toggleFolder(folder.id)}
-                isSelected={currentFolderId === folder.id}
-                onSelect={() => navigateToFolder(folder.id)}
-              />
-            ))}
-          </AnimatePresence>
-        </div>
-
-        {/* Bottom stats */}
-        <div
-          className="px-3 py-2 text-xs border-t"
-          style={{
-            color: 'var(--text-tertiary)',
-            borderColor: 'var(--border-subtle)',
-          }}
-        >
-          <div>{files.filter((f) => f.type === 'file').length} files</div>
-          <div>{files.filter((f) => f.type === 'folder').length} folders</div>
-        </div>
-      </div>
-
-      {/* Right pane - file grid / list */}
-      <div
-        className="flex-1 flex flex-col overflow-hidden"
-        style={{ backgroundColor: 'var(--bg-primary)' }}
-      >
-        {/* Breadcrumb + search */}
-        <div
-          className="flex items-center px-2 sm:px-3 py-2 border-b gap-2 flex-shrink-0"
-          style={{ borderColor: 'var(--border-subtle)' }}
-        >
-          <div className="flex items-center flex-1 min-w-0 overflow-hidden">
+          <Home size={14} />
+        </button>
+        {crumbs.map((crumb, i) => (
+          <span key={i} className="flex items-center gap-1.5">
+            <ChevronRight size={11} style={{ color: 'var(--text-tertiary)' }} />
             <button
-              onClick={() => navigateToFolder(null)}
-              className="text-sm transition-colors duration-100 cursor-pointer flex-shrink-0"
-              style={{ color: currentFolderId === null ? 'var(--text-primary)' : 'var(--accent-blue)' }}
+              onClick={() => refresh(crumbs.slice(0, i + 1).join('/'))}
+              className="text-[12px] cursor-pointer"
+              style={{ color: 'var(--text-secondary)' }}
             >
-              Home
+              {crumb}
             </button>
-            {breadcrumb.map((folder, idx) => (
-              <React.Fragment key={folder.id}>
-                <ChevronRight size={14} className="mx-1 flex-shrink-0" style={{ color: 'var(--text-tertiary)' }} />
-                <button
-                  onClick={() => navigateToFolder(folder.id)}
-                  className="text-sm transition-colors duration-100 truncate cursor-pointer"
-                  style={{
-                    color: idx === breadcrumb.length - 1 ? 'var(--text-primary)' : 'var(--accent-blue)',
-                  }}
-                >
-                  {folder.name}
-                </button>
-              </React.Fragment>
-            ))}
-          </div>
-          <div className="relative flex-shrink-0">
-            <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-tertiary)' }} />
-            <input
-              type="text"
-              placeholder="Search..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="text-sm rounded-md py-1 pl-6 pr-2 w-28 sm:w-32 lg:w-40 transition-all duration-200 focus:w-36 sm:focus:w-48 lg:focus:w-56"
-              style={{
-                backgroundColor: 'var(--bg-input)',
-                border: '1px solid var(--border-input)',
-                color: 'var(--text-primary)',
-              }}
-            />
-          </div>
-        </div>
-
-        {/* File grid */}
-        <div
-          className="flex-1 overflow-y-auto px-3 py-3"
-          onContextMenu={handleContextMenu}
-        >
-          {currentFiles.length === 0 ? (
-            <div
-              className="flex flex-col items-center justify-center h-full text-sm"
-              style={{ color: 'var(--text-tertiary)' }}
-            >
-              <FolderOpen size={32} strokeWidth={1} className="mb-2 opacity-30" />
-              <p>No files found</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-3 xl:grid-cols-4 gap-2">
-              {currentFiles.map((file) => (
-                <motion.div
-                  key={file.id}
-                  layout
-                  initial={{ opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.9 }}
-                  transition={{ duration: 0.15 }}
-                  onClick={() => {
-                    setSelectedFileId(file.id === selectedFileId ? null : file.id);
-                    if (file.type === 'folder') {
-                      openFolder(file);
-                    }
-                  }}
-                  onDoubleClick={() => {
-                    if (file.type === 'folder') {
-                      openFolder(file);
-                    } else {
-                      openFile(file);
-                    }
-                  }}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setSelectedFileId(file.id);
-                    setContextMenu({ x: e.clientX, y: e.clientY });
-                  }}
-                  className="flex flex-col items-center p-3 rounded-lg cursor-pointer transition-all duration-150 border"
-                  style={{
-                    backgroundColor:
-                      selectedFileId === file.id ? 'rgba(0,113,227,0.08)' : 'var(--bg-surface)',
-                    borderColor:
-                      selectedFileId === file.id ? 'rgba(0,113,227,0.25)' : 'var(--border-subtle)',
-                  }}
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                >
-                  <div
-                    className="mb-2"
-                    style={{
-                      color: file.type === 'folder' ? '#0071e3' : fileColors[file.icon || 'file'] || 'var(--text-secondary)',
-                    }}
-                  >
-                    {file.type === 'folder'
-                      ? <Folder size={32} strokeWidth={1.5} />
-                      : (fileIcons[file.icon || 'file'] || <File size={32} strokeWidth={1.5} />)}
-                  </div>
-                  <div
-                    className="text-xs text-center truncate w-full font-medium"
-                    style={{ color: 'var(--text-primary)' }}
-                  >
-                    {file.name}
-                  </div>
-                  {file.size !== undefined && (
-                    <div
-                      className="text-[10px] mt-0.5"
-                      style={{ color: 'var(--text-tertiary)' }}
-                    >
-                      {formatBytes(file.size)}
-                    </div>
-                  )}
-                  <div
-                    className="text-[10px] mt-0.5"
-                    style={{ color: 'var(--text-tertiary)' }}
-                  >
-                    {formatDate(file.modifiedAt)}
-                  </div>
-                </motion.div>
-              ))}
-            </div>
-          )}
+          </span>
+        ))}
+        <div className="ml-auto flex items-center gap-0.5">
+          <button onClick={handleNewFolder} disabled={busy} title="New folder"
+                  className="p-1.5 rounded-md cursor-pointer"
+                  style={{ color: 'var(--text-tertiary)' }}>
+            <FolderPlus size={14} />
+          </button>
+          <button onClick={handleNewFile} disabled={busy} title="New file"
+                  className="p-1.5 rounded-md cursor-pointer"
+                  style={{ color: 'var(--text-tertiary)' }}>
+            <FilePlus2 size={14} />
+          </button>
+          <button onClick={() => refresh(dir)} disabled={busy} title="Refresh"
+                  className="p-1.5 rounded-md cursor-pointer"
+                  style={{ color: 'var(--text-tertiary)' }}>
+            <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+          </button>
         </div>
       </div>
 
-      {/* Context menu */}
+      {/* Error line */}
+      {error && (
+        <div className="px-3 py-1.5 text-[11px]" style={{ color: 'var(--warning, #ff9500)' }}>
+          {error}
+        </div>
+      )}
+
+      {/* Entries */}
+      <div className="flex-1 overflow-y-auto px-2 py-1.5 min-h-0">
+        {entries.length === 0 && !loading && (
+          <p className="text-xs text-center py-8" style={{ color: 'var(--text-tertiary)' }}>
+            Empty folder
+          </p>
+        )}
+        <AnimatePresence initial={false}>
+          {entries.map((entry) => (
+            <motion.div
+              key={entry.path}
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2, ease: easeOut }}
+              className="group flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer"
+              style={{ color: 'var(--text-primary)' }}
+              onClick={() =>
+                entry.type === 'folder' ? refresh(entry.path) : openFile(entry)
+              }
+            >
+              <span className="flex-shrink-0" style={{ color: 'var(--text-secondary)' }}>
+                {iconFor(entry)}
+              </span>
+              <span className="text-[13px] truncate flex-1 min-w-0">{entry.name}</span>
+              <span className="text-[10.5px] flex-shrink-0" style={{ color: 'var(--text-tertiary)' }}>
+                {formatSize(entry.size)}
+              </span>
+              <span
+                className="flex-shrink-0 hidden group-hover:flex items-center gap-0.5"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <button
+                  onClick={() => handleRename(entry)}
+                  title="Rename"
+                  className="p-1 rounded-md cursor-pointer"
+                  style={{ color: 'var(--text-tertiary)' }}
+                >
+                  <Pencil size={12} />
+                </button>
+                <button
+                  onClick={() => handleDelete(entry)}
+                  title="Delete"
+                  className="p-1 rounded-md cursor-pointer"
+                  style={{ color: 'var(--text-tertiary)' }}
+                >
+                  <Trash2 size={12} />
+                </button>
+              </span>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </div>
+
+      {/* Footer count */}
+      <div className="flex items-center gap-3 px-3 h-8 flex-shrink-0 border-t text-[11px]"
+           style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-tertiary)' }}>
+        <span>{entries.filter((e) => e.type === 'file').length} files</span>
+        <span>{entries.filter((e) => e.type === 'folder').length} folders</span>
+      </div>
+
+      {/* File viewer overlay */}
       <AnimatePresence>
-        {contextMenu && (
-          <ContextMenu
-            x={contextMenu.x}
-            y={contextMenu.y}
-            onClose={() => setContextMenu(null)}
-            onAction={(action) => {
-              if (action === 'delete' && selectedFileId) {
-                useAppStore.getState().deleteFile(selectedFileId);
-                setSelectedFileId(null);
-              }
-              if (action === 'open' && selectedFileId) {
-                const file = files.find((f) => f.id === selectedFileId);
-                if (file) {
-                  if (file.type === 'folder') {
-                    openFolder(file);
-                  } else {
-                    openFile(file);
-                  }
-                }
-              }
-            }}
-          />
+        {viewing && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="absolute inset-0 z-20 flex flex-col"
+            style={{ backgroundColor: 'var(--bg-primary)' }}
+          >
+            <div className="flex items-center gap-2 px-3 h-11 border-b flex-shrink-0"
+                 style={{ borderColor: 'var(--border-subtle)' }}>
+              <FileText size={14} style={{ color: 'var(--text-tertiary)' }} />
+              <span className="text-[12.5px] font-medium truncate"
+                    style={{ color: 'var(--text-primary)' }}>
+                {viewing.path}
+              </span>
+              <button
+                onClick={() => setViewing(null)}
+                className="ml-auto p-1.5 rounded-md cursor-pointer"
+                style={{ color: 'var(--text-tertiary)' }}
+                aria-label="Close"
+              >
+                <X size={14} />
+              </button>
+            </div>
+            <pre
+              className="flex-1 overflow-auto px-4 py-3 text-[12px] whitespace-pre-wrap"
+              style={{ color: 'var(--text-primary)', fontFamily: 'var(--font-mono, monospace)' }}
+            >
+              {viewing.content}
+            </pre>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>

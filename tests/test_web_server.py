@@ -383,3 +383,81 @@ class TestAplotProtocol:
             server._append_chat_history("user", f"m{i}")
         assert len(server._chat_history) == 200
         assert server._chat_history[0]["text"] == "m50"
+
+
+# ================================================================
+# WORKSPACE FS API (replaces the UI mock file tree)
+# ================================================================
+
+
+class TestWorkspaceFs:
+    @pytest.fixture(autouse=True)
+    def _ws_root(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("BIGBRAIN_WORKSPACE_DIR", str(tmp_path / "ws"))
+        yield tmp_path / "ws"
+
+    def _mk(self, root, rel, content="x"):
+        root.mkdir(parents=True, exist_ok=True)
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(content)
+        return root / rel
+
+    def test_list_root_and_entries(self, _ws_root):
+        from bigbrain.web import fs_api
+        self._mk(_ws_root, "notes.md", "hello")
+        _ws_root.joinpath("sub").mkdir(parents=True)
+        result = fs_api.list_dir("")
+        names = {e["name"]: e["type"] for e in result["entries"]}
+        assert names == {"notes.md": "file", "sub": "folder"}
+
+    def test_write_read_roundtrip(self, _ws_root):
+        from bigbrain.web import fs_api
+        fs_api.write_file("docs/readme.txt", "line1\nline2")
+        data = fs_api.read_file("docs/readme.txt")
+        assert data["content"] == "line1\nline2"
+        assert data["binary"] is False
+
+    def test_rename_and_move(self, _ws_root):
+        from bigbrain.web import fs_api
+        self._mk(_ws_root, "a/old.txt", "v")
+        fs_api.mkdir("b")
+        fs_api.rename("a/old.txt", "new.txt")
+        fs_api.move("a/new.txt", "b")
+        data = fs_api.read_file("b/new.txt")
+        assert data["content"] == "v"
+
+    def test_delete_file_and_folder(self, _ws_root):
+        from bigbrain.web import fs_api
+        self._mk(_ws_root, "dir/f.txt", "v")
+        fs_api.delete("dir/f.txt")
+        fs_api.delete("dir")
+        listing = fs_api.list_dir("")
+        assert listing["entries"] == []
+
+    def test_path_traversal_refused(self, _ws_root):
+        from aiohttp import web as aioweb
+        from bigbrain.web import fs_api
+        with pytest.raises(aioweb.HTTPBadRequest):
+            fs_api.read_file("../secret.txt")
+        with pytest.raises(aioweb.HTTPBadRequest):
+            fs_api.write_file("../../outside.txt", "nope")
+        with pytest.raises(aioweb.HTTPBadRequest):
+            fs_api.delete("../..")
+
+    def test_delete_root_refused(self, _ws_root):
+        from aiohttp import web as aioweb
+        from bigbrain.web import fs_api
+        with pytest.raises(aioweb.HTTPBadRequest):
+            fs_api.delete("")
+        with pytest.raises(aioweb.HTTPBadRequest):
+            fs_api.delete(".")
+
+    def test_rename_refuses_slash_and_collision(self, _ws_root):
+        from aiohttp import web as aioweb
+        from bigbrain.web import fs_api
+        self._mk(_ws_root, "one.txt", "a")
+        self._mk(_ws_root, "two.txt", "b")
+        with pytest.raises(aioweb.HTTPBadRequest):
+            fs_api.rename("one.txt", "sub/name.txt")
+        with pytest.raises(aioweb.HTTPBadRequest):
+            fs_api.rename("one.txt", "two.txt")

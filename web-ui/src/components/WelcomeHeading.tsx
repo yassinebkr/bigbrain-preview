@@ -1,10 +1,12 @@
 import { motion } from 'framer-motion';
+import { useAppStore } from '@/store/appStore';
 
 const easeOut = [0, 0, 0.2, 1] as [number, number, number, number];
 
 export function WelcomeHeading() {
+  const user = useAppStore((s) => s.user);
   const lines = [
-    { text: 'Hi Rownok', weight: 500 },
+    { text: `Hi ${user?.name || 'there'}`, weight: 500 },
     { text: 'Ready to', weight: 600 },
     { text: 'Achieve Great Things?', weight: 600 },
   ];

@@ -84,7 +84,7 @@ export function RobotMascot() {
               className="text-xs sm:text-[13px] font-medium"
               style={{ color: 'var(--text-primary)' }}
             >
-              Hey there! Need a boost?
+              What are we building today?
             </span>
           </motion.div>
         </motion.div>

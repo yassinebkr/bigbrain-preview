@@ -125,35 +125,71 @@ export function BigBrainProviders() {
         </button>
       </div>
 
+      {/* Compact: one row per CONNECTED provider group, then a muted
+          summary line for the rest of the registry. */}
       <ul className="flex flex-col gap-1">
         {models.length === 0 && (
           <li className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
             Registry unavailable (server not connected?)
           </li>
         )}
-        {models.map((model) => (
-          <li
-            key={model.key}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-[12.5px]"
-            style={{
-              backgroundColor: 'var(--bg-surface)',
-              border: '1px solid var(--border-subtle)',
-              color: model.available ? 'var(--text-primary)' : 'var(--text-tertiary)',
-            }}
-          >
-            <span
-              aria-hidden
-              className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-              style={{ backgroundColor: model.available ? 'var(--success)' : 'var(--text-dim, #4d4d52)' }}
-            />
-            <span className="truncate">{model.display_name}</span>
-            {model.reasoning && (
-              <span className="ml-auto text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
-                reasoning
-              </span>
-            )}
-          </li>
-        ))}
+        {(() => {
+          const available = models.filter((m) => m.available);
+          const rest = models.length - available.length;
+          // Group available models by provider label.
+          const groups = new Map<string, number>();
+          for (const m of available) {
+            const group = m.provider.includes('openrouter')
+              ? 'OpenRouter'
+              : m.provider === 'codex'
+                ? 'Codex (ChatGPT)'
+                : m.provider === 'anthropic_oauth'
+                  ? 'Claude subscription'
+                  : m.display_name.split('(')[0].trim();
+            groups.set(group, (groups.get(group) || 0) + 1);
+          }
+          const rows = [...groups.entries()];
+          if (rows.length === 0 && models.length > 0) {
+            return (
+              <li className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                No provider connected — set a key or use a button below.
+              </li>
+            );
+          }
+          return (
+            <>
+              {rows.map(([group, count]) => (
+                <li
+                  key={group}
+                  className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-[12.5px]"
+                  style={{
+                    backgroundColor: 'var(--bg-surface)',
+                    border: '1px solid var(--border-subtle)',
+                    color: 'var(--text-primary)',
+                  }}
+                >
+                  <span
+                    aria-hidden
+                    className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                    style={{ backgroundColor: 'var(--success)' }}
+                  />
+                  <span className="truncate">{group}</span>
+                  <span className="ml-auto text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
+                    {count} model{count > 1 ? 's' : ''}
+                  </span>
+                </li>
+              ))}
+              {rest > 0 && (
+                <li
+                  className="flex items-center gap-2 px-3 py-1 text-[11.5px]"
+                  style={{ color: 'var(--text-tertiary)' }}
+                >
+                  + {rest} more in registry (no key set)
+                </li>
+              )}
+            </>
+          );
+        })()}
       </ul>
 
       <div className="flex flex-col gap-2">
