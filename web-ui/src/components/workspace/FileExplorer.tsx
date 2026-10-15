@@ -120,8 +120,29 @@ export function FileExplorer() {
   const [viewing, setViewing] = useState<{ path: string; content: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [currentProject, setCurrentProject] = useState<string | null>(null);
+  const currentProject = useAppStore((s) => s.currentProject);
+  const setCurrentProject = useAppStore((s) => s.setCurrentProject);
+  const pendingOpenFile = useAppStore((s) => s.pendingOpenFile);
+  const setPendingOpenFile = useAppStore((s) => s.setPendingOpenFile);
   const refreshRef = useRef<((path?: string) => Promise<void>) | null>(null);
+
+  // Open a file requested from elsewhere (e.g. the run panel's file list):
+  // read it and show the viewer overlay.
+  useEffect(() => {
+    if (!pendingOpenFile) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await readFile(pendingOpenFile);
+        if (!cancelled) setViewing({ path: pendingOpenFile, content: data.content });
+      } catch (e: any) {
+        if (!cancelled) setError(e.message);
+      } finally {
+        if (!cancelled) setPendingOpenFile(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [pendingOpenFile, setPendingOpenFile]);
 
   // Agent writes (workspace.file_written events) auto-refresh the listing.
   const lastWrite = useAppStore((s) => {

@@ -196,16 +196,20 @@ class BigBrainSystem:
     def apply_current_project(self) -> dict:
         """Re-target agent writes to the selected project.
 
-        No project (global) → pool writes to <workspace>/python (the
-        historical default). A selected project → pool writes to
-        <workspace>/<project>, so generated code lands in the project the
-        chat is working in and shows up in the explorer.
+        No project (global) → pool writes to the ``sandbox`` project
+        (auto-created scratch project), so global-mode files stay
+        organized instead of piling up in a loose folder. A selected
+        project → pool writes to <workspace>/<project>.
         """
-        from .web.fs_api import get_current_project, workspace_root
+        from .web.fs_api import ensure_sandbox, get_current_project, workspace_root
 
         project = get_current_project()
         root = workspace_root()
-        target = root / project if project else root / "python"
+        if project:
+            target = root / project
+        else:
+            ensure_sandbox()
+            target = root / "sandbox"
         target.mkdir(parents=True, exist_ok=True)
 
         retargeted = 0
@@ -214,7 +218,7 @@ class BigBrainSystem:
                 brain.work_dir = target
                 retargeted += 1
 
-        label = project or "global (python/)"
+        label = project or "global (sandbox/)"
         print(f"📂 Working project: {label} — {retargeted} brain(s) write to {target.name}/")
         return {"ok": True, "project": project, "retargeted": retargeted}
 
@@ -317,6 +321,9 @@ class BigBrainSystem:
         
         # 9. Brains (registers HMAC tokens)
         await self._create_brains()
+
+        # 9b. Retarget brains to the persisted project (global → sandbox/)
+        self.apply_current_project()
         
         # 10. Front brain — register available brains so it knows how to delegate
         self.front_brain = FrontBrain(self.bus, llm_provider=self.llm_provider)
@@ -438,9 +445,10 @@ class BigBrainSystem:
         python_pool_size = int(os.environ.get("BIGBRAIN_PYTHON_POOL", "3"))
         # Agent writes live in the shared workspace root (served by the FS
         # API) so the web UI's file explorer sees them and auto-refreshes
-        # on workspace.file_written events.
+        # on workspace.file_written events. Global mode targets the
+        # sandbox project; apply_current_project() retargets at startup.
         from .web.fs_api import workspace_root
-        shared_work_dir = workspace_root() / "python"
+        shared_work_dir = workspace_root() / "sandbox"
         shared_work_dir.mkdir(exist_ok=True, parents=True)
         python_pool_names = []
         for i in range(python_pool_size):

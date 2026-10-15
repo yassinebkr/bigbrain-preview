@@ -624,6 +624,19 @@ class TestWorkspaceProjects:
         with pytest.raises(aioweb.HTTPBadRequest):
             fs_api.create_project("one")
 
+    def test_ensure_sandbox_idempotent_and_is_a_project(self, _ws_root):
+        import json
+        from bigbrain.web import fs_api
+        assert fs_api.ensure_sandbox()["ok"] is True
+        # Second call must not raise although the folder already exists.
+        fs_api.ensure_sandbox()
+        manifest = _ws_root / "sandbox" / ".project.json"
+        assert manifest.is_file()
+        assert json.loads(manifest.read_text())["name"] == "sandbox"
+        # The sandbox shows up in the project selector like any project.
+        names = [p["name"] for p in fs_api.list_projects()["projects"]]
+        assert "sandbox" in names
+
 
 class TestCurrentProject:
     @pytest.fixture(autouse=True)

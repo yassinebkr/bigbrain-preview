@@ -12,5 +12,5 @@ debug_*.py
 .venv/
 venv/
 .env
-workspace/
+/workspace/
 data/

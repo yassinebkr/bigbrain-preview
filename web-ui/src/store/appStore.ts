@@ -11,6 +11,28 @@ export interface AgentActivity {
   ts: number;
 }
 
+// One orchestrated run (task → subtasks → complete/failed), derived from
+// bus events. Drives RunPanel: visibility follows the RUN STATE, never a
+// per-event timer — that is what made the old pills blink on and off.
+export interface RunStep {
+  id: string;
+  brain?: string;
+  description: string;
+  status: 'running' | 'done' | 'failed';
+  durationMs?: number;
+}
+
+export interface RunState {
+  id: string;
+  description: string;
+  status: 'running' | 'done' | 'failed';
+  startedAt: number;
+  finishedAt?: number;
+  steps: RunStep[];
+  files: { path: string; ts: number }[];
+  error?: string;
+}
+
 interface AppState {
   // Auth
   isAuthenticated: boolean;
@@ -70,6 +92,18 @@ interface AppState {
   // consumed by BrainStatusPanel and TaskBoard (docs/WEBUI-APLOT-PORT.md).
   agentActivities: AgentActivity[];
   addAgentActivity: (activity: Omit<AgentActivity, 'ts'>) => void;
+
+  // Orchestrated run state (task/subtask/file events) — RunPanel v2.
+  activeRun: RunState | null;
+  applyRunEvent: (activity: Omit<AgentActivity, 'ts'>) => void;
+  runPanelOpen: boolean;
+  setRunPanelOpen: (open: boolean) => void;
+
+  // Working project (mirrors /api/fs/current-project) — sandbox nudge.
+  currentProject: string | null;
+  setCurrentProject: (project: string | null) => void;
+  pendingOpenFile: string | null;
+  setPendingOpenFile: (path: string | null) => void;
 
   // Sidebar
   sidebarOpen: boolean;
@@ -234,6 +268,85 @@ export const useAppStore = create<AppState>()(
       addAgentActivity: (activity) => set((state) => ({
         agentActivities: [...state.agentActivities.slice(-49), { ...activity, ts: Date.now() }],
       })),
+
+      activeRun: null,
+      runPanelOpen: false,
+      setRunPanelOpen: (runPanelOpen) => set({ runPanelOpen }),
+      currentProject: null,
+      setCurrentProject: (currentProject) => set({ currentProject }),
+      pendingOpenFile: null,
+      setPendingOpenFile: (pendingOpenFile) => set({ pendingOpenFile }),
+
+      // Fold bus events into the current run. Pure state machine:
+      // task.received opens a run; subtask.* upsert steps;
+      // workspace.file_written collects files; task.complete/failed
+      // closes it (the panel lingers on the summary afterwards).
+      applyRunEvent: (activity) => set((state) => {
+        const d = activity.detail || {};
+        const run = state.activeRun;
+        switch (activity.type) {
+          case 'task.received': {
+            const fresh: RunState = {
+              id: d.task_id || `run-${Date.now()}`,
+              description: String(d.description || 'Task').slice(0, 140),
+              status: 'running',
+              startedAt: Date.now(),
+              steps: [],
+              files: [],
+            };
+            return { activeRun: fresh };
+          }
+          case 'subtask.started': {
+            if (!run || run.status !== 'running') return state;
+            const step: RunStep = {
+              id: String(d.subtask_id || `step-${run.steps.length}`),
+              brain: d.brain,
+              description: String(d.description || 'working').slice(0, 120),
+              status: 'running',
+            };
+            return {
+              activeRun: {
+                ...run,
+                steps: [...run.steps.filter((s) => s.id !== step.id), step],
+              },
+            };
+          }
+          case 'subtask.complete':
+          case 'subtask.failed': {
+            if (!run || run.status !== 'running') return state;
+            const id = String(d.subtask_id || `step-${run.steps.length}`);
+            const failed = activity.type === 'subtask.failed';
+            const durationMs = typeof d.execution_time === 'number' ? d.execution_time * 1000 : undefined;
+            const exists = run.steps.some((s) => s.id === id);
+            const steps = exists
+              ? run.steps.map((s) =>
+                  s.id === id ? { ...s, status: failed ? ('failed' as const) : ('done' as const), durationMs } : s
+                )
+              : [...run.steps, { id, description: 'subtask', status: failed ? ('failed' as const) : ('done' as const), durationMs }];
+            return { activeRun: { ...run, steps } };
+          }
+          case 'workspace.file_written': {
+            if (!run || run.status !== 'running' || !d.path) return state;
+            const path = String(d.path);
+            if (run.files.some((f) => f.path === path)) return state;
+            return { activeRun: { ...run, files: [...run.files, { path, ts: Date.now() }] } };
+          }
+          case 'task.complete':
+          case 'task.failed': {
+            if (!run) return state;
+            return {
+              activeRun: {
+                ...run,
+                status: activity.type === 'task.complete' ? 'done' : 'failed',
+                finishedAt: Date.now(),
+                error: d.error ? String(d.error).slice(0, 200) : run.error,
+              },
+            };
+          }
+          default:
+            return state;
+        }
+      }),
 
       // Sidebar
       sidebarOpen: false,

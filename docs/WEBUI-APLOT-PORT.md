@@ -179,9 +179,12 @@ ci-dessus — les reconnectés ne perdent rien.
 
 1. **Feedback d'action agent** : quand l'agent crée un fichier, l'UI ne
    propose rien — ouvrir/proposer le workspace ou une vue code, highlight
-   du bouton Workspace, lien vers le fichier écrit. C'est le pendant UX
-   de workspace.file_written (l'event existe, l'affichage proactif
-   manque). Naturellement le job de la Phase B (morphable).
+   du bouton Workspace, lien vers le fichier écrit. C'est le job de la
+   Phase B (morphable).
+   - *Partiellement fait* : le RunPanel (v2 des pastilles, sous le chat)
+     liste les fichiers écrits d'un run — cliquables, ils ouvrent le
+     viewer du workspace. Reste le "proactive nudge" (highlight du bouton
+     Workspace, ouvrir une vue code sans changer de layout).
 2. **Port du harness déterministe fpga → python_brain** : la couche
    vérification déterministe outillée comme sur ../fpga (typed tools,
    replay des runs, vérifs déterministes avant review LLM). À explorer
@@ -189,3 +192,21 @@ ci-dessus — les reconnectés ne perdent rien.
 3. Sessions persistées (l'historique est aujourd'hui mono-conversation).
 4. Drag/drop move dans l'explorateur (l'endpoint /api/fs/move existe).
 5. Premier plugin premium + paywall Stripe (billing scratchy à porter).
+
+## Changelog UX récent
+
+- **RunPanel v2** (`web-ui/src/components/RunPanel.tsx`) : remplace les
+  pastilles d'activité. Visibilité dérivée de l'état du run
+  (task.received → task.complete/failed), pas d'un timer par événement —
+  corrige l'apparition/disparition périodique. Repliable : une ligne
+  (statut, progression x/y, nb fichiers) ; déplié : plan (étapes, brain,
+  durée), fichiers écrits cliquables, nudge sandbox, erreurs.
+- **Mode global = projet sandbox** : sans projet sélectionné, les écritures
+  des brains vont dans `workspace/sandbox/` (projet auto-créé avec manifest,
+  visible dans le sélecteur de projets) au lieu du pool `python/` en vrac.
+  `apply_current_project()` est appelé au démarrage ; le front brain
+  annonce le contexte sandbox au LLM. Le RunPanel affiche un nudge quand
+  des fichiers atterrissent en sandbox sans projet sélectionné.
+- **Largeur du chat sur PC** : la colonne centrale passe de 720px à
+  1200px à partir de md (Layout.tsx) — la vue "téléphone" est réservée
+  aux vrais téléphones.

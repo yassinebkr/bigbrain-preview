@@ -6,7 +6,7 @@ import { StreamingMessage } from './StreamingMessage';
 import { TypingIndicator } from './TypingIndicator';
 import { ChatInput } from './ChatInput';
 import { GenUICanvas } from './GenUICanvas';
-import { AgentActivityStrip } from './AgentActivityStrip';
+import { RunPanel } from './RunPanel';
 
 export function ChatView() {
   const { messages, isStreaming } = useAppStore();
@@ -56,7 +56,7 @@ export function ChatView() {
       </motion.div>
 
       {/* Live agent activity — what is happening, which brain works */}
-      <AgentActivityStrip />
+      <RunPanel />
 
       {/* GenUI Canvas - between messages and input */}
       <GenUICanvas />

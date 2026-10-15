@@ -197,6 +197,12 @@ class FrontBrain:
                 f"the project directory '{project}/' of the workspace. "
                 f"File operations and generated code belong in this project."
             )})
+        else:
+            messages.append({"role": "system", "content": (
+                "No project selected. Generated files land in the 'sandbox' "
+                "scratch project. For anything beyond quick experiments, "
+                "suggest the user create or select a project."
+            )})
         
         # Add conversation history (keep last 20 turns for context)
         history = self._conversation_history[-20:]

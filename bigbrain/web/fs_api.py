@@ -178,6 +178,7 @@ def delete(rel: str) -> Dict[str, Any]:
 # ── projects (global workspace + per-project sub-workspaces) ───────────────
 
 PROJECT_MANIFEST = ".project.json"
+SANDBOX_PROJECT = "sandbox"
 
 
 def create_project(name: str) -> Dict[str, Any]:
@@ -202,6 +203,26 @@ def create_project(name: str) -> Dict[str, Any]:
         json.dumps(manifest, indent=2), encoding="utf-8"
     )
     return {"ok": True, "path": name, "manifest": manifest}
+
+
+def ensure_sandbox() -> Dict[str, Any]:
+    """Idempotently create the sandbox project.
+
+    The sandbox is the default write target when no project is selected
+    (global mode): agent files land in a real project folder instead of a
+    loose ``python/`` pool, so the explorer, project selector and future
+    per-project config treat them uniformly.
+    """
+    import json
+
+    root = workspace_root()
+    target = root / SANDBOX_PROJECT
+    manifest_path = target / PROJECT_MANIFEST
+    if not manifest_path.is_file():
+        target.mkdir(parents=True, exist_ok=True)
+        manifest = {"name": SANDBOX_PROJECT, "created": time.time(), "sandbox": True}
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    return {"ok": True, "path": SANDBOX_PROJECT}
 
 
 def list_projects() -> Dict[str, Any]:

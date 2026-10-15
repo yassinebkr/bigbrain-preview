@@ -33,7 +33,7 @@ export function Layout({ children }: LayoutProps) {
 
         {/* Main Content */}
         <main className="flex-1 overflow-hidden relative">
-          <div className={isWorkspace ? "w-full h-full" : "max-w-[720px] mx-auto w-full px-3 sm:px-4 md:px-6 h-full"}>
+          <div className={isWorkspace ? "w-full h-full" : "max-w-[720px] md:max-w-[1200px] mx-auto w-full px-3 sm:px-4 md:px-6 h-full"}>
             {children}
           </div>
         </main>
