@@ -707,6 +707,51 @@ class TestWorkspaceProjects:
         with pytest.raises(aioweb.HTTPBadRequest):
             fs_api.run_file("../escape.py")
 
+    @pytest.mark.asyncio
+    async def test_manual_run_records_evidence(self, tmp_path, monkeypatch):
+        """The UI Run button leaves the same auditable evidence as the agent."""
+        monkeypatch.setenv("BIGBRAIN_WORKSPACE_DIR", str(tmp_path / "ws"))
+        monkeypatch.setenv("BIGBRAIN_EVIDENCE_ROOT", str(tmp_path / "evidence"))
+        from bigbrain.web import fs_api
+
+        sandbox = tmp_path / "ws" / "sandbox"
+        sandbox.mkdir(parents=True)
+        (sandbox / "hello.py").write_text("print('Hello, World!')")
+
+        result = await fs_api.run_file_with_evidence("sandbox/hello.py")
+
+        assert result["ok"] is True
+        verification = result["verification"]
+        assert verification["verdict"] == "passed"
+        stages = {s["name"]: s["status"] for s in verification["stages"]}
+        assert stages["syntax"] == "passed"
+        assert stages["run"] == "passed"
+        assert stages["contracts"] == "passed"
+        # No test files in the project → honestly not_applicable.
+        assert stages["tests"] == "not_applicable"
+
+        # The manifest is on disk and immutable.
+        from bigbrain.verification.evidence import default_repository
+
+        repo = default_repository()
+        manifest = repo.load_manifest(verification["run_id"])
+        assert manifest is not None
+        assert manifest.metadata["attempt"] == 1
+
+    @pytest.mark.asyncio
+    async def test_manual_run_evidence_kill_switch(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("BIGBRAIN_WORKSPACE_DIR", str(tmp_path / "ws"))
+        monkeypatch.setenv("BIGBRAIN_EVIDENCE_ROOT", str(tmp_path / "evidence"))
+        monkeypatch.setenv("BIGBRAIN_EVIDENCE", "0")
+        from bigbrain.web import fs_api
+
+        sandbox = tmp_path / "ws" / "sandbox"
+        sandbox.mkdir(parents=True)
+        (sandbox / "hello.py").write_text("print('hi')")
+        result = await fs_api.run_file_with_evidence("sandbox/hello.py")
+        assert result["ok"] is True
+        assert "verification" not in result
+
     def test_run_file_timeout_is_bounded(self, _ws_root):
         from bigbrain.web import fs_api
         (_ws_root / "sandbox").mkdir(parents=True)

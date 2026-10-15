@@ -57,6 +57,12 @@ interface RunResult {
   stderr: string;
   durationMs: number;
   timedOut: boolean;
+  // Deterministic gate (same stages as the agent's runs).
+  verification?: {
+    run_id?: string;
+    verdict: string;
+    stages: { name: string; status: string }[];
+  };
 }
 
 interface CodeSurfaceProps {
@@ -365,6 +371,44 @@ export function CodeSurface({ path, onClose, onOpenInWorkspace }: CodeSurfacePro
                 <p className="text-[11.5px]" style={{ color: 'var(--text-tertiary)' }}>
                   (no output)
                 </p>
+              )}
+              {runResult.verification && (
+                <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                  <span
+                    className="text-[10.5px]"
+                    style={{
+                      color: runResult.verification.verdict === 'passed'
+                        ? 'var(--success, #34c759)'
+                        : runResult.verification.verdict === 'failed'
+                          ? 'var(--warning, #ff9500)'
+                          : 'var(--text-tertiary)',
+                    }}
+                  >
+                    {runResult.verification.verdict}
+                  </span>
+                  {runResult.verification.stages.map((stage) => {
+                    const color =
+                      stage.status === 'passed' ? 'var(--success, #34c759)'
+                      : stage.status === 'failed' || stage.status === 'inconclusive'
+                        ? 'var(--warning, #ff9500)'
+                        : 'var(--text-tertiary)';
+                    return (
+                      <span
+                        key={stage.name}
+                        className="flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10.5px]"
+                        style={{ color, border: `1px solid ${color}` }}
+                        title={`stage ${stage.name}: ${stage.status}`}
+                      >
+                        <span
+                          aria-hidden
+                          className="w-1.5 h-1.5 rounded-full"
+                          style={{ backgroundColor: color }}
+                        />
+                        {stage.name}
+                      </span>
+                    );
+                  })}
+                </div>
               )}
             </div>
           </motion.div>
