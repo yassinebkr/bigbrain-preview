@@ -87,6 +87,10 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _now_iso() -> str:
+    return _now().isoformat()
+
+
 class _Model(BaseModel):
     """Strict base for evidence records — unknown keys are errors."""
 
@@ -355,6 +359,46 @@ class EvidenceRepository:
         if not path.exists():
             return None
         return _parse_model(DesignSpec, json.loads(path.read_text(encoding="utf-8")))
+
+    def load_latest_spec(self, design_id: str) -> DesignSpec | None:
+        """The highest saved revision of a design (None if never saved)."""
+        folder = self.specs / self._safe_component(design_id, "design_id")
+        if not folder.is_dir():
+            return None
+        revisions = sorted(
+            (int(m.group(1)) for p in folder.glob("r*.json")
+             if (m := re.fullmatch(r"r(\d+)\.json", p.name))),
+        )
+        if not revisions:
+            return None
+        return self.load_spec(design_id, revisions[-1])
+
+    def approve_spec(self, design_id: str, *, by: str = "user",
+                     plan_id: str | None = None,
+                     decision: str = "approved") -> DesignSpec | None:
+        """Stamp the user's approval on a design as a NEW revision.
+
+        Revisions are immutable, so the approval is recorded as
+        ``metadata["approval"]`` on a fresh revision — the original
+        proposal is preserved and the trail stays auditable.
+        """
+        latest = self.load_latest_spec(design_id)
+        if latest is None:
+            return None
+        approved = latest.model_copy(update={
+            "revision": latest.revision + 1,
+            "metadata": {
+                **latest.metadata,
+                "approval": {
+                    "decision": decision,
+                    "by": by,
+                    "at": _now_iso(),
+                    "plan_id": plan_id,
+                },
+            },
+        })
+        self.save_spec(approved)
+        return approved
 
     # -- manifests ----------------------------------------------------------
 

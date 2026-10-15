@@ -26,6 +26,7 @@ interface EvidenceTask {
   name: string;
   user_request: string | null;
   contracts: string[];
+  approval?: { decision: string; by: string; at: string; plan_id: string | null } | null;
   runs: EvidenceRun[];
   total: number;
   passed: number;
@@ -252,6 +253,19 @@ export function EvidenceView() {
                         <div className="flex items-center gap-1.5 text-[10.5px] uppercase tracking-wide mb-1"
                              style={{ color: 'var(--text-tertiary)' }}>
                           <ScrollText size={11} /> Contracts
+                          {task.approval && (
+                            <span
+                              className="ml-1 px-1.5 py-0.5 rounded text-[10px] normal-case tracking-normal"
+                              style={{
+                                color: task.approval.decision === 'approved'
+                                  ? 'var(--success, #34c759)'
+                                  : 'var(--warning, #ff9500)',
+                                border: '1px solid var(--border-subtle)',
+                              }}
+                            >
+                              {task.approval.decision === 'approved' ? 'user approved' : 'user rejected'}
+                            </span>
+                          )}
                         </div>
                         {task.contracts.length === 0 ? (
                           <p className="text-[11.5px]" style={{ color: 'var(--text-tertiary)' }}>

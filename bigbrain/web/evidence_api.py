@@ -54,6 +54,10 @@ def list_runs(limit: int = 100) -> Dict[str, Any]:
                 "name": spec.name if spec else manifest.design_id,
                 "user_request": spec.user_request if spec else None,
                 "contracts": list(spec.contracts) if spec else [],
+                # Phase B approval trace: the user's verdict on the
+                # proposed contracts, stamped on the spec revision.
+                "approval": (spec.metadata.get("approval")
+                             if spec else None),
                 "runs": [],
             }
         group["runs"].append(run)

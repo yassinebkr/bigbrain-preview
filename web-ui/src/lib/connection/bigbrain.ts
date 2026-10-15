@@ -238,7 +238,9 @@ export class BigBrainConnection implements ConnectionLike {
     // must never drive live state — a replayed brain.started used to turn
     // on the typing indicator and 'working' pills forever. The chat
     // transcript on reconnect comes from loadHistory, not from replay.
-    if (isReplay) return;
+    // EXCEPTION: a replayed contracts.proposal is still PENDING live
+    // state (the plan waits for the user) — the card must come back.
+    if (isReplay && event !== 'contracts.proposal') return;
 
     if (event === 'chat.delta') {
       this.callbacks.onStreamDelta?.({
