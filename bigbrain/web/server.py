@@ -228,6 +228,11 @@ class WebServer:
         from .fs_api import setup_fs_routes
         setup_fs_routes(self._app)
 
+        # Per-role model lineup (the top-left dropdown) + OpenRouter key.
+        self._app.router.add_get("/api/models/roles", self._handle_model_roles)
+        self._app.router.add_post("/api/models/roles", self._handle_model_role_set)
+        self._app.router.add_post("/api/auth/openrouter/key", self._handle_openrouter_key)
+
     async def _handle_models(self, request: web.Request) -> web.Response:
         """List registry models with availability flags (no secrets)."""
         from ..llm.model_registry import list_models
@@ -239,6 +244,37 @@ class WebServer:
         from ..llm.usage import get_tracker
 
         return web.json_response(get_tracker().totals())
+
+    async def _handle_model_roles(self, request: web.Request) -> web.Response:
+        """Current per-role model lineup (front/planner/code/subagent)."""
+        from .model_roles import current_lineup
+
+        return web.json_response({"roles": current_lineup()})
+
+    async def _handle_model_role_set(self, request: web.Request) -> web.Response:
+        """Assign a registry key to a role; persisted + mirrored to env."""
+        from .model_roles import set_role
+
+        body = await request.json()
+        try:
+            result = set_role(body.get("role", ""), body.get("key", ""))
+        except (ValueError, KeyError) as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        return web.json_response(result)
+
+    async def _handle_openrouter_key(self, request: web.Request) -> web.Response:
+        """Connect with OpenRouter (API key): free-probe validate, store, activate.
+
+        The key itself never appears in the response.
+        """
+        from .openrouter_key import OpenRouterKeyError, connect_key
+
+        body = await request.json()
+        try:
+            result = await connect_key(body.get("key", ""))
+        except OpenRouterKeyError as exc:
+            return web.json_response({"error": str(exc)}, status=401)
+        return web.json_response(result)
 
     async def _handle_codex_status(self, request: web.Request) -> web.Response:
         """Who is signed in to the codex app-server (poll target)."""

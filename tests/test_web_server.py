@@ -461,3 +461,62 @@ class TestWorkspaceFs:
             fs_api.rename("one.txt", "sub/name.txt")
         with pytest.raises(aioweb.HTTPBadRequest):
             fs_api.rename("one.txt", "two.txt")
+
+
+# ================================================================
+# MODEL LINEUP + OPENROUTER KEY (per-role orchestration UI)
+# ================================================================
+
+
+class TestModelRoles:
+    @pytest.fixture(autouse=True)
+    def _roles_file(self, tmp_path, monkeypatch):
+        import bigbrain.web.model_roles as mr
+        monkeypatch.setattr(mr, "_ROLES_FILE", tmp_path / "model_roles.json")
+        yield
+
+    def test_default_lineup_covers_all_roles(self):
+        from bigbrain.web import model_roles
+        lineup = model_roles.current_lineup()
+        assert set(lineup) == {"front", "planner", "code", "subagent"}
+        assert lineup["front"]["key"]
+        assert lineup["subagent"]["key"]
+
+    def test_set_role_persists_and_mirrors_env(self, monkeypatch):
+        from bigbrain.web import model_roles
+        result = model_roles.set_role("front", "openrouter-kimi-k3")
+        assert result["model_id"] == "moonshotai/kimi-k3"
+        assert "moonshotai/kimi-k3" == __import__("os").environ["BIGBRAIN_FRONT_MODEL"]
+        # Persisted: a fresh read reflects the change.
+        lineup = model_roles.current_lineup()
+        assert lineup["front"]["key"] == "openrouter-kimi-k3"
+
+    def test_set_role_rejects_unknown(self):
+        import pytest as _pytest
+        from bigbrain.web import model_roles
+        with _pytest.raises(ValueError):
+            model_roles.set_role("nope", "openrouter-kimi-k3")
+        with _pytest.raises(KeyError):
+            model_roles.set_role("front", "not-a-model")
+
+
+class TestOpenRouterKey:
+    def test_env_file_upsert(self, tmp_path):
+        from bigbrain.web import openrouter_key as ork
+        env = tmp_path / ".env"
+        ork._upsert_env_file(env, "sk-or-1")
+        assert "OPENROUTER_API_KEY=sk-or-1" in env.read_text()
+        # Upsert replaces, not duplicates.
+        ork._upsert_env_file(env, "sk-or-2")
+        text = env.read_text()
+        assert text.count("OPENROUTER_API_KEY") == 1
+        assert "sk-or-2" in text
+
+    @pytest.mark.asyncio
+    async def test_connect_rejects_bad_key(self, monkeypatch):
+        from bigbrain.web import openrouter_key as ork
+        async def fake_verify(key):
+            return "auth_failed"
+        monkeypatch.setattr(ork, "verify_key", fake_verify)
+        with pytest.raises(ork.OpenRouterKeyError):
+            await ork.connect_key("sk-or-bad")

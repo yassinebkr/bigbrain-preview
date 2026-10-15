@@ -1,15 +1,33 @@
-import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronDown, Sparkles } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 import { ConnectionStatus } from './ConnectionStatus';
 
-const models = [
-  { id: 'aplot-3.5-pro', name: 'Aplot AI 3.5 Pro', active: true },
-  { id: 'aplot-4', name: 'Aplot AI 4', active: false },
-  { id: 'aplot-4-vision', name: 'Aplot AI 4 Vision', active: false },
-];
+// Per-role model lineup (BigBrain orchestrates models per role — the
+// dropdown shows the orchestra, not a single model). Available models come
+// from the registry filtered by the connected providers.
+
+import { useCallback, useEffect, useState } from 'react';
+
+interface RoleLine {
+  key: string;
+  model_id: string | null;
+  display_name: string;
+}
+interface RegistryModel {
+  key: string;
+  display_name: string;
+  provider: string;
+  available: boolean;
+}
+
+const ROLE_LABELS: Record<string, string> = {
+  front: 'Front Brain',
+  planner: 'Planner',
+  code: 'Code',
+  subagent: 'Sub-agents',
+};
 
 interface TopBarProps {
   children?: ReactNode;
@@ -18,7 +36,40 @@ interface TopBarProps {
 export function TopBar({ children }: TopBarProps) {
   const { connectionStatus } = useAppStore();
   const [dropdownOpen, setDropdownOpen] = useState(false);
-  const [selectedModel, setSelectedModel] = useState(models[0]);
+  const [lineup, setLineup] = useState<Record<string, RoleLine> | null>(null);
+  const [registry, setRegistry] = useState<RegistryModel[]>([]);
+  const [roleMenu, setRoleMenu] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const [rolesRes, modelsRes] = await Promise.all([
+        fetch('/api/models/roles').then((r) => r.json()),
+        fetch('/api/models').then((r) => r.json()),
+      ]);
+      setLineup(rolesRes.roles || null);
+      setRegistry(modelsRes.models || []);
+    } catch (e) {
+      setLineup(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const assign = async (role: string, key: string) => {
+    setRoleMenu(null);
+    try {
+      await fetch('/api/models/roles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role, key }),
+      });
+      await refresh();
+    } catch (e) { /* surfaced by the roles refresh */ }
+  };
+
+  const frontName = lineup?.front?.display_name || 'BigBrain';
 
   return (
     <motion.header
@@ -59,7 +110,7 @@ export function TopBar({ children }: TopBarProps) {
               className="text-[13px] font-medium hidden sm:inline"
               style={{ color: 'var(--text-primary)' }}
             >
-              {selectedModel.name}
+              {frontName}
             </span>
             <ChevronDown
               size={12}
@@ -91,47 +142,101 @@ export function TopBar({ children }: TopBarProps) {
                     boxShadow: 'var(--shadow-lg)',
                   }}
                 >
-                  {models.map((model) => (
-                    <button
-                      key={model.id}
-                      onClick={() => {
-                        setSelectedModel(model);
-                        setDropdownOpen(false);
-                      }}
-                      className="flex items-center gap-3 w-full h-10 px-4 transition-colors duration-150 cursor-pointer relative"
-                      style={{
-                        backgroundColor: model.active ? 'var(--bg-button)' : 'transparent',
-                      }}
-                      onMouseEnter={(e) => {
-                        if (!model.active) {
-                          e.currentTarget.style.backgroundColor = 'var(--bg-button)';
-                        }
-                      }}
-                      onMouseLeave={(e) => {
-                        if (!model.active) {
-                          e.currentTarget.style.backgroundColor = 'transparent';
-                        }
-                      }}
-                    >
-                      {model.active && (
-                        <div
-                          className="w-0.5 h-4 rounded-full absolute left-0"
-                          style={{ backgroundColor: 'var(--accent-blue)' }}
-                        />
-                      )}
-                      <img
-                        src="/robot-icon.png"
-                        alt=""
-                        className="w-4 h-4 object-contain"
-                      />
-                      <span
-                        className="text-sm font-medium"
-                        style={{ color: 'var(--text-primary)' }}
-                      >
-                        {model.name}
-                      </span>
-                    </button>
-                  ))}
+                  {/* Per-role lineup: each role picks among the models
+                      AVAILABLE under the current connection mode. */}
+                  {!lineup && (
+                    <div className="px-4 py-2 text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                      Lineup unavailable (server offline?)
+                    </div>
+                  )}
+                  {lineup && Object.entries(ROLE_LABELS).map(([role, label]) => {
+                    const current = lineup[role];
+                    const open = roleMenu === role;
+                    return (
+                      <div key={role} className="relative">
+                        <button
+                          onClick={() => setRoleMenu(open ? null : role)}
+                          className="flex items-center gap-2.5 w-full h-9 px-4 transition-colors duration-150 cursor-pointer"
+                          style={{
+                            backgroundColor: open ? 'var(--bg-button)' : 'transparent',
+                          }}
+                          onMouseEnter={(e) => {
+                            if (!open) e.currentTarget.style.backgroundColor = 'var(--bg-button)';
+                          }}
+                          onMouseLeave={(e) => {
+                            if (!open) e.currentTarget.style.backgroundColor = 'transparent';
+                          }}
+                        >
+                          <span
+                            className="text-[11px] uppercase tracking-wide w-[74px] text-left flex-shrink-0"
+                            style={{ color: 'var(--text-tertiary)' }}
+                          >
+                            {label}
+                          </span>
+                          <span
+                            className="text-[12.5px] font-medium truncate"
+                            style={{ color: 'var(--text-primary)' }}
+                          >
+                            {current?.display_name || '—'}
+                          </span>
+                          <ChevronDown
+                            size={11}
+                            className="ml-auto flex-shrink-0"
+                            style={{ color: 'var(--text-tertiary)' }}
+                          />
+                        </button>
+                        {open && (
+                          <div
+                            className="absolute left-2 right-2 top-full z-50 rounded-lg py-1 max-h-[240px] overflow-y-auto"
+                            style={{
+                              backgroundColor: 'var(--bg-surface)',
+                              border: '1px solid var(--border-subtle)',
+                              boxShadow: 'var(--shadow-lg)',
+                            }}
+                          >
+                            {registry.map((m) => (
+                              <button
+                                key={m.key}
+                                onClick={() => assign(role, m.key)}
+                                disabled={!m.available}
+                                className="flex items-center gap-2 w-full px-3 h-8 text-left transition-colors duration-100 cursor-pointer disabled:cursor-not-allowed"
+                                style={{
+                                  color: m.available
+                                    ? m.key === current?.key
+                                      ? 'var(--accent-blue)'
+                                      : 'var(--text-primary)'
+                                    : 'var(--text-tertiary)',
+                                  opacity: m.available ? 1 : 0.5,
+                                }}
+                                onMouseEnter={(e) => {
+                                  if (m.available) e.currentTarget.style.backgroundColor = 'var(--bg-button)';
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.currentTarget.style.backgroundColor = 'transparent';
+                                }}
+                              >
+                                <span className="text-[12px] truncate">{m.display_name}</span>
+                                {m.key === current?.key && (
+                                  <span className="ml-auto text-[10px]">active</span>
+                                )}
+                                {!m.available && (
+                                  <span className="ml-auto text-[10px]">no key</span>
+                                )}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  <div
+                    className="mt-1 pt-1.5 border-t"
+                    style={{ borderColor: 'var(--border-subtle)' }}
+                  >
+                    <div className="px-4 text-[10.5px]" style={{ color: 'var(--text-tertiary)' }}>
+                      Unavailable models need a provider key (Settings → Providers)
+                    </div>
+                  </div>
                 </motion.div>
               </>
             )}

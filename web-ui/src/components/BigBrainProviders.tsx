@@ -28,6 +28,8 @@ export function BigBrainProviders() {
   const [models, setModels] = useState<ModelEntry[]>([]);
   const [codexStatus, setCodexStatus] = useState<string>('Checking…');
   const [mistralStatus, setMistralStatus] = useState<string>('');
+  const [orKey, setOrKey] = useState('');
+  const [orStatus, setOrStatus] = useState<string>('');
   const [busy, setBusy] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -193,6 +195,56 @@ export function BigBrainProviders() {
       </ul>
 
       <div className="flex flex-col gap-2">
+        {/* OpenRouter (API): paste-key flow. Validated server-side with the
+            FREE /auth/key probe, stored like the Mistral key (never
+            returned to the client). */}
+        <input
+          type="password"
+          value={orKey}
+          onChange={(e) => setOrKey(e.target.value)}
+          placeholder="OpenRouter API key (sk-or-v1-…)"
+          className="px-3 py-2 rounded-lg text-[12.5px] outline-none"
+          style={{
+            backgroundColor: 'var(--bg-input)',
+            border: '1px solid var(--border-input)',
+            color: 'var(--text-primary)',
+          }}
+        />
+        <button
+          onClick={async () => {
+            if (!orKey.trim()) { setOrStatus('Paste a key first'); return; }
+            setBusy(true);
+            try {
+              await api('/api/auth/openrouter/key', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ key: orKey.trim() }),
+              });
+              setOrKey('');
+              setOrStatus('OpenRouter connected');
+              refresh();
+            } catch (e: any) {
+              setOrStatus(e.message);
+            } finally {
+              setBusy(false);
+            }
+          }}
+          disabled={busy}
+          className="px-3 py-2 rounded-lg text-[13px] font-medium transition-colors duration-150 cursor-pointer"
+          style={{
+            backgroundColor: 'var(--bg-button, #1a1a1a)',
+            color: 'var(--text-primary)',
+            border: '1px solid var(--border-subtle)',
+          }}
+        >
+          Connect with OpenRouter (API)
+        </button>
+        {orStatus && (
+          <span className="text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
+            {orStatus}
+          </span>
+        )}
+
         <button
           onClick={connectCodex}
           disabled={busy}
