@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -173,11 +174,66 @@ def delete(rel: str) -> Dict[str, Any]:
     return {"ok": True, "path": rel}
 
 
+# ── projects (global workspace + per-project sub-workspaces) ───────────────
+
+PROJECT_MANIFEST = ".project.json"
+
+
+def create_project(name: str) -> Dict[str, Any]:
+    """Create a project sub-workspace at the workspace root.
+
+    A project is a folder with a ``.project.json`` manifest — future home
+    of per-project config (models, brains, focus). Refuses weird names.
+    """
+    import json
+    import re
+
+    name = (name or "").strip()
+    if not name or not re.fullmatch(r"[\w][\w .-]*", name) or name.startswith("."):
+        raise web.HTTPBadRequest(text=json_error("invalid project name"))
+    root = workspace_root()
+    target = _resolve(root, name)
+    if target.exists():
+        raise web.HTTPBadRequest(text=json_error("project already exists"))
+    target.mkdir(parents=True)
+    manifest = {"name": name, "created": time.time()}
+    (target / PROJECT_MANIFEST).write_text(
+        json.dumps(manifest, indent=2), encoding="utf-8"
+    )
+    return {"ok": True, "path": name, "manifest": manifest}
+
+
+def list_projects() -> Dict[str, Any]:
+    """Projects = root-level folders carrying a .project.json manifest."""
+    import json
+
+    root = workspace_root()
+    projects = []
+    for child in sorted(root.iterdir()):
+        if not child.is_dir():
+            continue
+        manifest_path = child / PROJECT_MANIFEST
+        if not manifest_path.is_file():
+            continue
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except ValueError:
+            manifest = {}
+        projects.append({
+            "name": manifest.get("name") or child.name,
+            "path": child.name,
+            "created": manifest.get("created"),
+        })
+    return {"projects": projects}
+
+
 # ── aiohttp handlers ──────────────────────────────────────────────────────
 
 
 def setup_fs_routes(app: web.Application) -> None:
     app.router.add_get("/api/fs/list", _handle_list)
+    app.router.add_get("/api/fs/projects", _handle_projects)
+    app.router.add_post("/api/fs/project", _handle_project_create)
     app.router.add_get("/api/fs/file", _handle_read)
     app.router.add_post("/api/fs/file", _handle_write)
     app.router.add_delete("/api/fs/file", _handle_delete)
@@ -216,3 +272,12 @@ async def _handle_rename(request: web.Request) -> web.Response:
 async def _handle_move(request: web.Request) -> web.Response:
     body = await request.json()
     return web.json_response(move(body.get("path", ""), body.get("destDir", "")))
+
+
+async def _handle_projects(request: web.Request) -> web.Response:
+    return web.json_response(list_projects())
+
+
+async def _handle_project_create(request: web.Request) -> web.Response:
+    body = await request.json()
+    return web.json_response(create_project(body.get("name", "")))

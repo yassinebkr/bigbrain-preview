@@ -197,22 +197,23 @@ export function TopBar({ children }: TopBarProps) {
                               boxShadow: 'var(--shadow-lg)',
                             }}
                           >
-                            {registry.map((m) => (
+                            {registry.filter((m) => m.available).length === 0 && (
+                              <div className="px-3 py-2 text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
+                                No model connected — add a key in Settings → Providers
+                              </div>
+                            )}
+                            {registry.filter((m) => m.available).map((m) => (
                               <button
                                 key={m.key}
                                 onClick={() => assign(role, m.key)}
-                                disabled={!m.available}
-                                className="flex items-center gap-2 w-full px-3 h-8 text-left transition-colors duration-100 cursor-pointer disabled:cursor-not-allowed"
+                                className="flex items-center gap-2 w-full px-3 h-8 text-left transition-colors duration-100 cursor-pointer"
                                 style={{
-                                  color: m.available
-                                    ? m.key === current?.key
-                                      ? 'var(--accent-blue)'
-                                      : 'var(--text-primary)'
-                                    : 'var(--text-tertiary)',
-                                  opacity: m.available ? 1 : 0.5,
+                                  color: m.key === current?.key
+                                    ? 'var(--accent-blue)'
+                                    : 'var(--text-primary)',
                                 }}
                                 onMouseEnter={(e) => {
-                                  if (m.available) e.currentTarget.style.backgroundColor = 'var(--bg-button)';
+                                  e.currentTarget.style.backgroundColor = 'var(--bg-button)';
                                 }}
                                 onMouseLeave={(e) => {
                                   e.currentTarget.style.backgroundColor = 'transparent';
@@ -222,9 +223,6 @@ export function TopBar({ children }: TopBarProps) {
                                 {m.key === current?.key && (
                                   <span className="ml-auto text-[10px]">active</span>
                                 )}
-                                {!m.available && (
-                                  <span className="ml-auto text-[10px]">no key</span>
-                                )}
                               </button>
                             ))}
                           </div>
@@ -232,14 +230,7 @@ export function TopBar({ children }: TopBarProps) {
                       </div>
                     );
                   })}
-                  <div
-                    className="mt-1 pt-1.5 border-t"
-                    style={{ borderColor: 'var(--border-subtle)' }}
-                  >
-                    <div className="px-4 text-[10.5px]" style={{ color: 'var(--text-tertiary)' }}>
-                      Unavailable models need a provider key (Settings → Providers)
-                    </div>
-                  </div>
+
                 </motion.div>
               </>
             )}

@@ -583,3 +583,43 @@ class TestGlmRegistry:
         assert entry.api_key_env == "MISTRAL_API_KEY"
         assert entry.reasoning is True
         assert entry.reasoning_effort_default == "low"
+
+
+class TestWorkspaceProjects:
+    @pytest.fixture(autouse=True)
+    def _ws_root(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("BIGBRAIN_WORKSPACE_DIR", str(tmp_path / "ws"))
+        yield tmp_path / "ws"
+
+    def test_create_project_writes_manifest(self, _ws_root):
+        from bigbrain.web import fs_api
+        result = fs_api.create_project("fpga-brain")
+        assert result["ok"] is True
+        manifest = _ws_root / "fpga-brain" / ".project.json"
+        assert manifest.is_file()
+        import json
+        assert json.loads(manifest.read_text())["name"] == "fpga-brain"
+
+    def test_list_projects_finds_manifests_only(self, _ws_root):
+        import json
+        from bigbrain.web import fs_api
+        fs_api.create_project("alpha")
+        # A plain folder is NOT a project.
+        (_ws_root / "plain").mkdir(parents=True)
+        result = fs_api.list_projects()
+        names = [p["name"] for p in result["projects"]]
+        assert names == ["alpha"]
+
+    def test_create_project_rejects_bad_names(self, _ws_root):
+        from aiohttp import web as aioweb
+        from bigbrain.web import fs_api
+        for bad in ("", "  ", "../escape", ".hidden"):
+            with pytest.raises(aioweb.HTTPBadRequest):
+                fs_api.create_project(bad)
+
+    def test_create_project_refuses_duplicates(self, _ws_root):
+        from aiohttp import web as aioweb
+        from bigbrain.web import fs_api
+        fs_api.create_project("one")
+        with pytest.raises(aioweb.HTTPBadRequest):
+            fs_api.create_project("one")

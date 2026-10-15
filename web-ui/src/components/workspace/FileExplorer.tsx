@@ -26,6 +26,12 @@ import {
 
 const easeOut = [0, 0, 0.2, 1] as [number, number, number, number];
 
+interface Project {
+  name: string;
+  path: string;
+  created: number | null;
+}
+
 interface FsEntry {
   name: string;
   path: string;
@@ -78,6 +84,15 @@ const deleteEntry = (path: string) =>
     method: 'DELETE',
   });
 
+const listProjects = () => fsApi<{ projects: Project[] }>(`/api/fs/projects`);
+
+const createProject = (name: string) =>
+  fsApi<{ ok: boolean }>(`/api/fs/project`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+
 function iconFor(entry: FsEntry, size = 15) {
   if (entry.type === 'folder') return <Folder size={size} strokeWidth={1.5} />;
   const ext = (entry.extension || '').toLowerCase();
@@ -104,6 +119,7 @@ export function FileExplorer() {
   const [loading, setLoading] = useState(false);
   const [viewing, setViewing] = useState<{ path: string; content: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [projects, setProjects] = useState<Project[]>([]);
   const refreshRef = useRef<((path?: string) => Promise<void>) | null>(null);
 
   // Agent writes (workspace.file_written events) auto-refresh the listing.
@@ -122,6 +138,14 @@ export function FileExplorer() {
       const result = await listDir(path);
       setEntries(result.entries);
       setDir(path);
+      if (!path) {
+        try {
+          const pr = await listProjects();
+          setProjects(pr.projects || []);
+        } catch (e) {
+          setProjects([]);
+        }
+      }
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -152,6 +176,12 @@ export function FileExplorer() {
     } finally {
       setBusy(false);
     }
+  };
+
+  const handleNewProject = () => {
+    const name = prompt('New project name');
+    if (!name) return;
+    guard(() => createProject(name));
   };
 
   const handleNewFolder = () => {
@@ -214,6 +244,11 @@ export function FileExplorer() {
           </span>
         ))}
         <div className="ml-auto flex items-center gap-0.5">
+          <button onClick={handleNewProject} disabled={busy} title="New project"
+                  className="p-1.5 rounded-md cursor-pointer"
+                  style={{ color: 'var(--text-tertiary)' }}>
+            <FolderPlus size={14} style={{ color: 'var(--accent-blue)' }} />
+          </button>
           <button onClick={handleNewFolder} disabled={busy} title="New folder"
                   className="p-1.5 rounded-md cursor-pointer"
                   style={{ color: 'var(--text-tertiary)' }}>
@@ -264,6 +299,18 @@ export function FileExplorer() {
                 {iconFor(entry)}
               </span>
               <span className="text-[13px] truncate flex-1 min-w-0">{entry.name}</span>
+              {!dir && projects.some((p) => p.path === entry.name) && (
+                <span
+                  className="text-[9.5px] uppercase tracking-wide px-1.5 py-0.5 rounded-full flex-shrink-0"
+                  style={{
+                    color: 'var(--accent-blue)',
+                    border: '1px solid var(--accent-blue)',
+                    opacity: 0.8,
+                  }}
+                >
+                  project
+                </span>
+              )}
               <span className="text-[10.5px] flex-shrink-0" style={{ color: 'var(--text-tertiary)' }}>
                 {formatSize(entry.size)}
               </span>
