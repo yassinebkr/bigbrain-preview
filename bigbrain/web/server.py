@@ -31,6 +31,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
+# Aplot-based React UI build output (web-ui/; see docs/WEBUI-APLOT-PORT.md).
+WEBUI_DIST = Path(__file__).resolve().parents[2] / "web-ui" / "dist"
 
 
 class WebServer:
@@ -86,6 +88,11 @@ class WebServer:
             "brain.started", "brain.complete",
             "chat.message",  # Front brain summary / chat responses
         }
+
+        # Chat history for the Aplot UI (chat.history req/res + reconnect).
+        self._chat_history: list = []  # [{id, role, text, timestamp}]
+        self._chat_history_max = 200
+        self._chat_id_counter = 0
 
     async def start(self) -> None:
         """Start the web server."""
@@ -191,7 +198,7 @@ class WebServer:
 
     def _setup_routes(self) -> None:
         """Configure HTTP routes."""
-        self._app.router.add_get("/", self._handle_index)
+        self._app.router.add_get("/", self._handle_root)
         self._app.router.add_get("/ws", self._handle_websocket)
         self._app.router.add_get("/api/focus", self._handle_focus_get)
         self._app.router.add_post("/api/focus", self._handle_focus_set)
@@ -211,6 +218,11 @@ class WebServer:
         # Static files (JS, CSS, images) — with no-cache for dev
         if STATIC_DIR.exists():
             self._app.router.add_get("/static/{filename:.+}", self._handle_static)
+
+        # Aplot React UI build (web-ui/dist): assets; the root route
+        # (_handle_root) serves its index when the build exists.
+        if WEBUI_DIST.exists():
+            self._app.router.add_get("/assets/{filename:.+}", self._handle_webui_asset)
 
     async def _handle_models(self, request: web.Request) -> web.Response:
         """List registry models with availability flags (no secrets)."""
@@ -283,6 +295,27 @@ class WebServer:
             return web.Response(status=404, text="Not found")
         headers = {"Cache-Control": "no-cache, must-revalidate"}
         return web.FileResponse(file_path, headers=headers)
+
+    async def _handle_root(self, request: web.Request) -> web.Response:
+        """Serve the Aplot React build if present, else the legacy page."""
+        dist_index = WEBUI_DIST / "index.html"
+        if dist_index.exists():
+            return web.FileResponse(
+                dist_index,
+                headers={"Cache-Control": "no-cache, must-revalidate"},
+            )
+        return await self._handle_index(request)
+
+    async def _handle_webui_asset(self, request: web.Request) -> web.FileResponse:
+        """Serve built assets from web-ui/dist/assets (immutable hashed files)."""
+        filename = request.match_info["filename"]
+        file_path = (WEBUI_DIST / "assets" / filename).resolve()
+        # Contained path check: no traversal outside dist/assets.
+        if not str(file_path).startswith(str((WEBUI_DIST / "assets").resolve())):
+            return web.Response(status=404, text="Not found")
+        if not file_path.is_file():
+            return web.Response(status=404, text="Not found")
+        return web.FileResponse(file_path)
 
     async def _handle_index(self, request: web.Request) -> web.Response:
         """Serve the main HTML page, injecting WS auth token if auth is enabled."""
@@ -409,6 +442,17 @@ class WebServer:
         self._ws_clients.add(ws)
         logger.info("WebSocket client connected (%d total)", self.client_count)
 
+        # Handshake: the Aplot adapter waits for this before it is
+        # 'connected' (same contract as the Scratchy gateway).
+        await ws.send_json({
+            "type": "welcome",
+            "payload": {
+                "server": "bigbrain",
+                "auth": bool(self._auth_password),
+                "version": "0.1.0",
+            },
+        })
+
         # Send initial state
         await self._send_initial_state(ws)
 
@@ -477,14 +521,31 @@ class WebServer:
         """
         Handle a message from a WebSocket client.
 
-        Messages from the UI are forwarded to the MessageBus.
-        The source is always set to 'morphable_ui' for security.
+        Control frames (Aplot adapter protocol) are answered directly:
+        ping → pong, chat.send → bus task + acks, req chat.history → resp.
+        Everything else is forwarded to the MessageBus with the source
+        forced to 'morphable_ui' (prevents spoofing).
         """
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:
             logger.warning("Invalid JSON from WebSocket client")
             return
+
+        # -- Control frames (never reach the bus) --------------------------
+        if data.get("type") == "ping":
+            await ws.send_json({"type": "pong", "payload": {}})
+            return
+
+        if data.get("type") == "chat.send":
+            await self._handle_chat_send(ws, data)
+            return
+
+        if data.get("type") == "req":
+            await self._handle_request(ws, data)
+            return
+
+        # -- Bus passthrough (legacy protocol) -----------------------------
 
         # Force source to morphable_ui (prevent spoofing)
         data["source"] = "morphable_ui"
@@ -512,6 +573,77 @@ class WebServer:
         )
 
         await self.bus.send(message)
+
+    async def _handle_chat_send(
+        self, ws: web.WebSocketResponse, data: dict
+    ) -> None:
+        """Aplot chat.send: one user message → front brain via the bus.
+
+        Mirrors the legacy UI's frame exactly (task → front_brain with
+        payload.type user_message) and adds the message-status acks the
+        Aplot adapter expects (queued → sent).
+        """
+        payload = data.get("payload") or {}
+        text = (payload.get("text") or "").strip()
+        if not text:
+            return
+        message_id = payload.get("messageId") or data.get("messageId")
+
+        async def ack(status: str) -> None:
+            if not message_id:
+                return
+            await ws.send_json({
+                "type": "message.status",
+                "payload": {"messageId": message_id, "status": status},
+            })
+
+        await ack("queued")
+
+        # History entry for the user's own message (chat.history req/res).
+        self._append_chat_history("user", text)
+
+        from ..bus.message import BusMessage, MessageType, Priority
+
+        await self.bus.send(BusMessage(
+            type=MessageType.TASK,
+            source="morphable_ui",
+            target="front_brain",
+            payload={"type": "user_message", "text": text},
+            priority=Priority.NORMAL,
+        ))
+
+        await ack("sent")
+
+    async def _handle_request(
+        self, ws: web.WebSocketResponse, data: dict
+    ) -> None:
+        """Aplot req/res bridge. Only chat.history is supported today."""
+        request_id = data.get("id")
+        method = data.get("method")
+        if method == "chat.history":
+            await ws.send_json({
+                "type": "resp",
+                "id": request_id,
+                "payload": {"messages": list(self._chat_history)},
+            })
+            return
+        await ws.send_json({
+            "type": "resp",
+            "id": request_id,
+            "error": f"unknown method: {method}",
+        })
+
+    def _append_chat_history(self, role: str, text: str) -> None:
+        """Bounded chat history (chat.history + reconnect catch-up)."""
+        self._chat_id_counter += 1
+        self._chat_history.append({
+            "id": str(self._chat_id_counter),
+            "role": role,
+            "text": text,
+            "timestamp": time.time(),
+        })
+        if len(self._chat_history) > self._chat_history_max:
+            self._chat_history = self._chat_history[-self._chat_history_max:]
 
     # ================================================================
     # BUS → WEBSOCKET BRIDGE
@@ -545,6 +677,14 @@ class WebServer:
         # This ensures events are captured even when no browser is connected,
         # so reconnecting clients get the full replay.
         self._maybe_buffer(msg_type, event, data)
+
+        # Chat history: capture assistant/system messages for chat.history.
+        if event == "chat.message":
+            payload = message.payload or {}
+            role = payload.get("role", "assistant")
+            text = payload.get("text")
+            if isinstance(text, str) and text.strip() and role in ("assistant", "system", "user"):
+                self._append_chat_history(role, text)
 
         if not self._ws_clients:
             return

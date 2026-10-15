@@ -272,3 +272,114 @@ class TestClientCount:
         server._ws_clients.add(MagicMock())
         server._ws_clients.add(MagicMock())
         assert server.client_count == 2
+
+
+# ================================================================
+# APLOT ADAPTER PROTOCOL (étape 2 — docs/WEBUI-APLOT-PORT.md)
+# ================================================================
+
+
+class TestAplotProtocol:
+    """Control frames answered by the server without reaching the bus."""
+
+    @pytest.mark.asyncio
+    async def test_ping_gets_pong(self, server, bus):
+        sent_to_bus = []
+        bus.subscribe("*", lambda msg: sent_to_bus.append(msg))
+        mock_ws = AsyncMock()
+
+        await server._handle_ws_message(
+            mock_ws, json.dumps({"type": "ping"})
+        )
+        await asyncio.sleep(0.05)
+
+        frames = [c.args[0] for c in mock_ws.send_json.call_args_list]
+        assert any(f["type"] == "pong" for f in frames)
+        assert sent_to_bus == []  # control frames never reach the bus
+
+    @pytest.mark.asyncio
+    async def test_chat_send_routes_to_front_brain_with_acks(self, server, bus):
+        received = []
+        bus.subscribe("front_brain", lambda msg: received.append(msg))
+        mock_ws = AsyncMock()
+
+        raw = json.dumps({
+            "type": "chat.send",
+            "payload": {"text": "hello bigbrain", "messageId": "m1"},
+        })
+        await server._handle_ws_message(mock_ws, raw)
+        await asyncio.sleep(0.05)
+
+        # Exactly one bus task to front_brain with the legacy user_message shape.
+        assert len(received) == 1
+        assert received[0].source == "morphable_ui"
+        assert received[0].payload == {"type": "user_message", "text": "hello bigbrain"}
+
+        # Acks: queued then sent, in order.
+        statuses = [
+            c.args[0]["payload"]["status"]
+            for c in mock_ws.send_json.call_args_list
+            if c.args[0].get("type") == "message.status"
+        ]
+        assert statuses == ["queued", "sent"]
+        assert all(
+            c.args[0]["payload"]["messageId"] == "m1"
+            for c in mock_ws.send_json.call_args_list
+            if c.args[0].get("type") == "message.status"
+        )
+
+    @pytest.mark.asyncio
+    async def test_chat_send_empty_text_is_ignored(self, server, bus):
+        sent_to_bus = []
+        bus.subscribe("*", lambda msg: sent_to_bus.append(msg))
+        mock_ws = AsyncMock()
+
+        await server._handle_ws_message(
+            mock_ws, json.dumps({"type": "chat.send", "payload": {"text": "   "}})
+        )
+        await asyncio.sleep(0.05)
+        assert sent_to_bus == []
+
+    @pytest.mark.asyncio
+    async def test_chat_history_request_response(self, server):
+        server._append_chat_history("user", "hi")
+        server._append_chat_history("assistant", "hello")
+        mock_ws = AsyncMock()
+
+        await server._handle_ws_message(
+            mock_ws, json.dumps({"type": "req", "id": "r1", "method": "chat.history"})
+        )
+
+        frames = [c.args[0] for c in mock_ws.send_json.call_args_list]
+        resp = next(f for f in frames if f.get("type") == "resp")
+        assert resp["id"] == "r1"
+        texts = [m["text"] for m in resp["payload"]["messages"]]
+        assert texts == ["hi", "hello"]
+
+    @pytest.mark.asyncio
+    async def test_unknown_request_errors(self, server):
+        mock_ws = AsyncMock()
+        await server._handle_ws_message(
+            mock_ws, json.dumps({"type": "req", "id": "r2", "method": "nope"})
+        )
+        frames = [c.args[0] for c in mock_ws.send_json.call_args_list]
+        resp = next(f for f in frames if f.get("type") == "resp")
+        assert "unknown method" in resp["error"]
+
+    @pytest.mark.asyncio
+    async def test_chat_message_event_captured_in_history(self, server):
+        msg = BusMessage(
+            type=MessageType.EVENT,
+            source="front_brain",
+            target="morphable_ui",
+            payload={"event": "chat.message", "role": "assistant", "text": "bonjour"},
+        )
+        await server._on_bus_message(msg)
+        assert server._chat_history[-1]["role"] == "assistant"
+        assert server._chat_history[-1]["text"] == "bonjour"
+
+    def test_chat_history_bounded(self, server):
+        for i in range(250):
+            server._append_chat_history("user", f"m{i}")
+        assert len(server._chat_history) == 200
+        assert server._chat_history[0]["text"] == "m50"
