@@ -5,6 +5,10 @@ import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+# The real backends need the optional `voice` extra (websockets); without
+# it these tests cannot run — skip instead of failing collection in CI.
+pytest.importorskip("websockets")
+
 from bigbrain.voice.assemblyai_stt import AssemblyAISTT
 
 
