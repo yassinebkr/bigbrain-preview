@@ -11,6 +11,7 @@ import {
   Menu,
   CheckSquare,
   Brain,
+  ScrollText,
 } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 import { Tooltip } from './Tooltip';
@@ -23,6 +24,7 @@ const sidebarItems: { id: string; icon: React.ComponentType<{ size?: number; str
   { id: 'briefcase', icon: Briefcase, tooltip: 'Workspace' },
   { id: 'tasks', icon: CheckSquare, tooltip: 'Task Board' },
   { id: 'brains', icon: Brain, tooltip: 'Brains' },
+  { id: 'evidence', icon: ScrollText, tooltip: 'Evidence' },
   { id: 'history', icon: History, tooltip: 'History' },
   { id: 'settings', icon: Settings, tooltip: 'Settings' },
   { id: 'spacer', icon: null, isSpacer: true },
@@ -66,6 +68,9 @@ function SidebarContent({ onItemClick }: { onItemClick?: () => void }) {
         break;
       case 'brains':
         setView('brains');
+        break;
+      case 'evidence':
+        setView('evidence');
         break;
       case 'apps':
         setView('discover');
@@ -137,6 +142,7 @@ function SidebarContent({ onItemClick }: { onItemClick?: () => void }) {
           (item.id === 'briefcase' && view === 'workspace') ||
           (item.id === 'tasks' && view === 'tasks') ||
           (item.id === 'brains' && view === 'brains') ||
+          (item.id === 'evidence' && view === 'evidence') ||
           (item.id === 'apps' && view === 'discover');
 
         return (
