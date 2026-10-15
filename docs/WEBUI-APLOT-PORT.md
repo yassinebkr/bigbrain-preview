@@ -181,10 +181,13 @@ ci-dessus — les reconnectés ne perdent rien.
    cliquables, le CodeViewer les affiche (highlight Python + Run avec
    stdout/stderr). Reste le "proactive nudge" (highlight du bouton
    Workspace, ouvrir une vue code sans changer de layout = Phase B).
-2. **Interface code dédiée** : le CodeViewer est read + run. Manquent :
-   édition de fichier (save via /api/fs/file), exécution d'un run
-   directement depuis le chat ("fais tourner hello.py"), multi-langages
-   au-delà de Python, et plus tard un vrai layout code (Phase B morphable).
+2. **Interface code dédiée** — *terminée en couche produit* : le CodeViewer
+   fait read + run + edit (save via /api/fs/file), highlight multi-langages
+   (python, js/ts, json, bash, md, yaml, css, html/xml), et "fais tourner
+   hello.py" depuis le chat route vers le task type `run_file` du
+   python_brain (exécute le fichier sur disque, sans régénérer).
+   Reste pour la Phase B morphable : le vrai layout code intégré au flux
+   (panneau code persistant à côté du chat, sans modal).
 3. **Port du harness déterministe fpga → python_brain** : la couche
    vérification déterministe outillée comme sur ../fpga (typed tools,
    replay des runs, vérifs déterministes avant review LLM). À explorer
@@ -194,6 +197,12 @@ ci-dessus — les reconnectés ne perdent rien.
 6. Premier plugin premium + paywall Stripe (billing scratchy à porter).
 
 ## Changelog UX récent
+
+- **CodeViewer v3** : édition en place (Save via POST /api/fs/file,
+  Ctrl/Cmd+S, annulation), highlight multi-langages, et `run_file` —
+  le planner de l'orchestrateur route "run <file>.py" vers
+  payload {"type": "run_file", "file": ...} ; le python_brain exécute
+  le fichier existant du work_dir (projet courant/sandbox) tel quel.
 
 - **CodeViewer v2** : syntax highlighting Python (highlight.js, language
   python seulement), bouton Run qui exécute le fichier via

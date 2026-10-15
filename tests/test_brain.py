@@ -336,14 +336,61 @@ class TestPythonBrain:
                 "code": "print('Hello, BigBrain!')"
             }
         )
-        
+
         result = await python_brain.handle_task(task_message)
-        
+
         assert result["success"] is True
         assert result["exit_code"] == 0
         assert "Hello, BigBrain!" in result["stdout"]
         assert result["stderr"] == ""
         assert not result["timed_out"]
+
+    @pytest.mark.asyncio
+    async def test_run_file_executes_existing_file(self, python_brain, temp_work_dir):
+        """run_file executes what is on disk — no generation."""
+        (temp_work_dir / "hello.py").write_text("print('from disk')")
+
+        task_message = BusMessage(
+            type=MessageType.TASK,
+            source="orchestrator",
+            target="test_python_brain",
+            payload={"type": "run_file", "file": "hello.py"},
+        )
+
+        result = await python_brain.handle_task(task_message)
+
+        assert result["success"] is True
+        assert result["exit_code"] == 0
+        assert "from disk" in result["stdout"]
+        assert result["file"] == "hello.py"
+
+    @pytest.mark.asyncio
+    async def test_run_file_missing_file(self, python_brain):
+        """run_file on a missing file fails with a clear error."""
+        task_message = BusMessage(
+            type=MessageType.TASK,
+            source="orchestrator",
+            target="test_python_brain",
+            payload={"type": "run_file", "file": "nope.py"},
+        )
+
+        result = await python_brain.handle_task(task_message)
+
+        assert result["success"] is False
+        assert "not found" in result["stderr"].lower()
+
+    @pytest.mark.asyncio
+    async def test_run_file_rejects_path_traversal(self, python_brain):
+        """run_file only accepts plain filenames inside the work_dir."""
+        task_message = BusMessage(
+            type=MessageType.TASK,
+            source="orchestrator",
+            target="test_python_brain",
+            payload={"type": "run_file", "file": "../escape.py"},
+        )
+
+        with pytest.raises(ValueError):
+            await python_brain.handle_task(task_message)
     
     @pytest.mark.asyncio
     async def test_code_with_error(self, python_brain):

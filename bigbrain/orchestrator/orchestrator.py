@@ -183,6 +183,7 @@ CRITICAL RULES:
 - Use dependencies to enforce ordering when one subtask needs another's output
 - For simple code tasks: 1 subtask to python_brain
 - The "type" field in payload should be "generate_and_execute" for code tasks, "research" for research tasks
+- To RUN an existing file (e.g. "run hello.py"), use type "run_file" with payload {{"type": "run_file", "file": "hello.py"}} — the file must already exist in the project
 - If research is needed, add a researcher subtask BEFORE the coding subtask with a dependency
 
 Respond with ONLY a JSON array. No explanation, no markdown fences.
@@ -907,6 +908,7 @@ Example — research then code:
         brain_map = {
             "execute_code": "python_brain",
             "generate_and_execute": "python_brain",
+            "run_file": "python_brain",
             "research": "researcher",
             "web_search": "researcher",
         }

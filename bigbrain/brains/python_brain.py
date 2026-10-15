@@ -273,6 +273,9 @@ class PythonBrain(BaseBrain):
         elif task_type == "search_project":
             # Search across project files using regex or glob patterns
             return await self._search_project(payload)
+        elif task_type == "run_file":
+            # Execute an EXISTING file from the work_dir (no generation)
+            return await self._run_existing_file(payload)
         elif task_type == "execute_code":
             code = payload.get("code")
             if not code:
@@ -891,7 +894,80 @@ Rules:
                 "method": "rewrite",
                 "stdout": "", "stderr": str(e), "exit_code": -1
             }
-    
+
+    async def _run_existing_file(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute an existing file from the work_dir — no LLM, no generation.
+
+        "Run hello.py" from the chat must run what is on disk, not
+        regenerate it. The work_dir tracks the selected project (or the
+        sandbox in global mode), so the file runs in the same layout the
+        agent wrote it in.
+        """
+        import time
+
+        filename = str(payload.get("file") or payload.get("filename") or "").strip()
+        if not filename:
+            raise ValueError("No file provided in run_file task")
+        if "/" in filename or "\\" in filename or ".." in filename or filename.startswith("."):
+            raise ValueError("run_file accepts a plain filename inside the project")
+
+        target = self.work_dir / filename
+        timeout = payload.get("timeout", self.timeout)
+        start = time.time()
+
+        if not target.is_file():
+            return {
+                "success": False,
+                "error": f"File not found: {filename}",
+                "stdout": "",
+                "stderr": f"File not found: {filename}",
+                "exit_code": -1,
+                "files_created": [],
+                "execution_time": 0.0,
+                "file": filename,
+            }
+
+        try:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, str(target),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(self.work_dir),
+                env=self._get_execution_env(),
+            )
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(), timeout=timeout
+                )
+                exit_code = process.returncode
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.wait()
+                stdout = b""
+                stderr = f"Execution timed out after {timeout} seconds".encode()
+                exit_code = -1
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "stdout": "",
+                "stderr": str(e),
+                "exit_code": -2,
+                "files_created": [],
+                "execution_time": time.time() - start,
+                "file": filename,
+            }
+
+        return {
+            "success": exit_code == 0,
+            "stdout": stdout.decode(errors="replace"),
+            "stderr": stderr.decode(errors="replace"),
+            "exit_code": exit_code,
+            "files_created": [],
+            "execution_time": time.time() - start,
+            "file": filename,
+        }
+
     async def _search_project(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
         Search across project files using regex or glob patterns.

@@ -1,18 +1,55 @@
 // CodeViewer — in-chat viewer for files the agent wrote. Opens from the
 // run panel's file list; content comes from the real FS API. Python
-// files get syntax highlighting (highlight.js, python only) and a Run
-// button that executes the file server-side (/api/fs/run) and shows
-// stdout/stderr inline — the code surface is now read + run.
+// files get syntax highlighting and a Run button (server-side execution
+// with stdout/stderr inline); any file can be edited in place and
+// saved back through the FS API. Highlighting covers the common web
+// and scripting languages.
 
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { FileCode2, X, Copy, Check, FolderOpen, Play, Loader2 } from 'lucide-react';
+import {
+  FileCode2, X, Copy, Check, FolderOpen, Play, Loader2, Pencil, Ban,
+} from 'lucide-react';
 import hljs from 'highlight.js/lib/core';
 import pythonLang from 'highlight.js/lib/languages/python';
+import javascript from 'highlight.js/lib/languages/javascript';
+import typescript from 'highlight.js/lib/languages/typescript';
+import json from 'highlight.js/lib/languages/json';
+import bash from 'highlight.js/lib/languages/bash';
+import markdown from 'highlight.js/lib/languages/markdown';
+import yaml from 'highlight.js/lib/languages/yaml';
+import css from 'highlight.js/lib/languages/css';
+import xml from 'highlight.js/lib/languages/xml';
 import 'highlight.js/styles/github-dark.css';
 import { useAppStore } from '@/store/appStore';
 
 hljs.registerLanguage('python', pythonLang);
+hljs.registerLanguage('javascript', javascript);
+hljs.registerLanguage('typescript', typescript);
+hljs.registerLanguage('json', json);
+hljs.registerLanguage('bash', bash);
+hljs.registerLanguage('markdown', markdown);
+hljs.registerLanguage('yaml', yaml);
+hljs.registerLanguage('css', css);
+hljs.registerLanguage('xml', xml);
+
+const EXT_TO_LANG: Record<string, string> = {
+  py: 'python',
+  js: 'javascript', mjs: 'javascript', cjs: 'javascript',
+  ts: 'typescript', tsx: 'typescript',
+  jsx: 'javascript',
+  json: 'json',
+  sh: 'bash', bash: 'bash',
+  md: 'markdown', markdown: 'markdown',
+  yml: 'yaml', yaml: 'yaml',
+  css: 'css',
+  html: 'xml', htm: 'xml', xml: 'xml', svg: 'xml',
+};
+
+function languageFor(path: string): string | null {
+  const ext = path.split('.').pop()?.toLowerCase() || '';
+  return EXT_TO_LANG[ext] || null;
+}
 
 interface RunResult {
   ok: boolean;
@@ -35,7 +72,14 @@ export function CodeViewer() {
   const [running, setRunning] = useState(false);
   const [runResult, setRunResult] = useState<RunResult | null>(null);
 
+  // Edit mode: draft + save via the FS write API.
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
   const isPython = !!path && path.endsWith('.py');
+  const language = path ? languageFor(path) : null;
 
   useEffect(() => {
     if (!path) return;
@@ -43,6 +87,8 @@ export function CodeViewer() {
     setContent(null);
     setError(null);
     setRunResult(null);
+    setEditing(false);
+    setSaveError(null);
     fetch(`/api/fs/file?path=${encodeURIComponent(path)}`)
       .then(async (r) => {
         const body = await r.json().catch(() => ({}));
@@ -57,6 +103,35 @@ export function CodeViewer() {
       });
     return () => { cancelled = true; };
   }, [path]);
+
+  const startEditing = () => {
+    if (content == null) return;
+    setDraft(content);
+    setSaveError(null);
+    setEditing(true);
+  };
+
+  const save = async () => {
+    if (!path || saving) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const r = await fetch('/api/fs/file', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path, content: draft }),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+      setContent(draft);
+      setEditing(false);
+      setRunResult(null);
+    } catch (e: any) {
+      setSaveError(String(e.message || e));
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const copy = async () => {
     if (content == null) return;
@@ -99,8 +174,8 @@ export function CodeViewer() {
 
   const lines = content != null ? content.split('\n').length : 0;
   const highlighted =
-    content != null && isPython
-      ? hljs.highlight(content, { language: 'python', ignoreIllegals: true }).value
+    content != null && language
+      ? hljs.highlight(content, { language, ignoreIllegals: true }).value
       : null;
 
   return (
@@ -138,20 +213,57 @@ export function CodeViewer() {
                   {lines} lines
                 </span>
               )}
-              {isPython && (
-                <button
-                  onClick={run}
-                  disabled={running || content == null}
-                  className="flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer flex-shrink-0 text-[11.5px]"
-                  style={{
-                    backgroundColor: 'var(--accent-blue)',
-                    color: '#ffffff',
-                    opacity: running || content == null ? 0.6 : 1,
-                  }}
-                  title="Run this file"
-                >
-                  {running ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />} Run
-                </button>
+              {editing ? (
+                <>
+                  <button
+                    onClick={save}
+                    disabled={saving}
+                    className="flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer flex-shrink-0 text-[11.5px]"
+                    style={{
+                      backgroundColor: 'var(--accent-blue)',
+                      color: '#ffffff',
+                      opacity: saving ? 0.6 : 1,
+                    }}
+                    title="Save (Ctrl/Cmd+S)"
+                  >
+                    {saving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Save
+                  </button>
+                  <button
+                    onClick={() => setEditing(false)}
+                    className="flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer flex-shrink-0 text-[11.5px]"
+                    style={{ color: 'var(--text-secondary)', border: '1px solid var(--border-subtle)' }}
+                    title="Cancel"
+                  >
+                    <Ban size={11} /> Cancel
+                  </button>
+                </>
+              ) : (
+                <>
+                  {isPython && (
+                    <button
+                      onClick={run}
+                      disabled={running || content == null}
+                      className="flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer flex-shrink-0 text-[11.5px]"
+                      style={{
+                        backgroundColor: 'var(--accent-blue)',
+                        color: '#ffffff',
+                        opacity: running || content == null ? 0.6 : 1,
+                      }}
+                      title="Run this file"
+                    >
+                      {running ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />} Run
+                    </button>
+                  )}
+                  <button
+                    onClick={startEditing}
+                    disabled={content == null}
+                    className="p-1.5 rounded-md cursor-pointer flex-shrink-0"
+                    style={{ color: 'var(--text-tertiary)' }}
+                    title="Edit"
+                  >
+                    <Pencil size={13} />
+                  </button>
+                </>
               )}
               <button
                 onClick={copy}
@@ -189,6 +301,36 @@ export function CodeViewer() {
                 <p className="px-4 py-6 text-[12.5px]" style={{ color: 'var(--text-tertiary)' }}>
                   Loading…
                 </p>
+              ) : editing ? (
+                <div className="flex flex-col h-full min-h-[300px]">
+                  <textarea
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+                        e.preventDefault();
+                        save();
+                      }
+                    }}
+                    spellCheck={false}
+                    className="flex-1 w-full px-4 py-3 text-[12px] leading-relaxed bg-transparent border-none outline-none resize-none"
+                    style={{
+                      color: 'var(--text-primary)',
+                      fontFamily: 'var(--font-mono, monospace)',
+                    }}
+                  />
+                  {saveError && (
+                    <p
+                      className="px-4 py-1.5 text-[11.5px] border-t flex-shrink-0"
+                      style={{
+                        color: 'var(--warning, #ff9500)',
+                        borderColor: 'var(--border-subtle)',
+                      }}
+                    >
+                      {saveError}
+                    </p>
+                  )}
+                </div>
               ) : (
                 <pre
                   className="px-4 py-3 text-[12px] leading-relaxed whitespace-pre hljs"
