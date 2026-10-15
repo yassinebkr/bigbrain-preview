@@ -21,8 +21,8 @@ import {
   FilePlus2,
   Pencil,
   RefreshCw,
-  X,
 } from 'lucide-react';
+import { CodeSurface } from '../CodeSurface';
 
 const easeOut = [0, 0, 0.2, 1] as [number, number, number, number];
 
@@ -51,11 +51,6 @@ async function fsApi<T>(path: string, opts?: RequestInit): Promise<T> {
 const listDir = (path: string) =>
   fsApi<{ path: string; entries: FsEntry[] }>(
     `/api/fs/list?path=${encodeURIComponent(path)}`
-  );
-
-const readFile = (path: string) =>
-  fsApi<{ content: string; binary: boolean; truncated: boolean }>(
-    `/api/fs/file?path=${encodeURIComponent(path)}`
   );
 
 const writeFile = (path: string, content: string) =>
@@ -117,7 +112,7 @@ export function FileExplorer() {
   const [entries, setEntries] = useState<FsEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [viewing, setViewing] = useState<{ path: string; content: string } | null>(null);
+  const [viewingPath, setViewingPath] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
   const currentProject = useAppStore((s) => s.currentProject);
@@ -126,22 +121,11 @@ export function FileExplorer() {
   const setPendingOpenFile = useAppStore((s) => s.setPendingOpenFile);
   const refreshRef = useRef<((path?: string) => Promise<void>) | null>(null);
 
-  // Open a file requested from elsewhere (e.g. the run panel's file list):
-  // read it and show the viewer overlay.
+  // Open a file requested from elsewhere (e.g. the code viewer's
+  // "Workspace" button): show it in the inline CodeSurface.
   useEffect(() => {
-    if (!pendingOpenFile) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const data = await readFile(pendingOpenFile);
-        if (!cancelled) setViewing({ path: pendingOpenFile, content: data.content });
-      } catch (e: any) {
-        if (!cancelled) setError(e.message);
-      } finally {
-        if (!cancelled) setPendingOpenFile(null);
-      }
-    })();
-    return () => { cancelled = true; };
+    if (pendingOpenFile) setViewingPath(pendingOpenFile);
+    if (pendingOpenFile) setPendingOpenFile(null);
   }, [pendingOpenFile, setPendingOpenFile]);
 
   // Agent writes (workspace.file_written events) auto-refresh the listing.
@@ -232,18 +216,18 @@ export function FileExplorer() {
     guard(() => deleteEntry(entry.path));
   };
 
-  const openFile = async (entry: FsEntry) => {
+  const openFile = (entry: FsEntry) => {
     setError(null);
-    try {
-      const data = await readFile(entry.path);
-      setViewing({ path: entry.path, content: data.content });
-    } catch (e: any) {
-      setError(e.message);
-    }
+    setViewingPath(entry.path);
   };
 
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div className="relative flex h-full min-h-0">
+      {/* Explorer column (files, breadcrumbs, project selector) */}
+      <div
+        className="flex flex-col h-full min-w-0 flex-1 lg:flex-none lg:w-[340px] lg:border-r"
+        style={{ borderColor: 'var(--border-subtle)' }}
+      >
       {/* Header: breadcrumbs + actions */}
       <div className="flex items-center gap-1.5 px-3 h-11 flex-shrink-0 border-b"
            style={{ borderColor: 'var(--border-subtle)' }}>
@@ -401,40 +385,28 @@ export function FileExplorer() {
         <span>{entries.filter((e) => e.type === 'file').length} files</span>
         <span>{entries.filter((e) => e.type === 'folder').length} folders</span>
       </div>
+      </div>
 
-      {/* File viewer overlay */}
+      {/* Desktop: inline code surface (highlight, run, edit) next to the
+          list — same surface as the chat's CodeViewer modal. */}
+      {viewingPath && (
+        <div className="hidden lg:flex flex-1 min-w-0">
+          <CodeSurface path={viewingPath} onClose={() => setViewingPath(null)} />
+        </div>
+      )}
+
+      {/* Mobile: full-cover code surface */}
       <AnimatePresence>
-        {viewing && (
+        {viewingPath && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="absolute inset-0 z-20 flex flex-col"
+            className="lg:hidden absolute inset-0 z-20 flex flex-col"
             style={{ backgroundColor: 'var(--bg-primary)' }}
           >
-            <div className="flex items-center gap-2 px-3 h-11 border-b flex-shrink-0"
-                 style={{ borderColor: 'var(--border-subtle)' }}>
-              <FileText size={14} style={{ color: 'var(--text-tertiary)' }} />
-              <span className="text-[12.5px] font-medium truncate"
-                    style={{ color: 'var(--text-primary)' }}>
-                {viewing.path}
-              </span>
-              <button
-                onClick={() => setViewing(null)}
-                className="ml-auto p-1.5 rounded-md cursor-pointer"
-                style={{ color: 'var(--text-tertiary)' }}
-                aria-label="Close"
-              >
-                <X size={14} />
-              </button>
-            </div>
-            <pre
-              className="flex-1 overflow-auto px-4 py-3 text-[12px] whitespace-pre-wrap"
-              style={{ color: 'var(--text-primary)', fontFamily: 'var(--font-mono, monospace)' }}
-            >
-              {viewing.content}
-            </pre>
+            <CodeSurface path={viewingPath} onClose={() => setViewingPath(null)} />
           </motion.div>
         )}
       </AnimatePresence>

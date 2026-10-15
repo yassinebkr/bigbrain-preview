@@ -7,6 +7,9 @@ import { WelcomeScreen } from '@/components/WelcomeScreen';
 import { ChatView } from '@/components/ChatView';
 import { Workspace } from '@/components/Workspace';
 import { DiscoverView } from '@/components/DiscoverView';
+import { TasksView } from '@/components/TasksView';
+import { BrainsView } from '@/components/BrainsView';
+import { CodeViewer } from '@/components/CodeViewer';
 import { createConnection } from '@/lib/connection';
 
 const connection = createConnection();
@@ -150,10 +153,16 @@ export default function App() {
           <Workspace key="workspace" />
         ) : view === 'discover' ? (
           <DiscoverView key="discover" />
+        ) : view === 'tasks' ? (
+          <TasksView key="tasks" />
+        ) : view === 'brains' ? (
+          <BrainsView key="brains" />
         ) : (
           <ChatView key="chat" />
         )}
       </AnimatePresence>
+      {/* Global file viewer — opened from the run panel or the explorer */}
+      <CodeViewer />
     </Layout>
   );
 }

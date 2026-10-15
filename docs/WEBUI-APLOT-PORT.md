@@ -192,11 +192,25 @@ ci-dessus — les reconnectés ne perdent rien.
    vérification déterministe outillée comme sur ../fpga (typed tools,
    replay des runs, vérifs déterministes avant review LLM). À explorer
    dans fpga/backend puis planifier avant implémentation.
-4. Sessions persistées (l'historique est aujourd'hui mono-conversation).
-5. Drag/drop move dans l'explorateur (l'endpoint /api/fs/move existe).
-6. Premier plugin premium + paywall Stripe (billing scratchy à porter).
+4. **Pastilles d'activité inspirées de l'agent console de ../fpga** :
+   enrichir le RunPanel (ou le BrainsView) de pastilles live façon
+   agent console fpga — progression par brain, étapes en vol. À faire
+   après le harness déterministe (item 3) pour afficher les vérifs.
+5. Sessions persistées (l'historique est aujourd'hui mono-conversation).
+6. Drag/drop move dans l'explorateur (l'endpoint /api/fs/move existe).
+7. Premier plugin premium + paywall Stripe (billing scratchy à porter).
 
 ## Changelog UX récent
+
+- **Onglets dédiés** : le TaskBoard (QuickActions + board) et le statut
+  des brains (+ feed d'activité live) quittent le workspace pour leurs
+  propres onglets sidebar (TasksView, BrainsView). Le workspace est
+  maintenant files-only (ResearchBar + explorateur).
+- **CodeSurface partagé** : la logique highlight + run + édition vit
+  dans un seul composant, présenté en modal (CodeViewer, chat/run panel)
+  ET en panneau inline dans l'explorateur (desktop : liste à gauche /
+  code à droite ; mobile : plein écran). Le viewer brut `<pre>` de
+  l'explorateur est supprimé — plus de duplication.
 
 - **CodeViewer v3** : édition en place (Save via POST /api/fs/file,
   Ctrl/Cmd+S, annulation), highlight multi-langages, et `run_file` —

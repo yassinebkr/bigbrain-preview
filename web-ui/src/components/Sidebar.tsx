@@ -9,6 +9,8 @@ import {
   Settings,
   LayoutGrid,
   Menu,
+  CheckSquare,
+  Brain,
 } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 import { Tooltip } from './Tooltip';
@@ -19,6 +21,8 @@ const sidebarItems: { id: string; icon: React.ComponentType<{ size?: number; str
   { id: 'search', icon: Search, tooltip: 'Search (Ctrl+K)' },
   { id: 'home', icon: Home, tooltip: 'Home' },
   { id: 'briefcase', icon: Briefcase, tooltip: 'Workspace' },
+  { id: 'tasks', icon: CheckSquare, tooltip: 'Task Board' },
+  { id: 'brains', icon: Brain, tooltip: 'Brains' },
   { id: 'history', icon: History, tooltip: 'History' },
   { id: 'settings', icon: Settings, tooltip: 'Settings' },
   { id: 'spacer', icon: null, isSpacer: true },
@@ -35,6 +39,7 @@ function SidebarContent({ onItemClick }: { onItemClick?: () => void }) {
     setCommandPaletteOpen,
     setView,
     isStreaming,
+    view,
   } = useAppStore();
 
   const handleClick = (id: string) => {
@@ -55,6 +60,12 @@ function SidebarContent({ onItemClick }: { onItemClick?: () => void }) {
         break;
       case 'briefcase':
         setView('workspace');
+        break;
+      case 'tasks':
+        setView('tasks');
+        break;
+      case 'brains':
+        setView('brains');
         break;
       case 'apps':
         setView('discover');
@@ -121,7 +132,12 @@ function SidebarContent({ onItemClick }: { onItemClick?: () => void }) {
         const Icon = item.icon as React.ComponentType<{ size?: number; strokeWidth?: number; style?: React.CSSProperties }>;
         const isActive =
           (item.id === 'history' && sidebarPanel === 'sessions') ||
-          (item.id === 'settings' && sidebarPanel === 'settings');
+          (item.id === 'settings' && sidebarPanel === 'settings') ||
+          (item.id === 'home' && view === 'welcome') ||
+          (item.id === 'briefcase' && view === 'workspace') ||
+          (item.id === 'tasks' && view === 'tasks') ||
+          (item.id === 'brains' && view === 'brains') ||
+          (item.id === 'apps' && view === 'discover');
 
         return (
           <motion.button

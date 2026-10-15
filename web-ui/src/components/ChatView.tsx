@@ -7,7 +7,6 @@ import { TypingIndicator } from './TypingIndicator';
 import { ChatInput } from './ChatInput';
 import { GenUICanvas } from './GenUICanvas';
 import { RunPanel } from './RunPanel';
-import { CodeViewer } from './CodeViewer';
 
 export function ChatView() {
   const { messages, isStreaming } = useAppStore();
@@ -75,9 +74,6 @@ export function ChatView() {
           <ChatInput />
         </div>
       </div>
-
-      {/* Code viewer overlay — files written by the agent */}
-      <CodeViewer />
     </div>
   );
 }
