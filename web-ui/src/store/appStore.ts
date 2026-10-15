@@ -525,7 +525,14 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'aplot-ai-storage',
-      partialize: (state) => ({ theme: state.theme, settings: state.settings, activeSessionKey: state.activeSessionKey }),
+      partialize: (state) => ({
+        theme: state.theme,
+        settings: state.settings,
+        activeSessionKey: state.activeSessionKey,
+        // The last run is the RECORD of what the agent did (steps, files
+        // written) — it must survive a page reload, not just tab switches.
+        activeRun: state.activeRun,
+      }),
     }
   )
 );

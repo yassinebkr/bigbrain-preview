@@ -223,9 +223,14 @@ export function FileExplorer() {
 
   return (
     <div className="relative flex h-full min-h-0">
-      {/* Explorer column (files, breadcrumbs, project selector) */}
+      {/* Explorer column (files, breadcrumbs, project selector).
+          Full width until a file is open on desktop — a fixed 340px
+          column next to empty space looked broken. */}
       <div
-        className="flex flex-col h-full min-w-0 flex-1 lg:flex-none lg:w-[340px] lg:border-r"
+        className={
+          'flex flex-col h-full min-w-0 flex-1 ' +
+          (viewingPath ? 'lg:flex-none lg:w-[380px] lg:border-r' : '')
+        }
         style={{ borderColor: 'var(--border-subtle)' }}
       >
       {/* Header: breadcrumbs + actions */}
@@ -388,10 +393,16 @@ export function FileExplorer() {
       </div>
 
       {/* Desktop: inline code surface (highlight, run, edit) next to the
-          list — same surface as the chat's CodeViewer modal. */}
+          list — same surface as the chat's CodeViewer modal, presented
+          as a floating card. */}
       {viewingPath && (
-        <div className="hidden lg:flex flex-1 min-w-0">
-          <CodeSurface path={viewingPath} onClose={() => setViewingPath(null)} />
+        <div className="hidden lg:flex flex-1 min-w-0 p-3">
+          <div
+            className="flex-1 rounded-xl overflow-hidden"
+            style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)' }}
+          >
+            <CodeSurface path={viewingPath} onClose={() => setViewingPath(null)} />
+          </div>
         </div>
       )}
 

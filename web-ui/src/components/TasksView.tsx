@@ -1,9 +1,9 @@
 // TasksView — the TaskBoard as its own tab, separated from the
 // workspace (files). Agent tasks (bus events) and manual tasks live on
-// the same board; QuickActions stays with it.
+// the same board; the board renders its own header and add-task
+// affordances — no workspace quick actions here.
 
 import { motion } from 'framer-motion';
-import { QuickActions } from './workspace/QuickActions';
 import { TaskBoard } from './workspace/TaskBoard';
 
 export function TasksView() {
@@ -17,10 +17,7 @@ export function TasksView() {
       style={{ backgroundColor: 'var(--bg-primary)' }}
     >
       <div className="flex-1 flex flex-col overflow-hidden max-w-[1400px] w-full mx-auto px-2 sm:px-4 py-3 sm:py-4">
-        <QuickActions />
-        <div className="flex-1 min-h-0 mt-3">
-          <TaskBoard />
-        </div>
+        <TaskBoard />
       </div>
     </motion.div>
   );
