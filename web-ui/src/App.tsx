@@ -6,9 +6,9 @@ import { LoginPage } from '@/components/LoginPage';
 import { WelcomeScreen } from '@/components/WelcomeScreen';
 import { ChatView } from '@/components/ChatView';
 import { Workspace } from '@/components/Workspace';
-import { Connection } from '@/lib/connection';
+import { createConnection } from '@/lib/connection';
 
-const connection = new Connection();
+const connection = createConnection();
 
 export default function App() {
   const {
@@ -55,6 +55,7 @@ export default function App() {
     });
 
     connection.on('onAgentActivity', (activity) => {
+      useAppStore.getState().addAgentActivity(activity);
       if (activity.type === 'done' && activity.phase === 'end') {
         finalizeStreaming();
       } else {

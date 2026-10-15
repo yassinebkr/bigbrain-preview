@@ -5,6 +5,7 @@ import { ResearchBar } from './workspace/ResearchBar';
 import { FileExplorer } from './workspace/FileExplorer';
 import { QuickActions } from './workspace/QuickActions';
 import { TaskBoard } from './workspace/TaskBoard';
+import { BrainStatusPanel } from './BrainStatusPanel';
 
 const easeOut = [0, 0, 0.2, 1] as [number, number, number, number];
 
@@ -67,6 +68,14 @@ export function Workspace() {
           style={{ borderColor: 'var(--border-subtle)' }}
         >
           <FileExplorer />
+        </div>
+
+        {/* Desktop: Brains column (BigBrain bus status) */}
+        <div
+          className="hidden xl:flex w-[260px] flex-shrink-0 border-r flex-col overflow-hidden"
+          style={{ borderColor: 'var(--border-subtle)' }}
+        >
+          <BrainStatusPanel />
         </div>
 
         {/* Desktop: Right panel - QuickActions + TaskBoard */}

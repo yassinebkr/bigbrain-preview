@@ -1,4 +1,9 @@
-// OpenClaw Gateway WebSocket Connection — matches scratchy-v0 protocol exactly
+import type { ConnectionCallbacks, ConnectionLike } from './types';
+
+// Scratchy (OpenClaw Gateway) adapter — matches scratchy-v0 protocol exactly.
+// Kept verbatim so the same UI can target a Scratchy backend
+// (localStorage aplot_backend = 'scratchy'). The BigBrain adapter lives in
+// ./bigbrain.ts; both satisfy the contract in ./types.ts.
 
 // ── Cookie helpers (same as scratchy-v0) ──
 function getCookie(name: string): string | null {
@@ -11,26 +16,8 @@ function getAuthToken(): string | null {
   return getCookie('scratchy_session') || getCookie('scratchy_auth') || localStorage.getItem('aplot_auth_token') || null;
 }
 
-// ── Types ──
-interface ConnectionCallbacks {
-  onMessage?: (message: { text: string; role: string; timestamp: string; source: string }) => void;
-  onStreamDelta?: (message: { text: string; role: string; source: string }) => void;
-  onStatusChange?: (status: string) => void;
-  onAgentActivity?: (activity: { type: string; phase?: string; name?: string; detail?: any }) => void;
-  onQueueDrained?: () => void;
-  onQueueReplay?: (msg: { text: string; id: string; ts: number }) => void;
-  onSendError?: (error: { message: string }, messageId?: string) => void;
-  onMessageStatus?: (messageId: string, status: string) => void;
-  onCanvasUpdate?: (payload: any) => void;
-  onUserInfo?: (user: any) => void;
-  onReconnected?: () => void;
-  onRemoteUserMessage?: (message: any) => void;
-  onResumeCatchUp?: (messages: any[]) => void;
-  onRunEnd?: () => void;
-}
-
 // ── Connection ──
-export class Connection {
+export class ScratchyConnection implements ConnectionLike {
   private ws: WebSocket | null = null;
   private callbacks: ConnectionCallbacks = {};
   private reconnectAttempts = 0;

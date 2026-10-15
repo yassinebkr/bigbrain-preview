@@ -1,7 +1,15 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { Message, Attachment, Session, Settings, Theme, View, ConnectionStatus, SidebarPanel, User, CanvasOp, FileItem, Task } from '@/types';
-import { Connection } from '@/lib/connection';
+import type { ConnectionLike } from '@/lib/connection';
+
+export interface AgentActivity {
+  type: string;
+  phase?: string;
+  name?: string;
+  detail?: any;
+  ts: number;
+}
 
 interface AppState {
   // Auth
@@ -45,8 +53,8 @@ interface AppState {
   // Connection
   connectionStatus: ConnectionStatus;
   setConnectionStatus: (status: ConnectionStatus) => void;
-  connection: Connection | null;
-  setConnection: (conn: Connection) => void;
+  connection: ConnectionLike | null;
+  setConnection: (conn: ConnectionLike) => void;
 
   // Voice
   isRecording: boolean;
@@ -57,6 +65,11 @@ interface AppState {
   addAttachment: (attachment: Attachment) => void;
   removeAttachment: (id: string) => void;
   clearAttachments: () => void;
+
+  // BigBrain bus activity feed (brain status, task/subtask events) —
+  // consumed by BrainStatusPanel and TaskBoard (docs/WEBUI-APLOT-PORT.md).
+  agentActivities: AgentActivity[];
+  addAgentActivity: (activity: Omit<AgentActivity, 'ts'>) => void;
 
   // Sidebar
   sidebarOpen: boolean;
@@ -210,6 +223,11 @@ export const useAppStore = create<AppState>()(
       addAttachment: (attachment) => set((state) => ({ attachments: [...state.attachments, attachment] })),
       removeAttachment: (id) => set((state) => ({ attachments: state.attachments.filter((a) => a.id !== id) })),
       clearAttachments: () => set({ attachments: [] }),
+
+      agentActivities: [],
+      addAgentActivity: (activity) => set((state) => ({
+        agentActivities: [...state.agentActivities.slice(-49), { ...activity, ts: Date.now() }],
+      })),
 
       // Sidebar
       sidebarOpen: false,

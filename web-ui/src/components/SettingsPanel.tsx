@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion';
 import { X, LogOut, Moon, Sun } from 'lucide-react';
+import { BigBrainProviders } from './BigBrainProviders';
 import { useAppStore } from '@/store/appStore';
 
 const easeOut = [0, 0, 0.2, 1] as [number, number, number, number];
@@ -224,6 +225,14 @@ export function SettingsPanel() {
             Log Out
           </button>
         </div>
+      </div>
+
+      {/* BigBrain providers: model registry + subscription connections */}
+      <div
+        className="border-t"
+        style={{ borderBottom: 'none', borderColor: 'var(--border-subtle)' }}
+      >
+        <BigBrainProviders />
       </div>
     </motion.div>
   );
