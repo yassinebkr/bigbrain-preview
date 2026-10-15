@@ -631,3 +631,36 @@ class TestWorkspaceWriteNotify:
         assert not any(
             (m.payload or {}).get("event") == "workspace.file_written" for m in captured
         )
+
+
+class TestRequestedFilename:
+    @pytest.mark.asyncio
+    async def test_generated_script_saved_under_requested_name(self, tmp_path, monkeypatch):
+        """'crée un script hello.py' → workspace/hello.py exists with the code."""
+        from bigbrain.brains.python_brain import PythonBrain
+        from bigbrain.bus.bus import MessageBus
+
+        monkeypatch.setenv("BIGBRAIN_WORKSPACE_DIR", str(tmp_path / "ws"))
+        bus = MessageBus(auth=None)
+        brain = PythonBrain(name="py_test", bus=bus, workspace="default",
+                            work_dir=tmp_path / "ws" / "python")
+        saved = await brain._persist_requested_file(
+            "crée un script hello.py qui affiche bonjour", "print('bonjour')\n"
+        )
+        assert saved == "hello.py"
+        written = (tmp_path / "ws" / "python" / "hello.py").read_text()
+        assert written == "print('bonjour')\n"
+
+    @pytest.mark.asyncio
+    async def test_no_filename_in_request_means_no_file(self, tmp_path, monkeypatch):
+        from bigbrain.brains.python_brain import PythonBrain
+        from bigbrain.bus.bus import MessageBus
+
+        monkeypatch.setenv("BIGBRAIN_WORKSPACE_DIR", str(tmp_path / "ws"))
+        bus = MessageBus(auth=None)
+        brain = PythonBrain(name="py_test", bus=bus, workspace="default",
+                            work_dir=tmp_path / "ws" / "python")
+        saved = await brain._persist_requested_file("fais un calcul rapide", "x=1")
+        assert saved is None
+        assert not (tmp_path / "ws" / "python").exists() or \
+            not any((tmp_path / "ws" / "python").iterdir())

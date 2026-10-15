@@ -1,4 +1,6 @@
 import { motion } from 'framer-motion';
+import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Copy, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { useState } from 'react';
 import type { Message } from '@/types';
@@ -27,7 +29,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
       onMouseEnter={() => setShowActions(true)}
       onMouseLeave={() => setShowActions(false)}
     >
-      <div className={`flex ${isUser ? 'flex-row-reverse' : 'flex-row'} items-start gap-2 w-full max-w-[92%] sm:max-w-[85%] md:max-w-[75%] lg:max-w-[65%] xl:max-w-[55%]`}>
+      <div className={`flex ${isUser ? 'flex-row-reverse' : 'flex-row'} items-start gap-2 w-full max-w-[92%] sm:max-w-[85%] md:max-w-[82%] lg:max-w-[78%] xl:max-w-[75%]`}>
         {/* Avatar (AI only) */}
         {!isUser && (
           <div
@@ -55,14 +57,67 @@ export function MessageBubble({ message }: MessageBubbleProps) {
             }}
           >
             <p
-              className="text-[15px] leading-relaxed whitespace-pre-wrap"
+              className="text-[15px] leading-relaxed"
               style={{
                 color: isUser ? '#ffffff' : 'var(--text-primary)',
                 fontWeight: 400,
                 lineHeight: 1.6,
               }}
             >
-              {message.content}
+              {isUser ? (
+                <span className="whitespace-pre-wrap">{message.content}</span>
+              ) : (
+                // Real markdown for assistant replies — raw `**bold**`
+                // markers and unparsed lists are unreadable.
+                <Markdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    p: ({ children }) => (
+                      <p className="whitespace-pre-wrap m-0">{children}</p>
+                    ),
+                    ul: ({ children }) => (
+                      <ul className="list-disc pl-5 my-1.5 space-y-1">{children}</ul>
+                    ),
+                    ol: ({ children }) => (
+                      <ol className="list-decimal pl-5 my-1.5 space-y-1">{children}</ol>
+                    ),
+                    strong: ({ children }) => (
+                      <strong style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{children}</strong>
+                    ),
+                    code: ({ children, className }) =>
+                      className?.includes('language-') ? (
+                        <code
+                          className="block overflow-x-auto rounded-lg px-3 py-2.5 my-2 text-[13px]"
+                          style={{
+                            backgroundColor: 'var(--bg-input, #111)',
+                            border: '1px solid var(--border-subtle)',
+                            fontFamily: 'var(--font-mono, monospace)',
+                            whiteSpace: 'pre',
+                          }}
+                        >
+                          {children}
+                        </code>
+                      ) : (
+                        <code
+                          className="px-1.5 py-0.5 rounded-md text-[13.5px]"
+                          style={{
+                            backgroundColor: 'var(--bg-button, #1a1a1a)',
+                            fontFamily: 'var(--font-mono, monospace)',
+                          }}
+                        >
+                          {children}
+                        </code>
+                      ),
+                    pre: ({ children }) => <>{children}</>,
+                    a: ({ href, children }) => (
+                      <a href={href} target="_blank" rel="noreferrer"
+                         style={{ color: 'var(--accent-blue)' }}>{children}</a>
+                    ),
+                  }}
+                >
+                  {message.content}
+                </Markdown>
+              )}
             </p>
 
             {/* Attachments */}

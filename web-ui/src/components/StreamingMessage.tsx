@@ -8,12 +8,12 @@ export function StreamingMessage() {
 
   return (
     <motion.div
-      initial={{ opacity: 0, x: -20 }}
-      animate={{ opacity: 1, x: 0 }}
-      transition={{ duration: 0.3, ease: easeOut }}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.2, ease: easeOut }}
       className="flex justify-start w-full"
     >
-      <div className="flex flex-row items-start gap-2 max-w-[85%]">
+      <div className="flex flex-row items-start gap-2 w-full max-w-[92%] sm:max-w-[85%] md:max-w-[82%] lg:max-w-[78%] xl:max-w-[75%]">
         {/* Avatar */}
         <div
           className="w-7 h-7 rounded-full flex-shrink-0 flex items-center justify-center mt-1"
@@ -29,7 +29,7 @@ export function StreamingMessage() {
         <div className="flex flex-col items-start">
           {/* Bubble */}
           <div
-            className="px-4 py-3"
+            className="px-4 py-3 w-full min-h-[44px]"
             style={{
               backgroundColor: 'transparent',
               border: '1px solid var(--border-subtle)',

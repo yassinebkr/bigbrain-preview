@@ -1581,6 +1581,27 @@ Rules:
 
     MAX_RETRIES = 5  # Inner loop iterations before giving up
 
+    async def _persist_requested_file(self, user_request: str, code: str) -> str | None:
+        """Save generated code under the filename the user asked for.
+
+        The execution itself runs in a temp file the user never sees; when
+        the request names a file ("crée un script hello.py"), the code must
+        land at that exact path in the workspace so the claim is true and
+        the explorer shows it (workspace.file_written).
+        """
+        import re
+
+        match = re.search(r"[\w][\w.-]*\.(?:py|json|csv|txt|md|toml|yaml|yml)",
+                          user_request or "")
+        if not match:
+            return None
+        file_name = match.group(0)
+        try:
+            await self._write_and_notify(self.work_dir / file_name, code)
+            return file_name
+        except Exception:
+            return None
+
     async def _generate_and_execute(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Generate code via LLM, execute, and retry on failure (Honk inner loop).
 
@@ -1655,10 +1676,18 @@ Rules:
                 if no_errors and has_output:
                     # Clean success with output
                     result["success"] = True
+                    # Persist the script under the REQUESTED filename (the
+                    # temp execution file is invisible to the user). Extract
+                    # the name from the request ("crée un script hello.py"),
+                    # write it into the workspace and notify the UI.
+                    saved_as = await self._persist_requested_file(user_request, code)
+                    if saved_as:
+                        result["saved_as"] = saved_as
                     await self.send_progress({
                         "stage": "succeeded",
                         "attempt": attempt,
                         "success": True,
+                        **({"saved_as": saved_as} if saved_as else {}),
                     })
                     return result
                 

@@ -174,3 +174,18 @@ ci-dessus — les reconnectés ne perdent rien.
 - `welcome` (à créer) → connecté ; `chat.history` (à créer) → `setMessages`
 - `chat.message` → `onMessage` ; `brain.status` + events brain → `onAgentActivity`
 - events task/subtask → `onAgentActivity` (TaskBoard) ; `_replay` → `onQueueReplay`
+
+## Backlog (retours live, à traiter plus tard)
+
+1. **Feedback d'action agent** : quand l'agent crée un fichier, l'UI ne
+   propose rien — ouvrir/proposer le workspace ou une vue code, highlight
+   du bouton Workspace, lien vers le fichier écrit. C'est le pendant UX
+   de workspace.file_written (l'event existe, l'affichage proactif
+   manque). Naturellement le job de la Phase B (morphable).
+2. **Port du harness déterministe fpga → python_brain** : la couche
+   vérification déterministe outillée comme sur ../fpga (typed tools,
+   replay des runs, vérifs déterministes avant review LLM). À explorer
+   dans fpga/backend puis planifier avant implémentation.
+3. Sessions persistées (l'historique est aujourd'hui mono-conversation).
+4. Drag/drop move dans l'explorateur (l'endpoint /api/fs/move existe).
+5. Premier plugin premium + paywall Stripe (billing scratchy à porter).
