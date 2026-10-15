@@ -219,10 +219,12 @@ class WebServer:
         if STATIC_DIR.exists():
             self._app.router.add_get("/static/{filename:.+}", self._handle_static)
 
-        # Aplot React UI build (web-ui/dist): assets; the root route
-        # (_handle_root) serves its index when the build exists.
+        # Aplot React UI build (web-ui/dist): assets + root public files
+        # (robot-icon.png, robot-mascot.png…); the root route (_handle_root)
+        # serves its index when the build exists.
         if WEBUI_DIST.exists():
             self._app.router.add_get("/assets/{filename:.+}", self._handle_webui_asset)
+            self._app.router.add_get("/{filename}", self._handle_webui_public)
 
         # Real workspace filesystem API (replaces the UI's mock file tree).
         from .fs_api import setup_fs_routes
@@ -345,6 +347,24 @@ class WebServer:
                 headers={"Cache-Control": "no-cache, must-revalidate"},
             )
         return await self._handle_index(request)
+
+    async def _handle_webui_public(self, request: web.Request) -> web.FileResponse:
+        """Serve root-level files from the build (public/: robot images…).
+
+        Registered last-resort for single-segment paths; anything not a real
+        file in dist/ 404s normally.
+        """
+        filename = request.match_info["filename"]
+        if "/" in filename or filename.startswith("."):
+            return web.Response(status=404, text="Not found")
+        file_path = (WEBUI_DIST / filename).resolve()
+        if not str(file_path).startswith(str(WEBUI_DIST.resolve())):
+            return web.Response(status=404, text="Not found")
+        if not file_path.is_file():
+            return web.Response(status=404, text="Not found")
+        return web.FileResponse(file_path, headers={
+            "Cache-Control": "no-cache, must-revalidate",
+        })
 
     async def _handle_webui_asset(self, request: web.Request) -> web.FileResponse:
         """Serve built assets from web-ui/dist/assets (immutable hashed files)."""

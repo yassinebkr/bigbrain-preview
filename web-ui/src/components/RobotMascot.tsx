@@ -37,11 +37,7 @@ export function RobotMascot() {
             boxShadow: 'var(--shadow-sm)',
           }}
         >
-          <motion.div
-            animate={{ y: [0, -4, 0] }}
-            transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut', delay: 1.6 }}
-            className="flex items-center gap-1.5"
-          >
+          <div className="flex items-center gap-1.5">
             <img
               src="/robot-icon.png"
               alt=""
@@ -53,7 +49,7 @@ export function RobotMascot() {
             >
               Hey there! Need a boost?
             </span>
-          </motion.div>
+          </div>
         </motion.div>
 
         {/* Right Speech Bubble - hidden on very small screens */}
@@ -70,11 +66,7 @@ export function RobotMascot() {
             boxShadow: 'var(--shadow-sm)',
           }}
         >
-          <motion.div
-            animate={{ y: [0, -4, 0] }}
-            transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut', delay: 1.8 }}
-            className="flex items-center gap-1.5"
-          >
+          <div className="flex items-center gap-1.5">
             <img
               src="/robot-icon.png"
               alt=""
@@ -86,7 +78,7 @@ export function RobotMascot() {
             >
               What are we building today?
             </span>
-          </motion.div>
+          </div>
         </motion.div>
       </motion.div>
     </div>
