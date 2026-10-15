@@ -85,12 +85,18 @@ Intégration :
 
 ## 5. Phases
 
-### P1 — Evidence core (sans toucher au flow existant)
-- Port `evidence.py` : `DesignSpec`, `StageResult`, `RunManifest`,
-  `EvidenceRepository` (JSON + artefacts sha256, immuabilité).
-- Tests unitaires : manifeste roundtrip, immuabilité, artefacts
-  adressés par contenu.
-- *Done :* un manifeste peut être écrit/relu depuis `data/evidence/`.
+### P1 — Evidence core (sans toucher au flow existant) — ✅ FAIT
+- Port `evidence.py` : `DesignSpec` (user_request + contracts, hash
+  sémantique), `StageResult` (statuts dont `inconclusive` = terminal),
+  `RunManifest` (verdict dérivé conservateur : le pire résultat
+  obligatoire gagne ; références d'artefacts validées croisées),
+  `EvidenceRepository` (JSON canonique, écritures atomiques fsync,
+  artefacts sha256 dédupliqués, immuabilité des runs terminaux,
+  `BIGBRAIN_EVIDENCE_ROOT` surchargeable).
+- Layout retenu : `data/evidence/{specs,runs,artifacts/sha256}` (flat,
+  artefacts globaux adressés par contenu — dédup entre runs).
+- Tests : `tests/test_evidence.py` (24) — roundtrip, immuabilité
+  (même run_id), verdict conservateur, dédoublonnage, traversal refusé.
 
 ### P2 — Stages déterministes + gate
 - `executors.py` : syntax, compile, run, tests, contracts (l'ordre =
