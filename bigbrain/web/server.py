@@ -39,6 +39,12 @@ WEBUI_DIST = Path(__file__).resolve().parents[2] / "web-ui" / "dist"
 # class for convenient access in tests.
 PROVIDER_RELOAD_HOOK = None
 
+# Set when a working project is selected — re-targets agent writes.
+PROJECT_CHANGE_HOOK = None
+
+# Set when a plugin is toggled — applies the change at runtime where feasible.
+PLUGINS_CHANGE_HOOK = None
+
 
 class WebServer:
     """
@@ -240,6 +246,10 @@ class WebServer:
         self._app.router.add_post("/api/models/roles", self._handle_model_role_set)
         self._app.router.add_post("/api/auth/openrouter/key", self._handle_openrouter_key)
         self._app.router.add_post("/api/system/reload-provider", self._handle_reload_provider)
+        self._app.router.add_get("/api/fs/current-project", self._handle_current_project_get)
+        self._app.router.add_post("/api/fs/current-project", self._handle_current_project_set)
+        self._app.router.add_get("/api/plugins", self._handle_plugins)
+        self._app.router.add_post("/api/plugins/toggle", self._handle_plugin_toggle)
 
     async def _handle_models(self, request: web.Request) -> web.Response:
         """List registry models with TRUTHFUL availability (no secrets).
@@ -280,6 +290,45 @@ class WebServer:
         result = hook()
         # Fresh health: the newly connected provider must light up at once.
         model_registry._health_cache.clear()
+        return web.json_response(result)
+
+    async def _handle_plugins(self, request: web.Request) -> web.Response:
+        """Plugin catalog with live enabled state (docs/BRAIN-PLUGINS.md)."""
+        from ..plugins import list_plugins
+
+        return web.json_response(list_plugins())
+
+    async def _handle_plugin_toggle(self, request: web.Request) -> web.Response:
+        """Enable/disable a brain plugin; the system hook applies it."""
+        from ..plugins import set_enabled
+
+        body = await request.json()
+        try:
+            result = set_enabled(body.get("id", ""), bool(body.get("enabled")))
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        if PLUGINS_CHANGE_HOOK is not None:
+            PLUGINS_CHANGE_HOOK(result["id"], result["enabled"])
+        return web.json_response(result)
+
+    async def _handle_current_project_get(self, request: web.Request) -> web.Response:
+        """The project the chat/agent is currently working in."""
+        from .fs_api import get_current_project
+
+        return web.json_response({"project": get_current_project()})
+
+    async def _handle_current_project_set(self, request: web.Request) -> web.Response:
+        """Select the working project; the system hook re-targets agent
+        writes (python brain work_dir) and the front brain context."""
+        from .fs_api import set_current_project
+
+        body = await request.json()
+        try:
+            result = set_current_project(body.get("project"))
+        except web.HTTPBadRequest as exc:
+            return web.json_response({"error": exc.text}, status=400)
+        if PROJECT_CHANGE_HOOK is not None:
+            PROJECT_CHANGE_HOOK()
         return web.json_response(result)
 
     async def _handle_model_roles(self, request: web.Request) -> web.Response:

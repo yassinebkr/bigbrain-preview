@@ -167,6 +167,15 @@ class FrontBrain:
         
         return response
     
+    def _current_project(self) -> str | None:
+        """The selected working project, if any (and if web is loaded)."""
+        try:
+            from ..web.fs_api import get_current_project
+
+            return get_current_project()
+        except Exception:
+            return None
+
     async def _llm_respond(self, input_text: str) -> str:
         """Generate response using the real LLM with full conversation context.
         
@@ -178,6 +187,16 @@ class FrontBrain:
         system_prompt = self._build_system_prompt(focus_status)
         
         messages = [{"role": "system", "content": system_prompt}]
+
+        # Project context: the chat knows which project the user works in;
+        # generated files land there (the pool's work_dir follows it too).
+        project = self._current_project()
+        if project:
+            messages.append({"role": "system", "content": (
+                f"Current project: '{project}'. The user is working inside "
+                f"the project directory '{project}/' of the workspace. "
+                f"File operations and generated code belong in this project."
+            )})
         
         # Add conversation history (keep last 20 turns for context)
         history = self._conversation_history[-20:]

@@ -6,6 +6,7 @@ import { LoginPage } from '@/components/LoginPage';
 import { WelcomeScreen } from '@/components/WelcomeScreen';
 import { ChatView } from '@/components/ChatView';
 import { Workspace } from '@/components/Workspace';
+import { DiscoverView } from '@/components/DiscoverView';
 import { createConnection } from '@/lib/connection';
 
 const connection = createConnection();
@@ -132,6 +133,8 @@ export default function App() {
           <WelcomeScreen key="welcome" />
         ) : view === 'workspace' ? (
           <Workspace key="workspace" />
+        ) : view === 'discover' ? (
+          <DiscoverView key="discover" />
         ) : (
           <ChatView key="chat" />
         )}

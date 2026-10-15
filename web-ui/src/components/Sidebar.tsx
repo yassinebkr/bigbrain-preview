@@ -50,6 +50,9 @@ function SidebarContent({ onItemClick }: { onItemClick?: () => void }) {
       case 'briefcase':
         setView('workspace');
         break;
+      case 'apps':
+        setView('discover');
+        break;
       case 'history':
         toggleSidebarPanel('sessions');
         break;

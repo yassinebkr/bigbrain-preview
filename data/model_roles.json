@@ -1,3 +1,6 @@
 {
-  "front": "mistral-glm-5.3"
+  "front": "mistral-glm-5.3",
+  "planner": "mistral-glm-5.3",
+  "code": "mistral-glm-5.3",
+  "subagent": "mistral-glm-5.3"
 }

@@ -76,6 +76,6 @@ export interface Task {
 }
 
 export type Theme = 'dark' | 'light';
-export type View = 'welcome' | 'chat' | 'workspace';
+export type View = 'welcome' | 'chat' | 'workspace' | 'discover';
 export type ConnectionStatus = 'connected' | 'connecting' | 'disconnected';
 export type SidebarPanel = 'sessions' | 'settings' | null;

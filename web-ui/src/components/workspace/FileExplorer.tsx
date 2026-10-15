@@ -120,6 +120,7 @@ export function FileExplorer() {
   const [viewing, setViewing] = useState<{ path: string; content: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [currentProject, setCurrentProject] = useState<string | null>(null);
   const refreshRef = useRef<((path?: string) => Promise<void>) | null>(null);
 
   // Agent writes (workspace.file_written events) auto-refresh the listing.
@@ -142,6 +143,8 @@ export function FileExplorer() {
         try {
           const pr = await listProjects();
           setProjects(pr.projects || []);
+          const cur = await fsApi<{ project: string | null }>(`/api/fs/current-project`);
+          setCurrentProject(cur.project);
         } catch (e) {
           setProjects([]);
         }
@@ -243,7 +246,38 @@ export function FileExplorer() {
             </button>
           </span>
         ))}
-        <div className="ml-auto flex items-center gap-0.5">
+        {/* Working-project selector (agent writes + chat context) */}
+        <select
+          value={currentProject || ''}
+          onChange={async (e) => {
+            const value = e.target.value || null;
+            try {
+              await fsApi(`/api/fs/current-project`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ project: value }),
+              });
+              setCurrentProject(value);
+              refresh(dir);
+            } catch (err: any) {
+              setError(err.message);
+            }
+          }}
+          className="mr-1.5 px-2 py-1 rounded-md text-[11.5px] outline-none cursor-pointer"
+          style={{
+            backgroundColor: 'var(--bg-surface)',
+            border: '1px solid var(--border-subtle)',
+            color: currentProject ? 'var(--accent-blue)' : 'var(--text-tertiary)',
+            maxWidth: 110,
+          }}
+          title="Working project"
+        >
+          <option value="">Global</option>
+          {projects.map((p) => (
+            <option key={p.path} value={p.path}>{p.name}</option>
+          ))}
+        </select>
+        <div className="flex items-center gap-0.5">
           <button onClick={handleNewProject} disabled={busy} title="New project"
                   className="p-1.5 rounded-md cursor-pointer"
                   style={{ color: 'var(--text-tertiary)' }}>

@@ -192,6 +192,65 @@ class BigBrainSystem:
             "provider": type(new_provider).__name__,
             "rewired": rewired,
         }
+
+    def apply_current_project(self) -> dict:
+        """Re-target agent writes to the selected project.
+
+        No project (global) → pool writes to <workspace>/python (the
+        historical default). A selected project → pool writes to
+        <workspace>/<project>, so generated code lands in the project the
+        chat is working in and shows up in the explorer.
+        """
+        from .web.fs_api import get_current_project, workspace_root
+
+        project = get_current_project()
+        root = workspace_root()
+        target = root / project if project else root / "python"
+        target.mkdir(parents=True, exist_ok=True)
+
+        retargeted = 0
+        for brain in self.brains.values():
+            if hasattr(brain, "work_dir"):
+                brain.work_dir = target
+                retargeted += 1
+
+        label = project or "global (python/)"
+        print(f"📂 Working project: {label} — {retargeted} brain(s) write to {target.name}/")
+        return {"ok": True, "project": project, "retargeted": retargeted}
+
+    def apply_plugin_change(self, plugin_id: str, enabled: bool) -> dict:
+        """Apply a plugin toggle at runtime where feasible.
+
+        Researcher: registers/unregisters live (bus + orchestrator).
+        Python pool: sizing is a startup decision — applies at restart.
+        """
+        if plugin_id == "researcher":
+            if enabled and "researcher" not in self.brains:
+                from .brains.researcher import ResearcherBrain
+                import os
+
+                brain = ResearcherBrain(
+                    name="researcher",
+                    bus=self.bus,
+                    workspace=self.workspace,
+                    llm_provider=self.llm_provider,
+                    brave_api_key=os.environ.get("BRAVE_API_KEY"),
+                )
+                self.brains["researcher"] = brain
+                if self.orchestrator is not None:
+                    self.orchestrator.register_brain("researcher", {
+                        "type": "ResearcherBrain",
+                        "description": "Researches topics, gathers information, "
+                                       "analyzes data, web searches",
+                    })
+                print("🔌 Plugin enabled (live): researcher")
+                return {"ok": True, "applied": "live"}
+            if not enabled and "researcher" in self.brains:
+                brain = self.brains.pop("researcher")
+                brain.stop()
+                print("🔌 Plugin disabled (live): researcher")
+                return {"ok": True, "applied": "live"}
+        return {"ok": True, "applied": "restart"}
     
     async def initialize(self) -> None:
         """Initialize all BigBrain components."""
@@ -284,6 +343,8 @@ class BigBrainSystem:
         if self.web_server is not None:
             from .web import server as web_server_module
             web_server_module.PROVIDER_RELOAD_HOOK = self.reload_llm_provider
+            web_server_module.PROJECT_CHANGE_HOOK = self.apply_current_project
+            web_server_module.PLUGINS_CHANGE_HOOK = self.apply_plugin_change
         
         print("✅ BigBrain system initialized successfully!")
     

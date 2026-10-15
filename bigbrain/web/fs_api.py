@@ -12,6 +12,7 @@ escape the root by construction.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
@@ -225,6 +226,39 @@ def list_projects() -> Dict[str, Any]:
             "created": manifest.get("created"),
         })
     return {"projects": projects}
+
+
+# ── current project (the project the chat/agent is working in) ──────────────
+
+_CURRENT_PROJECT_FILE = _REPO_ROOT / "data" / "current_project.json"
+
+
+def get_current_project() -> Optional[str]:
+    """The selected project path ('' or None = global workspace)."""
+    try:
+        data = json.loads(_CURRENT_PROJECT_FILE.read_text(encoding="utf-8"))
+        return data.get("project") or None
+    except (OSError, ValueError):
+        return None
+
+
+def set_current_project(project: Optional[str]) -> Dict[str, Any]:
+    """Select the working project (None/'' = global).
+
+    Validates that the path is an existing project (manifest-carrying
+    folder) — selecting a plain folder is refused.
+    """
+    project = (project or "").strip() or None
+    if project:
+        root = workspace_root()
+        target = _resolve(root, project)
+        if not target.is_dir() or not (target / PROJECT_MANIFEST).is_file():
+            raise web.HTTPBadRequest(text=json_error("not a project (missing .project.json)"))
+    _CURRENT_PROJECT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _CURRENT_PROJECT_FILE.write_text(
+        json.dumps({"project": project}, indent=2), encoding="utf-8"
+    )
+    return {"ok": True, "project": project}
 
 
 # ── aiohttp handlers ──────────────────────────────────────────────────────

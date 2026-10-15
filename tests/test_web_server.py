@@ -623,3 +623,64 @@ class TestWorkspaceProjects:
         fs_api.create_project("one")
         with pytest.raises(aioweb.HTTPBadRequest):
             fs_api.create_project("one")
+
+
+class TestCurrentProject:
+    @pytest.fixture(autouse=True)
+    def _state(self, tmp_path, monkeypatch):
+        import bigbrain.web.fs_api as fs_api
+        monkeypatch.setenv("BIGBRAIN_WORKSPACE_DIR", str(tmp_path / "ws"))
+        monkeypatch.setattr(fs_api, "_CURRENT_PROJECT_FILE",
+                            tmp_path / "current_project.json")
+        yield
+
+    def test_roundtrip_and_persistence(self):
+        from bigbrain.web import fs_api
+        fs_api.create_project("alpha")
+        assert fs_api.get_current_project() is None
+        fs_api.set_current_project("alpha")
+        assert fs_api.get_current_project() == "alpha"
+        # Clearing works too.
+        fs_api.set_current_project(None)
+        assert fs_api.get_current_project() is None
+
+    def test_plain_folder_refused(self, tmp_path):
+        from aiohttp import web as aioweb
+        from bigbrain.web import fs_api
+        root = tmp_path / "ws"
+        root.mkdir(parents=True, exist_ok=True)
+        (root / "plain").mkdir()
+        with pytest.raises(aioweb.HTTPBadRequest):
+            fs_api.set_current_project("plain")
+
+
+class TestPlugins:
+    @pytest.fixture(autouse=True)
+    def _state(self, tmp_path, monkeypatch):
+        import bigbrain.plugins as plugins
+        monkeypatch.setattr(plugins, "_PLUGINS_FILE", tmp_path / "plugins.json")
+        yield
+
+    def test_catalog_defaults_all_enabled(self):
+        from bigbrain.plugins import list_plugins
+        result = list_plugins()
+        ids = {p["id"]: p["enabled"] for p in result["plugins"]}
+        assert ids == {"python-brain": True, "researcher": True}
+
+    def test_toggle_persists(self):
+        from bigbrain.plugins import list_plugins, set_enabled
+        result = set_enabled("researcher", False)
+        assert result["enabled"] is False
+        assert result["applies"] == "live"
+        ids = {p["id"]: p["enabled"] for p in list_plugins()["plugins"]}
+        assert ids["researcher"] is False
+
+    def test_core_plugin_cannot_be_disabled(self):
+        from bigbrain.plugins import set_enabled
+        with pytest.raises(ValueError, match="cannot be disabled"):
+            set_enabled("python-brain", False)
+
+    def test_unknown_plugin_rejected(self):
+        from bigbrain.plugins import set_enabled
+        with pytest.raises(ValueError, match="unknown plugin"):
+            set_enabled("nope", True)
