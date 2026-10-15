@@ -297,3 +297,43 @@ class TestOrchestratorApprovalFlow:
         plan = list(orch.task_plans.values())[0]
         assert plan.awaiting_approval is False
         assert executed == [plan.id]
+
+
+class FakeRequest:
+    def __init__(self, body):
+        self._body = body
+
+    async def json(self):
+        return self._body
+
+
+class TestApprovalRouteAuth:
+    """Regression: the approval POST must travel the bus as an
+    AUTHENTICATED source. An unregistered source (e.g. "web_server")
+    is silently DROPPED by the authenticated bus — the plan then waits
+    forever even though the UI showed the click as accepted."""
+
+    async def test_route_sends_via_authenticated_source(self):
+        from bigbrain.bus.auth import BusAuth
+        from bigbrain.bus.bus import MessageBus
+        from bigbrain.web.server import WebServer
+
+        auth = BusAuth()
+        auth.generate_token("morphable_ui")
+        bus = MessageBus(auth=auth)
+
+        received = []
+
+        async def orchestrator_handler(message):
+            received.append(message.payload)
+
+        bus.subscribe("orchestrator_default", orchestrator_handler)
+
+        server = WebServer(bus=bus)
+        response = await server._handle_contracts_approve(FakeRequest({
+            "design_id": "task-x", "plan_id": "p1", "approve": True,
+        }))
+        assert response.status == 200
+        assert len(received) == 1  # delivered, not silently dropped
+        assert received[0]["type"] == "contracts.approval"
+        assert received[0]["approve"] is True

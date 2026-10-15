@@ -602,7 +602,11 @@ class WebServer:
                 {"error": "design_id and plan_id are required"}, status=400)
 
         await self.bus.send_task(
-            source="web_server",
+            # Source MUST be a bus-authenticated component ("morphable_ui"
+            # has an HMAC token, like chat.send) — an unknown source is
+            # silently DROPPED by the authenticated bus and the plan would
+            # wait forever.
+            source="morphable_ui",
             target="orchestrator_default",
             task_data={
                 "type": "contracts.approval",
