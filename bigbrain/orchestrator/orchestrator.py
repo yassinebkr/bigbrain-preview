@@ -193,7 +193,11 @@ Example — single task:
 [{{"id": "s1", "description": "Generate fibonacci code", "brain_target": "python_brain", "payload": {{"type": "generate_and_execute", "user_request": "write a fibonacci function"}}, "dependencies": []}}]
 
 Example — research then code:
-[{{"id": "s1", "description": "Research WebSocket libraries", "brain_target": "researcher", "payload": {{"type": "research", "query": "python websocket server libraries comparison 2026"}}, "dependencies": []}}, {{"id": "s2", "description": "Build WebSocket server", "brain_target": "python_brain", "payload": {{"type": "generate_and_execute", "user_request": "build a websocket chat server", "context_ref": "#s1"}}, "dependencies": ["s1"]}}]"""
+[{{"id": "s1", "description": "Research WebSocket libraries", "brain_target": "researcher", "payload": {{"type": "research", "query": "python websocket server libraries comparison 2026"}}, "dependencies": []}}, {{"id": "s2", "description": "Build WebSocket server", "brain_target": "python_brain", "payload": {{"type": "generate_and_execute", "user_request": "build a websocket chat server", "context_ref": "#s1"}}, "dependencies": ["s1"]}}]
+
+Example — the user asks to ADD A TASK to their task board (taskboard brain, NOT a code task):
+User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
+[{{"id": "s1", "description": "Add board task", "brain_target": "taskboard", "payload": {{"type": "board_task", "title": "mettre à jour le README de near_agi", "status": "todo"}}, "dependencies": []}}]"""
 
     def __init__(self, workspace: str, bus: MessageBus, llm_provider=None,
                  planner_model: str = None):

@@ -125,3 +125,58 @@ class TestOrchestratorRouting:
         })
         assert subtasks[0].brain_target == "taskboard"
         assert subtasks[0].payload["type"] == "board_task"
+
+
+class TestSummarizerGrounding:
+    """Board-action results must reach the summarizer as REAL actions,
+    and the summarizer must not invent actions the output never shows."""
+
+    @pytest.fixture
+    def brain(self):
+        from bigbrain.front.front_brain import FrontBrain
+
+        class CapturingProvider:
+            def __init__(self):
+                self.calls = []
+
+            async def chat_complete(self, messages=None, **kwargs):
+                self.calls.append(messages)
+                return "résumé honnête"
+
+        provider = CapturingProvider()
+        from bigbrain.bus.bus import MessageBus
+
+        return FrontBrain(MessageBus(auth=None), llm_provider=provider), provider
+
+    async def test_board_action_reaches_the_summarizer(self, brain):
+        front, provider = brain
+        # The summarizer relays the answer to the user's last question.
+        front._conversation_history.append(
+            {"role": "user", "content": "ajoute une tâche à la taskboard"})
+        summary = await front._summarize_result([
+            ("action", "Task 'mettre à jour le README' added to the board as todo."),
+        ])
+        assert summary == "résumé honnête"
+        prompt = provider.calls[0][1]["content"]
+        assert "Action performed:" in prompt
+        assert "added to the board" in prompt
+
+    async def test_grounding_rules_are_in_the_prompt(self, brain):
+        front, provider = brain
+        front._conversation_history.append(
+            {"role": "user", "content": "fais quelque chose"})
+        await front._summarize_result([("code", "print('hi')")])
+        system = provider.calls[0][0]["content"]
+        # The summarizer must not invent actions the output never shows.
+        assert "NEVER claim a task was created" in system
+        assert "instead of pretending success" in system
+
+    async def test_code_result_is_not_an_action_block(self, brain):
+        """A code result alone must not produce an 'Action performed'
+        block — the summarizer only sees what really ran."""
+        front, provider = brain
+        front._conversation_history.append(
+            {"role": "user", "content": "affiche hello"})
+        await front._summarize_result([("code", "Hello, World!")])
+        prompt = provider.calls[0][1]["content"]
+        assert "Action performed:" not in prompt

@@ -556,6 +556,8 @@ Type 'quit' or 'exit' to stop."""
                 output_text += f"Code execution output:\n{content}\n\n"
             elif kind == "code_only":
                 output_text += f"Generated code (no output):\n{content[:500]}\n\n"
+            elif kind == "action":
+                output_text += f"Action performed:\n{content}\n\n"
             elif kind == "preview":
                 output_text += f"Deployment: {content}\n\n"
             elif kind == "files":
@@ -587,7 +589,9 @@ Type 'quit' or 'exit' to stop."""
                             "- NEVER invent URLs, domains, or deployment links. Only mention a URL if one appears in the task output\n"
                             "- If a preview_url is provided in the output, use EXACTLY that URL — do not modify it\n"
                             "- If files were written but no preview is running, say the code was generated (not deployed)\n"
-                            "- Mention which algorithms/items were actually tested vs what research found"
+                            "- Mention which algorithms/items were actually tested vs what research found\n"
+                            "- Report ONLY actions the task output explicitly confirms. NEVER claim a task was created, a board item was added, a file was saved, or a message was sent unless the output says so\n"
+                            "- If the output does NOT accomplish what the user asked, say honestly what actually happened instead of pretending success"
                         )},
                         {"role": "user", "content": (
                             f"User's question: {user_question}\n\n"
@@ -920,6 +924,11 @@ Type 'quit' or 'exit' to stop."""
                     elif data.get("generated_code"):
                         raw_outputs.append(("code_only", data["generated_code"]))
                         workspace_hint = workspace_hint or "python-dev"
+                    elif data.get("message"):
+                        # Structured action results (e.g. the taskboard
+                        # brain): the action's own confirmation IS the
+                        # output the summarizer must relay.
+                        raw_outputs.append(("action", data["message"]))
                     # Capture preview URL if server started
                     if data.get("preview_port") and data.get("server_running"):
                         raw_outputs.append(("preview", f"Preview server running at https://preview.clawos.fr (port {data['preview_port']})"))
