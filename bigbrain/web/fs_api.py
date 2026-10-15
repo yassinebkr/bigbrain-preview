@@ -224,6 +224,30 @@ def run_file(rel: str, timeout: float = 30.0) -> Dict[str, Any]:
         }
 
 
+def search_files(query: str, limit: int = 20) -> Dict[str, Any]:
+    """Case-insensitive substring search over the workspace tree.
+
+    Bounded and dot-free (manifests, .exec/ temp scripts are skipped) —
+    powers the research bar's real file suggestions.
+    """
+    q = (query or "").strip().lower()
+    if not q:
+        return {"query": query, "results": []}
+    root = workspace_root()
+    results: List[Dict[str, Any]] = []
+    for dirpath, _dirnames, filenames in os.walk(root):
+        _dirnames[:] = [d for d in _dirnames if not d.startswith(".")]
+        for name in filenames:
+            if name.startswith(".") or q not in name.lower():
+                continue
+            rel = Path(dirpath).relative_to(root).as_posix()
+            full = f"{rel}/{name}" if rel != "." else name
+            results.append({"path": full, "name": name, "type": "file"})
+            if len(results) >= limit:
+                return {"query": query, "results": results}
+    return {"query": query, "results": results}
+
+
 # ── projects (global workspace + per-project sub-workspaces) ───────────────
 
 PROJECT_MANIFEST = ".project.json"
@@ -345,6 +369,7 @@ def setup_fs_routes(app: web.Application) -> None:
     app.router.add_post("/api/fs/rename", _handle_rename)
     app.router.add_post("/api/fs/move", _handle_move)
     app.router.add_post("/api/fs/run", _handle_run)
+    app.router.add_get("/api/fs/search", _handle_search)
 
 
 async def _handle_list(request: web.Request) -> web.Response:
@@ -387,6 +412,13 @@ async def _handle_run(request: web.Request) -> web.Response:
     result = await asyncio.to_thread(
         run_file, body.get("path", ""), body.get("timeout", 30.0)
     )
+    return web.json_response(result)
+
+
+async def _handle_search(request: web.Request) -> web.Response:
+    import asyncio
+
+    result = await asyncio.to_thread(search_files, request.query.get("q", ""))
     return web.json_response(result)
 
 

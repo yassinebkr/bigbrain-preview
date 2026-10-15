@@ -700,6 +700,28 @@ class TestWorkspaceProjects:
         with pytest.raises(aioweb.HTTPBadRequest):
             fs_api.run_file("notes.txt")
 
+    def test_search_files_finds_and_skips_dots(self, _ws_root):
+        from bigbrain.web import fs_api
+        sandbox = _ws_root / "sandbox"
+        sandbox.mkdir(parents=True)
+        (sandbox / "hello.py").write_text("print('hi')")
+        (sandbox / "notes.md").write_text("note")
+        (_ws_root / ".exec").mkdir()
+        (_ws_root / ".exec" / "script_1.py").write_text("")
+        (_ws_root / ".project.json").write_text("{}")
+
+        result = fs_api.search_files("hello")
+        assert [r["path"] for r in result["results"]] == ["sandbox/hello.py"]
+
+        result = fs_api.search_files("py")
+        paths = [r["path"] for r in result["results"]]
+        assert "sandbox/hello.py" in paths
+        assert not any(".exec" in p or ".project.json" in p for p in paths)
+
+    def test_search_files_empty_query(self, _ws_root):
+        from bigbrain.web import fs_api
+        assert fs_api.search_files("   ")["results"] == []
+
 
 class TestCurrentProject:
     @pytest.fixture(autouse=True)

@@ -4,16 +4,14 @@ import {
   Search,
   Sparkles,
   FileText,
-  FolderOpen,
   Command,
-  MessageSquare,
   FilePlus,
   ArrowRight as ArrowRightIcon,
   X,
 } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 
-type SuggestionType = 'file' | 'command' | 'action' | 'recent';
+type SuggestionType = 'file' | 'command' | 'action';
 
 interface Suggestion {
   id: string;
@@ -24,19 +22,42 @@ interface Suggestion {
   action: () => void;
 }
 
-const recentSearches = [
-  'API documentation',
-  'Q2 budget report',
-  'User interview notes',
-];
+interface SearchHit {
+  path: string;
+  name: string;
+  type: string;
+}
+
+// A query without an extension becomes a markdown note at the root.
+function createFileName(query: string): string {
+  const q = query.trim();
+  return /\.[a-z0-9]+$/i.test(q) ? q : `${q}.md`;
+}
 
 export function ResearchBar() {
-  const { files, setView, setInputText, sendMessage } = useAppStore();
+  const { setView, setInputText, sendMessage, setPendingOpenFile } = useAppStore();
   const [query, setQuery] = useState('');
   const [isFocused, setIsFocused] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [hits, setHits] = useState<SearchHit[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Real file search: debounced query against /api/fs/search.
+  useEffect(() => {
+    const q = query.trim();
+    if (!q || q.startsWith('/')) {
+      setHits([]);
+      return;
+      }
+    const timer = setTimeout(() => {
+      fetch(`/api/fs/search?q=${encodeURIComponent(q)}`)
+        .then((r) => (r.ok ? r.json() : { results: [] }))
+        .then((data) => setHits(data.results || []))
+        .catch(() => setHits([]));
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [query]);
 
   // Parse command prefix
   const isCommand = query.startsWith('/');
@@ -46,19 +67,16 @@ export function ResearchBar() {
     const items: Suggestion[] = [];
 
     if (!isCommand && query.trim().length > 0) {
-      // File search results
-      const matchingFiles = files
-        .filter((f) => f.type === 'file' && f.name.toLowerCase().includes(query.toLowerCase()))
-        .slice(0, 4);
-
-      matchingFiles.forEach((file) => {
+      // Real file search results
+      hits.slice(0, 4).forEach((hit) => {
         items.push({
-          id: `file-${file.id}`,
+          id: `file-${hit.path}`,
           type: 'file',
-          label: file.name,
-          description: `${file.type === 'folder' ? 'Folder' : 'File'}`,
+          label: hit.name,
+          description: hit.path,
           icon: <FileText size={16} strokeWidth={1.5} style={{ color: '#5ac8fa' }} />,
           action: () => {
+            setPendingOpenFile(hit.path);
             setQuery('');
             setIsFocused(false);
           },
@@ -80,60 +98,38 @@ export function ResearchBar() {
         },
       });
 
-      // New file action
+      // New file action — REAL creation through the FS API
       items.push({
         id: 'new-file',
         type: 'action',
-        label: `Create "${query}"`,
+        label: `Create "${createFileName(query)}"`,
         icon: <FilePlus size={16} strokeWidth={1.5} style={{ color: '#34c759' }} />,
-        action: () => {
-          const newFile = {
-            id: `file-${Date.now()}`,
-            name: query.endsWith('.md') || query.endsWith('.txt') ? query : `${query}.md`,
-            type: 'file' as const,
-            size: 0,
-            modifiedAt: Date.now(),
-            parentId: null,
-            icon: 'file-text',
-          };
-          useAppStore.getState().addFile(newFile);
-          setQuery('');
+        action: async () => {
+          try {
+            await fetch('/api/fs/file', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ path: createFileName(query), content: '' }),
+            });
+            // Refresh the results — the new file must show up for real.
+            const r = await fetch(`/api/fs/search?q=${encodeURIComponent(query)}`);
+            const data = await r.json();
+            setHits(data.results || []);
+          } catch { /* keep stale results on failure */ }
           setIsFocused(false);
-        },
-      });
-    } else if (!isCommand) {
-      // Show recent searches and quick actions when empty
-      recentSearches.forEach((search, idx) => {
-        items.push({
-          id: `recent-${idx}`,
-          type: 'recent',
-          label: search,
-          icon: <ArrowRightIcon size={14} strokeWidth={1.5} style={{ color: 'var(--text-tertiary)' }} />,
-          action: () => {
-            setQuery(search);
-          },
-        });
-      });
-
-      items.push({
-        id: 'quick-ask',
-        type: 'action',
-        label: 'Ask AI assistant...',
-        icon: <MessageSquare size={16} strokeWidth={1.5} style={{ color: '#0071e3' }} />,
-        action: () => {
-          setQuery('/ask ');
         },
       });
     }
 
     if (isCommand || query.trim().length > 0) {
-      // Command suggestions
+      // Command suggestions (only the ones that actually do something:
+      // both funnel the query into the AI chat)
       const commands = [
         {
           id: 'cmd-search',
           prefix: '/search',
           label: '/search',
-          desc: 'Search files by name or content',
+          desc: 'Send a search request to the AI',
           icon: <Search size={16} strokeWidth={1.5} style={{ color: '#ff9500' }} />,
         },
         {
@@ -142,20 +138,6 @@ export function ResearchBar() {
           label: '/ask',
           desc: 'Ask the AI assistant',
           icon: <Sparkles size={16} strokeWidth={1.5} style={{ color: '#0071e3' }} />,
-        },
-        {
-          id: 'cmd-new',
-          prefix: '/new',
-          label: '/new',
-          desc: 'Create a new file',
-          icon: <FilePlus size={16} strokeWidth={1.5} style={{ color: '#34c759' }} />,
-        },
-        {
-          id: 'cmd-open',
-          prefix: '/open',
-          label: '/open',
-          desc: 'Open a folder',
-          icon: <FolderOpen size={16} strokeWidth={1.5} style={{ color: '#5ac8fa' }} />,
         },
       ];
 
@@ -177,7 +159,7 @@ export function ResearchBar() {
     }
 
     return items;
-  }, [query, files, isCommand, commandPrefix, setView, setInputText, sendMessage]);
+  }, [query, hits, isCommand, commandPrefix, setView, setInputText, sendMessage, setPendingOpenFile]);
 
   // Reset selection when suggestions change
   useEffect(() => {
@@ -356,7 +338,7 @@ export function ResearchBar() {
             ) : (
               <div className="py-1.5">
                 {/* Group by type */}
-                {(['recent', 'file', 'command', 'action'] as const).map((groupType) => {
+                {(['file', 'command', 'action'] as const).map((groupType) => {
                   const groupItems = suggestions.filter((s) => s.type === groupType);
                   if (groupItems.length === 0) return null;
 
@@ -366,7 +348,6 @@ export function ResearchBar() {
                         className="px-3 py-1 text-[10px] uppercase tracking-wider font-semibold"
                         style={{ color: 'var(--text-tertiary)' }}
                       >
-                        {groupType === 'recent' && 'Recent'}
                         {groupType === 'file' && 'Files'}
                         {groupType === 'command' && 'Commands'}
                         {groupType === 'action' && 'Actions'}

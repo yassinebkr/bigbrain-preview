@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { Message, Attachment, Session, Settings, Theme, View, ConnectionStatus, SidebarPanel, User, CanvasOp, FileItem, Task, TaskStatus } from '@/types';
+import type { Message, Attachment, Session, Settings, Theme, View, ConnectionStatus, SidebarPanel, User, CanvasOp, Task, TaskStatus } from '@/types';
 import type { ConnectionLike } from '@/lib/connection';
 
 export interface AgentActivity {
@@ -140,12 +140,7 @@ interface AppState {
   clearCanvasOps: () => void;
 
   // Workspace
-  files: FileItem[];
-  selectedFileId: string | null;
   tasks: Task[];
-  setSelectedFileId: (id: string | null) => void;
-  addFile: (file: FileItem) => void;
-  deleteFile: (id: string) => void;
   addTask: (task: Task) => void;
   applyBusActivity: (activity: Omit<AgentActivity, 'ts'>) => void;
   updateTask: (id: string, updates: Partial<Task>) => void;
@@ -401,27 +396,9 @@ export const useAppStore = create<AppState>()(
       addCanvasOp: (op) => set((state) => ({ canvasOps: [...state.canvasOps, op] })),
       clearCanvasOps: () => set({ canvasOps: [] }),
 
-      // Workspace
-      files: [
-        { id: 'root', name: 'Home', type: 'folder', modifiedAt: Date.now(), parentId: null },
-        { id: 'docs', name: 'Documents', type: 'folder', modifiedAt: Date.now() - 86400000, parentId: 'root' },
-        { id: 'proj', name: 'Projects', type: 'folder', modifiedAt: Date.now() - 172800000, parentId: 'root' },
-        { id: 'research', name: 'Research', type: 'folder', modifiedAt: Date.now() - 259200000, parentId: 'root' },
-        { id: 'file1', name: 'README.md', type: 'file', size: 2048, modifiedAt: Date.now() - 3600000, parentId: 'docs' },
-        { id: 'file2', name: 'notes.txt', type: 'file', size: 1024, modifiedAt: Date.now() - 7200000, parentId: 'docs' },
-        { id: 'file3', name: 'app.tsx', type: 'file', size: 5120, modifiedAt: Date.now() - 10800000, parentId: 'proj' },
-        { id: 'file4', name: 'analysis.pdf', type: 'file', size: 102400, modifiedAt: Date.now() - 86400000, parentId: 'research' },
-      ],
-      selectedFileId: null,
-      tasks: [
-        { id: 't1', title: 'Implement auth flow', description: 'Add login page and token management', status: 'done', tags: ['auth', 'frontend'], assignee: 'AI Agent', priority: 'high', createdAt: Date.now() - 86400000 },
-        { id: 't2', title: 'Build GenUI canvas', description: 'Port canvas renderer to React', status: 'in-progress', tags: ['genui', 'canvas'], assignee: 'AI Agent', priority: 'high', createdAt: Date.now() - 43200000 },
-        { id: 't3', title: 'Voice recording', description: 'Add mic support with transcription', status: 'in-progress', tags: ['voice', 'chat'], assignee: 'AI Agent', priority: 'medium', createdAt: Date.now() - 36000000 },
-        { id: 't4', title: 'Workspace desktop', description: 'File explorer + research bar + tasks', status: 'todo', tags: ['workspace', 'ui'], assignee: 'AI Agent', priority: 'medium', createdAt: Date.now() - 18000000 },
-      ],
-      setSelectedFileId: (id) => set({ selectedFileId: id }),
-      addFile: (file) => set((state) => ({ files: [...state.files, file] })),
-      deleteFile: (id) => set((state) => ({ files: state.files.filter((f) => f.id !== id) })),
+      // Workspace — the board starts EMPTY: only real agent tasks (bus
+      // events) and manual additions show up. No seed/mock entries.
+      tasks: [],
       addTask: (task) => set((state) => ({ tasks: [...state.tasks, task] })),
 
       // Bus task events (orchestrator) mapped onto the TaskBoard slice —
