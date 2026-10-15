@@ -627,6 +627,74 @@ print("Cross-platform test successful")
         assert "Cross-platform test successful" in result["stdout"]
         assert "Python executable:" in result["stdout"]
 
+    # --- Execution edge cases (ported from the hand-built bigbrain's
+    # excellent subprocess suite, adapted to our executor) ---------------
+
+    @staticmethod
+    def _execute(python_brain, code, timeout=10):
+        from bigbrain.bus.message import BusMessage, MessageType
+
+        return python_brain.handle_task(BusMessage(
+            type=MessageType.TASK,
+            source="orchestrator",
+            target=python_brain.name,
+            payload={"type": "execute_code", "code": code, "timeout": timeout},
+        ))
+
+    @pytest.mark.asyncio
+    async def test_stdin_read_does_not_hang(self, python_brain):
+        """input() must hit EOF, not hang the execution until timeout."""
+        result = await self._execute(
+            python_brain,
+            "try:\n    print(input())\nexcept EOFError:\n    print('eof')")
+        assert result["success"] is True
+        assert result["stdout"].strip() == "eof"
+
+    @pytest.mark.asyncio
+    async def test_unicode_output_round_trips(self, python_brain):
+        result = await self._execute(
+            python_brain, "print('héllo wörld ✓ 🧠')")
+        assert result["success"] is True
+        assert "héllo wörld ✓ 🧠" in result["stdout"]
+
+    @pytest.mark.asyncio
+    async def test_massive_output_is_captured(self, python_brain):
+        """A few MB of stdout must not deadlock the PIPE."""
+        result = await self._execute(
+            python_brain, "for i in range(200_000):\n    print('x' * 10)")
+        assert result["exit_code"] == 0
+        assert len(result["stdout"]) > 1_000_000
+
+    @pytest.mark.asyncio
+    async def test_stderr_with_exit_zero_is_reported(self, python_brain):
+        """Warnings on stderr with a clean exit: the executor reports both
+        (policy on stderr belongs to the loop/gate, not the executor)."""
+        result = await self._execute(
+            python_brain,
+            "import sys\nprint('out')\nprint('warn', file=sys.stderr)")
+        assert result["exit_code"] == 0
+        assert result["stdout"].strip() == "out"
+        assert "warn" in result["stderr"]
+
+    @pytest.mark.asyncio
+    async def test_concurrent_executions(self, python_brain):
+        import asyncio
+
+        tasks = [
+            self._execute(python_brain, f"print({i}); import time; time.sleep(0.05)")
+            for i in range(4)
+        ]
+        results = await asyncio.gather(*tasks)
+        assert sorted(r["stdout"].strip() for r in results) == ["0", "1", "2", "3"]
+        assert all(r["exit_code"] == 0 for r in results)
+
+    @pytest.mark.asyncio
+    async def test_empty_code_is_refused(self, python_brain):
+        """Empty code is a task error by policy (missing code key)."""
+        with pytest.raises(ValueError, match="No code provided"):
+            await self._execute(python_brain, "")
+
+
 # ================================================================
 # WORKSPACE WRITE NOTIFICATION (agent files visible in the web UI)
 # ================================================================
@@ -711,3 +779,4 @@ class TestRequestedFilename:
         assert saved is None
         assert not (tmp_path / "ws" / "python").exists() or \
             not any((tmp_path / "ws" / "python").iterdir())
+

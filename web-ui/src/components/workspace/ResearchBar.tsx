@@ -42,19 +42,28 @@ export function ResearchBar() {
   const [hits, setHits] = useState<SearchHit[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  // Guards against stale search responses: a slow earlier request must
+  // never overwrite the results of a newer one.
+  const searchSeq = useRef(0);
 
   // Real file search: debounced query against /api/fs/search.
   useEffect(() => {
     const q = query.trim();
     if (!q || q.startsWith('/')) {
+      searchSeq.current += 1;
       setHits([]);
       return;
       }
+    const seq = ++searchSeq.current;
     const timer = setTimeout(() => {
       fetch(`/api/fs/search?q=${encodeURIComponent(q)}`)
         .then((r) => (r.ok ? r.json() : { results: [] }))
-        .then((data) => setHits(data.results || []))
-        .catch(() => setHits([]));
+        .then((data) => {
+          if (seq === searchSeq.current) setHits(data.results || []);
+        })
+        .catch(() => {
+          if (seq === searchSeq.current) setHits([]);
+        });
     }, 200);
     return () => clearTimeout(timer);
   }, [query]);

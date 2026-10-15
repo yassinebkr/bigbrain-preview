@@ -700,6 +700,148 @@ class TestWorkspaceProjects:
         with pytest.raises(aioweb.HTTPBadRequest):
             fs_api.run_file("notes.txt")
 
+    def test_run_file_refuses_traversal(self, _ws_root):
+        from aiohttp import web as aioweb
+        from bigbrain.web import fs_api
+        _ws_root.mkdir(parents=True, exist_ok=True)
+        with pytest.raises(aioweb.HTTPBadRequest):
+            fs_api.run_file("../escape.py")
+
+    @pytest.mark.asyncio
+    async def test_manual_run_records_evidence(self, tmp_path, monkeypatch):
+        """The UI Run button leaves the same auditable evidence as the agent."""
+        monkeypatch.setenv("BIGBRAIN_WORKSPACE_DIR", str(tmp_path / "ws"))
+        monkeypatch.setenv("BIGBRAIN_EVIDENCE_ROOT", str(tmp_path / "evidence"))
+        from bigbrain.web import fs_api
+
+        sandbox = tmp_path / "ws" / "sandbox"
+        sandbox.mkdir(parents=True)
+        (sandbox / "hello.py").write_text("print('Hello, World!')")
+
+        result = await fs_api.run_file_with_evidence("sandbox/hello.py")
+
+        assert result["ok"] is True
+        verification = result["verification"]
+        assert verification["verdict"] == "passed"
+        stages = {s["name"]: s["status"] for s in verification["stages"]}
+        assert stages["syntax"] == "passed"
+        assert stages["run"] == "passed"
+        assert stages["contracts"] == "passed"
+        # No test files in the project → honestly not_applicable.
+        assert stages["tests"] == "not_applicable"
+
+        # The manifest is on disk and immutable.
+        from bigbrain.verification.evidence import default_repository
+
+        repo = default_repository()
+        manifest = repo.load_manifest(verification["run_id"])
+        assert manifest is not None
+        assert manifest.metadata["attempt"] == 1
+
+    @pytest.mark.asyncio
+    async def test_manual_run_evidence_kill_switch(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("BIGBRAIN_WORKSPACE_DIR", str(tmp_path / "ws"))
+        monkeypatch.setenv("BIGBRAIN_EVIDENCE_ROOT", str(tmp_path / "evidence"))
+        monkeypatch.setenv("BIGBRAIN_EVIDENCE", "0")
+        from bigbrain.web import fs_api
+
+        sandbox = tmp_path / "ws" / "sandbox"
+        sandbox.mkdir(parents=True)
+        (sandbox / "hello.py").write_text("print('hi')")
+        result = await fs_api.run_file_with_evidence("sandbox/hello.py")
+        assert result["ok"] is True
+        assert "verification" not in result
+
+    @pytest.mark.asyncio
+    async def test_evidence_api_lists_runs_with_contracts(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("BIGBRAIN_WORKSPACE_DIR", str(tmp_path / "ws"))
+        monkeypatch.setenv("BIGBRAIN_EVIDENCE_ROOT", str(tmp_path / "evidence"))
+        from bigbrain.web import fs_api
+        from bigbrain.web.evidence_api import list_runs, run_detail
+
+        sandbox = tmp_path / "ws" / "sandbox"
+        sandbox.mkdir(parents=True)
+        (sandbox / "hello.py").write_text("print('Hello, World!')")
+        result = await fs_api.run_file_with_evidence("sandbox/hello.py")
+        run_id = result["verification"]["run_id"]
+
+        listed = list_runs(limit=10)
+        # Runs are GROUPED by task: one manual run → one task group.
+        assert len(listed["tasks"]) == 1
+        group = listed["tasks"][0]
+        assert group["total"] == 1
+        assert group["last_verdict"] == "passed"
+        assert group["last_run_id"] == run_id
+        assert any("hello.py" in c for c in group["contracts"])
+        assert group["runs"][0]["run_id"] == run_id
+
+        detail = run_detail(run_id)
+        assert detail["manifest"]["run_id"] == run_id
+        assert detail["spec"]["user_request"].startswith("manual run")
+        assert "hello.py" in detail["spec"]["contracts"][0]
+
+        # Unknown run → 404-shaped error.
+        from aiohttp import web as aioweb
+        with pytest.raises(aioweb.HTTPNotFound):
+            run_detail("run-doesnotexist")
+
+    @pytest.mark.asyncio
+    async def test_evidence_groups_honk_attempts_into_one_task(
+            self, tmp_path, monkeypatch):
+        """A task with 3 attempts is ONE group with the history inside."""
+        monkeypatch.setenv("BIGBRAIN_WORKSPACE_DIR", str(tmp_path / "ws"))
+        monkeypatch.setenv("BIGBRAIN_EVIDENCE_ROOT", str(tmp_path / "evidence"))
+        from pathlib import Path as _Path
+
+        from bigbrain.verification.evidence import default_repository
+        from bigbrain.verification.gate import RunGate
+        from bigbrain.web.evidence_api import list_runs
+
+        work_dir = _Path(str(tmp_path / "ws"))
+        work_dir.mkdir(parents=True, exist_ok=True)
+        (work_dir / "hello.py").write_text("print('hi')")
+        gate = RunGate(default_repository())
+        request = "crée hello.py"
+        for attempt in (1, 2, 3):
+            await gate.evaluate_attempt(
+                user_request=request,
+                code="print('hi')",
+                execution={"exit_code": 0, "stdout": "hi\n", "stderr": ""},
+                work_dir=work_dir,
+                requested_file="hello.py",
+                persisted_file="hello.py",
+                attempt=attempt,
+            )
+
+        listed = list_runs()
+        assert len(listed["tasks"]) == 1
+        group = listed["tasks"][0]
+        assert group["total"] == 3
+        assert group["passed"] == 3
+        assert group["last_verdict"] == "passed"
+        # Attempt history is inside, newest first.
+        attempts = [r["attempt"] for r in group["runs"]]
+        assert attempts == [3, 2, 1]
+
+    def test_run_file_timeout_is_bounded(self, _ws_root):
+        from bigbrain.web import fs_api
+        (_ws_root / "sandbox").mkdir(parents=True)
+        loop = _ws_root / "sandbox" / "loop.py"
+        loop.write_text("while True:\n    pass")
+        result = fs_api.run_file("sandbox/loop.py", timeout=1.0)
+        assert result["ok"] is False
+        assert result["timedOut"] is True
+
+    def test_write_file_creates_parent_dirs(self, _ws_root):
+        from bigbrain.web import fs_api
+        result = fs_api.write_file("sandbox/deep/nested/hello.py", "print(1)")
+        assert result["ok"] is True
+        assert (_ws_root / "sandbox" / "deep" / "nested" / "hello.py").is_file()
+
+    def test_search_files_empty_workspace(self, _ws_root):
+        from bigbrain.web import fs_api
+        assert fs_api.search_files("anything")["results"] == []
+
     def test_search_files_finds_and_skips_dots(self, _ws_root):
         from bigbrain.web import fs_api
         sandbox = _ws_root / "sandbox"

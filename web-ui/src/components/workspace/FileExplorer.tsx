@@ -204,16 +204,39 @@ export function FileExplorer() {
     guard(() => writeFile(dir ? `${dir}/${name}` : name, ''));
   };
 
-  const handleRename = (entry: FsEntry) => {
+  const handleRename = async (entry: FsEntry) => {
     const newName = prompt('Rename to', entry.name);
     if (!newName || newName === entry.name) return;
-    guard(() => rename(entry.path, newName));
+    try {
+      await rename(entry.path, newName);
+    } catch (e: any) {
+      setError(e.message);
+      return;
+    }
+    // Keep the open viewer pointing at the file that still exists.
+    const newPath = dir ? `${dir}/${newName}` : newName;
+    if (viewingPath === entry.path) setViewingPath(newPath);
+    else if (viewingPath && viewingPath.startsWith(entry.path + '/')) {
+      setViewingPath(newPath + viewingPath.slice(entry.path.length));
+    }
+    await refresh(dir);
   };
 
-  const handleDelete = (entry: FsEntry) => {
+  const handleDelete = async (entry: FsEntry) => {
     const label = entry.type === 'folder' ? 'folder and ALL its contents' : 'file';
     if (!confirm(`Delete ${label} "${entry.name}"?`)) return;
-    guard(() => deleteEntry(entry.path));
+    try {
+      await deleteEntry(entry.path);
+    } catch (e: any) {
+      setError(e.message);
+      return;
+    }
+    // The open viewer must not outlive the file it shows.
+    if (viewingPath === entry.path ||
+        (viewingPath && viewingPath.startsWith(entry.path + '/'))) {
+      setViewingPath(null);
+    }
+    await refresh(dir);
   };
 
   const openFile = (entry: FsEntry) => {

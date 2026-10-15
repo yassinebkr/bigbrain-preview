@@ -62,6 +62,10 @@ class PythonBrain(BaseBrain):
         
         # Track created temp files for cleanup
         self._temp_files: set[Path] = set()
+
+        # Deterministic evidence gate (harness P2) — set False to disable
+        # recording without touching the execution flow.
+        self._evidence_enabled = os.environ.get("BIGBRAIN_EVIDENCE", "1") != "0"
         
         # Preview server tracking (class-level shared across instances)
         self._preview_process: Optional[asyncio.subprocess.Process] = None
@@ -100,6 +104,34 @@ class PythonBrain(BaseBrain):
         except Exception:
             pass  # notification must never break the write path
     
+    async def _notify_verification(self, manifest, verdict: str,
+                                   attempt: int | None = None) -> None:
+        """Broadcast the gate verdict to the UI (verification.run_recorded).
+
+        Harness P4: the run panel shows per-stage pills and the verdict;
+        the event must never break the run — broadcast is best effort.
+        """
+        try:
+            from ..bus.message import BusMessage, MessageType
+
+            await self.bus.send(BusMessage(
+                type=MessageType.EVENT,
+                source=self.name,
+                target="morphable_ui",
+                payload={
+                    "event": "verification.run_recorded",
+                    "run_id": manifest.run_id,
+                    "verdict": verdict,
+                    "attempt": attempt,
+                    "stages": [
+                        {"name": s.name, "status": s.status}
+                        for s in manifest.stages
+                    ],
+                },
+            ))
+        except Exception:
+            pass  # the UI surface must never break the run
+
     # Port range for preview servers (shared across all PythonBrain instances)
     PREVIEW_PORT_MIN = 3100
     PREVIEW_PORT_MAX = 3199
@@ -958,7 +990,7 @@ Rules:
                 "file": filename,
             }
 
-        return {
+        result = {
             "success": exit_code == 0,
             "stdout": stdout.decode(errors="replace"),
             "stderr": stderr.decode(errors="replace"),
@@ -967,6 +999,37 @@ Rules:
             "execution_time": time.time() - start,
             "file": filename,
         }
+
+        # Evidence record (harness P2) — same gate, best effort.
+        if self._evidence_enabled:
+            try:
+                import platform as _platform
+
+                from ..verification.evidence import default_repository
+                from ..verification.gate import RunGate
+
+                manifest, verdict = await RunGate(default_repository()).evaluate_attempt(
+                    user_request=f"run existing file {filename}",
+                    code=target.read_text(encoding="utf-8", errors="replace"),
+                    execution=result,
+                    work_dir=self.work_dir,
+                    requested_file=filename,
+                    persisted_file=filename,
+                    toolchain={"python": _platform.python_version(),
+                               "brain": self.name},
+                    filename=filename,
+                )
+                result["verification"] = {
+                    "run_id": manifest.run_id,
+                    "verdict": verdict,
+                    "stages": [{"name": s.name, "status": s.status}
+                               for s in manifest.stages],
+                }
+                await self._notify_verification(manifest, verdict)
+            except Exception:
+                pass  # recording must never break the run
+
+        return result
 
     async def _search_project(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -1661,17 +1724,15 @@ Rules:
         """Save generated code under the filename the user asked for.
 
         The execution itself runs in a temp file the user never sees; when
-        the request names a file ("crée un script hello.py"), the code must
+        the request names a file (\"crée un script hello.py\"), the code must
         land at that exact path in the workspace so the claim is true and
         the explorer shows it (workspace.file_written).
         """
-        import re
+        from ..verification.executors import extract_requested_file
 
-        match = re.search(r"[\w][\w.-]*\.(?:py|json|csv|txt|md|toml|yaml|yml)",
-                          user_request or "")
-        if not match:
+        file_name = extract_requested_file(user_request)
+        if not file_name:
             return None
-        file_name = match.group(0)
         try:
             await self._write_and_notify(self.work_dir / file_name, code)
             return file_name
@@ -1708,6 +1769,8 @@ Rules:
 
         # Reflexion memory — tracks errors across attempts so LLM doesn't repeat them
         attempt_history: list[dict] = []
+        # Evidence chain: each attempt's manifest links to the previous one.
+        last_run_id = None
 
         for attempt in range(1, max_retries + 1):
             await self.send_progress({
@@ -1745,20 +1808,97 @@ Rules:
                 result["total_attempts"] = attempt
                 result["attempt_history"] = attempt_history
 
-                # Check if execution succeeded
                 has_output = bool(result.get("stdout", "").strip())
                 no_errors = result.get("exit_code") == 0 and not result.get("stderr", "").strip()
-                
+
+                # Deterministic gate (harness P2): record evidence for this
+                # attempt and derive a conservative verdict. The gate must
+                # never break generation — on internal error we degrade to
+                # the legacy behavior (verdict None).
+                saved_as = None
+                if no_errors:
+                    # Persist BEFORE the gate: the contracts stage checks
+                    # that the requested file exists in the workspace.
+                    saved_as = await self._persist_requested_file(user_request, code)
+                verdict, verification = None, None
+                if self._evidence_enabled:
+                    try:
+                        import platform as _platform
+
+                        from ..verification.evidence import default_repository
+                        from ..verification.gate import RunGate
+
+                        manifest, verdict = await RunGate(default_repository()).evaluate_attempt(
+                            user_request=user_request,
+                            code=code,
+                            execution=result,
+                            work_dir=self.work_dir,
+                            persisted_file=saved_as,
+                            attempt=attempt,
+                            parent_run_id=last_run_id,
+                            toolchain={"python": _platform.python_version(),
+                                       "brain": self.name},
+                        )
+                        last_run_id = manifest.run_id
+                        verification = {
+                            "run_id": manifest.run_id,
+                            "verdict": verdict,
+                            "stages": [{"name": s.name, "status": s.status}
+                                       for s in manifest.stages],
+                        }
+                        await self._notify_verification(manifest, verdict,
+                                                        attempt=attempt)
+                    except Exception as gate_error:
+                        verification = {"verdict": None,
+                                        "error": str(gate_error)[:200]}
+                if verification is not None:
+                    result["verification"] = verification
+
+                if no_errors and has_output and verdict == "failed":
+                    # The gate rejected a clean execution (e.g. the requested
+                    # file never landed in the workspace). Fixable: feed the
+                    # failed stage details back to the LLM like any error.
+                    failed = [f"{s['name']}={s['status']}"
+                              for s in verification["stages"]
+                              if s["status"] == "failed"]
+                    error_info = {
+                        "attempt": attempt,
+                        "code": code,
+                        "exit_code": 0,
+                        "stderr": ("DETERMINISTIC GATE FAILED — " + "; ".join(failed)
+                                   + ". The verification stages listed as failed must pass."),
+                        "stdout": "",
+                    }
+                    attempt_history.append(error_info)
+                    if attempt < max_retries:
+                        await self.send_progress({
+                            "stage": "retrying",
+                            "attempt": attempt,
+                            "error": error_info["stderr"][:100],
+                            "next_attempt": attempt + 1,
+                        })
+                        continue
+                    result["success"] = False
+                    result["error"] = error_info["stderr"]
+                    await self.send_progress({
+                        "stage": "failed_after_retries",
+                        "attempts": attempt,
+                    })
+                    return result
+
                 if no_errors and has_output:
                     # Clean success with output
                     result["success"] = True
-                    # Persist the script under the REQUESTED filename (the
-                    # temp execution file is invisible to the user). Extract
-                    # the name from the request ("crée un script hello.py"),
-                    # write it into the workspace and notify the UI.
-                    saved_as = await self._persist_requested_file(user_request, code)
                     if saved_as:
                         result["saved_as"] = saved_as
+                    if verdict == "inconclusive":
+                        # The script ran; a mandatory stage could not produce
+                        # evidence (e.g. tests present, pytest missing). Never
+                        # claimed as verified — labelled explicitly instead.
+                        result["warning"] = "Executed, but not fully verified: " + "; ".join(
+                            f"{s['name']}={s['status']}"
+                            for s in verification["stages"]
+                            if s["status"] == "inconclusive")
                     await self.send_progress({
                         "stage": "succeeded",
                         "attempt": attempt,
@@ -2197,15 +2337,20 @@ Output ONLY the corrected file content, no explanation."""
         and captures all output and exit status.
         """
         import time
+        import uuid
         start_time = time.time()
-        
+
         # Temp execution scripts live in a hidden .exec/ subfolder of the
         # work_dir so the user-visible workspace only contains real
         # generated files (script_<timestamp>.py used to clutter the
         # project folder — sandbox/, project dirs).
         exec_dir = self.work_dir / ".exec"
         exec_dir.mkdir(exist_ok=True)
-        script_file = exec_dir / f"script_{int(start_time)}.py"
+        # Unique per execution: int(start_time) alone collided for
+        # concurrent tasks started within the same second — all workers
+        # then executed the LAST written script (caught by the edge-case
+        # pass; the uuid fragment keeps names debuggable AND unique).
+        script_file = exec_dir / f"script_{int(start_time)}_{uuid.uuid4().hex[:8]}.py"
         script_file.write_text(code, encoding='utf-8')
         self._temp_files.add(script_file)
         

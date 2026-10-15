@@ -98,25 +98,57 @@ Intégration :
 - Tests : `tests/test_evidence.py` (24) — roundtrip, immuabilité
   (même run_id), verdict conservateur, dédoublonnage, traversal refusé.
 
-### P2 — Stages déterministes + gate
-- `executors.py` : syntax, compile, run, tests, contracts (l'ordre =
-  du moins cher au plus cher ; échec court-circuite).
-- `gate.py` : verdict PASS/FAIL/INCONCLUSIVE, jamais de pass implicite.
-- Branchement dans `_generate_and_execute` : la boucle Honk utilise le
-  verdict ; le payload de résultat porte `verification`.
-- *Done :* « crée hello.py » qui compile pas → subtask failed avec le
-  détail syntaxique ; pytest présent → vraiment exécuté.
+### P2 — Stages déterministes + gate — ✅ FAIT
+- `executors.py` : stage_syntax (ast.parse), stage_compile (compile),
+  stage_run (verdict SUR l'exécution déjà faite — la gate ne rejoue
+  jamais le code), stage_tests (pytest si fichiers test présents ;
+  absents = not_applicable, pytest manquant = inconclusive),
+  stage_contracts (le fichier nommé dans la requête existe au bon
+  endroit — attrape le "hello.py créé sous un autre nom").
+- `gate.py` : RunGate.evaluate_attempt — spec + artefacts sha256
+  (code, stdout, stderr, sortie tests) + manifeste terminal immuable,
+  chaînage des tentatives via parent_run_id, verdict conservateur.
+- Branché dans la boucle Honk (`_generate_and_execute`) et
+  `_run_existing_file` : verdict failed → feedback au LLM (retry),
+  inconclusive → pas de retry (l'environnement n'est pas réparable par
+  le LLM) mais jamais revendiqué "verified" ; la gate ne casse JAMAIS
+  la génération (erreur interne → verdict None, comportage legacy).
+- Kill switch : BIGBRAIN_EVIDENCE=0.
+- Tests : `tests/test_harness_gate.py` (24) — stages unitaires, gate
+  end-to-end, chaînage des tentatives, intégration Honk (succès,
+  cassé→corrigé, run_file).
 
-### P3 — Replay & différentiel (pattern golden models)
-- Rejouer un run depuis son manifeste (mêmes inputs → comparaison des
-  outputs ; non-déterminisme détecté).
-- Corpus de cas de référence (hello, fibonacci, file IO) pour la
-  régression des brains eux-mêmes.
-- *Done :* un run rejoué produit un diff manifeste vs replay.
+### P3 — Replay & différentiel (pattern golden models) — ✅ FAIT
+- `replay.py` : `replay_run(run_id)` recharge le code depuis les
+  artefacts du manifeste, le ré-exécute dans un subprocess PROPRE
+  (`run_code` : env minimal, stdin /dev/null, scratch dir), compare
+  stdout/stderr/exit aux artefacts enregistrés → report
+  {deterministic, mismatches}. Le replay est lui-même persisté comme
+  manifeste chaîné (parent_run_id, metadata.replay_of) avec un stage
+  `replay_compare`. Seuls les runs terminaux sont rejouables ; le
+  replay d'un replay chaîne l'historique.
+- `golden.py` : corpus de référence (hello, fibonacci, file_io,
+  unicode) indépendant de tout LLM, exécuté via le même run_code —
+  régression de la machinerie d'exécution (env, encodage, timeouts,
+  stdin). `run_corpus()` pour tests et futur job schedulé.
+- Tests : `tests/test_harness_replay.py` (9) — replay déterministe,
+  non-déterminisme détecté (time.time), runs non-terminaux refusés,
+  chaînage, corpus complet, stdin EOF, boucle infinie bornée.
+- *Done atteint :* un run rejoué produit un diff manifeste vs replay.
 
-### P4 — Surface UI
-- Event `verification.run_recorded` → RunPanel : verdict par étape,
-  artefacts cliquables. Pastilles agent console fpga (backlog).
+### P4 — Surface UI — ✅ FAIT
+- PythonBrain diffuse `verification.run_recorded` sur le bus (target
+  morphable_ui) après chaque évaluation de la gate : {run_id, verdict,
+  attempt, stages[{name,status}]}. Best effort — ne casse jamais le run.
+- Store : `applyRunEvent` attache le verdict au run actif
+  (orphan events droppés, verdicts inconnus → inconclusive, shapes
+  défectueuses survivent) ; persisté avec activeRun.
+- RunPanel : ligne repliée → chip verdict (verified / gate failed /
+  unverified + "· try N") ; déplié → pastilles par stage façon agent
+  console (dot coloré : passed vert, failed/inconclusive orange,
+  not_applicable discret). BrainsView : le verdict entre dans le feed.
+- Tests : +1 backend (broadcast bus), +3 vitest (attach, orphan,
+  dégradation).
 
 ## 6. Non-goals (P1–P3)
 
@@ -125,6 +157,21 @@ Intégration :
 - Pas de portage de `jobs.py` complet : l'exécution bornée existante du
   PythonBrain suffit ; le replay P3 réutilise le même chemin.
 - Pas d'outillage FPGA/EDA : uniquement les patterns, zéro import fpga.
+
+## 8. Suite possible (post P1-P4)
+
+- **Contrats proposés à l'approbation avant implémentation** (pattern
+  shopifast-local) : aujourd'hui les contrats sont auto-extraits du
+  message (fichier nommé) et vérifiés APRÈS coup. L'évolution : le front
+  brain propose le(s) contrat(s) dérivés de la requête ("hello.py sera
+  créé dans le projet X, affichera Hello, World!", tests inclus), l'UI
+  (gen-ui / Phase B morphable) les affiche clairement et l'utilisateur
+  approuve ou édite AVANT que la boucle Honk démarre — le DesignSpec
+  validé devient le spec_sha256 du run (l'approbation est tracée dans
+  l'evidence). Réutilise le mécanisme V5 human gate côté orchestration.
+- Evidence API en lecture (`/api/evidence/runs`, `/run/{id}`,
+  `/artifact?sha`) — surface actuelle : section Evidence de l'onglet
+  Brains (contrats, stages, verdicts).
 
 ## 7. Risques / points d'attention
 

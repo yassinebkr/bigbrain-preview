@@ -32,3 +32,20 @@ jobs:
           pytest tests/ --ignore=tests/test_voice_real.py -q \
             --deselect tests/test_architect.py::TestArtifactFlow::test_upstream_context_keyed_by_filepath \
             --deselect tests/test_integration_dispatch.py::TestParallelExecution::test_pool_dispatches_to_multiple_workers
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web-ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install
+        run: npm ci
+      - name: Unit tests (store state machine)
+        run: npm run test
+      - name: Type-check + build
+        run: npm run build

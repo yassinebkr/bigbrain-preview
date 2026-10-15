@@ -12,6 +12,7 @@ escape the root by construction.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -250,6 +251,57 @@ def search_files(query: str, limit: int = 20) -> Dict[str, Any]:
 
 # ── projects (global workspace + per-project sub-workspaces) ───────────────
 
+async def run_file_with_evidence(rel: str, timeout: float = 30.0) -> Dict[str, Any]:
+    """Run a workspace .py file AND record it through the deterministic gate.
+
+    The UI's Run button must leave the same auditable evidence as the
+    agent's runs: stages (syntax, compile, run, contracts, tests) and an
+    immutable manifest under data/evidence/. Evidence is best effort —
+    a recording failure never breaks a manual run. Kill switch:
+    BIGBRAIN_EVIDENCE=0.
+    """
+    result = await asyncio.to_thread(run_file, rel, timeout)
+
+    if os.environ.get("BIGBRAIN_EVIDENCE", "1") == "0":
+        return result
+
+    try:
+        import platform
+
+        from ..verification.evidence import default_repository
+        from ..verification.gate import RunGate
+
+        target = _resolve(workspace_root(), rel)
+        code = await asyncio.to_thread(
+            target.read_text, encoding="utf-8", errors="replace")
+        # run_file's wire keys (exitCode, timedOut) → the executor's
+        # execution shape (exit_code, timed_out).
+        execution = {
+            "exit_code": result.get("exitCode"),
+            "stdout": result.get("stdout", ""),
+            "stderr": result.get("stderr", ""),
+            "timed_out": bool(result.get("timedOut")),
+        }
+        manifest, verdict = await RunGate(default_repository()).evaluate_attempt(
+            user_request=f"manual run {rel}",
+            code=code,
+            execution=execution,
+            work_dir=target.parent,
+            requested_file=target.name,
+            persisted_file=target.name,
+            toolchain={"python": platform.python_version(), "brain": "manual-ui"},
+            filename=target.name,
+        )
+        result["verification"] = {
+            "run_id": manifest.run_id,
+            "verdict": verdict,
+            "stages": [{"name": s.name, "status": s.status}
+                       for s in manifest.stages],
+        }
+    except Exception:
+        pass
+    return result
+
 PROJECT_MANIFEST = ".project.json"
 SANDBOX_PROJECT = "sandbox"
 
@@ -405,12 +457,10 @@ async def _handle_move(request: web.Request) -> web.Response:
 
 
 async def _handle_run(request: web.Request) -> web.Response:
-    """Execute a workspace .py file off the event loop."""
-    import asyncio
-
+    """Execute a workspace .py file off the event loop — with evidence."""
     body = await request.json()
-    result = await asyncio.to_thread(
-        run_file, body.get("path", ""), body.get("timeout", 30.0)
+    result = await run_file_with_evidence(
+        body.get("path", ""), body.get("timeout", 30.0)
     )
     return web.json_response(result)
 

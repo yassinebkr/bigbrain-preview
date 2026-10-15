@@ -2,7 +2,8 @@
 
 A modular, async AI agent system built on a **3-layer architecture** with specialized brain topologies, event-driven orchestration, and focus-managed attention.
 
-> **Preview Implementation** — Full reference codebase with 523 tests. The [real project](https://github.com/yassinebkr/bigbrain) is built incrementally by hand.
+> **Active development repo.** What started as the preview reference codebase
+> is now the working product (web UI, models/auth, deterministic harness).
 
 ## Quick Start
 
@@ -10,17 +11,17 @@ A modular, async AI agent system built on a **3-layer architecture** with specia
 git clone https://github.com/yassinebkr/bigbrain-preview.git
 cd bigbrain-preview
 
-# Core + TUI + tests
-pip install pydantic rich textual litellm pytest pytest-asyncio
+# Backend (core + web + tests)
+pip install -e ".[test,web]"
 
-# Voice (optional)
-pip install websockets sounddevice numpy
+# Web UI (React app in web-ui/, served by the backend at /)
+cd web-ui && npm install && npm run build && cd ..
 
 # Authenticate with Claude (free via Pro/Max subscription)
 python -m bigbrain --login
 
-# Run
-python -m bigbrain
+# Run the web product
+python -m bigbrain --web --web-port 3007
 ```
 
 ### Environment (`.env`)
@@ -47,6 +48,10 @@ BIGBRAIN_LOG_DIR=logs
 BIGBRAIN_MAX_TOKENS=2048
 BIGBRAIN_CODE_TIMEOUT=30
 BIGBRAIN_TEMPERATURE=0.7
+
+# Deterministic harness (P1-P4) — 0 disables evidence recording
+BIGBRAIN_EVIDENCE=1
+BIGBRAIN_EVIDENCE_ROOT=data/evidence
 ```
 
 ## Architecture
@@ -97,9 +102,9 @@ User ←→ Front Brain ←→ Bus ←→ Orchestrator(s) ←→ Sub-brains
 | Feature | Status | Description |
 |---------|--------|-------------|
 | BaseBrain | ✅ | Abstract base with lifecycle, error events, double-start guard |
-| PythonBrain | ✅ | Subprocess code execution with timeout, lifecycle events |
-| ResearcherBrain | ✅ | Research planning + summarization |
-| Front Brain | ✅ | Real Claude LLM via OAuth, conversation history, code auto-execution |
+| PythonBrain | ✅ | Worker pool (3), subprocess execution with timeout/unique temp scripts, 7 task types (generate_and_execute, run_file, edit_file, write_project_file, assemble_and_run, batch_write_files, search_project) |
+| ResearcherBrain | ✅ | Research planning + summarization (Brave search, LLM synthesis) |
+| Front Brain | ✅ | Real-time chat.delta streaming, delegation routing to the orchestrator, project context injection |
 
 ### Orchestration
 | Feature | Status | Description |
@@ -109,7 +114,7 @@ User ←→ Front Brain ←→ Bus ←→ Orchestrator(s) ←→ Sub-brains
 | Execution Modes | ✅ | Lightning (auto) / Control (human gate) / Custom (per-brain) |
 | Task Timeout | ✅ | Configurable TTL with cleanup loop and callback |
 
-### Verification (5-layer pipeline)
+### Verification (5-layer pipeline + deterministic harness)
 | Layer | Status | Description |
 |-------|--------|-------------|
 | V1 Schema | ✅ | Pydantic output validation |
@@ -117,6 +122,9 @@ User ←→ Front Brain ←→ Bus ←→ Orchestrator(s) ←→ Sub-brains
 | V3 Cross-Check | ✅ | Different-provider LLM reviews brain output |
 | V4 Deterministic | ✅ | Syntax checks, test runners, type checking |
 | V5 Human Gate | ✅ | Async approval with configurable timeout |
+| Evidence core | ✅ | DesignSpec / RunManifest / EvidenceRepository — immutable, hash-linked, content-addressed artifacts (sha256) |
+| Gate + stages | ✅ | syntax → compile → run → tests → contracts, conservative verdict (inconclusive is never a pass), wired into the Honk retry loop |
+| Replay + golden | ✅ | Re-execute recorded runs in a clean subprocess and diff the outputs; LLM-independent golden corpus (hello, fibonacci, file_io, unicode) |
 
 ### Focus System
 | Feature | Status | Description |
@@ -147,17 +155,38 @@ User ←→ Front Brain ←→ Bus ←→ Orchestrator(s) ←→ Sub-brains
 |---------|--------|-------------|
 | Anthropic OAuth | ✅ | PKCE flow, `--login` CLI, token persistence |
 | AnthropicOAuthProvider | ✅ | Raw httpx with Claude Code stealth headers |
+| Model Registry | ✅ | 10 entries (OpenRouter, Kimi direct, Mistral vibe, GLM 5.3, Codex, Claude), free health checks (60s cache), per-role lineup (front/planner/code/subagent) |
+| Auth facade (`bigbrain/auth/`) | ✅ | Mistral PKCE wizard, OpenRouter key input, Codex subscription login, provider hot-reload without restart |
 | litellm Provider | ✅ | Multi-provider LLM routing |
 | Mock Provider | ✅ | Realistic responses for testing |
+
+### Projects & Workspace
+| Feature | Status | Description |
+|---------|--------|-------------|
+| Projects | ✅ | Per-project sub-workspaces (`.project.json` manifests), selector in the explorer, current project persisted |
+| Sandbox default | ✅ | No project selected → agent writes land in the auto-created `sandbox/` project (no more loose pools) |
+| FS API | ✅ | list / read / write / mkdir / rename / move / delete / **run** (bounded .py execution) / **search** (dot-entries skipped) |
 
 ### UI
 | Feature | Status | Description |
 |---------|--------|-------------|
-| Morphable UI (Web) | ✅ | Glassmorphic workspace-based UI with FLIP animations, 7 layout grids, 9 panel types |
+| **Web Product (web-ui/)** | ✅ | React 18 + TypeScript + Vite + Tailwind + Framer Motion (Aplot port) — the primary interface, served from `web-ui/dist` |
+| Morphable UI (legacy static) | ✅ | Glassmorphic workspace-based UI with FLIP animations, 7 layout grids, 9 panel types (kept as the morphable core prototype) |
 | Textual TUI | ✅ | 4-panel layout: chat, brains, tasks, bus/focus |
 | Rich Fallback | ✅ | Console output when Textual unavailable |
 
-### Morphable UI — Web Interface
+### Web Product (web-ui/)
+| Feature | Status | Description |
+|---------|--------|-------------|
+| Real-time chat | ✅ | `chat.delta` streaming, markdown bubbles, stop button (cancels the LLM stream AND the orchestrated run) |
+| Model lineup | ✅ | Available-only dropdown (free health checks), per-role selection (front/planner/code/subagent) |
+| Run panel | ✅ | Live run state derived from bus events (no per-event timers), persistent across reloads, per-step brains/durations, clickable written files, sandbox nudge, gate-verdict chip + stage pills |
+| Code surface | ✅ | Shared highlight (multi-language) / run (stdout/stderr inline) / edit (Ctrl+S) component — modal in chat, inline pane in the workspace |
+| Tasks & Brains tabs | ✅ | TaskBoard on real bus tasks (starts empty — zero mock data), brain status dots + live activity feed |
+| Workspace | ✅ | Project file explorer, project selector, research bar with real FS search |
+| Providers panel | ✅ | Model availability, OpenRouter key input, Connect-with-Mistral / Connect-with-ChatGPT wizards, provider reload |
+
+### Morphable UI — Web Interface (legacy core)
 | Feature | Status | Description |
 |---------|--------|-------------|
 | Spring FLIP Engine | ✅ | Custom WAAPI + CSS `linear()` spring physics, 5 presets, zero deps |
@@ -208,6 +237,32 @@ Execution modes control which layers run per brain:
 - **Control**: All layers including V5 human approval
 - **Custom**: Per-brain configuration
 
+### Deterministic Harness (P1–P4)
+
+On top of the V-layers, every Python execution attempt goes through a
+conservative evidence gate (`bigbrain/verification/`, ported from the
+fpga backend patterns — see [docs/HARNESS-DETERMINISTE.md](docs/HARNESS-DETERMINISTE.md)):
+
+```
+DesignSpec (what was asked) ──hash──→ RunManifest (what happened)
+     │                                      │
+     │   stages: syntax → compile → run → tests → contracts
+     │   verdict: passed | failed | inconclusive  (inconclusive is NEVER a pass)
+     └── artifacts: sha256 content-addressed (code, stdout, stderr, test output)
+```
+
+- **Immutable evidence**: terminal manifests cannot be rewritten; every
+  attempt chains to the previous via `parent_run_id`.
+- **Gate in the Honk loop**: a `failed` verdict feeds the stage details
+  back to the LLM (retry); an `inconclusive` one is labelled
+  "not fully verified" instead of claimed.
+- **Replay**: `replay_run()` re-executes a recorded run in a clean
+  subprocess and diffs the outputs — non-determinism is detected.
+- **Golden corpus**: LLM-independent cases (hello, fibonacci, file_io,
+  unicode) regression-test the execution machinery itself.
+- **UI**: the run panel shows the verdict chip and per-stage pills
+  (`verification.run_recorded` event); kill switch: `BIGBRAIN_EVIDENCE=0`.
+
 ## Focus System
 
 | Mode | What reaches the user | Use case |
@@ -225,11 +280,17 @@ Execution modes control which layers run per brain:
 
 ## Usage
 
-### Web Mode (Morphable UI)
+### Web Mode (product UI)
 ```bash
+# Build the React UI once (or after UI changes)
+cd web-ui && npm install && npm run build && cd ..
+
 python -m bigbrain --web --web-port 3007
 ```
-Opens the Morphable UI web interface. Access at `http://localhost:3007`.
+Opens the web product at `http://localhost:3007` — chat with streaming,
+run panel with verification pills, workspace explorer, Tasks/Brains
+tabs. The legacy morphable UI's static assets remain served under
+`/static/`.
 
 Set `BIGBRAIN_WEB_PASSWORD` env var to enable Basic Auth.
 
@@ -285,23 +346,19 @@ systemctl --user enable --now bigbrain-web
 ## Tests
 
 ```bash
-# Full suite (523 tests)
-python -m pytest tests/ -v
+# Backend full suite (743+ tests)
+python -m pytest tests/ -q --ignore=tests/test_voice_real.py
 
-# By module
-python -m pytest tests/test_bus.py -v           # Bus (14 tests)
-python -m pytest tests/test_brain.py -v          # Brains (24 tests)
-python -m pytest tests/test_python_brain.py -v   # PythonBrain (25 tests)
-python -m pytest tests/test_orchestrator.py -v   # Orchestrator (28 tests)
-python -m pytest tests/test_bus_auth.py -v       # HMAC auth (22 tests)
-python -m pytest tests/test_bus_participant.py -v # BusParticipant (17 tests)
-python -m pytest tests/test_v3_cross_check.py -v # V3 verification (19 tests)
-python -m pytest tests/test_v5_human_gate.py -v  # V5 human gate (21 tests)
-python -m pytest tests/test_execution_modes.py -v # Execution modes (30 tests)
-python -m pytest tests/test_voice_real.py -v     # Voice providers (66 tests)
-python -m pytest tests/test_memory.py -v         # Memory system
-python -m pytest tests/test_verification.py -v   # Verification pipeline
+# Frontend (vitest — store state machine, 14 tests)
+cd web-ui && npm run test
+
+# Frontend type-check + production build
+cd web-ui && npm run build
 ```
+
+CI (GitHub Actions): Python 3.12/3.13 matrix (`pip install -e ".[test,web]"`,
+ruff non-blocking, two environment-fragile tests deselected) plus a
+frontend job (npm ci + vitest + build).
 
 ## Project Structure
 
@@ -329,68 +386,79 @@ bigbrain/
 │   ├── long_term_memory.py   # ChromaDB cross-workspace
 │   ├── chromadb_backend.py   # ChromaDB integration
 │   └── memory_manager.py     # Unified interface
-├── verification/         # 5-layer verification pipeline
-│   ├── pipeline.py       # Pipeline orchestration
+├── verification/         # 5-layer pipeline + deterministic harness (P1-P4)
+│   ├── pipeline.py       # Pipeline orchestration (V1-V5)
 │   ├── v1_schema.py      # Pydantic output validation
 │   ├── v3_cross_check.py # Cross-provider LLM review
 │   ├── v4_deterministic.py # Syntax, tests, types
-│   └── v5_human_gate.py  # Async human approval
+│   ├── v5_human_gate.py  # Async human approval
+│   ├── evidence.py       # DesignSpec/RunManifest/EvidenceRepository — immutable evidence
+│   ├── executors.py     # Deterministic stages: syntax/compile/run/tests/contracts
+│   ├── gate.py           # Conservative verdict + chained manifests per attempt
+│   ├── replay.py         # Re-execute recorded runs, diff outputs
+│   └── golden.py         # LLM-independent regression corpus
 ├── llm/                  # LLM provider abstraction
 │   ├── provider.py       # ABC for LLM providers
 │   ├── anthropic_oauth.py # OAuth + Claude Code stealth headers
 │   ├── litellm_provider.py # Multi-provider via litellm
+│   ├── openai_compat_provider.py # OpenRouter/Mistral/Kimi (SSE, reasoning deltas)
+│   ├── codex_provider.py # Codex subscription via `codex app-server` JSON-RPC
+│   ├── model_registry.py # 10-entry registry, free health checks, capabilities
+│   ├── usage.py          # Token accounting + per-role budgets
 │   └── mock_provider.py  # Mock with realistic responses
-├── voice/                # Voice pipeline
+├── voice/                # Voice pipeline (optional extra)
 │   ├── deepgram_stt.py   # Deepgram Nova-3 WebSocket streaming
 │   ├── cartesia_tts.py   # Cartesia Sonic REST + WebSocket
-│   ├── stt.py            # MockSTT for testing
-│   ├── tts.py            # MockTTS for testing
+│   ├── stt.py / tts.py   # Mocks for testing
 │   └── voice_manager.py  # Pipeline coordinator + auto-detection
-├── auth/                 # Authentication
-│   └── oauth.py          # Anthropic PKCE OAuth flow
+├── auth/                 # Auth facade (unified)
+│   ├── oauth.py          # Anthropic PKCE OAuth flow
+│   ├── mistral_oauth.py  # Mistral vibe PKCE wizard
+│   ├── openrouter_key.py # OpenRouter key input
+│   └── registry.py       # Provider selection facade
 ├── tui/                  # Textual TUI
 │   ├── app.py            # Main 4-panel application
-│   ├── app.css           # Dark theme styling
 │   └── widgets/          # Chat, brains, tasks, bus, focus panels
-├── web/                  # Morphable UI (Phase 3 WebAdapter)
-│   ├── server.py         # aiohttp WS bridge, Basic Auth, static serving
-│   ├── adapter.py        # WebAdapter (UIAdapter implementation)
-│   ├── focus_bridge.py   # Bidirectional Focus ↔ UI sync
-│   ├── pipeline_manager.py # Server-side pipeline validation
-│   └── static/           # Client-side (zero dependencies)
-│       ├── app.js        # MorphableUI orchestrator, workspace switching
-│       ├── morph.js      # Spring FLIP engine, CSS linear() generator
-│       ├── layout.js     # 7 layout grids, SlotManager, workspace configs
-│       ├── panel.js      # 9 panel types (chat, code-output, research, etc.)
-│       ├── bus-client.js # WebSocket bus client, auto-reconnect
-│       ├── pipeline.js   # 3 pipeline runners (bus/http-poll/websocket)
-│       ├── style.css     # Glassmorphic dark theme, 24 sections
-│       └── index.html    # App shell
+├── web/                  # Web backend
+│   ├── server.py         # aiohttp WS bridge, Basic Auth, serves web-ui/dist
+│   ├── fs_api.py         # Workspace FS API (list/read/write/run/search + projects)
+│   ├── model_roles.py    # Per-role model lineup (persisted)
+│   ├── adapter.py / focus_bridge.py / pipeline_manager.py
+│   └── static/           # Legacy morphable UI (zero-dep vanilla JS)
 ├── ui/                   # Rich fallback UI
-│   ├── ui_adapter.py     # ABC for UI adapters
-│   └── rich_adapter.py   # Rich console implementation
-├── config.py             # Configuration (env + defaults)
-└── __main__.py           # Entry point + system coordinator
+├── plugins.py            # Brain plugin manifests (builtin: python-brain, researcher)
+├── system.py             # BigBrainSystem assembly + runtime hooks (reload/project/cancel)
+├── cli.py / __main__.py  # Entry points
+└── config.py             # Configuration (env + defaults)
+
+web-ui/                   # The web product (React 18 + TS + Vite + Tailwind)
+├── src/components/       # RunPanel, CodeSurface/CodeViewer, ChatView, Tasks/Brains views...
+├── src/store/            # Zustand store (run state machine, persisted activeRun)
+├── src/lib/connection/   # WS adapters (bigbrain protocol + scratchy)
+└── dist/                 # Production build served by the backend
 ```
 
 ## Tech Stack
 
 | Component | Technology |
 |-----------|-----------|
-| Language | Python 3.12+ |
-| LLM Interface | litellm + custom Anthropic OAuth provider |
-| Auth | Anthropic OAuth (PKCE) — free via Pro/Max subscription |
+| Language | Python 3.12+ (backend) · TypeScript (frontend) |
+| LLM Interface | litellm + OpenAI-compatible registry providers + Anthropic OAuth + Codex JSON-RPC |
+| Auth | Anthropic OAuth (PKCE) · Mistral vibe PKCE · OpenRouter key · Codex subscription |
 | Memory | ChromaDB (PersistentClient) + vector embeddings |
 | Schemas | Pydantic v2 |
 | Concurrency | asyncio |
 | Bus Auth | HMAC-SHA256 per-brain tokens |
+| Evidence | Content-addressed sha256 artifacts, immutable JSON manifests |
 | STT | Deepgram Nova-3 (WebSocket streaming, ~100ms) |
 | TTS | Cartesia Sonic (REST + WebSocket, sub-100ms) |
 | Terminal UI | Textual 8.x (dark theme, 4-panel layout) |
 | Fallback UI | Rich (console panels) |
-| Tests | pytest + pytest-asyncio (523 tests) |
+| Tests | pytest + pytest-asyncio (743+) · vitest (frontend store) |
+| CI | GitHub Actions — Python 3.12/3.13 matrix + frontend job (npm ci, vitest, build) |
 | Web Server | aiohttp (async WS bridge to MessageBus) |
-| Web UI | Vanilla JS + WAAPI (zero dependencies) |
+| Web Product | React 18 + Vite + Tailwind + Framer Motion + Zustand (web-ui/) |
+| Legacy Web UI | Vanilla JS + WAAPI (zero dependencies) |
 
 ## Design Philosophy
 
@@ -408,5 +476,4 @@ Dual license: AGPL-3.0 (core) + Commercial (contact for production use without o
 
 ## Links
 
-- **Real project**: [github.com/yassinebkr/bigbrain](https://github.com/yassinebkr/bigbrain) (private)
 - **Research**: MASS (Google ICLR 2026), Spotify Honk, LLMCompiler, ReWOO, Andrew Ng patterns

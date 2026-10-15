@@ -9,6 +9,7 @@ import { Workspace } from '@/components/Workspace';
 import { DiscoverView } from '@/components/DiscoverView';
 import { TasksView } from '@/components/TasksView';
 import { BrainsView } from '@/components/BrainsView';
+import { EvidenceView } from '@/components/EvidenceView';
 import { CodeViewer } from '@/components/CodeViewer';
 import { createConnection } from '@/lib/connection';
 
@@ -157,6 +158,8 @@ export default function App() {
           <TasksView key="tasks" />
         ) : view === 'brains' ? (
           <BrainsView key="brains" />
+        ) : view === 'evidence' ? (
+          <EvidenceView key="evidence" />
         ) : (
           <ChatView key="chat" />
         )}
