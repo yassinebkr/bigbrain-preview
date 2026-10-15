@@ -295,6 +295,14 @@ function snapshotPanels(container) {
 }
 
 /**
+ * Aplot motion language: fast, subtle easeOut — no bounce. Ported from
+ * okcomputer_ui_v11 (MessageBubble/ChatInput Framer Motion presets).
+ * Springs remain available for explicit attention effects (highlightPanel).
+ */
+const APLOT_EASE_OUT = 'cubic-bezier(0, 0, 0.2, 1)';
+const APLOT_MORPH_MS = 320;
+
+/**
  * Execute a FLIP animation on panels after a layout change.
  *
  * Usage:
@@ -309,7 +317,7 @@ function snapshotPanels(container) {
  * @param {HTMLElement} container - Grid container
  * @param {Map<string, DOMRect>} firstSnapshot - Positions before layout change
  * @param {object} [options]
- * @param {string} [options.preset='panel'] - Spring preset name
+ * @param {string} [options.preset='panel'] - Spring preset name (unused for easing)
  * @param {object} [options.spring] - Custom spring parameters (overrides preset)
  * @param {function} [options.onComplete] - Called when all animations finish
  * @returns {Animation[]} Array of running WAAPI animations
@@ -321,9 +329,9 @@ function flipPanels(container, firstSnapshot, options = {}) {
     onComplete,
   } = options;
 
-  const springOpts = customSpring || SPRING_PRESETS[preset] || SPRING_PRESETS.panel;
-  const duration = calcSpringDuration(springOpts) * 1000; // Convert to ms
-  const easing = getSpringCSS(springOpts);
+  // Aplot easeOut at fixed duration: morphs glide, never bounce.
+  const duration = APLOT_MORPH_MS;
+  const easing = APLOT_EASE_OUT;
 
   const animations = [];
   const panels = container.querySelectorAll('[data-panel-id]');
@@ -403,10 +411,10 @@ function flipPanels(container, firstSnapshot, options = {}) {
  * @returns {Animation}
  */
 function breathePanel(panel, from, to, options = {}) {
-  const { preset = 'breathe', onComplete } = options;
-  const springOpts = SPRING_PRESETS[preset] || SPRING_PRESETS.breathe;
-  const duration = calcSpringDuration(springOpts) * 1000;
-  const easing = getSpringCSS(springOpts);
+  const { onComplete } = options;
+  // Aplot easeOut at fixed duration (springs kept only for highlightPanel).
+  const duration = APLOT_MORPH_MS;
+  const easing = APLOT_EASE_OUT;
 
   const keyframes = [];
 

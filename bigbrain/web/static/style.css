@@ -2,7 +2,7 @@
  * style.css — BigBrain Morphable UI
  * v3.0 — Premium Design System
  *
- * Glassmorphic dark theme · Indigo accent · Geist typeface
+ * Aplot AI theme · near-black neutral · Plus Jakarta Sans (ported from okcomputer_ui_v11)
  * Depth layers · Micro-interactions · WCAG AA contrast
  */
 
@@ -11,63 +11,64 @@
    ============================================================ */
 
 :root {
-  /* Liquid theme (Phase 6 redesign): deep-water base, one aqua accent,
-     gel surfaces instead of saturated glass, airy spacing. */
-  --bg-deep:     #04101a;
-  --bg:          #061420;
-  --surface-1:   #081927;
-  --surface-2:   #0a1f30;
-  --surface-3:   #0d263a;
-  --surface-4:   #123049;
-  --surface-5:   #1a3d5c;
+  /* Aplot AI design system (ported from okcomputer_ui_v11): near-black
+     neutral surfaces, hairline borders, Apple-exact text grays, ONE blue
+     accent. No glass blur, no glow, no gradients on panels. */
+  --bg-deep:     #0a0a0a;
+  --bg:          #0a0a0a;
+  --surface-1:   #0f0f0f;
+  --surface-2:   #161616;
+  --surface-3:   #1a1a1a;
+  --surface-4:   #1c1c1e;
+  --surface-5:   #262628;
 
-  --glass-bg:       rgba(8, 25, 39, 0.72);
-  --glass-bg-solid: #081927;
-  --glass-blur:     5px;
-  --glass-saturate: 110%;
+  --glass-bg:       rgba(22, 22, 22, 0.98);
+  --glass-bg-solid: #161616;
+  --glass-blur:     0px;
+  --glass-saturate: 100%;
 
-  --border-subtle: rgba(148, 210, 255, 0.06);
-  --border:        rgba(148, 210, 255, 0.10);
-  --border-hover:  rgba(148, 210, 255, 0.20);
-  --border-focus:  rgba(62, 218, 215, 0.55);
-  --border-glow:  rgba(62, 218, 215, 0.12);
+  --border-subtle: #2a2a2e;
+  --border:        #2c2c30;
+  --border-hover:  #3a3a40;
+  --border-focus:  rgba(0, 113, 227, 0.5);
+  --border-glow:   rgba(0, 113, 227, 0.12);
 
-  --text:       #e8f3fa;
-  --text-2:     #a9c3d4;
-  --text-muted: #6e8ba0;
-  --text-dim:   #466172;
-  --text-ghost: #2c4354;
+  --text:       #f5f5f7;
+  --text-2:      #a1a1aa;
+  --text-muted:  #6e6e73;
+  --text-dim:    #4d4d52;
+  --text-ghost:  #38383d;
 
-  --accent:       #3ddad7;
-  --accent-hover: #5ce4e1;
-  --accent-light: #8eeef0;
-  --accent-soft:  rgba(62, 218, 215, 0.10);
-  --accent-mid:   rgba(62, 218, 215, 0.18);
-  --accent-glow:  rgba(62, 218, 215, 0.16);
+  --accent:       #0071e3;
+  --accent-hover: #0077ed;
+  --accent-light: #5ac8fa;
+  --accent-soft:  rgba(0, 113, 227, 0.10);
+  --accent-mid:   rgba(0, 113, 227, 0.18);
+  --accent-glow:  rgba(0, 113, 227, 0.12);
 
-  --green:       #22c55e;
-  --green-soft:  rgba(34, 197, 94, 0.12);
-  --green-mid:   rgba(34, 197, 94, 0.25);
-  --yellow:      #eab308;
-  --yellow-soft: rgba(234, 179, 8, 0.12);
-  --yellow-mid:  rgba(234, 179, 8, 0.25);
-  --red:         #ef4444;
-  --red-soft:    rgba(239, 68, 68, 0.12);
-  --red-mid:     rgba(239, 68, 68, 0.25);
-  --blue:        #38bdf8;
-  --blue-soft:   rgba(56, 189, 248, 0.12);
-  --blue-mid:    rgba(56, 189, 248, 0.25);
+  --green:       #34c759;
+  --green-soft:  rgba(52, 199, 89, 0.12);
+  --green-mid:   rgba(52, 199, 89, 0.25);
+  --yellow:      #ff9500;
+  --yellow-soft: rgba(255, 149, 0, 0.12);
+  --yellow-mid:  rgba(255, 149, 0, 0.25);
+  --red:         #ff3b30;
+  --red-soft:    rgba(255, 59, 48, 0.12);
+  --red-mid:     rgba(255, 59, 48, 0.25);
+  --blue:        #0071e3;
+  --blue-soft:   rgba(0, 113, 227, 0.12);
+  --blue-mid:    rgba(0, 113, 227, 0.25);
 
   --title-bar-height:    44px;
   --status-strip-height: 38px;
   --input-height:        48px;
   --top-bar-height:      54px;
-  --gap:       14px;
-  --radius:    18px;
-  --radius-sm: 12px;
-  --radius-xs: 7px;
-  /* Drop radius: one soft large corner gives panels a liquid silhouette. */
-  --radius-drop: 26px;
+  --gap:       10px;
+  --radius:    10px;
+  --radius-sm: 8px;
+  --radius-xs: 6px;
+  /* Aplot bubble corner: one tight corner instead of a uniform radius. */
+  --radius-drop: 4px;
 
   --ease-out:    cubic-bezier(0.16, 1, 0.3, 1);
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -76,8 +77,8 @@
   --t-smooth: 300ms;
   --t-slow:   500ms;
 
-  --font-sans: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  --font-mono: 'Geist Mono', 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
   --fs-xs:   10px;
   --fs-sm:   11px;
   --fs-base: 13px;
@@ -263,7 +264,6 @@ body::after {
   height: 6px;
   border-radius: 50%;
   background: var(--accent-light);
-  box-shadow: 0 0 6px var(--accent);
   animation: notify-breathe 2.5s ease-in-out infinite;
   pointer-events: none;
 }
@@ -298,12 +298,10 @@ body::after {
 
 .connection-connected {
   background: var(--green);
-  box-shadow: 0 0 4px var(--green), 0 0 12px rgba(34, 197, 94, 0.25);
 }
 
 .connection-disconnected {
   background: var(--red);
-  box-shadow: 0 0 6px rgba(239, 68, 68, 0.4);
   animation: pulse-dot 2s ease-in-out infinite;
 }
 
@@ -364,10 +362,9 @@ body::after {
 .panel {
   display: flex;
   flex-direction: column;
-  background: var(--glass-bg);
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  border: 1px solid var(--border);
+  /* Aplot: flat surface, no backdrop blur. */
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius);
   overflow: hidden;
   min-height: 0;
@@ -780,28 +777,30 @@ body::after {
 
 .chat-msg {
   padding: 10px 14px;
-  border-radius: var(--radius-sm);
+  border-radius: 18px;
   font-size: var(--fs-base);
   line-height: var(--lh-base);
   max-width: 82%;
   word-wrap: break-word;
-  animation: msg-slide-in 250ms var(--ease-out) both;
+  animation: msg-slide-in 300ms var(--ease-out) both;
 }
 
 .chat-msg-user {
-  background: linear-gradient(135deg, var(--accent), #5558e6);
+  /* Aplot: flat accent fill, no gradient, no glow; one tight corner. */
+  background: var(--accent);
   color: #fff;
   align-self: flex-end;
-  border-bottom-right-radius: 3px;
-  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.2);
+  border-bottom-right-radius: var(--radius-drop);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
 }
 
 .chat-msg-assistant {
-  background: var(--surface-3);
+  /* Aplot: transparent bubble, hairline border. */
+  background: transparent;
   color: var(--text);
   align-self: flex-start;
-  border-bottom-left-radius: 3px;
   border: 1px solid var(--border-subtle);
+  border-bottom-left-radius: var(--radius-drop);
 }
 
 .chat-msg-system {
@@ -901,17 +900,17 @@ body::after {
 
 /* Idle */
 .brain-idle                      { border-left: 3px solid var(--green); }
-.brain-idle .brain-indicator     { background: var(--green);  box-shadow: 0 0 6px var(--green-mid); }
+.brain-idle .brain-indicator     { background: var(--green); }
 .brain-idle .brain-status-badge  { background: var(--green-soft); color: var(--green); }
 
 /* Busy */
 .brain-busy                      { border-left: 3px solid var(--yellow); animation: brain-busy-bg 2s ease-in-out infinite; }
-.brain-busy .brain-indicator     { background: var(--yellow); box-shadow: 0 0 6px var(--yellow-mid); animation: indicator-pulse 1.2s ease-in-out infinite; }
+.brain-busy .brain-indicator     { background: var(--yellow); animation: indicator-pulse 1.2s ease-in-out infinite; }
 .brain-busy .brain-status-badge  { background: var(--yellow-soft); color: var(--yellow); }
 
 /* Error */
 .brain-error                     { border-left: 3px solid var(--red); }
-.brain-error .brain-indicator    { background: var(--red);    box-shadow: 0 0 6px var(--red-mid); }
+.brain-error .brain-indicator    { background: var(--red); }
 .brain-error .brain-status-badge { background: var(--red-soft); color: var(--red); }
 
 @keyframes brain-busy-bg {
@@ -1530,21 +1529,21 @@ a.research-source-link .research-source-title { color: var(--accent-light); }
 /* 25. Provider settings dialog (Phase 3/4 connection buttons) */
 
 .settings-btn {
-  background: transparent;
-  color: var(--text-secondary, #9ca3af);
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
-  border-radius: 8px;
+  background: var(--surface-3);
+  color: var(--text-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
   padding: 4px 10px;
   cursor: pointer;
   font-size: 12px;
 }
-.settings-btn:hover { color: var(--text-primary, #fff); }
+.settings-btn:hover { color: var(--text); }
 
 .settings-dialog {
-  background: var(--bg-panel, rgba(20, 20, 30, 0.95));
-  color: var(--text-primary, #fff);
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
-  border-radius: 12px;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
   padding: 24px;
   min-width: 380px;
   max-width: 480px;
@@ -1559,8 +1558,8 @@ a.research-source-link .research-source-title { color: var(--accent-light); }
   font-size: 12px;
 }
 .settings-models li { padding: 3px 0; }
-.settings-models .available { color: #86efac; }
-.settings-models .unavailable { color: var(--text-secondary, #9ca3af); }
+.settings-models .available { color: var(--green); }
+.settings-models .unavailable { color: var(--text-muted); }
 
 .settings-row {
   display: flex;
@@ -1569,73 +1568,18 @@ a.research-source-link .research-source-title { color: var(--accent-light); }
   margin: 10px 0;
 }
 .settings-row button {
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.2));
-  background: var(--accent, #6366f1);
+  border: 1px solid var(--border-subtle);
+  background: var(--accent);
   color: #fff;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   padding: 6px 12px;
   cursor: pointer;
   font-size: 13px;
 }
-.settings-status { font-size: 12px; color: var(--text-secondary, #9ca3af); }
-.settings-usage { font-size: 12px; color: var(--text-secondary, #9ca3af); }
+.settings-status { font-size: 12px; color: var(--text-2); }
+.settings-usage { font-size: 12px; color: var(--text-2); }
 
-/* 26. Fluid background — slow-moving contour lines and water blobs.
-   Pure CSS: no canvas, no deps. Everything respects prefers-reduced-motion. */
-
-#fluid-bg {
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  overflow: hidden;
-  pointer-events: none;
-}
-
-#fluid-bg .blob {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(90px);
-  opacity: 0.16;
-  animation: blob-drift 46s ease-in-out infinite alternate;
-}
-#fluid-bg .blob-1 { width: 55vmax; height: 55vmax; left: -18vmax; top: -22vmax;
-  background: radial-gradient(circle at 30% 30%, #0d4d5c, transparent 70%); }
-#fluid-bg .blob-2 { width: 42vmax; height: 42vmax; right: -14vmax; bottom: -18vmax;
-  background: radial-gradient(circle at 60% 40%, #0a3550, transparent 70%);
-  animation-duration: 58s; animation-delay: -12s; }
-#fluid-bg .blob-3 { width: 30vmax; height: 30vmax; left: 34vw; bottom: -14vmax;
-  background: radial-gradient(circle at 50% 50%, #124a52, transparent 70%);
-  animation-duration: 39s; animation-delay: -20s; opacity: 0.10; }
-
-@keyframes blob-drift {
-  0%   { transform: translate(0, 0) scale(1); }
-  50%  { transform: translate(4vmax, -3vmax) scale(1.08); }
-  100% { transform: translate(-3vmax, 2vmax) scale(0.95); }
-}
-
-#fluid-bg svg.contours {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  opacity: 0.35;
-}
-#fluid-bg svg.contours path {
-  fill: none;
-  stroke: rgba(148, 210, 255, 0.10);
-  stroke-width: 1;
-  stroke-dasharray: 6 10;
-  animation: contour-flow 60s linear infinite;
-}
-@keyframes contour-flow {
-  to { stroke-dashoffset: -1600; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  #fluid-bg .blob, #fluid-bg svg.contours path { animation: none; }
-}
-
-/* 27. Morph toast — non-blocking error surface (Phase 6). */
+/* 26. Morph toast — non-blocking error surface (Phase 6). */
 
 .morph-toast {
   position: fixed;
@@ -1648,8 +1592,8 @@ a.research-source-link .research-source-title { color: var(--accent-light); }
   font-size: 12.5px;
   color: var(--text);
   background: var(--surface-2);
-  border: 1px solid var(--border);
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--border-subtle);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
   animation: toast-rise 0.4s var(--ease-out);
 }
 .morph-toast.error { border-color: rgba(239, 68, 68, 0.4); color: #fca5a5; }
