@@ -60,6 +60,9 @@ class FrontBrain:
         self._running = False
         self._current_conversation_id: Optional[str] = None
         self._conversation_history: List[Dict[str, str]] = []
+        # Set by the stop button (chat.cancel): the current LLM stream
+        # breaks at the next delta and returns what it already has.
+        self._stop_requested = False
         
         # Brain registry for system prompt
         self._registered_brains: Dict[str, str] = {}
@@ -70,6 +73,14 @@ class FrontBrain:
     def register_brain(self, name: str, description: str) -> None:
         """Register a brain so the Front Brain knows how to delegate."""
         self._registered_brains[name] = description
+
+    def request_stop(self) -> None:
+        """Ask the current LLM stream to stop at the next delta.
+
+        The partial reply is kept: the stream loop breaks and the caller
+        broadcasts chat.done with whatever was already emitted.
+        """
+        self._stop_requested = True
     
     async def start(self) -> None:
         """Start the Front Brain and register with message bus."""
@@ -167,6 +178,15 @@ class FrontBrain:
         
         return response
     
+    def _current_project(self) -> str | None:
+        """The selected working project, if any (and if web is loaded)."""
+        try:
+            from ..web.fs_api import get_current_project
+
+            return get_current_project()
+        except Exception:
+            return None
+
     async def _llm_respond(self, input_text: str) -> str:
         """Generate response using the real LLM with full conversation context.
         
@@ -178,19 +198,64 @@ class FrontBrain:
         system_prompt = self._build_system_prompt(focus_status)
         
         messages = [{"role": "system", "content": system_prompt}]
+
+        # Project context: the chat knows which project the user works in;
+        # generated files land there (the pool's work_dir follows it too).
+        project = self._current_project()
+        if project:
+            messages.append({"role": "system", "content": (
+                f"Current project: '{project}'. The user is working inside "
+                f"the project directory '{project}/' of the workspace. "
+                f"File operations and generated code belong in this project."
+            )})
+        else:
+            messages.append({"role": "system", "content": (
+                "No project selected. Generated files land in the 'sandbox' "
+                "scratch project. For anything beyond quick experiments, "
+                "suggest the user create or select a project."
+            )})
         
         # Add conversation history (keep last 20 turns for context)
         history = self._conversation_history[-20:]
         messages.extend(history)
         
         try:
-            response = await self.llm_provider.chat_complete(
+            # STREAMING: consume the provider's delta stream and broadcast
+            # each chunk as chat.delta — the UI shows the reply live.
+            # Gate: if the model starts emitting delegation JSON, stop
+            # streaming (raw JSON has no business in the chat).
+            result = await self.llm_provider.chat_complete(
                 messages=messages,
-                stream=False
+                stream=True,
             )
-            
+            self._stop_requested = False
+            if hasattr(result, "__aiter__"):
+                parts: list[str] = []
+                emitting = False
+                async for delta in result:
+                    if self._stop_requested:
+                        break
+                    if not delta:
+                        continue
+                    parts.append(delta)
+                    if not emitting:
+                        # Decide once, from the first non-space content.
+                        head = "".join(parts).lstrip()[:8]
+                        looks_like_json = head.startswith("{") or head.startswith("```json")
+                        if looks_like_json:
+                            emitting = False
+                            continue
+                        emitting = True
+                    if emitting:
+                        await self._emit_chat_delta(delta)
+                response = "".join(parts)
+                self._last_response_streamed = emitting
+            else:
+                response = str(result)
+                self._last_response_streamed = False
             return response
         except Exception as e:
+            self._last_response_streamed = False
             return f"I encountered an error processing your request: {e}"
     
     # _execute_code_direct REMOVED — Front Brain must never execute code.
@@ -397,8 +462,13 @@ Type 'quit' or 'exit' to stop."""
                     priority=Priority.NORMAL,
                 )
             else:
-                # Plain text response — send to chat
-                await self._emit_chat_message("assistant", response)
+                # Plain text response — send to chat. If the reply was
+                # already streamed (chat.delta), signal completion only:
+                # re-sending the full text would duplicate the bubble.
+                if getattr(self, "_last_response_streamed", False):
+                    await self._emit_chat_done(response)
+                else:
+                    await self._emit_chat_message("assistant", response)
             
         except Exception as e:
             import traceback
@@ -522,6 +592,25 @@ Type 'quit' or 'exit' to stop."""
             else:
                 return "✅ Done — check the workspace tab for details."
         return "✅ Done."
+
+    async def _emit_chat_delta(self, delta: str) -> None:
+        """Stream one text chunk to the UI (chat.delta events)."""
+        await self.bus.broadcast_event(
+            source=self.name,
+            event_type="chat.delta",
+            payload={"delta": delta},
+            priority=Priority.NORMAL,
+        )
+
+    async def _emit_chat_done(self, text: str = "") -> None:
+        """End of a streamed reply: the UI finalizes the streaming bubble
+        WITHOUT re-adding the text as a new message (no duplicate)."""
+        await self.bus.broadcast_event(
+            source=self.name,
+            event_type="chat.done",
+            payload={"text": text},
+            priority=Priority.NORMAL,
+        )
 
     async def _emit_chat_message(self, role: str, text: str) -> None:
         """Emit a chat message event on the bus for the Morphable UI."""

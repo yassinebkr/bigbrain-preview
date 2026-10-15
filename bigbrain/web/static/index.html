@@ -32,7 +32,31 @@
         <span class="connection-label">Bus</span>
         <div id="connection-status" class="connection-disconnected" role="status" aria-label="Connection status"></div>
       </div>
+      <button id="settings-btn" class="settings-btn" aria-label="Open provider settings">⚙ Providers</button>
     </header>
+
+    <!-- Provider settings: connection buttons (Codex / Mistral pipelines) -->
+    <dialog id="settings-dialog" class="settings-dialog">
+      <h2>Providers</h2>
+      <ul id="settings-models" class="settings-models"></ul>
+      <div class="settings-row">
+        <button id="codex-login-btn">Connect with ChatGPT</button>
+        <span id="codex-status" class="settings-status"></span>
+      </div>
+      <div class="settings-row">
+        <button id="mistral-login-btn">Connect with Mistral</button>
+        <span id="mistral-status" class="settings-status"></span>
+      </div>
+      <div class="settings-row settings-usage">
+        <span id="usage-summary"></span>
+      </div>
+      <div class="settings-row">
+        <button id="settings-close-btn">Close</button>
+      </div>
+    </dialog>
+
+    <!-- Aplot AI typography (Plus Jakarta Sans + JetBrains Mono) -->
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet" />
 
     <!-- Panel grid -->
     <main id="grid-container"></main>
@@ -58,5 +82,15 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-css.min.js"></script>
 
   <script type="module" src="/static/app.js?v=20260327b"></script>
+  <script type="module" src="/static/settings.js?v=20260327b"></script>
+  <!-- Replayable morph gate: add ?demo=morph to the URL (Phase 6.4) -->
+  <script>
+    if (location.search.includes('demo=morph')) {
+      const s = document.createElement('script');
+      s.type = 'module';
+      s.src = '/static/demo-morph.js';
+      document.head.appendChild(s);
+    }
+  </script>
 </body>
 </html>

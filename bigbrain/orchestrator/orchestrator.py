@@ -183,6 +183,7 @@ CRITICAL RULES:
 - Use dependencies to enforce ordering when one subtask needs another's output
 - For simple code tasks: 1 subtask to python_brain
 - The "type" field in payload should be "generate_and_execute" for code tasks, "research" for research tasks
+- To RUN an existing file (e.g. "run hello.py"), use type "run_file" with payload {{"type": "run_file", "file": "hello.py"}} — the file must already exist in the project
 - If research is needed, add a researcher subtask BEFORE the coding subtask with a dependency
 
 Respond with ONLY a JSON array. No explanation, no markdown fences.
@@ -896,23 +897,48 @@ Example — research then code:
         raise ValueError(f"Could not parse plan JSON from LLM output: {text[:200]}")
 
     def _simple_decompose(self, plan_id: str, task_data: dict) -> List[SubTask]:
-        """Fallback: simple deterministic task routing (no LLM needed)."""
+        """Fallback: simple deterministic task routing (no LLM needed).
+
+        Compound or unknown types must NOT be forwarded raw — brains reject
+        what they don't know ('Unknown task type: compound'). Convert them
+        to a generate_and_execute request the python brain handles.
+        """
         task_type = task_data.get("type", "unknown")
         
         brain_map = {
             "execute_code": "python_brain",
             "generate_and_execute": "python_brain",
+            "run_file": "python_brain",
             "research": "researcher",
             "web_search": "researcher",
         }
         
-        target = brain_map.get(task_type, self._choose_brain_for_task(task_type))
+        if task_type in brain_map:
+            target = brain_map[task_type]
+            payload = task_data
+        else:
+            # Compound / unknown: let the python brain generate + run code
+            # from the natural-language request instead of crashing.
+            request = (
+                task_data.get("user_request")
+                or task_data.get("request")
+                or task_data.get("query")
+                or task_data.get("description")
+                or str(task_data)
+            )
+            target = "python_brain"
+            payload = {
+                "type": "generate_and_execute",
+                "user_request": request,
+                "description": request[:120],
+                "reply_to_ui": task_data.get("reply_to_ui", False),
+            }
         
         return [SubTask(
             id=f"{plan_id}_s0",
-            description=f"Execute {task_type} task",
+            description=f"Execute {payload.get('type', task_type)} task",
             brain_target=target,
-            payload=task_data,
+            payload=payload,
         )]
 
     def _choose_brain_for_task(self, task_type: str) -> str:
@@ -1395,7 +1421,19 @@ Example — research then code:
             # Extract learnings from the completed plan
             await self._extract_learnings(plan)
             
-            # Announce plan completion
+            # Announce plan completion. On failure, carry the real error
+            # detail — the UI surfaces it in the chat instead of a bare
+            # "Task failed" with no cause.
+            fail_payload = {}
+            if plan.status == TaskStatus.FAILED:
+                failed_subtasks = [st for st in plan.subtasks if st.status == TaskStatus.FAILED]
+                fail_payload = {
+                    "error": plan.error or "Unknown error",
+                    "failed_subtasks": [
+                        {"id": st.id, "error": st.error or "Unknown error"}
+                        for st in failed_subtasks
+                    ][:3],
+                }
             await self.bus.broadcast_event(
                 source=self.name,
                 event_type="task.complete" if plan.status == TaskStatus.COMPLETE else "task.failed",
@@ -1403,7 +1441,8 @@ Example — research then code:
                     "task_id": plan.id,
                     "status": plan.status.value,
                     "workspace": self.workspace,
-                    "subtasks_total": len(plan.subtasks)
+                    "subtasks_total": len(plan.subtasks),
+                    **fail_payload,
                 },
                 workspace=self.workspace,
                 priority=Priority.NORMAL

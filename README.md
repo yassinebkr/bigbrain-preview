@@ -30,6 +30,13 @@ BIGBRAIN_MODEL=anthropic/claude-opus-4-6
 BIGBRAIN_FRONT_MODEL=anthropic/claude-opus-4-6
 BIGBRAIN_CODE_MODEL=anthropic/claude-sonnet-4-20250514
 
+# Registry providers (docs/MODELS.md):
+# OpenRouter — one key unlocks kimi k3, gpt sol, opus 5.5, k2.7-code, luna
+# OPENROUTER_API_KEY=sk-or-v1-...
+# MISTRAL_API_KEY (set automatically by the Connect-with-Mistral button)
+# KIMI_API_KEY (direct coding endpoint)
+# BIGBRAIN_PROVIDER=codex-chatgpt  # force a registry provider
+
 # Voice (optional)
 DEEPGRAM_API_KEY=dg-...
 CARTESIA_API_KEY=sk-cart-...
@@ -225,6 +232,13 @@ python -m bigbrain --web --web-port 3007
 Opens the Morphable UI web interface. Access at `http://localhost:3007`.
 
 Set `BIGBRAIN_WEB_PASSWORD` env var to enable Basic Auth.
+
+The `⚙ Providers` button opens the settings panel: model availability
+(OpenRouter / Mistral / Kimi / Codex / Claude), a **Connect with ChatGPT**
+button (codex subscription OAuth — the server opens the login URL and
+codex stores the credentials), a **Connect with Mistral** button (browser
+PKCE wizard), and the live token/cost ledger. See [docs/AUTH.md](docs/AUTH.md)
+and [docs/MODELS.md](docs/MODELS.md).
 
 ### Interactive Mode (TUI)
 ```bash

@@ -336,14 +336,61 @@ class TestPythonBrain:
                 "code": "print('Hello, BigBrain!')"
             }
         )
-        
+
         result = await python_brain.handle_task(task_message)
-        
+
         assert result["success"] is True
         assert result["exit_code"] == 0
         assert "Hello, BigBrain!" in result["stdout"]
         assert result["stderr"] == ""
         assert not result["timed_out"]
+
+    @pytest.mark.asyncio
+    async def test_run_file_executes_existing_file(self, python_brain, temp_work_dir):
+        """run_file executes what is on disk — no generation."""
+        (temp_work_dir / "hello.py").write_text("print('from disk')")
+
+        task_message = BusMessage(
+            type=MessageType.TASK,
+            source="orchestrator",
+            target="test_python_brain",
+            payload={"type": "run_file", "file": "hello.py"},
+        )
+
+        result = await python_brain.handle_task(task_message)
+
+        assert result["success"] is True
+        assert result["exit_code"] == 0
+        assert "from disk" in result["stdout"]
+        assert result["file"] == "hello.py"
+
+    @pytest.mark.asyncio
+    async def test_run_file_missing_file(self, python_brain):
+        """run_file on a missing file fails with a clear error."""
+        task_message = BusMessage(
+            type=MessageType.TASK,
+            source="orchestrator",
+            target="test_python_brain",
+            payload={"type": "run_file", "file": "nope.py"},
+        )
+
+        result = await python_brain.handle_task(task_message)
+
+        assert result["success"] is False
+        assert "not found" in result["stderr"].lower()
+
+    @pytest.mark.asyncio
+    async def test_run_file_rejects_path_traversal(self, python_brain):
+        """run_file only accepts plain filenames inside the work_dir."""
+        task_message = BusMessage(
+            type=MessageType.TASK,
+            source="orchestrator",
+            target="test_python_brain",
+            payload={"type": "run_file", "file": "../escape.py"},
+        )
+
+        with pytest.raises(ValueError):
+            await python_brain.handle_task(task_message)
     
     @pytest.mark.asyncio
     async def test_code_with_error(self, python_brain):
@@ -579,3 +626,88 @@ print("Cross-platform test successful")
         assert result["success"] is True
         assert "Cross-platform test successful" in result["stdout"]
         assert "Python executable:" in result["stdout"]
+
+# ================================================================
+# WORKSPACE WRITE NOTIFICATION (agent files visible in the web UI)
+# ================================================================
+
+
+class TestWorkspaceWriteNotify:
+    @pytest.mark.asyncio
+    async def test_write_and_notify_emits_event(self, tmp_path, monkeypatch):
+        """Agent writes inside the workspace root emit workspace.file_written."""
+        import asyncio
+        from bigbrain.brains.python_brain import PythonBrain
+        from bigbrain.bus.bus import MessageBus
+
+        monkeypatch.setenv("BIGBRAIN_WORKSPACE_DIR", str(tmp_path / "ws"))
+        bus = MessageBus(auth=None)
+        captured = []
+        bus.subscribe("*", lambda msg: captured.append(msg))
+
+        brain = PythonBrain(name="python_brain_test", bus=bus, workspace="default",
+                            work_dir=tmp_path / "ws" / "python")
+
+        await brain._write_and_notify(
+            tmp_path / "ws" / "python" / "gen" / "main.py", "print('hi')\n"
+        )
+
+        # File written.
+        assert (tmp_path / "ws" / "python" / "gen" / "main.py").read_text() == "print('hi')\n"
+        # Event emitted with the workspace-relative path.
+        events = [m for m in captured
+                  if (m.payload or {}).get("event") == "workspace.file_written"]
+        assert len(events) == 1
+        assert events[0].payload["path"] == "python/gen/main.py"
+        assert events[0].payload["brain"] == "python_brain_test"
+
+    @pytest.mark.asyncio
+    async def test_write_outside_workspace_no_event(self, tmp_path, monkeypatch):
+        """Writes outside the shared workspace stay silent (not UI-visible)."""
+        from bigbrain.brains.python_brain import PythonBrain
+        from bigbrain.bus.bus import MessageBus
+
+        monkeypatch.setenv("BIGBRAIN_WORKSPACE_DIR", str(tmp_path / "ws"))
+        bus = MessageBus(auth=None)
+        captured = []
+        bus.subscribe("*", lambda msg: captured.append(msg))
+        brain = PythonBrain(name="python_brain_test", bus=bus, workspace="default")
+
+        await brain._write_and_notify(tmp_path / "elsewhere" / "x.py", "x")
+        assert (tmp_path / "elsewhere" / "x.py").exists()
+        assert not any(
+            (m.payload or {}).get("event") == "workspace.file_written" for m in captured
+        )
+
+
+class TestRequestedFilename:
+    @pytest.mark.asyncio
+    async def test_generated_script_saved_under_requested_name(self, tmp_path, monkeypatch):
+        """'crée un script hello.py' → workspace/hello.py exists with the code."""
+        from bigbrain.brains.python_brain import PythonBrain
+        from bigbrain.bus.bus import MessageBus
+
+        monkeypatch.setenv("BIGBRAIN_WORKSPACE_DIR", str(tmp_path / "ws"))
+        bus = MessageBus(auth=None)
+        brain = PythonBrain(name="py_test", bus=bus, workspace="default",
+                            work_dir=tmp_path / "ws" / "python")
+        saved = await brain._persist_requested_file(
+            "crée un script hello.py qui affiche bonjour", "print('bonjour')\n"
+        )
+        assert saved == "hello.py"
+        written = (tmp_path / "ws" / "python" / "hello.py").read_text()
+        assert written == "print('bonjour')\n"
+
+    @pytest.mark.asyncio
+    async def test_no_filename_in_request_means_no_file(self, tmp_path, monkeypatch):
+        from bigbrain.brains.python_brain import PythonBrain
+        from bigbrain.bus.bus import MessageBus
+
+        monkeypatch.setenv("BIGBRAIN_WORKSPACE_DIR", str(tmp_path / "ws"))
+        bus = MessageBus(auth=None)
+        brain = PythonBrain(name="py_test", bus=bus, workspace="default",
+                            work_dir=tmp_path / "ws" / "python")
+        saved = await brain._persist_requested_file("fais un calcul rapide", "x=1")
+        assert saved is None
+        assert not (tmp_path / "ws" / "python").exists() or \
+            not any((tmp_path / "ws" / "python").iterdir())

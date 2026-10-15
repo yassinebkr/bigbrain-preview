@@ -31,6 +31,23 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
+# Aplot-based React UI build output (web-ui/; see docs/WEBUI-APLOT-PORT.md).
+WEBUI_DIST = Path(__file__).resolve().parents[2] / "web-ui" / "dist"
+
+# Runtime provider-reload hook, set by BigBrainSystem when it wires the
+# web server (keeps WebServer free of a system dependency). Mirrored on the
+# class for convenient access in tests.
+PROVIDER_RELOAD_HOOK = None
+
+# Set when a working project is selected — re-targets agent writes.
+PROJECT_CHANGE_HOOK = None
+
+# Set when a plugin is toggled — applies the change at runtime where feasible.
+PLUGINS_CHANGE_HOOK = None
+
+# Set when the user hits Stop — cancels the front brain stream and the
+# running orchestrated task (chat.cancel frame). Async hook.
+CANCEL_HOOK = None
 
 
 class WebServer:
@@ -85,7 +102,14 @@ class WebServer:
             "subtask.started", "subtask.complete", "subtask.failed",
             "brain.started", "brain.complete",
             "chat.message",  # Front brain summary / chat responses
+            "chat.done",    # Final text of a streamed reply
+            # NOTE: chat.delta is deliberately absent — transient chunks.
         }
+
+        # Chat history for the Aplot UI (chat.history req/res + reconnect).
+        self._chat_history: list = []  # [{id, role, text, timestamp}]
+        self._chat_history_max = 200
+        self._chat_id_counter = 0
 
     async def start(self) -> None:
         """Start the web server."""
@@ -191,16 +215,209 @@ class WebServer:
 
     def _setup_routes(self) -> None:
         """Configure HTTP routes."""
-        self._app.router.add_get("/", self._handle_index)
+        self._app.router.add_get("/", self._handle_root)
         self._app.router.add_get("/ws", self._handle_websocket)
         self._app.router.add_get("/api/focus", self._handle_focus_get)
         self._app.router.add_post("/api/focus", self._handle_focus_set)
         self._app.router.add_get("/api/status", self._handle_status)
         self._app.router.add_get("/api/preview-logs", self._handle_preview_logs)
 
+        # Provider registry + connection pipelines (Phase 3/4):
+        # the settings "buttons" poll these endpoints.
+        self._app.router.add_get("/api/models", self._handle_models)
+        self._app.router.add_get("/api/usage", self._handle_usage)
+        self._app.router.add_get("/api/auth/codex/status", self._handle_codex_status)
+        self._app.router.add_post("/api/auth/codex/login", self._handle_codex_login)
+        self._app.router.add_post("/api/auth/mistral/start", self._handle_mistral_start)
+        self._app.router.add_get("/api/auth/mistral/poll", self._handle_mistral_poll)
+        self._app.router.add_post("/api/auth/mistral/complete", self._handle_mistral_complete)
+
         # Static files (JS, CSS, images) — with no-cache for dev
         if STATIC_DIR.exists():
             self._app.router.add_get("/static/{filename:.+}", self._handle_static)
+
+        # Aplot React UI build (web-ui/dist): assets + root public files
+        # (robot-icon.png, robot-mascot.png…); the root route (_handle_root)
+        # serves its index when the build exists.
+        if WEBUI_DIST.exists():
+            self._app.router.add_get("/assets/{filename:.+}", self._handle_webui_asset)
+            self._app.router.add_get("/{filename}", self._handle_webui_public)
+
+        # Real workspace filesystem API (replaces the UI's mock file tree).
+        from .fs_api import setup_fs_routes
+        setup_fs_routes(self._app)
+
+        # Per-role model lineup (the top-left dropdown) + OpenRouter key.
+        self._app.router.add_get("/api/models/roles", self._handle_model_roles)
+        self._app.router.add_post("/api/models/roles", self._handle_model_role_set)
+        self._app.router.add_post("/api/auth/openrouter/key", self._handle_openrouter_key)
+        self._app.router.add_post("/api/system/reload-provider", self._handle_reload_provider)
+        self._app.router.add_get("/api/fs/current-project", self._handle_current_project_get)
+        self._app.router.add_post("/api/fs/current-project", self._handle_current_project_set)
+        self._app.router.add_get("/api/plugins", self._handle_plugins)
+        self._app.router.add_post("/api/plugins/toggle", self._handle_plugin_toggle)
+
+    async def _handle_models(self, request: web.Request) -> web.Response:
+        """List registry models with TRUTHFUL availability (no secrets).
+
+        Availability is the free-probe health (60s cache), not mere env-key
+        presence — a stale or invalid key must not show a green pill.
+        """
+        from ..llm import model_registry
+        from ..llm.model_registry import list_models
+
+        health = await model_registry.verify_all()
+        models = list_models()
+        for model in models:
+            model["available"] = health.get(model["key"]) == "ok"
+            model["health"] = health.get(model["key"], "unknown")
+        return web.json_response({"models": models})
+
+    async def _handle_usage(self, request: web.Request) -> web.Response:
+        """Aggregate token/cost ledger (Phase 5) — no message content."""
+        from ..llm.usage import get_tracker
+
+        return web.json_response(get_tracker().totals())
+
+    async def _handle_reload_provider(self, request: web.Request) -> web.Response:
+        """Rebuild the LLM provider at runtime (after connecting a key).
+
+        Without this, keys added at runtime never reach the chat — the
+        provider is built once at system start. The system registers the
+        reload hook when it wires the web server.
+        """
+        from ..llm import model_registry
+
+        hook = PROVIDER_RELOAD_HOOK
+        if hook is None:
+            return web.json_response(
+                {"error": "system not wired for provider reload"}, status=503
+            )
+        result = hook()
+        # Fresh health: the newly connected provider must light up at once.
+        model_registry._health_cache.clear()
+        return web.json_response(result)
+
+    async def _handle_plugins(self, request: web.Request) -> web.Response:
+        """Plugin catalog with live enabled state (docs/BRAIN-PLUGINS.md)."""
+        from ..plugins import list_plugins
+
+        return web.json_response(list_plugins())
+
+    async def _handle_plugin_toggle(self, request: web.Request) -> web.Response:
+        """Enable/disable a brain plugin; the system hook applies it."""
+        from ..plugins import set_enabled
+
+        body = await request.json()
+        try:
+            result = set_enabled(body.get("id", ""), bool(body.get("enabled")))
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        if PLUGINS_CHANGE_HOOK is not None:
+            PLUGINS_CHANGE_HOOK(result["id"], result["enabled"])
+        return web.json_response(result)
+
+    async def _handle_current_project_get(self, request: web.Request) -> web.Response:
+        """The project the chat/agent is currently working in."""
+        from .fs_api import get_current_project
+
+        return web.json_response({"project": get_current_project()})
+
+    async def _handle_current_project_set(self, request: web.Request) -> web.Response:
+        """Select the working project; the system hook re-targets agent
+        writes (python brain work_dir) and the front brain context."""
+        from .fs_api import set_current_project
+
+        body = await request.json()
+        try:
+            result = set_current_project(body.get("project"))
+        except web.HTTPBadRequest as exc:
+            return web.json_response({"error": exc.text}, status=400)
+        if PROJECT_CHANGE_HOOK is not None:
+            PROJECT_CHANGE_HOOK()
+        return web.json_response(result)
+
+    async def _handle_model_roles(self, request: web.Request) -> web.Response:
+        """Current per-role model lineup (front/planner/code/subagent)."""
+        from .model_roles import current_lineup
+
+        return web.json_response({"roles": current_lineup()})
+
+    async def _handle_model_role_set(self, request: web.Request) -> web.Response:
+        """Assign a registry key to a role; persisted + mirrored to env."""
+        from .model_roles import set_role
+
+        body = await request.json()
+        try:
+            result = set_role(body.get("role", ""), body.get("key", ""))
+        except (ValueError, KeyError) as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        return web.json_response(result)
+
+    async def _handle_openrouter_key(self, request: web.Request) -> web.Response:
+        """Connect with OpenRouter (API key): free-probe validate, store, activate.
+
+        The key itself never appears in the response.
+        """
+        from .openrouter_key import OpenRouterKeyError, connect_key
+
+        body = await request.json()
+        try:
+            result = await connect_key(body.get("key", ""))
+        except OpenRouterKeyError as exc:
+            return web.json_response({"error": str(exc)}, status=401)
+        return web.json_response(result)
+
+    async def _handle_codex_status(self, request: web.Request) -> web.Response:
+        """Who is signed in to the codex app-server (poll target)."""
+        from ..llm.codex_provider import codex_auth_status
+
+        return web.json_response(await codex_auth_status())
+
+    async def _handle_codex_login(self, request: web.Request) -> web.Response:
+        """Start the Connect-with-ChatGPT flow; returns the authUrl.
+
+        codex owns the OAuth callback and credential storage (~/.codex);
+        the UI polls /api/auth/codex/status until the account appears.
+        """
+        from ..llm.codex_provider import codex_start_login
+
+        body = await request.json() if request.can_read_body else {}
+        try:
+            result = await codex_start_login(open_browser=body.get("open_browser", True))
+        except Exception as exc:
+            return web.json_response({"error": str(exc)}, status=502)
+        return web.json_response(result)
+
+    async def _handle_mistral_start(self, request: web.Request) -> web.Response:
+        """Start the PKCE browser sign-in; returns the sign_in_url."""
+        from ..auth.mistral_oauth import SetupError, start_browser_sign_in
+
+        try:
+            summary = await start_browser_sign_in()
+        except SetupError as exc:
+            return web.json_response({"error": str(exc)}, status=502)
+        return web.json_response(summary)
+
+    async def _handle_mistral_poll(self, request: web.Request) -> web.Response:
+        """Poll the in-flight browser sign-in once (client sets cadence)."""
+        from ..auth.mistral_oauth import poll_browser_sign_in
+
+        return web.json_response(await poll_browser_sign_in())
+
+    async def _handle_mistral_complete(self, request: web.Request) -> web.Response:
+        """Exchange the completed sign-in for an API key and store it.
+
+        The key never appears in the response — only the stored credential's
+        health (free GET /v1/models probe).
+        """
+        from ..auth.mistral_oauth import SetupError, complete_browser_sign_in
+
+        try:
+            result = await complete_browser_sign_in()
+        except SetupError as exc:
+            return web.json_response({"error": str(exc)}, status=409)
+        return web.json_response(result)
 
     async def _handle_static(self, request: web.Request) -> web.FileResponse:
         """Serve static files with no-cache headers."""
@@ -210,6 +427,45 @@ class WebServer:
             return web.Response(status=404, text="Not found")
         headers = {"Cache-Control": "no-cache, must-revalidate"}
         return web.FileResponse(file_path, headers=headers)
+
+    async def _handle_root(self, request: web.Request) -> web.Response:
+        """Serve the Aplot React build if present, else the legacy page."""
+        dist_index = WEBUI_DIST / "index.html"
+        if dist_index.exists():
+            return web.FileResponse(
+                dist_index,
+                headers={"Cache-Control": "no-cache, must-revalidate"},
+            )
+        return await self._handle_index(request)
+
+    async def _handle_webui_public(self, request: web.Request) -> web.FileResponse:
+        """Serve root-level files from the build (public/: robot images…).
+
+        Registered last-resort for single-segment paths; anything not a real
+        file in dist/ 404s normally.
+        """
+        filename = request.match_info["filename"]
+        if "/" in filename or filename.startswith("."):
+            return web.Response(status=404, text="Not found")
+        file_path = (WEBUI_DIST / filename).resolve()
+        if not str(file_path).startswith(str(WEBUI_DIST.resolve())):
+            return web.Response(status=404, text="Not found")
+        if not file_path.is_file():
+            return web.Response(status=404, text="Not found")
+        return web.FileResponse(file_path, headers={
+            "Cache-Control": "no-cache, must-revalidate",
+        })
+
+    async def _handle_webui_asset(self, request: web.Request) -> web.FileResponse:
+        """Serve built assets from web-ui/dist/assets (immutable hashed files)."""
+        filename = request.match_info["filename"]
+        file_path = (WEBUI_DIST / "assets" / filename).resolve()
+        # Contained path check: no traversal outside dist/assets.
+        if not str(file_path).startswith(str((WEBUI_DIST / "assets").resolve())):
+            return web.Response(status=404, text="Not found")
+        if not file_path.is_file():
+            return web.Response(status=404, text="Not found")
+        return web.FileResponse(file_path)
 
     async def _handle_index(self, request: web.Request) -> web.Response:
         """Serve the main HTML page, injecting WS auth token if auth is enabled."""
@@ -336,6 +592,17 @@ class WebServer:
         self._ws_clients.add(ws)
         logger.info("WebSocket client connected (%d total)", self.client_count)
 
+        # Handshake: the Aplot adapter waits for this before it is
+        # 'connected' (same contract as the Scratchy gateway).
+        await ws.send_json({
+            "type": "welcome",
+            "payload": {
+                "server": "bigbrain",
+                "auth": bool(self._auth_password),
+                "version": "0.1.0",
+            },
+        })
+
         # Send initial state
         await self._send_initial_state(ws)
 
@@ -404,14 +671,41 @@ class WebServer:
         """
         Handle a message from a WebSocket client.
 
-        Messages from the UI are forwarded to the MessageBus.
-        The source is always set to 'morphable_ui' for security.
+        Control frames (Aplot adapter protocol) are answered directly:
+        ping → pong, chat.send → bus task + acks, req chat.history → resp.
+        Everything else is forwarded to the MessageBus with the source
+        forced to 'morphable_ui' (prevents spoofing).
         """
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:
             logger.warning("Invalid JSON from WebSocket client")
             return
+
+        # -- Control frames (never reach the bus) --------------------------
+        if data.get("type") == "ping":
+            await ws.send_json({"type": "pong", "payload": {}})
+            return
+
+        if data.get("type") == "chat.send":
+            await self._handle_chat_send(ws, data)
+            return
+
+        if data.get("type") == "chat.cancel":
+            if CANCEL_HOOK is not None:
+                try:
+                    result = CANCEL_HOOK()
+                    if asyncio.iscoroutine(result):
+                        await result
+                except Exception as e:
+                    logger.warning("chat.cancel hook failed: %s", e)
+            return
+
+        if data.get("type") == "req":
+            await self._handle_request(ws, data)
+            return
+
+        # -- Bus passthrough (legacy protocol) -----------------------------
 
         # Force source to morphable_ui (prevent spoofing)
         data["source"] = "morphable_ui"
@@ -439,6 +733,77 @@ class WebServer:
         )
 
         await self.bus.send(message)
+
+    async def _handle_chat_send(
+        self, ws: web.WebSocketResponse, data: dict
+    ) -> None:
+        """Aplot chat.send: one user message → front brain via the bus.
+
+        Mirrors the legacy UI's frame exactly (task → front_brain with
+        payload.type user_message) and adds the message-status acks the
+        Aplot adapter expects (queued → sent).
+        """
+        payload = data.get("payload") or {}
+        text = (payload.get("text") or "").strip()
+        if not text:
+            return
+        message_id = payload.get("messageId") or data.get("messageId")
+
+        async def ack(status: str) -> None:
+            if not message_id:
+                return
+            await ws.send_json({
+                "type": "message.status",
+                "payload": {"messageId": message_id, "status": status},
+            })
+
+        await ack("queued")
+
+        # History entry for the user's own message (chat.history req/res).
+        self._append_chat_history("user", text)
+
+        from ..bus.message import BusMessage, MessageType, Priority
+
+        await self.bus.send(BusMessage(
+            type=MessageType.TASK,
+            source="morphable_ui",
+            target="front_brain",
+            payload={"type": "user_message", "text": text},
+            priority=Priority.NORMAL,
+        ))
+
+        await ack("sent")
+
+    async def _handle_request(
+        self, ws: web.WebSocketResponse, data: dict
+    ) -> None:
+        """Aplot req/res bridge. Only chat.history is supported today."""
+        request_id = data.get("id")
+        method = data.get("method")
+        if method == "chat.history":
+            await ws.send_json({
+                "type": "resp",
+                "id": request_id,
+                "payload": {"messages": list(self._chat_history)},
+            })
+            return
+        await ws.send_json({
+            "type": "resp",
+            "id": request_id,
+            "error": f"unknown method: {method}",
+        })
+
+    def _append_chat_history(self, role: str, text: str) -> None:
+        """Bounded chat history (chat.history + reconnect catch-up)."""
+        self._chat_id_counter += 1
+        self._chat_history.append({
+            "id": str(self._chat_id_counter),
+            "role": role,
+            "text": text,
+            "timestamp": time.time(),
+        })
+        if len(self._chat_history) > self._chat_history_max:
+            self._chat_history = self._chat_history[-self._chat_history_max:]
 
     # ================================================================
     # BUS → WEBSOCKET BRIDGE
@@ -472,6 +837,21 @@ class WebServer:
         # This ensures events are captured even when no browser is connected,
         # so reconnecting clients get the full replay.
         self._maybe_buffer(msg_type, event, data)
+
+        # Chat history: capture assistant/system messages for chat.history.
+        # chat.done carries the full text of a STREAMED reply (the deltas
+        # themselves are transient and never stored).
+        if event == "chat.done":
+            payload = message.payload or {}
+            text = payload.get("text")
+            if isinstance(text, str) and text.strip():
+                self._append_chat_history("assistant", text)
+        elif event == "chat.message":
+            payload = message.payload or {}
+            role = payload.get("role", "assistant")
+            text = payload.get("text")
+            if isinstance(text, str) and text.strip() and role in ("assistant", "system", "user"):
+                self._append_chat_history(role, text)
 
         if not self._ws_clients:
             return

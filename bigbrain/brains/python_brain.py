@@ -65,6 +65,40 @@ class PythonBrain(BaseBrain):
         
         # Preview server tracking (class-level shared across instances)
         self._preview_process: Optional[asyncio.subprocess.Process] = None
+
+    async def _write_and_notify(self, full_path: Path, content: str) -> None:
+        """Write a file inside the shared workspace and notify the UI.
+
+        All agent file writes land under the workspace root served by the
+        FS API, so they are visible in the web file explorer; the
+        workspace.file_written event lets the explorer auto-refresh.
+        """
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(full_path.write_text, content, encoding="utf-8")
+        await self._notify_workspace_write(full_path)
+
+    async def _notify_workspace_write(self, full_path: Path) -> None:
+        from ..web.fs_api import workspace_root
+
+        try:
+            rel = full_path.relative_to(workspace_root())
+        except ValueError:
+            return  # outside the shared workspace: not UI-visible
+        try:
+            from ..bus.message import BusMessage, MessageType
+
+            await self.bus.send(BusMessage(
+                type=MessageType.EVENT,
+                source=self.name,
+                target="morphable_ui",
+                payload={
+                    "event": "workspace.file_written",
+                    "path": rel.as_posix(),
+                    "brain": self.name,
+                },
+            ))
+        except Exception:
+            pass  # notification must never break the write path
     
     # Port range for preview servers (shared across all PythonBrain instances)
     PREVIEW_PORT_MIN = 3100
@@ -239,6 +273,9 @@ class PythonBrain(BaseBrain):
         elif task_type == "search_project":
             # Search across project files using regex or glob patterns
             return await self._search_project(payload)
+        elif task_type == "run_file":
+            # Execute an EXISTING file from the work_dir (no generation)
+            return await self._run_existing_file(payload)
         elif task_type == "execute_code":
             code = payload.get("code")
             if not code:
@@ -468,7 +505,7 @@ Rules:
             # Code is good (or non-Python) — write it
             break
 
-        full_path.write_text(code, encoding="utf-8")
+        await self._write_and_notify(full_path, code)
         # NOTE: project files are NOT tracked as temp files — they persist
         # across restarts so preview servers can be restarted and projects
         # can be inspected after completion.
@@ -550,7 +587,7 @@ Rules:
                 full_path.parent.mkdir(parents=True, exist_ok=True)
                 
                 # Use asyncio.to_thread for the actual I/O to avoid blocking
-                await asyncio.to_thread(full_path.write_text, content, encoding="utf-8")
+                await self._write_and_notify(full_path, content)
                 
                 return {
                     "path": file_path,
@@ -765,7 +802,7 @@ Be precise with indentation and whitespace."""
                 }
             
             # Write the updated content
-            full_path.write_text(updated_content, encoding="utf-8")
+            await self._write_and_notify(full_path, updated_content)
             
             diff_summary = f"Applied {len(changes)} change(s): {', '.join(changes[:3])}"
             if len(changes) > 3:
@@ -836,7 +873,7 @@ Rules:
                 }
             
             # Write the new content
-            full_path.write_text(new_content, encoding="utf-8")
+            await self._write_and_notify(full_path, new_content)
             
             return {
                 "success": True,
@@ -857,7 +894,80 @@ Rules:
                 "method": "rewrite",
                 "stdout": "", "stderr": str(e), "exit_code": -1
             }
-    
+
+    async def _run_existing_file(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute an existing file from the work_dir — no LLM, no generation.
+
+        "Run hello.py" from the chat must run what is on disk, not
+        regenerate it. The work_dir tracks the selected project (or the
+        sandbox in global mode), so the file runs in the same layout the
+        agent wrote it in.
+        """
+        import time
+
+        filename = str(payload.get("file") or payload.get("filename") or "").strip()
+        if not filename:
+            raise ValueError("No file provided in run_file task")
+        if "/" in filename or "\\" in filename or ".." in filename or filename.startswith("."):
+            raise ValueError("run_file accepts a plain filename inside the project")
+
+        target = self.work_dir / filename
+        timeout = payload.get("timeout", self.timeout)
+        start = time.time()
+
+        if not target.is_file():
+            return {
+                "success": False,
+                "error": f"File not found: {filename}",
+                "stdout": "",
+                "stderr": f"File not found: {filename}",
+                "exit_code": -1,
+                "files_created": [],
+                "execution_time": 0.0,
+                "file": filename,
+            }
+
+        try:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, str(target),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(self.work_dir),
+                env=self._get_execution_env(),
+            )
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(), timeout=timeout
+                )
+                exit_code = process.returncode
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.wait()
+                stdout = b""
+                stderr = f"Execution timed out after {timeout} seconds".encode()
+                exit_code = -1
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "stdout": "",
+                "stderr": str(e),
+                "exit_code": -2,
+                "files_created": [],
+                "execution_time": time.time() - start,
+                "file": filename,
+            }
+
+        return {
+            "success": exit_code == 0,
+            "stdout": stdout.decode(errors="replace"),
+            "stderr": stderr.decode(errors="replace"),
+            "exit_code": exit_code,
+            "files_created": [],
+            "execution_time": time.time() - start,
+            "file": filename,
+        }
+
     async def _search_project(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
         Search across project files using regex or glob patterns.
@@ -1108,7 +1218,7 @@ Rules:
                     try:
                         full_path = project_dir / file_path
                         full_path.parent.mkdir(exist_ok=True, parents=True)
-                        await asyncio.to_thread(full_path.write_text, content, encoding="utf-8")
+                        await self._write_and_notify(full_path, content)
                         return file_path, True
                     except Exception:
                         return file_path, False
@@ -1547,6 +1657,27 @@ Rules:
 
     MAX_RETRIES = 5  # Inner loop iterations before giving up
 
+    async def _persist_requested_file(self, user_request: str, code: str) -> str | None:
+        """Save generated code under the filename the user asked for.
+
+        The execution itself runs in a temp file the user never sees; when
+        the request names a file ("crée un script hello.py"), the code must
+        land at that exact path in the workspace so the claim is true and
+        the explorer shows it (workspace.file_written).
+        """
+        import re
+
+        match = re.search(r"[\w][\w.-]*\.(?:py|json|csv|txt|md|toml|yaml|yml)",
+                          user_request or "")
+        if not match:
+            return None
+        file_name = match.group(0)
+        try:
+            await self._write_and_notify(self.work_dir / file_name, code)
+            return file_name
+        except Exception:
+            return None
+
     async def _generate_and_execute(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Generate code via LLM, execute, and retry on failure (Honk inner loop).
 
@@ -1621,10 +1752,18 @@ Rules:
                 if no_errors and has_output:
                     # Clean success with output
                     result["success"] = True
+                    # Persist the script under the REQUESTED filename (the
+                    # temp execution file is invisible to the user). Extract
+                    # the name from the request ("crée un script hello.py"),
+                    # write it into the workspace and notify the UI.
+                    saved_as = await self._persist_requested_file(user_request, code)
+                    if saved_as:
+                        result["saved_as"] = saved_as
                     await self.send_progress({
                         "stage": "succeeded",
                         "attempt": attempt,
                         "success": True,
+                        **({"saved_as": saved_as} if saved_as else {}),
                     })
                     return result
                 
@@ -2060,8 +2199,13 @@ Output ONLY the corrected file content, no explanation."""
         import time
         start_time = time.time()
         
-        # Create temporary Python file
-        script_file = self.work_dir / f"script_{int(start_time)}.py"
+        # Temp execution scripts live in a hidden .exec/ subfolder of the
+        # work_dir so the user-visible workspace only contains real
+        # generated files (script_<timestamp>.py used to clutter the
+        # project folder — sandbox/, project dirs).
+        exec_dir = self.work_dir / ".exec"
+        exec_dir.mkdir(exist_ok=True)
+        script_file = exec_dir / f"script_{int(start_time)}.py"
         script_file.write_text(code, encoding='utf-8')
         self._temp_files.add(script_file)
         
@@ -2232,6 +2376,12 @@ Output ONLY the corrected file content, no explanation."""
             if self.work_dir.exists():
                 remaining_files = list(self.work_dir.glob("*"))
                 if not remaining_files:
+                    exec_dir = self.work_dir / ".exec"
+                    if exec_dir.is_dir():
+                        try:
+                            exec_dir.rmdir()
+                        except Exception:
+                            pass
                     self.work_dir.rmdir()
                 else:
                     # Log remaining files for debugging
