@@ -19,8 +19,8 @@ export function WelcomeScreen() {
         <ProPlanBanner />
       </div>
 
-      {/* Chat Input */}
-      <div className="w-full px-1">
+      {/* Chat Input — same compact width as the banner above */}
+      <div className="w-full max-w-[720px] px-1">
         <ChatInput />
       </div>
 

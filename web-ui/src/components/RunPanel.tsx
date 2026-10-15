@@ -2,13 +2,14 @@
 // activity pills). Visibility derives from RUN STATE, not from a
 // per-event timer: while a run is in flight the panel is always visible
 // (the old pills blinked on/off every few seconds between sparse
-// events); after the run finishes the collapsed summary lingers a few
-// seconds, unless the user expanded it.
+// events). After the run finishes the summary STAYS (it is the record
+// of what happened — steps, files) until the user closes it or a new
+// run starts.
 //
 // Collapsed: one compact row (status, description, progress, files).
 // Expanded: the plan — subtask steps with their brain and duration,
-// files written (clickable: jumps to the workspace viewer), errors,
-// and a nudge when files landed in sandbox/ with no project selected.
+// files written (clickable: opens the code viewer), errors, and a
+// nudge when files landed in sandbox/ with no project selected.
 
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -22,10 +23,9 @@ import {
   FolderOpen,
   AlertTriangle,
   Ban,
+  X,
 } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
-
-const LINGER_MS = 12_000;
 
 function StatusIcon({ status, size = 13 }: { status: string; size?: number }) {
   if (status === 'running') return <Loader2 size={size} className="animate-spin flex-shrink-0" />;
@@ -67,13 +67,6 @@ export function RunPanel() {
     if (run) setDismissed(false);
   }, [run?.id]);
 
-  // Once the run finishes (and is not expanded), hide the summary later.
-  useEffect(() => {
-    if (!run || run.status === 'running' || expanded) return;
-    const timer = setTimeout(() => setDismissed(true), LINGER_MS);
-    return () => clearTimeout(timer);
-  }, [run?.status, run?.finishedAt, expanded]);
-
   if (!run || dismissed) return null;
 
   const stepsDone = run.steps.filter((s) => s.status !== 'running').length;
@@ -105,16 +98,16 @@ export function RunPanel() {
         transition={{ duration: 0.25, ease: [0, 0, 0.2, 1] }}
         className="px-4 md:px-10 pb-1.5 flex-shrink-0"
       >
-        <div className="max-w-[1200px] mx-auto">
-          {/* Collapsed row — always one stable height, no re-layout */}
-          <button
+        <div className="max-w-[720px] mx-auto">
+          {/* Collapsed row — always one stable height, no re-layout.
+              Width matches the chat input, not the full message column. */}
+          <div
             onClick={() => setExpanded(!expanded)}
             className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-[12px] cursor-pointer"
             style={{
               backgroundColor: 'var(--bg-surface)',
               border: '1px solid var(--border-subtle)',
               color: 'var(--text-secondary)',
-              textAlign: 'left',
             }}
           >
             <span style={{ color: statusColor(run.status) }}>
@@ -132,7 +125,19 @@ export function RunPanel() {
               </span>
             )}
             {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-          </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setDismissed(true);
+              }}
+              className="p-0.5 rounded-md cursor-pointer flex-shrink-0"
+              style={{ color: 'var(--text-tertiary)' }}
+              aria-label="Dismiss"
+              title="Close"
+            >
+              <X size={12} />
+            </button>
+          </div>
 
           {/* Expanded: the plan */}
           <AnimatePresence initial={false}>
