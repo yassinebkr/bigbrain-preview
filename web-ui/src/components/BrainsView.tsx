@@ -12,6 +12,7 @@ const FEED_EVENTS = new Set([
   'task.received', 'task.complete', 'task.failed', 'task.cancelled',
   'subtask.started', 'subtask.complete', 'subtask.failed',
   'brain.started', 'brain.complete', 'brain_status',
+  'verification.run_recorded',
 ]);
 
 function timeOf(ts: number): string {

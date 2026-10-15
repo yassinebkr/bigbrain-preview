@@ -109,6 +109,44 @@ describe('applyRunEvent — run state machine', () => {
     s.applyRunEvent(ev('task.received', { task_id: 't2' }));
     expect(useAppStore.getState().activeRun!.id).toBe('t2');
   });
+
+  it('verification.run_recorded attaches the gate verdict to the run', () => {
+    const s = useAppStore.getState();
+    s.applyRunEvent(ev('task.received', { task_id: 't1' }));
+    s.applyRunEvent(ev('verification.run_recorded', {
+      run_id: 'run-abc', verdict: 'passed', attempt: 1,
+      stages: [
+        { name: 'syntax', status: 'passed' },
+        { name: 'compile', status: 'passed' },
+        { name: 'run', status: 'passed' },
+        { name: 'contracts', status: 'passed' },
+        { name: 'tests', status: 'not_applicable' },
+      ],
+    }));
+    const run = useAppStore.getState().activeRun!;
+    expect(run.verification).toBeDefined();
+    expect(run.verification!.verdict).toBe('passed');
+    expect(run.verification!.runId).toBe('run-abc');
+    expect(run.verification!.stages).toHaveLength(5);
+    expect(run.verification!.stages[4].status).toBe('not_applicable');
+  });
+
+  it('orphan verification events are dropped (no active run)', () => {
+    useAppStore.getState().applyRunEvent(
+      ev('verification.run_recorded', { run_id: 'r', verdict: 'passed' }));
+    expect(useAppStore.getState().activeRun).toBeNull();
+  });
+
+  it('unknown verdicts collapse to inconclusive; bad stages shapes survive', () => {
+    const s = useAppStore.getState();
+    s.applyRunEvent(ev('task.received', { task_id: 't1' }));
+    s.applyRunEvent(ev('verification.run_recorded', {
+      run_id: 'r2', verdict: 'something-else', stages: 'not-an-array',
+    }));
+    const run = useAppStore.getState().activeRun!;
+    expect(run.verification!.verdict).toBe('inconclusive');
+    expect(run.verification!.stages).toEqual([]);
+  });
 });
 
 describe('finalizeStreaming — empty buffer guard', () => {

@@ -104,6 +104,34 @@ class PythonBrain(BaseBrain):
         except Exception:
             pass  # notification must never break the write path
     
+    async def _notify_verification(self, manifest, verdict: str,
+                                   attempt: int | None = None) -> None:
+        """Broadcast the gate verdict to the UI (verification.run_recorded).
+
+        Harness P4: the run panel shows per-stage pills and the verdict;
+        the event must never break the run — broadcast is best effort.
+        """
+        try:
+            from ..bus.message import BusMessage, MessageType
+
+            await self.bus.send(BusMessage(
+                type=MessageType.EVENT,
+                source=self.name,
+                target="morphable_ui",
+                payload={
+                    "event": "verification.run_recorded",
+                    "run_id": manifest.run_id,
+                    "verdict": verdict,
+                    "attempt": attempt,
+                    "stages": [
+                        {"name": s.name, "status": s.status}
+                        for s in manifest.stages
+                    ],
+                },
+            ))
+        except Exception:
+            pass  # the UI surface must never break the run
+
     # Port range for preview servers (shared across all PythonBrain instances)
     PREVIEW_PORT_MIN = 3100
     PREVIEW_PORT_MAX = 3199
@@ -997,6 +1025,7 @@ Rules:
                     "stages": [{"name": s.name, "status": s.status}
                                for s in manifest.stages],
                 }
+                await self._notify_verification(manifest, verdict)
             except Exception:
                 pass  # recording must never break the run
 
@@ -1817,6 +1846,8 @@ Rules:
                             "stages": [{"name": s.name, "status": s.status}
                                        for s in manifest.stages],
                         }
+                        await self._notify_verification(manifest, verdict,
+                                                        attempt=attempt)
                     except Exception as gate_error:
                         verification = {"verdict": None,
                                         "error": str(gate_error)[:200]}

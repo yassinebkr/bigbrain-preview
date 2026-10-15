@@ -22,6 +22,13 @@ export interface RunStep {
   durationMs?: number;
 }
 
+export interface RunVerification {
+  runId: string;
+  verdict: 'passed' | 'failed' | 'inconclusive';
+  attempt?: number;
+  stages: { name: string; status: string }[];
+}
+
 export interface RunState {
   id: string;
   description: string;
@@ -31,6 +38,7 @@ export interface RunState {
   steps: RunStep[];
   files: { path: string; ts: number }[];
   error?: string;
+  verification?: RunVerification;
 }
 
 interface AppState {
@@ -334,6 +342,29 @@ export const useAppStore = create<AppState>()(
             const path = String(d.path);
             if (run.files.some((f) => f.path === path)) return state;
             return { activeRun: { ...run, files: [...run.files, { path, ts: Date.now() }] } };
+          }
+          case 'verification.run_recorded': {
+            // Harness P4: the gate's verdict per attempt, attached to the
+            // live run. An orphan event (no active run) is dropped.
+            if (!run) return state;
+            const verdict = d.verdict === 'passed' || d.verdict === 'failed'
+              ? d.verdict : 'inconclusive';
+            return {
+              activeRun: {
+                ...run,
+                verification: {
+                  runId: String(d.run_id || ''),
+                  verdict,
+                  attempt: typeof d.attempt === 'number' ? d.attempt : undefined,
+                  stages: Array.isArray(d.stages)
+                    ? d.stages.map((s: any) => ({
+                        name: String(s?.name || ''),
+                        status: String(s?.status || ''),
+                      }))
+                    : [],
+                },
+              },
+            };
           }
           case 'task.complete':
           case 'task.failed':

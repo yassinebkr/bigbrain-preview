@@ -26,6 +26,7 @@ import {
   X,
 } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
+import type { RunVerification } from '@/store/appStore';
 
 function StatusIcon({ status, size = 13 }: { status: string; size?: number }) {
   if (status === 'running') return <Loader2 size={size} className="animate-spin flex-shrink-0" />;
@@ -39,6 +40,69 @@ const statusColor = (status: string) =>
   : status === 'done' ? 'var(--success, #34c759)'
   : status === 'cancelled' ? 'var(--text-tertiary)'
   : 'var(--warning, #ff9500)';
+
+// Harness P4 — the gate's verdict, shown as console-style stage pills.
+const STAGE_COLORS: Record<string, string> = {
+  passed: 'var(--success, #34c759)',
+  failed: 'var(--warning, #ff9500)',
+  inconclusive: 'var(--warning, #ff9500)',
+  not_applicable: 'var(--text-tertiary)',
+  skipped: 'var(--text-tertiary)',
+  pending: 'var(--text-tertiary)',
+  running: 'var(--text-tertiary)',
+};
+
+function VerificationChip({ verification }: { verification: RunVerification }) {
+  const label =
+    verification.verdict === 'passed' ? 'verified'
+    : verification.verdict === 'failed' ? 'gate failed'
+    : 'unverified';
+  const color =
+    verification.verdict === 'passed' ? 'var(--success, #34c759)'
+    : verification.verdict === 'failed' ? 'var(--warning, #ff9500)'
+    : 'var(--text-tertiary)';
+  const Icon = verification.verdict === 'passed' ? CheckCircle2 : XCircle;
+  return (
+    <span className="flex items-center gap-1 flex-shrink-0" style={{ color }}>
+      <Icon size={11} />
+      <span>{label}</span>
+      {verification.attempt != null && verification.attempt > 1 && (
+        <span style={{ color: 'var(--text-tertiary)' }}>· try {verification.attempt}</span>
+      )}
+    </span>
+  );
+}
+
+function VerificationSection({ verification }: { verification: RunVerification }) {
+  return (
+    <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+      <span
+        className="text-[10px] uppercase tracking-wide flex-shrink-0"
+        style={{ color: 'var(--text-tertiary)' }}
+      >
+        verification
+      </span>
+      {verification.stages.map((stage) => (
+        <span
+          key={stage.name}
+          className="flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10.5px]"
+          style={{
+            color: STAGE_COLORS[stage.status] || 'var(--text-tertiary)',
+            border: `1px solid ${STAGE_COLORS[stage.status] || 'var(--border-subtle)'}`,
+          }}
+          title={`stage ${stage.name}: ${stage.status}`}
+        >
+          <span
+            aria-hidden
+            className="w-1.5 h-1.5 rounded-full"
+            style={{ backgroundColor: STAGE_COLORS[stage.status] || 'var(--text-tertiary)' }}
+          />
+          {stage.name}
+        </span>
+      ))}
+    </div>
+  );
+}
 
 export function RunPanel() {
   const run = useAppStore((s) => s.activeRun);
@@ -124,6 +188,7 @@ export function RunPanel() {
                 <FileEdit size={11} /> {run.files.length}
               </span>
             )}
+            {run.verification && <VerificationChip verification={run.verification} />}
             {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
             <button
               onClick={(e) => {
@@ -237,6 +302,11 @@ export function RunPanel() {
                     <div className="mt-2 text-[11.5px]" style={{ color: 'var(--warning, #ff9500)' }}>
                       {run.error}
                     </div>
+                  )}
+
+                  {/* Verification — harness gate pills (agent-console style) */}
+                  {run.verification && (
+                    <VerificationSection verification={run.verification} />
                   )}
                 </div>
               </motion.div>

@@ -267,6 +267,25 @@ class TestHonkLoopIntegration:
         spec = repo.load_spec(manifest.design_id, 1)
         assert "hello.py" in spec.contracts[0]
 
+    async def test_verification_event_broadcast_to_ui(
+            self, brain, temp_work_dir, evidence_root, mock_bus):
+        """Harness P4: the gate verdict reaches the UI bus feed."""
+        await brain.handle_task(_task(
+            "crée un script hello.py qui affiche Hello, World!"))
+
+        events = [
+            c.args[0].payload for c in mock_bus.send.call_args_list
+            if getattr(c.args[0], "payload", None)
+            and c.args[0].payload.get("event") == "verification.run_recorded"
+        ]
+        assert len(events) == 1
+        event = events[0]
+        assert event["verdict"] == "passed"
+        assert {s["name"] for s in event["stages"]} == {
+            "syntax", "compile", "run", "contracts", "tests"}
+        assert event["attempt"] == 1
+        assert event["run_id"]
+
     async def test_broken_attempt_then_fix_chains_manifests(
             self, brain, temp_work_dir, evidence_root):
         # First reply is syntactically broken (execution fails), the

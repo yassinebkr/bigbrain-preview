@@ -136,9 +136,19 @@ Intégration :
   chaînage, corpus complet, stdin EOF, boucle infinie bornée.
 - *Done atteint :* un run rejoué produit un diff manifeste vs replay.
 
-### P4 — Surface UI
-- Event `verification.run_recorded` → RunPanel : verdict par étape,
-  artefacts cliquables. Pastilles agent console fpga (backlog).
+### P4 — Surface UI — ✅ FAIT
+- PythonBrain diffuse `verification.run_recorded` sur le bus (target
+  morphable_ui) après chaque évaluation de la gate : {run_id, verdict,
+  attempt, stages[{name,status}]}. Best effort — ne casse jamais le run.
+- Store : `applyRunEvent` attache le verdict au run actif
+  (orphan events droppés, verdicts inconnus → inconclusive, shapes
+  défectueuses survivent) ; persisté avec activeRun.
+- RunPanel : ligne repliée → chip verdict (verified / gate failed /
+  unverified + "· try N") ; déplié → pastilles par stage façon agent
+  console (dot coloré : passed vert, failed/inconclusive orange,
+  not_applicable discret). BrainsView : le verdict entre dans le feed.
+- Tests : +1 backend (broadcast bus), +3 vitest (attach, orphan,
+  dégradation).
 
 ## 6. Non-goals (P1–P3)
 
