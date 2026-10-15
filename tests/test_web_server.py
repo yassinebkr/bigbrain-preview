@@ -766,12 +766,14 @@ class TestWorkspaceProjects:
         run_id = result["verification"]["run_id"]
 
         listed = list_runs(limit=10)
-        assert len(listed["runs"]) == 1
-        entry = listed["runs"][0]
-        assert entry["run_id"] == run_id
-        assert entry["verdict"] == "passed"
-        assert entry["brain"] == "manual-ui"
-        assert any("hello.py" in c for c in entry["contracts"])
+        # Runs are GROUPED by task: one manual run → one task group.
+        assert len(listed["tasks"]) == 1
+        group = listed["tasks"][0]
+        assert group["total"] == 1
+        assert group["last_verdict"] == "passed"
+        assert group["last_run_id"] == run_id
+        assert any("hello.py" in c for c in group["contracts"])
+        assert group["runs"][0]["run_id"] == run_id
 
         detail = run_detail(run_id)
         assert detail["manifest"]["run_id"] == run_id
@@ -782,6 +784,44 @@ class TestWorkspaceProjects:
         from aiohttp import web as aioweb
         with pytest.raises(aioweb.HTTPNotFound):
             run_detail("run-doesnotexist")
+
+    @pytest.mark.asyncio
+    async def test_evidence_groups_honk_attempts_into_one_task(
+            self, tmp_path, monkeypatch):
+        """A task with 3 attempts is ONE group with the history inside."""
+        monkeypatch.setenv("BIGBRAIN_WORKSPACE_DIR", str(tmp_path / "ws"))
+        monkeypatch.setenv("BIGBRAIN_EVIDENCE_ROOT", str(tmp_path / "evidence"))
+        from pathlib import Path as _Path
+
+        from bigbrain.verification.evidence import default_repository
+        from bigbrain.verification.gate import RunGate
+        from bigbrain.web.evidence_api import list_runs
+
+        work_dir = _Path(str(tmp_path / "ws"))
+        work_dir.mkdir(parents=True, exist_ok=True)
+        (work_dir / "hello.py").write_text("print('hi')")
+        gate = RunGate(default_repository())
+        request = "crée hello.py"
+        for attempt in (1, 2, 3):
+            await gate.evaluate_attempt(
+                user_request=request,
+                code="print('hi')",
+                execution={"exit_code": 0, "stdout": "hi\n", "stderr": ""},
+                work_dir=work_dir,
+                requested_file="hello.py",
+                persisted_file="hello.py",
+                attempt=attempt,
+            )
+
+        listed = list_runs()
+        assert len(listed["tasks"]) == 1
+        group = listed["tasks"][0]
+        assert group["total"] == 3
+        assert group["passed"] == 3
+        assert group["last_verdict"] == "passed"
+        # Attempt history is inside, newest first.
+        attempts = [r["attempt"] for r in group["runs"]]
+        assert attempts == [3, 2, 1]
 
     def test_run_file_timeout_is_bounded(self, _ws_root):
         from bigbrain.web import fs_api

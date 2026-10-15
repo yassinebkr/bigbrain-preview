@@ -20,30 +20,61 @@ from ..verification.evidence import default_repository
 MAX_ARTIFACT_BYTES = 100 * 1024
 
 
-def list_runs(limit: int = 20) -> Dict[str, Any]:
-    """Recent terminal + running runs, newest first, contracts included."""
+def list_runs(limit: int = 100) -> Dict[str, Any]:
+    """Runs GROUPED BY TASK (design_id), most recently active first.
+
+    A task with 5 Honk attempts is ONE entry with its attempt history
+    inside — a flat per-attempt list was unreadable. Each group carries
+    the contracts, the verdict of the LATEST attempt, per-verdict counts
+    and the individual run summaries.
+    """
     repo = default_repository()
-    items: List[Dict[str, Any]] = []
+    groups: Dict[str, Dict[str, Any]] = {}
+
     for manifest in repo.iter_manifests():
         spec = repo.load_spec(manifest.design_id, manifest.design_revision)
-        items.append({
+        created_at = manifest.created_at.isoformat() \
+            if hasattr(manifest.created_at, "isoformat") \
+            else str(manifest.created_at)
+        run = {
             "run_id": manifest.run_id,
             "status": manifest.status,
             "verdict": manifest.verdict,
-            "created_at": manifest.created_at.isoformat()
-            if hasattr(manifest.created_at, "isoformat")
-            else str(manifest.created_at),
-            "name": spec.name if spec else manifest.design_id,
-            "user_request": spec.user_request if spec else None,
-            "contracts": list(spec.contracts) if spec else [],
-            "stages": [{"name": s.name, "status": s.status}
-                       for s in manifest.stages],
+            "created_at": created_at,
             "attempt": manifest.metadata.get("attempt"),
             "replay_of": manifest.metadata.get("replay_of"),
             "brain": manifest.toolchain.get("brain"),
+            "stages": [{"name": s.name, "status": s.status}
+                       for s in manifest.stages],
+        }
+        group = groups.get(manifest.design_id)
+        if group is None:
+            group = groups[manifest.design_id] = {
+                "design_id": manifest.design_id,
+                "name": spec.name if spec else manifest.design_id,
+                "user_request": spec.user_request if spec else None,
+                "contracts": list(spec.contracts) if spec else [],
+                "runs": [],
+            }
+        group["runs"].append(run)
+
+    tasks: List[Dict[str, Any]] = []
+    for group in groups.values():
+        runs = sorted(group["runs"], key=lambda r: r["created_at"], reverse=True)
+        latest = runs[0]
+        group.update({
+            "runs": runs,
+            "total": len(runs),
+            "passed": sum(1 for r in runs if r["verdict"] == "passed"),
+            "failed": sum(1 for r in runs if r["verdict"] == "failed"),
+            "last_verdict": latest["verdict"],
+            "last_run_id": latest["run_id"],
+            "last_at": latest["created_at"],
+            "has_replay": any(r["replay_of"] for r in runs),
         })
-    items.sort(key=lambda r: r["created_at"], reverse=True)
-    return {"runs": items[:max(1, min(int(limit), 100))]}
+        tasks.append(group)
+    tasks.sort(key=lambda t: t["last_at"], reverse=True)
+    return {"tasks": tasks[:max(1, min(int(limit), 200))]}
 
 
 def run_detail(run_id: str) -> Dict[str, Any]:
