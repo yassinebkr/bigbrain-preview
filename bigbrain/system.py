@@ -340,7 +340,11 @@ class BigBrainSystem:
         # by worker 1 are visible to worker 0 during assemble_and_run.
         # Each worker still has isolated temp scripts (script_*.py uses unique names).
         python_pool_size = int(os.environ.get("BIGBRAIN_PYTHON_POOL", "3"))
-        shared_work_dir = Path(tempfile.gettempdir()) / "bigbrain_python_pool"
+        # Agent writes live in the shared workspace root (served by the FS
+        # API) so the web UI's file explorer sees them and auto-refreshes
+        # on workspace.file_written events.
+        from .web.fs_api import workspace_root
+        shared_work_dir = workspace_root() / "python"
         shared_work_dir.mkdir(exist_ok=True, parents=True)
         python_pool_names = []
         for i in range(python_pool_size):

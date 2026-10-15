@@ -59,6 +59,7 @@ export default function App() {
 
     connection.on('onAgentActivity', (activity) => {
       useAppStore.getState().addAgentActivity(activity);
+      useAppStore.getState().applyBusActivity(activity);
       // Streaming only while a run is actually in flight. Startup frames
       // (brain.status etc.) must not leave the typing indicator stuck on.
       const runEvents = [

@@ -579,3 +579,55 @@ print("Cross-platform test successful")
         assert result["success"] is True
         assert "Cross-platform test successful" in result["stdout"]
         assert "Python executable:" in result["stdout"]
+
+# ================================================================
+# WORKSPACE WRITE NOTIFICATION (agent files visible in the web UI)
+# ================================================================
+
+
+class TestWorkspaceWriteNotify:
+    @pytest.mark.asyncio
+    async def test_write_and_notify_emits_event(self, tmp_path, monkeypatch):
+        """Agent writes inside the workspace root emit workspace.file_written."""
+        import asyncio
+        from bigbrain.brains.python_brain import PythonBrain
+        from bigbrain.bus.bus import MessageBus
+
+        monkeypatch.setenv("BIGBRAIN_WORKSPACE_DIR", str(tmp_path / "ws"))
+        bus = MessageBus(auth=None)
+        captured = []
+        bus.subscribe("*", lambda msg: captured.append(msg))
+
+        brain = PythonBrain(name="python_brain_test", bus=bus, workspace="default",
+                            work_dir=tmp_path / "ws" / "python")
+
+        await brain._write_and_notify(
+            tmp_path / "ws" / "python" / "gen" / "main.py", "print('hi')\n"
+        )
+
+        # File written.
+        assert (tmp_path / "ws" / "python" / "gen" / "main.py").read_text() == "print('hi')\n"
+        # Event emitted with the workspace-relative path.
+        events = [m for m in captured
+                  if (m.payload or {}).get("event") == "workspace.file_written"]
+        assert len(events) == 1
+        assert events[0].payload["path"] == "python/gen/main.py"
+        assert events[0].payload["brain"] == "python_brain_test"
+
+    @pytest.mark.asyncio
+    async def test_write_outside_workspace_no_event(self, tmp_path, monkeypatch):
+        """Writes outside the shared workspace stay silent (not UI-visible)."""
+        from bigbrain.brains.python_brain import PythonBrain
+        from bigbrain.bus.bus import MessageBus
+
+        monkeypatch.setenv("BIGBRAIN_WORKSPACE_DIR", str(tmp_path / "ws"))
+        bus = MessageBus(auth=None)
+        captured = []
+        bus.subscribe("*", lambda msg: captured.append(msg))
+        brain = PythonBrain(name="python_brain_test", bus=bus, workspace="default")
+
+        await brain._write_and_notify(tmp_path / "elsewhere" / "x.py", "x")
+        assert (tmp_path / "elsewhere" / "x.py").exists()
+        assert not any(
+            (m.payload or {}).get("event") == "workspace.file_written" for m in captured
+        )

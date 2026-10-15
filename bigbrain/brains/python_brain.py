@@ -65,6 +65,40 @@ class PythonBrain(BaseBrain):
         
         # Preview server tracking (class-level shared across instances)
         self._preview_process: Optional[asyncio.subprocess.Process] = None
+
+    async def _write_and_notify(self, full_path: Path, content: str) -> None:
+        """Write a file inside the shared workspace and notify the UI.
+
+        All agent file writes land under the workspace root served by the
+        FS API, so they are visible in the web file explorer; the
+        workspace.file_written event lets the explorer auto-refresh.
+        """
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(full_path.write_text, content, encoding="utf-8")
+        await self._notify_workspace_write(full_path)
+
+    async def _notify_workspace_write(self, full_path: Path) -> None:
+        from ..web.fs_api import workspace_root
+
+        try:
+            rel = full_path.relative_to(workspace_root())
+        except ValueError:
+            return  # outside the shared workspace: not UI-visible
+        try:
+            from ..bus.message import BusMessage, MessageType
+
+            await self.bus.send(BusMessage(
+                type=MessageType.EVENT,
+                source=self.name,
+                target="morphable_ui",
+                payload={
+                    "event": "workspace.file_written",
+                    "path": rel.as_posix(),
+                    "brain": self.name,
+                },
+            ))
+        except Exception:
+            pass  # notification must never break the write path
     
     # Port range for preview servers (shared across all PythonBrain instances)
     PREVIEW_PORT_MIN = 3100
@@ -468,7 +502,7 @@ Rules:
             # Code is good (or non-Python) — write it
             break
 
-        full_path.write_text(code, encoding="utf-8")
+        await self._write_and_notify(full_path, code)
         # NOTE: project files are NOT tracked as temp files — they persist
         # across restarts so preview servers can be restarted and projects
         # can be inspected after completion.
@@ -550,7 +584,7 @@ Rules:
                 full_path.parent.mkdir(parents=True, exist_ok=True)
                 
                 # Use asyncio.to_thread for the actual I/O to avoid blocking
-                await asyncio.to_thread(full_path.write_text, content, encoding="utf-8")
+                await self._write_and_notify(full_path, content)
                 
                 return {
                     "path": file_path,
@@ -765,7 +799,7 @@ Be precise with indentation and whitespace."""
                 }
             
             # Write the updated content
-            full_path.write_text(updated_content, encoding="utf-8")
+            await self._write_and_notify(full_path, updated_content)
             
             diff_summary = f"Applied {len(changes)} change(s): {', '.join(changes[:3])}"
             if len(changes) > 3:
@@ -836,7 +870,7 @@ Rules:
                 }
             
             # Write the new content
-            full_path.write_text(new_content, encoding="utf-8")
+            await self._write_and_notify(full_path, new_content)
             
             return {
                 "success": True,
@@ -1108,7 +1142,7 @@ Rules:
                     try:
                         full_path = project_dir / file_path
                         full_path.parent.mkdir(exist_ok=True, parents=True)
-                        await asyncio.to_thread(full_path.write_text, content, encoding="utf-8")
+                        await self._write_and_notify(full_path, content)
                         return file_path, True
                     except Exception:
                         return file_path, False

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { Message, Attachment, Session, Settings, Theme, View, ConnectionStatus, SidebarPanel, User, CanvasOp, FileItem, Task } from '@/types';
+import type { Message, Attachment, Session, Settings, Theme, View, ConnectionStatus, SidebarPanel, User, CanvasOp, FileItem, Task, TaskStatus } from '@/types';
 import type { ConnectionLike } from '@/lib/connection';
 
 export interface AgentActivity {
@@ -108,6 +108,7 @@ interface AppState {
   addFile: (file: FileItem) => void;
   deleteFile: (id: string) => void;
   addTask: (task: Task) => void;
+  applyBusActivity: (activity: Omit<AgentActivity, 'ts'>) => void;
   updateTask: (id: string, updates: Partial<Task>) => void;
   deleteTask: (id: string) => void;
   workspaceView: 'files' | 'tasks' | 'research';
@@ -290,6 +291,73 @@ export const useAppStore = create<AppState>()(
       addFile: (file) => set((state) => ({ files: [...state.files, file] })),
       deleteFile: (id) => set((state) => ({ files: state.files.filter((f) => f.id !== id) })),
       addTask: (task) => set((state) => ({ tasks: [...state.tasks, task] })),
+
+      // Bus task events (orchestrator) mapped onto the TaskBoard slice —
+      // agent tasks live in the same board as manual ones; drag & drop
+      // still works locally (updateTask overrides).
+      applyBusActivity: (activity) => set((state) => {
+        const d = activity.detail || {};
+        const taskId = d.task_id;
+        if (!taskId) return state;
+        const existing = state.tasks.find((t) => t.id === taskId);
+        const ensure = (status: TaskStatus, title?: string, description?: string): Task => ({
+          id: taskId,
+          title: title || `Task ${taskId}`,
+          description: description || '',
+          status,
+          tags: ['agent'],
+          assignee: 'BigBrain',
+          priority: 'medium',
+          createdAt: Date.now(),
+        });
+        switch (activity.type) {
+          case 'task.received': {
+            if (existing) return state;
+            const task = ensure(
+              'todo',
+              (d.description || `Task ${taskId}`).slice(0, 60),
+              `${d.subtasks_count ?? '?'} subtask(s)`
+            );
+            return { tasks: [...state.tasks, task] };
+          }
+          case 'subtask.started': {
+            const desc = `${d.brain || 'brain'}: ${(d.description || '').slice(0, 80)}`;
+            if (existing) {
+              return {
+                tasks: state.tasks.map((t) =>
+                  t.id === taskId ? { ...t, status: 'in-progress', description: desc } : t
+                ),
+              };
+            }
+            return { tasks: [...state.tasks, ensure('in-progress', undefined, desc)] };
+          }
+          case 'subtask.complete': {
+            return state; // task stays in-progress until task.complete
+          }
+          case 'task.complete': {
+            if (existing) {
+              return {
+                tasks: state.tasks.map((t) => (t.id === taskId ? { ...t, status: 'done' } : t)),
+              };
+            }
+            return { tasks: [...state.tasks, ensure('done')] };
+          }
+          case 'task.failed': {
+            if (existing) {
+              return {
+                tasks: state.tasks.map((t) =>
+                  t.id === taskId
+                    ? { ...t, status: 'review', tags: [...new Set([...t.tags, 'failed'])] }
+                    : t
+                ),
+              };
+            }
+            return { tasks: [...state.tasks, { ...ensure('review'), tags: ['agent', 'failed'] }] };
+          }
+          default:
+            return state;
+        }
+      }),
       updateTask: (id, updates) => set((state) => ({ tasks: state.tasks.map((t) => (t.id === id ? { ...t, ...updates } : t)) })),
       deleteTask: (id) => set((state) => ({ tasks: state.tasks.filter((t) => t.id !== id) })),
       workspaceView: 'files',

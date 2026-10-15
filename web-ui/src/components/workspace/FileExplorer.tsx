@@ -5,7 +5,8 @@
 // (PythonBrain) writes into the same root, so agent-created files show up
 // here on refresh.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useAppStore } from '@/store/appStore';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Folder,
@@ -103,6 +104,16 @@ export function FileExplorer() {
   const [loading, setLoading] = useState(false);
   const [viewing, setViewing] = useState<{ path: string; content: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const refreshRef = useRef<((path?: string) => Promise<void>) | null>(null);
+
+  // Agent writes (workspace.file_written events) auto-refresh the listing.
+  const lastWrite = useAppStore((s) => {
+    const writes = s.agentActivities.filter((a) => a.type === 'workspace.file_written');
+    return writes.length ? writes[writes.length - 1].ts : 0;
+  });
+  useEffect(() => {
+    if (lastWrite > 0) refreshRef.current?.();
+  }, [lastWrite]);
 
   const refresh = useCallback(async (path = dir) => {
     setLoading(true);
@@ -122,6 +133,11 @@ export function FileExplorer() {
     refresh('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Keep the ref current so the write watcher uses the latest closure.
+  useEffect(() => {
+    refreshRef.current = refresh;
+  }, [refresh]);
 
   const crumbs = dir ? dir.split('/') : [];
 
