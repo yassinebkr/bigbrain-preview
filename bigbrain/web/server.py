@@ -246,6 +246,8 @@ class WebServer:
         # Real workspace filesystem API (replaces the UI's mock file tree).
         from .fs_api import setup_fs_routes
         setup_fs_routes(self._app)
+        from .evidence_api import setup_evidence_routes
+        setup_evidence_routes(self._app)
 
         # Per-role model lineup (the top-left dropdown) + OpenRouter key.
         self._app.router.add_get("/api/models/roles", self._handle_model_roles)

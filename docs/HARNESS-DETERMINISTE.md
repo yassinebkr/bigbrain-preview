@@ -158,6 +158,21 @@ Intégration :
   PythonBrain suffit ; le replay P3 réutilise le même chemin.
 - Pas d'outillage FPGA/EDA : uniquement les patterns, zéro import fpga.
 
+## 8. Suite possible (post P1-P4)
+
+- **Contrats proposés à l'approbation avant implémentation** (pattern
+  shopifast-local) : aujourd'hui les contrats sont auto-extraits du
+  message (fichier nommé) et vérifiés APRÈS coup. L'évolution : le front
+  brain propose le(s) contrat(s) dérivés de la requête ("hello.py sera
+  créé dans le projet X, affichera Hello, World!", tests inclus), l'UI
+  (gen-ui / Phase B morphable) les affiche clairement et l'utilisateur
+  approuve ou édite AVANT que la boucle Honk démarre — le DesignSpec
+  validé devient le spec_sha256 du run (l'approbation est tracée dans
+  l'evidence). Réutilise le mécanisme V5 human gate côté orchestration.
+- Evidence API en lecture (`/api/evidence/runs`, `/run/{id}`,
+  `/artifact?sha`) — surface actuelle : section Evidence de l'onglet
+  Brains (contrats, stages, verdicts).
+
 ## 7. Risques / points d'attention
 
 - **Ne pas casser la boucle Honk** : la gate enrichit le feedback

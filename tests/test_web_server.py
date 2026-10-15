@@ -752,6 +752,37 @@ class TestWorkspaceProjects:
         assert result["ok"] is True
         assert "verification" not in result
 
+    @pytest.mark.asyncio
+    async def test_evidence_api_lists_runs_with_contracts(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("BIGBRAIN_WORKSPACE_DIR", str(tmp_path / "ws"))
+        monkeypatch.setenv("BIGBRAIN_EVIDENCE_ROOT", str(tmp_path / "evidence"))
+        from bigbrain.web import fs_api
+        from bigbrain.web.evidence_api import list_runs, run_detail
+
+        sandbox = tmp_path / "ws" / "sandbox"
+        sandbox.mkdir(parents=True)
+        (sandbox / "hello.py").write_text("print('Hello, World!')")
+        result = await fs_api.run_file_with_evidence("sandbox/hello.py")
+        run_id = result["verification"]["run_id"]
+
+        listed = list_runs(limit=10)
+        assert len(listed["runs"]) == 1
+        entry = listed["runs"][0]
+        assert entry["run_id"] == run_id
+        assert entry["verdict"] == "passed"
+        assert entry["brain"] == "manual-ui"
+        assert any("hello.py" in c for c in entry["contracts"])
+
+        detail = run_detail(run_id)
+        assert detail["manifest"]["run_id"] == run_id
+        assert detail["spec"]["user_request"].startswith("manual run")
+        assert "hello.py" in detail["spec"]["contracts"][0]
+
+        # Unknown run → 404-shaped error.
+        from aiohttp import web as aioweb
+        with pytest.raises(aioweb.HTTPNotFound):
+            run_detail("run-doesnotexist")
+
     def test_run_file_timeout_is_bounded(self, _ws_root):
         from bigbrain.web import fs_api
         (_ws_root / "sandbox").mkdir(parents=True)
