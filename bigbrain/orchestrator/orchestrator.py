@@ -378,6 +378,28 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             or str(task_data)
         )
         
+        # Explicit route from the Front Brain (LLM tool-call): the LLM
+        # already picked the brain and payload — execute them verbatim,
+        # no re-planning and no decomposition. Unknown brain names fall
+        # through to the normal planning pipeline.
+        routed_brain = task_data.get("brain")
+        if routed_brain and (
+            routed_brain in self.registered_brains
+            or routed_brain in self.brain_pools
+        ):
+            payload = {k: v for k, v in task_data.items() if k != "brain"}
+            payload["user_request"] = payload.get("user_request") or user_request
+            subtasks = [SubTask(
+                id=f"{plan_id}_s0",
+                description=f"Execute {payload.get('type', 'routed')} task",
+                brain_target=routed_brain,
+                payload=payload,
+            )]
+            plan.subtasks = subtasks
+            plan.execution_mode = self._analyze_execution_mode(subtasks, user_request)
+            plan.tracker = TaskTracker.create_from_plan(subtasks)
+            return plan
+        
         # Try LLM-powered planning with complexity assessment
         if self.llm_provider:
             try:

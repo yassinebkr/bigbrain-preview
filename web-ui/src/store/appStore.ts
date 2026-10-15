@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { Message, Attachment, Session, Settings, Theme, View, ConnectionStatus, SidebarPanel, User, CanvasOp, Task, TaskStatus } from '@/types';
+import type { Message, Attachment, Session, Settings, Theme, View, ConnectionStatus, SidebarPanel, User, CanvasOp, Task } from '@/types';
 import type { ConnectionLike } from '@/lib/connection';
 
 export interface AgentActivity {
@@ -155,7 +155,6 @@ interface AppState {
   addTask: (task: Task) => void;
   fetchBoardTasks: () => Promise<void>;
   createBoardTask: (task: Partial<Task>) => Promise<void>;
-  applyBusActivity: (activity: Omit<AgentActivity, 'ts'>) => void;
   updateTask: (id: string, updates: Partial<Task>) => void;
   deleteTask: (id: string) => void;
   workspaceView: 'files' | 'tasks' | 'research';
@@ -513,10 +512,10 @@ export const useAppStore = create<AppState>()(
             priority: t.priority || 'medium',
             createdAt: (t.createdAt || 0) * 1000,
           }));
-          // Server tasks replace the local list, minus transient bus
-          // tasks (agent runs) that live only in this session.
-          const transient = get().tasks.filter((t) => !t.id.startsWith('task-'));
-          set({ tasks: [...transient, ...serverTasks] });
+          // Server tasks replace the list except offline local tasks
+          // (local-*) which have no server counterpart yet.
+          const local = get().tasks.filter((t) => t.id.startsWith('local-'));
+          set({ tasks: [...local, ...serverTasks] });
         } catch { /* offline: keep the local view */ }
       },
       createBoardTask: async (task) => {
@@ -544,72 +543,10 @@ export const useAppStore = create<AppState>()(
         });
       },
 
-      // Bus task events (orchestrator) mapped onto the TaskBoard slice —
-      // agent tasks live in the same board as manual ones; drag & drop
-      // still works locally (updateTask overrides).
-      applyBusActivity: (activity) => set((state) => {
-        const d = activity.detail || {};
-        const taskId = d.task_id;
-        if (!taskId) return state;
-        const existing = state.tasks.find((t) => t.id === taskId);
-        const ensure = (status: TaskStatus, title?: string, description?: string): Task => ({
-          id: taskId,
-          title: title || `Task ${taskId}`,
-          description: description || '',
-          status,
-          tags: ['agent'],
-          assignee: 'BigBrain',
-          priority: 'medium',
-          createdAt: Date.now(),
-        });
-        switch (activity.type) {
-          case 'task.received': {
-            if (existing) return state;
-            const task = ensure(
-              'todo',
-              (d.description || `Task ${taskId}`).slice(0, 60),
-              `${d.subtasks_count ?? '?'} subtask(s)`
-            );
-            return { tasks: [...state.tasks, task] };
-          }
-          case 'subtask.started': {
-            const desc = `${d.brain || 'brain'}: ${(d.description || '').slice(0, 80)}`;
-            if (existing) {
-              return {
-                tasks: state.tasks.map((t) =>
-                  t.id === taskId ? { ...t, status: 'in-progress', description: desc } : t
-                ),
-              };
-            }
-            return { tasks: [...state.tasks, ensure('in-progress', undefined, desc)] };
-          }
-          case 'subtask.complete': {
-            return state; // task stays in-progress until task.complete
-          }
-          case 'task.complete': {
-            if (existing) {
-              return {
-                tasks: state.tasks.map((t) => (t.id === taskId ? { ...t, status: 'done' } : t)),
-              };
-            }
-            return { tasks: [...state.tasks, ensure('done')] };
-          }
-          case 'task.failed': {
-            if (existing) {
-              return {
-                tasks: state.tasks.map((t) =>
-                  t.id === taskId
-                    ? { ...t, status: 'review', tags: [...new Set([...t.tags, 'failed'])] }
-                    : t
-                ),
-              };
-            }
-            return { tasks: [...state.tasks, { ...ensure('review'), tags: ['agent', 'failed'] }] };
-          }
-          default:
-            return state;
-        }
-      }),
+      // The board shows ONLY persistent user tasks (server + offline
+      // local). Agent runs in flight are visible in the RunPanel —
+      // mirroring them here flipped cards in-progress→done and
+      // confused them with real tasks.
       updateTask: (id, updates) => {
         set((state) => ({ tasks: state.tasks.map((t) => (t.id === id ? { ...t, ...updates } : t)) }));
         // Persisted board task → sync the server (best effort).

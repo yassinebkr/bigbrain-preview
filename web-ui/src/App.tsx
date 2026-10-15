@@ -81,7 +81,6 @@ export default function App() {
 
     connection.on('onAgentActivity', (activity) => {
       useAppStore.getState().addAgentActivity(activity);
-      useAppStore.getState().applyBusActivity(activity);
       useAppStore.getState().applyRunEvent(activity);
       // The agent created a board task → pull the persistent board.
       if (activity.type === 'taskboard.task_created') {

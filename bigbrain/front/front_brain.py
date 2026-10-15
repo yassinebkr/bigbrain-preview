@@ -314,6 +314,16 @@ YOUR JOB:
 DELEGATION: When the user asks for work, respond with EXACTLY this JSON format:
 {{"reply": "brief natural acknowledgment to the user", "task": "full description of what the user wants done, preserving ALL details and intent"}}
 
+ROUTED DELEGATION (preferred when the request matches ONE known brain capability): use "route" instead of "task". The orchestrator executes it EXACTLY as given, without re-planning:
+{{"reply": "brief natural acknowledgment", "route": {{"brain": "<brain>", "payload": {{...}}}}}}
+
+Routable brains and payloads:
+- taskboard — add/create a task or todo on the user's persistent board. Payload: {{"type": "board_task", "title": "<short task title>", "description": "<optional details>", "status": "todo"}}. Use status "todo" unless the user explicitly asks for another status.
+- researcher — research / web search. Payload: {{"type": "research", "query": "<self-contained search query>"}}
+- python_brain — run an existing workspace file. Payload: {{"type": "run_file", "file": "<file path>"}}
+
+Use "route" ONLY for these direct single actions. For code generation, multi-step work, or anything combining several actions, use the generic "task" format.
+
 IMPORTANT: Send the ENTIRE request as ONE task. Do NOT break it into subtasks yourself.
 The orchestrator will decompose it into subtasks with proper dependencies.
 For example, "research sorting algorithms and benchmark them" is ONE task — the orchestrator
@@ -340,6 +350,9 @@ Available brains (for your awareness, NOT for you to assign):
 Examples:
 User: "write a fibonacci function"
 You: {{"reply": "On it.", "task": "Write a fibonacci function in Python and execute it"}}
+
+User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
+You: {{"reply": "Ajouté à ta taskboard.", "route": {{"brain": "taskboard", "payload": {{"type": "board_task", "title": "Mettre à jour le README de near_agi", "status": "todo"}}}}}}
 
 User: "what's the capital of France?"  
 You: Paris.
@@ -416,9 +429,6 @@ Type 'quit' or 'exit' to stop."""
         Delegation sends ONE compound task to the orchestrator, which
         handles decomposition into subtasks with proper dependencies.
         """
-        import json
-        import re
-        
         text = message.payload.get("text", "").strip()
         if not text:
             return
@@ -432,7 +442,38 @@ Type 'quit' or 'exit' to stop."""
             # Try to parse as delegation JSON
             parsed = self._try_parse_delegation(response)
             
-            if parsed and "task" in parsed:
+            # Routed delegation (tool-call): the Front Brain picked a
+            # brain + payload itself. Forward it verbatim — the orchestrator
+            # validates the brain name against its registry/pools and
+            # falls back to normal planning for unknown names.
+            route = parsed.get("route") if isinstance(parsed, dict) else None
+            route_brain = route.get("brain") if isinstance(route, dict) else None
+            route_payload = route.get("payload") if isinstance(route, dict) else None
+            route_valid = (
+                isinstance(route_brain, str)
+                and bool(route_brain)
+                and isinstance(route_payload, dict)
+                and bool(route_payload.get("type"))
+            )
+            
+            if parsed and route_valid:
+                reply_text = parsed.get("reply", "Working on it...")
+                await self._emit_chat_message("assistant", reply_text)
+                
+                ws = "default"  # Always route to the single orchestrator
+                task_data = {
+                    **route_payload,
+                    "brain": route_brain,
+                    "reply_to_ui": True,
+                    "user_request": text,
+                }
+                await self.bus.send_task(
+                    source=self.name,
+                    target=f"orchestrator_{ws}",
+                    task_data=task_data,
+                    priority=Priority.NORMAL,
+                )
+            elif parsed and "task" in parsed:
                 # Front Brain wants to delegate — send the reply part to chat
                 reply_text = parsed.get("reply", "Working on it...")
                 await self._emit_chat_message("assistant", reply_text)
@@ -500,43 +541,48 @@ Type 'quit' or 'exit' to stop."""
         Try to parse a Front Brain response as delegation JSON.
         
         Handles:
-        - New format: {"reply": "...", "task": "single compound request"}
+        - {"reply": "...", "task": "single compound request"}
+        - {"reply": "...", "route": {"brain": "...", "payload": {...}}}
         - Legacy format: {"reply": "...", "tasks": [...]}
         - Raw JSON, markdown-fenced JSON, JSON embedded in text
         """
         import json
-        import re
         
         if not response:
             return None
         
+        def _valid(parsed) -> bool:
+            return (
+                isinstance(parsed, dict)
+                and any(k in parsed for k in ("task", "tasks", "route"))
+            )
+        
         # 1. Try raw JSON
         try:
             parsed = json.loads(response.strip())
-            if isinstance(parsed, dict) and ("task" in parsed or "tasks" in parsed):
+            if _valid(parsed):
                 return parsed
         except (json.JSONDecodeError, TypeError):
             pass
         
-        # 2. Try extracting from markdown code fences
-        fence_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', response, re.DOTALL)
-        if fence_match:
-            try:
-                parsed = json.loads(fence_match.group(1).strip())
-                if isinstance(parsed, dict) and ("task" in parsed or "tasks" in parsed):
-                    return parsed
-            except (json.JSONDecodeError, TypeError):
-                pass
-        
-        # 3. Try finding JSON object with "task" key in the text
-        brace_match = re.search(r'\{[^{}]*"task(?:s)?"\s*:.*?\}', response, re.DOTALL)
-        if brace_match:
-            try:
-                parsed = json.loads(brace_match.group(0))
-                if isinstance(parsed, dict) and ("task" in parsed or "tasks" in parsed):
-                    return parsed
-            except (json.JSONDecodeError, TypeError):
-                pass
+        # 2. Scan for balanced {...} candidates anywhere in the text
+        #    (covers markdown fences, prose, and nested route payloads —
+        #    a lazy regex stops at the first '}' and misses them).
+        for start in (i for i, c in enumerate(response) if c == "{"):
+            depth = 0
+            for i in range(start, len(response)):
+                if response[i] == "{":
+                    depth += 1
+                elif response[i] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        try:
+                            parsed = json.loads(response[start:i + 1])
+                            if _valid(parsed):
+                                return parsed
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                        break
         
         return None
     
@@ -591,6 +637,7 @@ Type 'quit' or 'exit' to stop."""
                             "- If files were written but no preview is running, say the code was generated (not deployed)\n"
                             "- Mention which algorithms/items were actually tested vs what research found\n"
                             "- Report ONLY actions the task output explicitly confirms. NEVER claim a task was created, a board item was added, a file was saved, or a message was sent unless the output says so\n"
+                            "- Do not invent file names, storage locations, or record formats not shown in the output (e.g. where or how data was saved)\n"
                             "- If the output does NOT accomplish what the user asked, say honestly what actually happened instead of pretending success"
                         )},
                         {"role": "user", "content": (
