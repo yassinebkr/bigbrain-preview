@@ -60,6 +60,10 @@ class FrontBrain:
         self._running = False
         self._current_conversation_id: Optional[str] = None
         self._conversation_history: List[Dict[str, str]] = []
+        # Sessions (web): one history per session id. The legacy
+        # _conversation_history stays the default (TUI, no session).
+        self._session_histories: Dict[str, List[Dict[str, str]]] = {}
+        self._last_session_id: Optional[str] = None
         # Set by the stop button (chat.cancel): the current LLM stream
         # breaks at the next delta and returns what it already has.
         self._stop_requested = False
@@ -73,6 +77,12 @@ class FrontBrain:
     def register_brain(self, name: str, description: str) -> None:
         """Register a brain so the Front Brain knows how to delegate."""
         self._registered_brains[name] = description
+
+    def _history_for(self, session_id: Optional[str]) -> List[Dict[str, str]]:
+        """The conversation history of a session (default: the legacy one)."""
+        if not session_id:
+            return self._conversation_history
+        return self._session_histories.setdefault(session_id, [])
 
     def request_stop(self) -> None:
         """Ask the current LLM stream to stop at the next delta.
@@ -125,24 +135,28 @@ class FrontBrain:
             priority=Priority.LOW
         )
     
-    async def handle_user_input(self, input_text: str, input_type: str = "text") -> str:
+    async def handle_user_input(self, input_text: str, input_type: str = "text",
+                                session_id: Optional[str] = None) -> str:
         """
         Process user input and return response.
-        
+
         When a real LLM is available, uses it for all responses.
         Falls back to pattern-matching + mock when no LLM configured.
-        
+
         Args:
             input_text: User's input text
             input_type: Type of input ("text", "voice", "command")
-            
+            session_id: Web session this turn belongs to (None = default)
+
         Returns:
             Response text for the user
         """
         self.focus_manager.mark_user_activity()
-        
+        self._last_session_id = session_id
+        history = self._history_for(session_id)
+
         # Store conversation turn
-        self._conversation_history.append({"role": "user", "content": input_text})
+        history.append({"role": "user", "content": input_text})
         self.memory.store_conversation_turn("user", input_text, {
             "type": input_type,
             "conversation_id": self._current_conversation_id
@@ -159,7 +173,7 @@ class FrontBrain:
             response = await self._handle_focus_command(intent)
         elif self.llm_provider and not isinstance(self.llm_provider, type(None)):
             # Use LLM for everything else
-            response = await self._llm_respond(input_text)
+            response = await self._llm_respond(input_text, session_id=session_id)
         else:
             # Fallback to pattern matching
             intent = await self._analyze_intent(input_text)
@@ -171,7 +185,7 @@ class FrontBrain:
                 response = await self._handle_unknown_input(input_text)
         
         # Store response
-        self._conversation_history.append({"role": "assistant", "content": response})
+        history.append({"role": "assistant", "content": response})
         self.memory.store_conversation_turn("assistant", response, {
             "conversation_id": self._current_conversation_id
         })
@@ -187,16 +201,19 @@ class FrontBrain:
         except Exception:
             return None
 
-    async def _llm_respond(self, input_text: str) -> str:
+    async def _llm_respond(self, input_text: str,
+                           session_id: Optional[str] = None) -> str:
         """Generate response using the real LLM with full conversation context.
-        
+
         The LLM will return either plain text (conversation) or delegation
-        JSON (task request). The caller handles both cases.
+        JSON (task request). The caller handles both cases. The history
+        is the SESSION's history — switching conversations must not leak
+        context across sessions.
         """
         # Build system prompt with current context
         focus_status = self.focus_manager.get_focus_status()
         system_prompt = self._build_system_prompt(focus_status)
-        
+
         messages = [{"role": "system", "content": system_prompt}]
 
         # Project context: the chat knows which project the user works in;
@@ -216,7 +233,7 @@ class FrontBrain:
             )})
         
         # Add conversation history (keep last 20 turns for context)
-        history = self._conversation_history[-20:]
+        history = self._history_for(session_id)[-20:]
         messages.extend(history)
         
         try:
@@ -405,10 +422,12 @@ Type 'quit' or 'exit' to stop."""
         text = message.payload.get("text", "").strip()
         if not text:
             return
-        
+        session_id = message.payload.get("session_id")
+
         try:
             # Process through the normal input pipeline
-            response = await self.handle_user_input(text, input_type="web")
+            response = await self.handle_user_input(text, input_type="web",
+                                                    session_id=session_id)
             
             # Try to parse as delegation JSON
             parsed = self._try_parse_delegation(response)
@@ -544,7 +563,7 @@ Type 'quit' or 'exit' to stop."""
         
         # Find the user's original question from conversation history
         user_question = ""
-        for msg in reversed(self._conversation_history):
+        for msg in reversed(self._history_for(self._last_session_id)):
             if msg.get("role") == "user":
                 user_question = msg.get("content", "")
                 break
@@ -608,7 +627,7 @@ Type 'quit' or 'exit' to stop."""
         await self.bus.broadcast_event(
             source=self.name,
             event_type="chat.done",
-            payload={"text": text},
+            payload={"text": text, "session_id": self._last_session_id},
             priority=Priority.NORMAL,
         )
 
@@ -620,6 +639,7 @@ Type 'quit' or 'exit' to stop."""
             payload={
                 "role": role,
                 "text": text,
+                "session_id": self._last_session_id,
             },
             priority=Priority.NORMAL,
         )

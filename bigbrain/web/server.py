@@ -106,10 +106,13 @@ class WebServer:
             # NOTE: chat.delta is deliberately absent — transient chunks.
         }
 
-        # Chat history for the Aplot UI (chat.history req/res + reconnect).
-        self._chat_history: list = []  # [{id, role, text, timestamp}]
-        self._chat_history_max = 200
-        self._chat_id_counter = 0
+        # Chat history: sessions are the single source of truth
+        # (data/sessions/). The legacy in-memory buffer is gone.
+        from .sessions import SessionStore
+        self._sessions = SessionStore()
+        # The session the last chat.send targeted — used to capture
+        # chat.done/chat.message replies that don't carry a session id.
+        self._active_session_id: str | None = None
 
     async def start(self) -> None:
         """Start the web server."""
@@ -761,8 +764,13 @@ class WebServer:
 
         await ack("queued")
 
-        # History entry for the user's own message (chat.history req/res).
-        self._append_chat_history("user", text)
+        # Sessions: the message belongs to the client's session (created
+        # lazily if unknown); without a sessionId the active session is
+        # used, or a fresh one starts.
+        session_id = payload.get("sessionId") or self._active_session_id
+        session = self._sessions.ensure(session_id)
+        self._active_session_id = session["id"]
+        self._sessions.append_message(session["id"], "user", text)
 
         from ..bus.message import BusMessage, MessageType, Priority
 
@@ -770,7 +778,8 @@ class WebServer:
             type=MessageType.TASK,
             source="morphable_ui",
             target="front_brain",
-            payload={"type": "user_message", "text": text},
+            payload={"type": "user_message", "text": text,
+                     "session_id": session["id"]},
             priority=Priority.NORMAL,
         ))
 
@@ -779,14 +788,43 @@ class WebServer:
     async def _handle_request(
         self, ws: web.WebSocketResponse, data: dict
     ) -> None:
-        """Aplot req/res bridge. Only chat.history is supported today."""
+        """Aplot req/res bridge: chat history + session management."""
         request_id = data.get("id")
         method = data.get("method")
+        params = data.get("params") or {}
         if method == "chat.history":
+            session_id = params.get("sessionId") or self._active_session_id
+            session = self._sessions.get(session_id) if session_id else None
             await ws.send_json({
                 "type": "resp",
                 "id": request_id,
-                "payload": {"messages": list(self._chat_history)},
+                "payload": {
+                    "messages": (session or {}).get("messages", []),
+                    "sessionId": (session or {}).get("id"),
+                },
+            })
+            return
+        if method == "sessions.list":
+            await ws.send_json({
+                "type": "resp", "id": request_id,
+                "payload": {"sessions": self._sessions.list()},
+            })
+            return
+        if method == "sessions.create":
+            session = self._sessions.create(params.get("title"))
+            await ws.send_json({
+                "type": "resp", "id": request_id,
+                "payload": {"session": {
+                    "id": session["id"], "title": session["title"],
+                    "updated_at": session["updated_at"], "message_count": 0,
+                }},
+            })
+            return
+        if method == "sessions.delete":
+            await ws.send_json({
+                "type": "resp", "id": request_id,
+                "payload": {"deleted": self._sessions.delete(
+                    params.get("sessionId", ""))},
             })
             return
         await ws.send_json({
@@ -796,16 +834,20 @@ class WebServer:
         })
 
     def _append_chat_history(self, role: str, text: str) -> None:
-        """Bounded chat history (chat.history + reconnect catch-up)."""
-        self._chat_id_counter += 1
-        self._chat_history.append({
-            "id": str(self._chat_id_counter),
-            "role": role,
-            "text": text,
-            "timestamp": time.time(),
-        })
-        if len(self._chat_history) > self._chat_history_max:
-            self._chat_history = self._chat_history[-self._chat_history_max:]
+        """Compat wrapper: append to the ACTIVE session (creating one if
+        none exists). Sessions are the single source of chat history."""
+        target = self._active_session_id or self._sessions.ensure(None)["id"]
+        self._active_session_id = target
+        self._sessions.append_message(target, role, text)
+
+    def _capture_to_session(self, session_id: str | None,
+                            role: str, text: str) -> None:
+        """Persist a reply into its session (tagged, else active/new)."""
+        target = session_id or self._active_session_id
+        if not target:
+            target = self._sessions.ensure(None)["id"]
+            self._active_session_id = target
+        self._sessions.append_message(target, role, text)
 
     # ================================================================
     # BUS → WEBSOCKET BRIDGE
@@ -841,19 +883,22 @@ class WebServer:
         self._maybe_buffer(msg_type, event, data)
 
         # Chat history: capture assistant/system messages for chat.history.
-        # chat.done carries the full text of a STREAMED reply (the deltas
-        # themselves are transient and never stored).
+        # Sessions: capture assistant/system replies into the session the
+        # front brain tags (payload session_id), falling back to the
+        # active session. chat.done carries the full text of a STREAMED
+        # reply (the deltas themselves are transient and never stored).
         if event == "chat.done":
             payload = message.payload or {}
             text = payload.get("text")
             if isinstance(text, str) and text.strip():
-                self._append_chat_history("assistant", text)
+                self._capture_to_session(
+                    payload.get("session_id"), "assistant", text)
         elif event == "chat.message":
             payload = message.payload or {}
             role = payload.get("role", "assistant")
             text = payload.get("text")
             if isinstance(text, str) and text.strip() and role in ("assistant", "system", "user"):
-                self._append_chat_history(role, text)
+                self._capture_to_session(payload.get("session_id"), role, text)
 
         if not self._ws_clients:
             return

@@ -141,6 +141,9 @@ interface AppState {
   setSessions: (sessions: Session[]) => void;
   setActiveSessionKey: (key: string) => void;
   switchSession: (key: string) => void;
+  refreshSessions: () => void;
+  startNewSession: () => void;
+  openSession: (key: string) => void;
 
   // Canvas
   canvasOps: CanvasOp[];
@@ -408,18 +411,76 @@ export const useAppStore = create<AppState>()(
       settings: { genui: false, autoSpeech: false },
       toggleSetting: (key) => set((state) => ({ settings: { ...state.settings, [key]: !state.settings[key] } })),
 
-      // Sessions
-      sessions: [
-        { key: 'default', title: 'General Conversation', timestamp: Date.now(), messageCount: 0 },
-        { key: 'coding', title: 'Coding Help', timestamp: Date.now() - 86400000, messageCount: 12 },
-        { key: 'trip', title: 'Trip Planning', timestamp: Date.now() - 172800000, messageCount: 8 },
-      ],
-      activeSessionKey: 'default',
+      // Sessions — real server-side conversations (data/sessions/).
+      sessions: [],
+      activeSessionKey: '',
       setSessions: (sessions) => set({ sessions }),
       setActiveSessionKey: (activeSessionKey) => set({ activeSessionKey }),
       switchSession: (key) => {
         get().connection?.switchSession(key);
         set({ activeSessionKey: key, messages: [], view: 'welcome' });
+      },
+      // Pull the session list from the server into the store.
+      refreshSessions: () => {
+        get().connection?.listSessions?.((list) => {
+          set({
+            sessions: (list || []).map((s) => ({
+              key: s.id,
+              title: s.title || 'New conversation',
+              timestamp: (s.updated_at || 0) * 1000,
+              messageCount: s.message_count || 0,
+            })),
+          });
+        });
+      },
+      // New conversation: a REAL session on the server.
+      startNewSession: () => {
+        const conn = get().connection;
+        if (conn?.createSession) {
+          conn.createSession((session) => {
+            if (!session?.id) return;
+            set({
+              activeSessionKey: session.id,
+              messages: [],
+              view: 'welcome',
+              streamingText: '',
+              isStreaming: false,
+            });
+            get().refreshSessions();
+          });
+        } else {
+          // Offline: a local blank conversation (kept honest — no fake id).
+          set({
+            activeSessionKey: '',
+            messages: [],
+            view: 'welcome',
+            streamingText: '',
+            isStreaming: false,
+          });
+        }
+      },
+      // Open an existing conversation: load its history from the server.
+      openSession: (key) => {
+        set({
+          activeSessionKey: key,
+          sidebarPanel: null,
+          messages: [],
+          streamingText: '',
+          isStreaming: false,
+        });
+        get().connection?.loadHistory((frame: any) => {
+          if (frame?.ok && frame.payload?.messages) {
+            set({
+              messages: frame.payload.messages.map((m: any) => ({
+                id: m.id || `hist-${Date.now()}-${Math.random()}`,
+                role: m.role === 'user' ? 'user' : 'assistant',
+                content: m.content,
+                timestamp: m.timestamp || Date.now(),
+              })),
+              view: 'chat',
+            });
+          }
+        }, key);
       },
 
       // Canvas
@@ -520,7 +581,10 @@ export const useAppStore = create<AppState>()(
           isStreaming: true,
           streamingText: '',
         }));
-        state.connection?.send(text, state.attachments);
+        // The message belongs to the active server session (empty → the
+        // server lazily creates one and remembers it).
+        state.connection?.send(text, state.attachments,
+                                state.activeSessionKey || undefined);
       },
 
       // Stop button: cancel server-side (front brain stream + orchestrated

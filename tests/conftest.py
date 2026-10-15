@@ -13,3 +13,4 @@ import pytest
 @pytest.fixture(autouse=True)
 def _isolate_evidence(tmp_path, monkeypatch):
     monkeypatch.setenv("BIGBRAIN_EVIDENCE_ROOT", str(tmp_path / "evidence"))
+    monkeypatch.setenv("BIGBRAIN_SESSIONS_DIR", str(tmp_path / "sessions"))

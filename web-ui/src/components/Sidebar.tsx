@@ -49,10 +49,9 @@ function SidebarContent({ onItemClick }: { onItemClick?: () => void }) {
     switch (id) {
       case 'avatar':
       case 'newchat':
-        // A new conversation — clear the transcript (the server keeps its
-        // own history; sessions restore it later).
-        useAppStore.getState().clearMessages();
-        setView('welcome');
+        // A new conversation — a REAL session on the server (the server
+        // keeps its own history; the session list refreshes).
+        useAppStore.getState().startNewSession();
         break;
       case 'search':
         setCommandPaletteOpen(true);

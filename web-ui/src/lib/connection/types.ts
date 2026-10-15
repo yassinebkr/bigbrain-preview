@@ -23,14 +23,24 @@ export interface ConnectionCallbacks {
  * Public surface every adapter must expose (mirrors the original Scratchy
  * Connection class used by the store and App.tsx).
  */
+export interface SessionSummary {
+  id: string;
+  title: string;
+  updated_at: number;
+  message_count: number;
+}
+
 export interface ConnectionLike {
   sessionKey: string;
   on<K extends keyof ConnectionCallbacks>(event: K, callback: ConnectionCallbacks[K]): void;
   connect(): void;
   disconnect(): void;
-  send(text: string, attachments?: any[]): string;
+  send(text: string, attachments?: any[], sessionId?: string): string;
   cancel?(): void;
-  loadHistory(callback?: (frame: any) => void): void;
+  loadHistory(callback?: (frame: any) => void, sessionId?: string): void;
+  listSessions?(callback: (sessions: SessionSummary[]) => void): void;
+  createSession?(callback: (session: SessionSummary) => void): void;
+  deleteSession?(sessionId: string, callback?: (deleted: boolean) => void): void;
   switchSession(newSessionKey: string): void;
   forceReconnect(): void;
   checkHealth(callback: (alive: boolean) => void, timeoutMs?: number): void;

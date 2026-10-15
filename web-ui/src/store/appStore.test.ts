@@ -1,7 +1,7 @@
 // Store edge cases — the run state machine (applyRunEvent) and the
 // streaming finalize guard. Pure state logic; no React needed.
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useAppStore } from '@/store/appStore';
 
 function reset() {
@@ -173,5 +173,102 @@ describe('finalizeStreaming — empty buffer guard', () => {
     expect(s.messages).toHaveLength(1);
     expect(s.messages[0].role).toBe('assistant');
     expect(s.messages[0].content).toBe('hello there');
+  });
+});
+
+// ── Sessions (real server-side conversations) ────────────────────────────
+
+function mockConnection(overrides: Record<string, any> = {}) {
+  return {
+    send: vi.fn(),
+    cancel: vi.fn(),
+    switchSession: vi.fn(),
+    loadHistory: vi.fn(),
+    listSessions: vi.fn(),
+    createSession: vi.fn(),
+    deleteSession: vi.fn(),
+    ...overrides,
+  };
+}
+
+describe('sessions', () => {
+  beforeEach(() => {
+    reset();
+    useAppStore.setState({ sessions: [], activeSessionKey: '' });
+  });
+
+  it('refreshSessions maps server sessions into the store', () => {
+    const conn = mockConnection({
+      listSessions: vi.fn((cb) => cb([
+        { id: 'sess-a', title: 'blague.py', updated_at: 100, message_count: 4 },
+        { id: 'sess-b', title: 'New conversation', updated_at: 50, message_count: 0 },
+      ])),
+    });
+    useAppStore.setState({ connection: conn as any });
+    useAppStore.getState().refreshSessions();
+    const sessions = useAppStore.getState().sessions;
+    expect(sessions).toHaveLength(2);
+    expect(sessions[0]).toEqual({
+      key: 'sess-a', title: 'blague.py', timestamp: 100000, messageCount: 4,
+    });
+  });
+
+  it('startNewSession creates a server session and resets the view', () => {
+    const conn = mockConnection({
+      createSession: vi.fn((cb) => cb({ id: 'sess-new', title: 'New conversation' })),
+      listSessions: vi.fn((cb) => cb([{ id: 'sess-new', title: 'New conversation', updated_at: 1, message_count: 0 }])),
+    });
+    useAppStore.setState({ connection: conn as any, messages: [
+      { id: 'm1', role: 'user', content: 'old', timestamp: 1 },
+    ] });
+    useAppStore.getState().startNewSession();
+    const s = useAppStore.getState();
+    expect(s.activeSessionKey).toBe('sess-new');
+    expect(s.messages).toHaveLength(0);
+    expect(s.view).toBe('welcome');
+    expect(conn.createSession).toHaveBeenCalled();
+  });
+
+  it('startNewSession offline clears locally without a fake id', () => {
+    const conn = mockConnection();
+    delete (conn as any).createSession;
+    useAppStore.setState({ connection: conn as any, messages: [
+      { id: 'm1', role: 'user', content: 'old', timestamp: 1 },
+    ] });
+    useAppStore.getState().startNewSession();
+    const s = useAppStore.getState();
+    expect(s.activeSessionKey).toBe('');
+    expect(s.messages).toHaveLength(0);
+  });
+
+  it('openSession loads the history from the server', () => {
+    const conn = mockConnection({
+      loadHistory: vi.fn((cb, sessionId) => {
+        expect(sessionId).toBe('sess-x');
+        cb({ ok: true, payload: { messages: [
+          { id: 'h1', role: 'user', content: 'question', timestamp: 1000 },
+          { id: 'h2', role: 'assistant', content: 'réponse', timestamp: 2000 },
+        ] } });
+      }),
+    });
+    useAppStore.setState({ connection: conn as any });
+    useAppStore.getState().openSession('sess-x');
+    const s = useAppStore.getState();
+    expect(s.activeSessionKey).toBe('sess-x');
+    expect(s.messages).toHaveLength(2);
+    expect(s.messages[1].content).toBe('réponse');
+    expect(s.view).toBe('chat');
+    expect(s.sidebarPanel).toBeNull();
+  });
+
+  it('sendMessage carries the active session id', () => {
+    const conn = mockConnection();
+    useAppStore.setState({
+      connection: conn as any,
+      activeSessionKey: 'sess-live',
+      inputText: 'bonjour',
+    });
+    useAppStore.getState().sendMessage();
+    expect(conn.send).toHaveBeenCalledWith('bonjour', [], 'sess-live');
   });
 });

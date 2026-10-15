@@ -42,6 +42,19 @@ export default function App() {
 
     connection.on('onStatusChange', (status) => {
       setConnectionStatus(status as 'connected' | 'connecting' | 'disconnected');
+      // Real sessions: list them on connect, and start one if the client
+      // has none (first visit / cleared storage) so messages have a home.
+      if (status === 'connected') {
+        const store = useAppStore.getState();
+        store.refreshSessions();
+        if (!store.activeSessionKey && connection.createSession) {
+          connection.createSession((session) => {
+            if (session?.id && !useAppStore.getState().activeSessionKey) {
+              useAppStore.getState().setActiveSessionKey(session.id);
+            }
+          });
+        }
+      }
     });
 
     connection.on('onMessage', (msg) => {
