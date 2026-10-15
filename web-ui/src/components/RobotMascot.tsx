@@ -30,8 +30,8 @@ export function RobotMascot() {
           transition={{ duration: 0.4, delay: 0.9, ease: easeOut }}
           className="absolute hidden sm:flex items-center gap-1.5 px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-2xl whitespace-nowrap"
           style={{
-            right: '60%',
-            top: '-10%',
+            right: '58%',
+            top: '-18%',
             backgroundColor: 'var(--bg-surface)',
             border: '1px solid var(--border-subtle)',
             boxShadow: 'var(--shadow-sm)',
@@ -59,8 +59,8 @@ export function RobotMascot() {
           transition={{ duration: 0.4, delay: 1.05, ease: easeOut }}
           className="absolute hidden sm:flex items-center gap-1.5 px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-2xl whitespace-nowrap"
           style={{
-            left: '55%',
-            top: '-25%',
+            left: '58%',
+            top: '-18%',
             backgroundColor: 'var(--bg-surface)',
             border: '1px solid var(--border-subtle)',
             boxShadow: 'var(--shadow-sm)',
