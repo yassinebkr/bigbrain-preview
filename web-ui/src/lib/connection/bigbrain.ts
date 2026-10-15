@@ -79,14 +79,14 @@ export class BigBrainConnection implements ConnectionLike {
     this.connect();
   }
 
-  send(text: string, _attachments?: any[]): string {
+  send(text: string, _attachments?: any[], sessionId?: string): string {
     this.messageIdCounter += 1;
     const messageId = `msg-${Date.now()}-${this.messageIdCounter}`;
     this._emitStatus(messageId, 'sending');
     try {
       this.ws?.send(JSON.stringify({
         type: 'chat.send',
-        payload: { text, messageId },
+        payload: { text, messageId, sessionId },
       }));
     } catch (e) {
       this.callbacks.onSendError?.({ message: String(e) }, messageId);
@@ -97,13 +97,31 @@ export class BigBrainConnection implements ConnectionLike {
     return messageId;
   }
 
+  listSessions(callback: (sessions: any[]) => void): void {
+    this._request('sessions.list', (frame) => {
+      callback(frame.payload?.sessions || []);
+    });
+  }
+
+  createSession(callback: (session: any) => void): void {
+    this._request('sessions.create', (frame) => {
+      callback(frame.payload?.session);
+    });
+  }
+
+  deleteSession(sessionId: string, callback?: (deleted: boolean) => void): void {
+    this._request('sessions.delete', (frame) => {
+      callback?.(!!frame.payload?.deleted);
+    }, { sessionId });
+  }
+
   cancel(): void {
     try {
       this.ws?.send(JSON.stringify({ type: 'chat.cancel', payload: {} }));
     } catch (e) { /* best effort */ }
   }
 
-  loadHistory(callback?: (frame: any) => void): void {
+  loadHistory(callback?: (frame: any) => void, sessionId?: string): void {
     const id = this._request('chat.history', (frame) => {
       // Server entries: {id, role, text, timestamp}. Normalize to the
       // gateway shape the panels expect ({content} strings).
@@ -120,7 +138,7 @@ export class BigBrainConnection implements ConnectionLike {
       callback?.({ ok: true, payload: { messages } });
       // Also surface as catch-up so App can wire it later.
       this.callbacks.onResumeCatchUp?.(messages);
-    });
+    }, { sessionId });
     if (!id) {
       callback?.({ ok: false, payload: { messages: [] } });
     }
@@ -148,7 +166,8 @@ export class BigBrainConnection implements ConnectionLike {
 
   // ── internals ──────────────────────────────────────────────────
 
-  private _request(method: string, onResponse: (frame: any) => void): string | null {
+  private _request(method: string, onResponse: (frame: any) => void,
+                   params?: Record<string, any>): string | null {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return null;
     this.requestIdCounter += 1;
     const id = `req-${this.requestIdCounter}`;
@@ -158,7 +177,7 @@ export class BigBrainConnection implements ConnectionLike {
       // pong frames resolve every pending '__health' request.
       (this as any)._healthId = id;
     } else {
-      this.ws.send(JSON.stringify({ type: 'req', id, method }));
+      this.ws.send(JSON.stringify({ type: 'req', id, method, params }));
     }
     return id;
   }

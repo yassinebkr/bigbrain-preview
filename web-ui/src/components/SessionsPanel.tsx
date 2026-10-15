@@ -1,46 +1,33 @@
-import { useState, useEffect } from 'react';
+// SessionsPanel — the History sidebar: REAL server-side conversations.
+// Lists the sessions from data/sessions/ (title, time, message count),
+// search by title, click opens the conversation, "New" starts a fresh
+// server session. No more single-conversation message dump.
+
+import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { X, MessageSquare, Search, Clock } from 'lucide-react';
+import { X, MessageSquare, Search, Plus, Clock } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 
 const easeOut = [0, 0, 0.2, 1] as [number, number, number, number];
 
-interface HistoryMessage {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  timestamp: number;
+function timeAgo(timestamp: number): string {
+  if (!timestamp) return '';
+  const diff = Date.now() - timestamp;
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
 }
 
 export function SessionsPanel() {
-  const { setSidebarPanel, connection } = useAppStore();
+  const { setSidebarPanel, sessions, activeSessionKey, openSession, startNewSession } = useAppStore();
   const [searchQuery, setSearchQuery] = useState('');
-  const [history, setHistory] = useState<HistoryMessage[]>([]);
-  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
-  // Load history from connection when panel opens
-  useEffect(() => {
-    if (connection) {
-      setIsLoadingHistory(true);
-      connection.loadHistory((response) => {
-        setIsLoadingHistory(false);
-        if (response.ok && response.payload?.messages) {
-          const loadedMessages = response.payload.messages.map((m: any) => ({
-            id: m.id || `hist-${Date.now()}-${Math.random()}`,
-            role: m.role || 'assistant',
-            content: typeof m.content === 'string' ? m.content : 
-              (m.content?.filter((c: any) => c.type === 'text').map((c: any) => c.text).join('') || ''),
-            timestamp: m.timestamp || Date.now(),
-          }));
-          setHistory(loadedMessages);
-        }
-      });
-    }
-  }, [connection]);
-
-  // The real history is the current (single) conversation; search filters it.
-  const filteredHistory = history.filter((m) =>
-    (m.content || '').toLowerCase().includes(searchQuery.toLowerCase())
+  const filtered = sessions.filter((s) =>
+    s.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   return (
@@ -62,26 +49,27 @@ export function SessionsPanel() {
         className="flex items-center justify-between h-14 px-4 flex-shrink-0"
         style={{ borderBottom: '1px solid var(--border-subtle)' }}
       >
-        <span
-          className="text-base font-semibold"
-          style={{ color: 'var(--text-primary)' }}
-        >
+        <span className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
           History
         </span>
-        <button
-          onClick={() => setSidebarPanel(null)}
-          className="p-1.5 rounded-md transition-colors duration-150 cursor-pointer"
-          style={{ backgroundColor: 'transparent' }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = 'var(--bg-button)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = 'transparent';
-          }}
-          aria-label="Close panel"
-        >
-          <X size={20} style={{ color: 'var(--text-tertiary)' }} />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={startNewSession}
+            title="New conversation"
+            className="p-1.5 rounded-md cursor-pointer"
+            style={{ color: 'var(--accent-blue)' }}
+          >
+            <Plus size={18} />
+          </button>
+          <button
+            onClick={() => setSidebarPanel(null)}
+            className="p-1.5 rounded-md cursor-pointer"
+            style={{ color: 'var(--text-tertiary)' }}
+            aria-label="Close panel"
+          >
+            <X size={20} />
+          </button>
+        </div>
       </div>
 
       {/* Search */}
@@ -105,84 +93,56 @@ export function SessionsPanel() {
         </div>
       </div>
 
-      {/* Session List */}
+      {/* Session list */}
       <div className="flex-1 overflow-y-auto">
-        {isLoadingHistory && (
-          <div className="px-4 py-3">
-            <div className="flex items-center gap-2 text-xs" style={{ color: 'var(--text-tertiary)' }}>
-              <Clock size={14} className="animate-spin" />
-              Loading history...
-            </div>
-          </div>
-        )}
-
-        {/* Real History Messages */}
-        {history.length > 0 && (
-          <>
-            <div className="px-4 py-2">
-              <span
-                className="text-xs font-medium uppercase tracking-wider"
-                style={{ color: 'var(--text-tertiary)' }}
-              >
-                Current Conversation ({history.length} messages)
-              </span>
-            </div>
-            {filteredHistory.slice(-15).reverse().map((msg) => (
-              <button
-                key={msg.id}
-                onClick={() => {
-                  // Reopen the conversation: load its messages into the
-                  // chat (mapped to the store's Message shape), end any
-                  // stale streaming state, close the panel.
-                  const store = useAppStore.getState();
-                  store.setMessages(filteredHistory.map((m) => ({
-                    id: m.id,
-                    role: m.role,
-                    content: m.content,
-                    timestamp: m.timestamp,
-                  })));
-                  useAppStore.setState({ isStreaming: false, streamingText: '' });
-                  setSidebarPanel(null);
-                  store.setView('chat');
+        {filtered.length === 0 ? (
+          <p className="px-4 py-6 text-xs" style={{ color: 'var(--text-tertiary)' }}>
+            {sessions.length === 0
+              ? 'No conversations yet — your sessions will appear here.'
+              : 'No conversation matches this search.'}
+          </p>
+        ) : (
+          filtered.map((session) => (
+            <button
+              key={session.key}
+              onClick={() => openSession(session.key)}
+              className="flex items-center gap-2.5 w-full px-4 py-2.5 text-left cursor-pointer relative group"
+              style={{
+                backgroundColor:
+                  session.key === activeSessionKey
+                    ? 'var(--bg-icon-hover)'
+                    : 'transparent',
+              }}
+            >
+              {session.key === activeSessionKey && (
+                <span
+                  className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-5 rounded-r-full"
+                  style={{ backgroundColor: 'var(--accent-blue)' }}
+                />
+              )}
+              <MessageSquare
+                size={16}
+                style={{
+                  color: session.key === activeSessionKey
+                    ? 'var(--accent-blue)'
+                    : 'var(--text-tertiary)',
                 }}
-                className="flex items-center gap-2.5 w-full px-4 py-2.5 text-left transition-colors duration-150 relative cursor-pointer"
-                style={{ backgroundColor: 'transparent' }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = 'var(--bg-button)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = 'transparent';
-                }}
-              >
-                <MessageSquare size={16} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
-                <div className="flex flex-col min-w-0">
-                  <span
-                    className="text-sm font-medium truncate"
-                    style={{ color: 'var(--text-primary)' }}
-                  >
-                    {msg.content?.substring(0, 40) || '...'}
-                    {msg.content?.length > 40 ? '...' : ''}
-                  </span>
-                  <span
-                    className="text-xs"
-                    style={{ color: 'var(--text-tertiary)' }}
-                  >
-                    {msg.role === 'user' ? 'You' : 'AI'} • {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </span>
+              />
+              <div className="flex-1 min-w-0">
+                <div className="text-[13px] truncate" style={{ color: 'var(--text-primary)' }}>
+                  {session.title}
                 </div>
-              </button>
-            ))}
-          </>
-        )}
-
-        {/* Empty state */}
-        {history.length === 0 && !isLoadingHistory && (
-          <div className="px-4 py-8 text-center">
-            <span className="text-sm" style={{ color: 'var(--text-tertiary)' }}>
-              No messages yet — one continuous conversation for now;
-              saved sessions land with the sessions feature.
-            </span>
-          </div>
+                <div
+                  className="text-[11px] flex items-center gap-1"
+                  style={{ color: 'var(--text-tertiary)' }}
+                >
+                  <Clock size={10} />
+                  {timeAgo(session.timestamp)}
+                  {session.messageCount > 0 && ` · ${session.messageCount} msg`}
+                </div>
+              </div>
+            </button>
+          ))
         )}
       </div>
     </motion.div>

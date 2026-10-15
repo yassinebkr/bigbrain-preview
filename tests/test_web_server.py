@@ -310,10 +310,15 @@ class TestAplotProtocol:
         await server._handle_ws_message(mock_ws, raw)
         await asyncio.sleep(0.05)
 
-        # Exactly one bus task to front_brain with the legacy user_message shape.
+        # Exactly one bus task to front_brain with the legacy user_message
+        # shape + the session id of the lazily created session.
         assert len(received) == 1
         assert received[0].source == "morphable_ui"
-        assert received[0].payload == {"type": "user_message", "text": "hello bigbrain"}
+        assert received[0].payload["type"] == "user_message"
+        assert received[0].payload["text"] == "hello bigbrain"
+        assert received[0].payload["session_id"].startswith("sess-")
+        # The user message is persisted in that session.
+        assert server._active_session_id == received[0].payload["session_id"]
 
         # Acks: queued then sent, in order.
         statuses = [
@@ -403,6 +408,13 @@ class TestAplotProtocol:
 
     @pytest.mark.asyncio
     async def test_chat_message_event_captured_in_history(self, server):
+        # An active session first (untagged replies capture into it).
+        from unittest.mock import AsyncMock
+
+        await server._handle_chat_send(AsyncMock(), {
+            "payload": {"text": "question", "messageId": "m1",
+                        "sessionId": "sess-live"},
+        })
         msg = BusMessage(
             type=MessageType.EVENT,
             source="front_brain",
@@ -410,14 +422,33 @@ class TestAplotProtocol:
             payload={"event": "chat.message", "role": "assistant", "text": "bonjour"},
         )
         await server._on_bus_message(msg)
-        assert server._chat_history[-1]["role"] == "assistant"
-        assert server._chat_history[-1]["text"] == "bonjour"
+        session = server._sessions.get("sess-live")
+        assert session["messages"][-1]["role"] == "assistant"
+        assert session["messages"][-1]["text"] == "bonjour"
+
+    async def test_untagged_event_without_session_is_dropped(self, server):
+        """No active session → an untagged reply must NOT mint a junk
+        session (the startup banner used to create 'New conversation'
+        sessions holding only the system message)."""
+        msg = BusMessage(
+            type=MessageType.EVENT,
+            source="front_brain",
+            target="morphable_ui",
+            payload={"event": "chat.message", "role": "system",
+                      "text": "✅ BigBrain system started!"},
+        )
+        await server._on_bus_message(msg)
+        assert server._active_session_id is None
+        assert server._sessions.list() == []
 
     def test_chat_history_bounded(self, server):
-        for i in range(250):
-            server._append_chat_history("user", f"m{i}")
-        assert len(server._chat_history) == 200
-        assert server._chat_history[0]["text"] == "m50"
+        # Sessions bound their messages (500) — the legacy 200-entry
+        # buffer is gone; a long conversation stays bounded on disk.
+        session = server._sessions.create()
+        for i in range(600):
+            server._sessions.append_message(session["id"], "user", f"m{i}")
+        assert len(server._sessions.get(session["id"])["messages"]) == 500
+        assert server._sessions.get(session["id"])["messages"][-1]["text"] == "m599"
 
 
 # ================================================================
@@ -931,23 +962,33 @@ class TestStreamingFrames:
 
     @pytest.mark.asyncio
     async def test_chat_delta_not_buffered_chat_done_is(self, server):
+        from unittest.mock import AsyncMock
+
+        # An active session first (the streamed reply captures into it).
+        await server._handle_chat_send(AsyncMock(), {
+            "payload": {"text": "hello", "messageId": "m1",
+                        "sessionId": "sess-stream"},
+        })
+
         # chat.delta: transient — not replay-buffered, not history.
         delta = BusMessage(
             type=MessageType.EVENT, source="front_brain", target="morphable_ui",
             payload={"event": "chat.delta", "delta": "Hel"},
         )
         await server._on_bus_message(delta)
-        assert server._chat_history == []
+        session = server._sessions.get("sess-stream")
+        assert len(session["messages"]) == 1  # only the user message
         assert all(e != "chat.delta" for _, e in
                    [(ts, d.get("payload", {}).get("event")) for ts, d in server._replay_buffer])
 
-        # chat.done: final streamed text → history + replay buffer.
+        # chat.done: final streamed text → session history + replay buffer.
         done = BusMessage(
             type=MessageType.EVENT, source="front_brain", target="morphable_ui",
             payload={"event": "chat.done", "text": "Hello streamed world"},
         )
         await server._on_bus_message(done)
-        assert server._chat_history[-1]["text"] == "Hello streamed world"
+        session = server._sessions.get("sess-stream")
+        assert session["messages"][-1]["text"] == "Hello streamed world"
         assert server._replay_buffer[-1][1]["payload"]["event"] == "chat.done"
 
 

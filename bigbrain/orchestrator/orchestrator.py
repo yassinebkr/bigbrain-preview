@@ -184,6 +184,7 @@ CRITICAL RULES:
 - For simple code tasks: 1 subtask to python_brain
 - The "type" field in payload should be "generate_and_execute" for code tasks, "research" for research tasks
 - To RUN an existing file (e.g. "run hello.py"), use type "run_file" with payload {{"type": "run_file", "file": "hello.py"}} — the file must already exist in the project
+- To ADD A TASK to the user's task board, use brain_target "taskboard" with payload {{"type": "board_task", "title": "<short task title>", "description": "<details>", "status": "todo"}} — a requested task is a TO-DO unless the user explicitly says it is done or in progress
 - If research is needed, add a researcher subtask BEFORE the coding subtask with a dependency
 
 Respond with ONLY a JSON array. No explanation, no markdown fences.
@@ -192,7 +193,11 @@ Example — single task:
 [{{"id": "s1", "description": "Generate fibonacci code", "brain_target": "python_brain", "payload": {{"type": "generate_and_execute", "user_request": "write a fibonacci function"}}, "dependencies": []}}]
 
 Example — research then code:
-[{{"id": "s1", "description": "Research WebSocket libraries", "brain_target": "researcher", "payload": {{"type": "research", "query": "python websocket server libraries comparison 2026"}}, "dependencies": []}}, {{"id": "s2", "description": "Build WebSocket server", "brain_target": "python_brain", "payload": {{"type": "generate_and_execute", "user_request": "build a websocket chat server", "context_ref": "#s1"}}, "dependencies": ["s1"]}}]"""
+[{{"id": "s1", "description": "Research WebSocket libraries", "brain_target": "researcher", "payload": {{"type": "research", "query": "python websocket server libraries comparison 2026"}}, "dependencies": []}}, {{"id": "s2", "description": "Build WebSocket server", "brain_target": "python_brain", "payload": {{"type": "generate_and_execute", "user_request": "build a websocket chat server", "context_ref": "#s1"}}, "dependencies": ["s1"]}}]
+
+Example — the user asks to ADD A TASK to their task board (taskboard brain, NOT a code task):
+User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
+[{{"id": "s1", "description": "Add board task", "brain_target": "taskboard", "payload": {{"type": "board_task", "title": "mettre à jour le README de near_agi", "status": "todo"}}, "dependencies": []}}]"""
 
     def __init__(self, workspace: str, bus: MessageBus, llm_provider=None,
                  planner_model: str = None):
@@ -372,6 +377,28 @@ Example — research then code:
             or task_data.get("description")
             or str(task_data)
         )
+        
+        # Explicit route from the Front Brain (LLM tool-call): the LLM
+        # already picked the brain and payload — execute them verbatim,
+        # no re-planning and no decomposition. Unknown brain names fall
+        # through to the normal planning pipeline.
+        routed_brain = task_data.get("brain")
+        if routed_brain and (
+            routed_brain in self.registered_brains
+            or routed_brain in self.brain_pools
+        ):
+            payload = {k: v for k, v in task_data.items() if k != "brain"}
+            payload["user_request"] = payload.get("user_request") or user_request
+            subtasks = [SubTask(
+                id=f"{plan_id}_s0",
+                description=f"Execute {payload.get('type', 'routed')} task",
+                brain_target=routed_brain,
+                payload=payload,
+            )]
+            plan.subtasks = subtasks
+            plan.execution_mode = self._analyze_execution_mode(subtasks, user_request)
+            plan.tracker = TaskTracker.create_from_plan(subtasks)
+            return plan
         
         # Try LLM-powered planning with complexity assessment
         if self.llm_provider:
@@ -911,6 +938,8 @@ Example — research then code:
             "run_file": "python_brain",
             "research": "researcher",
             "web_search": "researcher",
+            "board_task": "taskboard",
+            "create_task": "taskboard",
         }
         
         if task_type in brain_map:

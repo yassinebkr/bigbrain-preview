@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { Message, Attachment, Session, Settings, Theme, View, ConnectionStatus, SidebarPanel, User, CanvasOp, Task, TaskStatus } from '@/types';
+import type { Message, Attachment, Session, Settings, Theme, View, ConnectionStatus, SidebarPanel, User, CanvasOp, Task } from '@/types';
 import type { ConnectionLike } from '@/lib/connection';
 
 export interface AgentActivity {
@@ -141,6 +141,9 @@ interface AppState {
   setSessions: (sessions: Session[]) => void;
   setActiveSessionKey: (key: string) => void;
   switchSession: (key: string) => void;
+  refreshSessions: () => void;
+  startNewSession: () => void;
+  openSession: (key: string) => void;
 
   // Canvas
   canvasOps: CanvasOp[];
@@ -150,7 +153,8 @@ interface AppState {
   // Workspace
   tasks: Task[];
   addTask: (task: Task) => void;
-  applyBusActivity: (activity: Omit<AgentActivity, 'ts'>) => void;
+  fetchBoardTasks: () => Promise<void>;
+  createBoardTask: (task: Partial<Task>) => Promise<void>;
   updateTask: (id: string, updates: Partial<Task>) => void;
   deleteTask: (id: string) => void;
   workspaceView: 'files' | 'tasks' | 'research';
@@ -408,18 +412,76 @@ export const useAppStore = create<AppState>()(
       settings: { genui: false, autoSpeech: false },
       toggleSetting: (key) => set((state) => ({ settings: { ...state.settings, [key]: !state.settings[key] } })),
 
-      // Sessions
-      sessions: [
-        { key: 'default', title: 'General Conversation', timestamp: Date.now(), messageCount: 0 },
-        { key: 'coding', title: 'Coding Help', timestamp: Date.now() - 86400000, messageCount: 12 },
-        { key: 'trip', title: 'Trip Planning', timestamp: Date.now() - 172800000, messageCount: 8 },
-      ],
-      activeSessionKey: 'default',
+      // Sessions — real server-side conversations (data/sessions/).
+      sessions: [],
+      activeSessionKey: '',
       setSessions: (sessions) => set({ sessions }),
       setActiveSessionKey: (activeSessionKey) => set({ activeSessionKey }),
       switchSession: (key) => {
         get().connection?.switchSession(key);
         set({ activeSessionKey: key, messages: [], view: 'welcome' });
+      },
+      // Pull the session list from the server into the store.
+      refreshSessions: () => {
+        get().connection?.listSessions?.((list) => {
+          set({
+            sessions: (list || []).map((s) => ({
+              key: s.id,
+              title: s.title || 'New conversation',
+              timestamp: (s.updated_at || 0) * 1000,
+              messageCount: s.message_count || 0,
+            })),
+          });
+        });
+      },
+      // New conversation: a REAL session on the server.
+      startNewSession: () => {
+        const conn = get().connection;
+        if (conn?.createSession) {
+          conn.createSession((session) => {
+            if (!session?.id) return;
+            set({
+              activeSessionKey: session.id,
+              messages: [],
+              view: 'welcome',
+              streamingText: '',
+              isStreaming: false,
+            });
+            get().refreshSessions();
+          });
+        } else {
+          // Offline: a local blank conversation (kept honest — no fake id).
+          set({
+            activeSessionKey: '',
+            messages: [],
+            view: 'welcome',
+            streamingText: '',
+            isStreaming: false,
+          });
+        }
+      },
+      // Open an existing conversation: load its history from the server.
+      openSession: (key) => {
+        set({
+          activeSessionKey: key,
+          sidebarPanel: null,
+          messages: [],
+          streamingText: '',
+          isStreaming: false,
+        });
+        get().connection?.loadHistory((frame: any) => {
+          if (frame?.ok && frame.payload?.messages) {
+            set({
+              messages: frame.payload.messages.map((m: any) => ({
+                id: m.id || `hist-${Date.now()}-${Math.random()}`,
+                role: m.role === 'user' ? 'user' : 'assistant',
+                content: m.content,
+                timestamp: m.timestamp || Date.now(),
+              })),
+              view: 'chat',
+            });
+          }
+        }, key);
       },
 
       // Canvas
@@ -432,74 +494,77 @@ export const useAppStore = create<AppState>()(
       tasks: [],
       addTask: (task) => set((state) => ({ tasks: [...state.tasks, task] })),
 
-      // Bus task events (orchestrator) mapped onto the TaskBoard slice —
-      // agent tasks live in the same board as manual ones; drag & drop
-      // still works locally (updateTask overrides).
-      applyBusActivity: (activity) => set((state) => {
-        const d = activity.detail || {};
-        const taskId = d.task_id;
-        if (!taskId) return state;
-        const existing = state.tasks.find((t) => t.id === taskId);
-        const ensure = (status: TaskStatus, title?: string, description?: string): Task => ({
-          id: taskId,
-          title: title || `Task ${taskId}`,
-          description: description || '',
-          status,
-          tags: ['agent'],
-          assignee: 'BigBrain',
-          priority: 'medium',
+      // The persistent board lives server-side (data/tasks.json); the
+      // store is its view. Server sync is best effort — offline the
+      // local operations keep working.
+      fetchBoardTasks: async () => {
+        try {
+          const r = await fetch('/api/tasks');
+          if (!r.ok) return;
+          const body = await r.json();
+          const serverTasks = (body.tasks || []).map((t: any) => ({
+            id: t.id,
+            title: t.title,
+            description: t.description || '',
+            status: t.status,
+            tags: t.tags || [],
+            assignee: t.assignee || 'BigBrain',
+            priority: t.priority || 'medium',
+            createdAt: (t.createdAt || 0) * 1000,
+          }));
+          // Server tasks replace the list except offline local tasks
+          // (local-*) which have no server counterpart yet.
+          const local = get().tasks.filter((t) => t.id.startsWith('local-'));
+          set({ tasks: [...local, ...serverTasks] });
+        } catch { /* offline: keep the local view */ }
+      },
+      createBoardTask: async (task) => {
+        try {
+          const r = await fetch('/api/tasks', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(task),
+          });
+          if (r.ok) {
+            await get().fetchBoardTasks();
+            return;
+          }
+        } catch { /* fall through to local */ }
+        // Offline fallback: local task (honest — no fake server id).
+        get().addTask({
+          id: `local-${Date.now()}`,
+          title: task.title || 'Task',
+          description: task.description || '',
+          status: task.status || 'todo',
+          tags: task.tags || ['manual'],
+          assignee: task.assignee || 'You',
+          priority: task.priority || 'medium',
           createdAt: Date.now(),
         });
-        switch (activity.type) {
-          case 'task.received': {
-            if (existing) return state;
-            const task = ensure(
-              'todo',
-              (d.description || `Task ${taskId}`).slice(0, 60),
-              `${d.subtasks_count ?? '?'} subtask(s)`
-            );
-            return { tasks: [...state.tasks, task] };
-          }
-          case 'subtask.started': {
-            const desc = `${d.brain || 'brain'}: ${(d.description || '').slice(0, 80)}`;
-            if (existing) {
-              return {
-                tasks: state.tasks.map((t) =>
-                  t.id === taskId ? { ...t, status: 'in-progress', description: desc } : t
-                ),
-              };
-            }
-            return { tasks: [...state.tasks, ensure('in-progress', undefined, desc)] };
-          }
-          case 'subtask.complete': {
-            return state; // task stays in-progress until task.complete
-          }
-          case 'task.complete': {
-            if (existing) {
-              return {
-                tasks: state.tasks.map((t) => (t.id === taskId ? { ...t, status: 'done' } : t)),
-              };
-            }
-            return { tasks: [...state.tasks, ensure('done')] };
-          }
-          case 'task.failed': {
-            if (existing) {
-              return {
-                tasks: state.tasks.map((t) =>
-                  t.id === taskId
-                    ? { ...t, status: 'review', tags: [...new Set([...t.tags, 'failed'])] }
-                    : t
-                ),
-              };
-            }
-            return { tasks: [...state.tasks, { ...ensure('review'), tags: ['agent', 'failed'] }] };
-          }
-          default:
-            return state;
+      },
+
+      // The board shows ONLY persistent user tasks (server + offline
+      // local). Agent runs in flight are visible in the RunPanel —
+      // mirroring them here flipped cards in-progress→done and
+      // confused them with real tasks.
+      updateTask: (id, updates) => {
+        set((state) => ({ tasks: state.tasks.map((t) => (t.id === id ? { ...t, ...updates } : t)) }));
+        // Persisted board task → sync the server (best effort).
+        if (id.startsWith('task-')) {
+          fetch('/api/tasks', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, updates }),
+          }).catch(() => { /* offline: local view already updated */ });
         }
-      }),
-      updateTask: (id, updates) => set((state) => ({ tasks: state.tasks.map((t) => (t.id === id ? { ...t, ...updates } : t)) })),
-      deleteTask: (id) => set((state) => ({ tasks: state.tasks.filter((t) => t.id !== id) })),
+      },
+      deleteTask: (id) => {
+        set((state) => ({ tasks: state.tasks.filter((t) => t.id !== id) }));
+        if (id.startsWith('task-')) {
+          fetch(`/api/tasks?id=${encodeURIComponent(id)}`, { method: 'DELETE' })
+            .catch(() => { /* offline: local view already updated */ });
+        }
+      },
       workspaceView: 'files',
       setWorkspaceView: (workspaceView) => set({ workspaceView }),
 
@@ -520,7 +585,10 @@ export const useAppStore = create<AppState>()(
           isStreaming: true,
           streamingText: '',
         }));
-        state.connection?.send(text, state.attachments);
+        // The message belongs to the active server session (empty → the
+        // server lazily creates one and remembers it).
+        state.connection?.send(text, state.attachments,
+                                state.activeSessionKey || undefined);
       },
 
       // Stop button: cancel server-side (front brain stream + orchestrated

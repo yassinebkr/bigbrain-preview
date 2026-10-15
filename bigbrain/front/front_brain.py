@@ -60,6 +60,10 @@ class FrontBrain:
         self._running = False
         self._current_conversation_id: Optional[str] = None
         self._conversation_history: List[Dict[str, str]] = []
+        # Sessions (web): one history per session id. The legacy
+        # _conversation_history stays the default (TUI, no session).
+        self._session_histories: Dict[str, List[Dict[str, str]]] = {}
+        self._last_session_id: Optional[str] = None
         # Set by the stop button (chat.cancel): the current LLM stream
         # breaks at the next delta and returns what it already has.
         self._stop_requested = False
@@ -73,6 +77,12 @@ class FrontBrain:
     def register_brain(self, name: str, description: str) -> None:
         """Register a brain so the Front Brain knows how to delegate."""
         self._registered_brains[name] = description
+
+    def _history_for(self, session_id: Optional[str]) -> List[Dict[str, str]]:
+        """The conversation history of a session (default: the legacy one)."""
+        if not session_id:
+            return self._conversation_history
+        return self._session_histories.setdefault(session_id, [])
 
     def request_stop(self) -> None:
         """Ask the current LLM stream to stop at the next delta.
@@ -125,24 +135,28 @@ class FrontBrain:
             priority=Priority.LOW
         )
     
-    async def handle_user_input(self, input_text: str, input_type: str = "text") -> str:
+    async def handle_user_input(self, input_text: str, input_type: str = "text",
+                                session_id: Optional[str] = None) -> str:
         """
         Process user input and return response.
-        
+
         When a real LLM is available, uses it for all responses.
         Falls back to pattern-matching + mock when no LLM configured.
-        
+
         Args:
             input_text: User's input text
             input_type: Type of input ("text", "voice", "command")
-            
+            session_id: Web session this turn belongs to (None = default)
+
         Returns:
             Response text for the user
         """
         self.focus_manager.mark_user_activity()
-        
+        self._last_session_id = session_id
+        history = self._history_for(session_id)
+
         # Store conversation turn
-        self._conversation_history.append({"role": "user", "content": input_text})
+        history.append({"role": "user", "content": input_text})
         self.memory.store_conversation_turn("user", input_text, {
             "type": input_type,
             "conversation_id": self._current_conversation_id
@@ -159,7 +173,7 @@ class FrontBrain:
             response = await self._handle_focus_command(intent)
         elif self.llm_provider and not isinstance(self.llm_provider, type(None)):
             # Use LLM for everything else
-            response = await self._llm_respond(input_text)
+            response = await self._llm_respond(input_text, session_id=session_id)
         else:
             # Fallback to pattern matching
             intent = await self._analyze_intent(input_text)
@@ -171,7 +185,7 @@ class FrontBrain:
                 response = await self._handle_unknown_input(input_text)
         
         # Store response
-        self._conversation_history.append({"role": "assistant", "content": response})
+        history.append({"role": "assistant", "content": response})
         self.memory.store_conversation_turn("assistant", response, {
             "conversation_id": self._current_conversation_id
         })
@@ -187,16 +201,19 @@ class FrontBrain:
         except Exception:
             return None
 
-    async def _llm_respond(self, input_text: str) -> str:
+    async def _llm_respond(self, input_text: str,
+                           session_id: Optional[str] = None) -> str:
         """Generate response using the real LLM with full conversation context.
-        
+
         The LLM will return either plain text (conversation) or delegation
-        JSON (task request). The caller handles both cases.
+        JSON (task request). The caller handles both cases. The history
+        is the SESSION's history — switching conversations must not leak
+        context across sessions.
         """
         # Build system prompt with current context
         focus_status = self.focus_manager.get_focus_status()
         system_prompt = self._build_system_prompt(focus_status)
-        
+
         messages = [{"role": "system", "content": system_prompt}]
 
         # Project context: the chat knows which project the user works in;
@@ -216,7 +233,7 @@ class FrontBrain:
             )})
         
         # Add conversation history (keep last 20 turns for context)
-        history = self._conversation_history[-20:]
+        history = self._history_for(session_id)[-20:]
         messages.extend(history)
         
         try:
@@ -297,6 +314,16 @@ YOUR JOB:
 DELEGATION: When the user asks for work, respond with EXACTLY this JSON format:
 {{"reply": "brief natural acknowledgment to the user", "task": "full description of what the user wants done, preserving ALL details and intent"}}
 
+ROUTED DELEGATION (preferred when the request matches ONE known brain capability): use "route" instead of "task". The orchestrator executes it EXACTLY as given, without re-planning:
+{{"reply": "brief natural acknowledgment", "route": {{"brain": "<brain>", "payload": {{...}}}}}}
+
+Routable brains and payloads:
+- taskboard — add/create a task or todo on the user's persistent board. Payload: {{"type": "board_task", "title": "<short task title>", "description": "<optional details>", "status": "todo"}}. Use status "todo" unless the user explicitly asks for another status.
+- researcher — research / web search. Payload: {{"type": "research", "query": "<self-contained search query>"}}
+- python_brain — run an existing workspace file. Payload: {{"type": "run_file", "file": "<file path>"}}
+
+Use "route" ONLY for these direct single actions. For code generation, multi-step work, or anything combining several actions, use the generic "task" format.
+
 IMPORTANT: Send the ENTIRE request as ONE task. Do NOT break it into subtasks yourself.
 The orchestrator will decompose it into subtasks with proper dependencies.
 For example, "research sorting algorithms and benchmark them" is ONE task — the orchestrator
@@ -323,6 +350,9 @@ Available brains (for your awareness, NOT for you to assign):
 Examples:
 User: "write a fibonacci function"
 You: {{"reply": "On it.", "task": "Write a fibonacci function in Python and execute it"}}
+
+User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
+You: {{"reply": "Ajouté à ta taskboard.", "route": {{"brain": "taskboard", "payload": {{"type": "board_task", "title": "Mettre à jour le README de near_agi", "status": "todo"}}}}}}
 
 User: "what's the capital of France?"  
 You: Paris.
@@ -399,21 +429,51 @@ Type 'quit' or 'exit' to stop."""
         Delegation sends ONE compound task to the orchestrator, which
         handles decomposition into subtasks with proper dependencies.
         """
-        import json
-        import re
-        
         text = message.payload.get("text", "").strip()
         if not text:
             return
-        
+        session_id = message.payload.get("session_id")
+
         try:
             # Process through the normal input pipeline
-            response = await self.handle_user_input(text, input_type="web")
+            response = await self.handle_user_input(text, input_type="web",
+                                                    session_id=session_id)
             
             # Try to parse as delegation JSON
             parsed = self._try_parse_delegation(response)
             
-            if parsed and "task" in parsed:
+            # Routed delegation (tool-call): the Front Brain picked a
+            # brain + payload itself. Forward it verbatim — the orchestrator
+            # validates the brain name against its registry/pools and
+            # falls back to normal planning for unknown names.
+            route = parsed.get("route") if isinstance(parsed, dict) else None
+            route_brain = route.get("brain") if isinstance(route, dict) else None
+            route_payload = route.get("payload") if isinstance(route, dict) else None
+            route_valid = (
+                isinstance(route_brain, str)
+                and bool(route_brain)
+                and isinstance(route_payload, dict)
+                and bool(route_payload.get("type"))
+            )
+            
+            if parsed and route_valid:
+                reply_text = parsed.get("reply", "Working on it...")
+                await self._emit_chat_message("assistant", reply_text)
+                
+                ws = "default"  # Always route to the single orchestrator
+                task_data = {
+                    **route_payload,
+                    "brain": route_brain,
+                    "reply_to_ui": True,
+                    "user_request": text,
+                }
+                await self.bus.send_task(
+                    source=self.name,
+                    target=f"orchestrator_{ws}",
+                    task_data=task_data,
+                    priority=Priority.NORMAL,
+                )
+            elif parsed and "task" in parsed:
                 # Front Brain wants to delegate — send the reply part to chat
                 reply_text = parsed.get("reply", "Working on it...")
                 await self._emit_chat_message("assistant", reply_text)
@@ -481,43 +541,48 @@ Type 'quit' or 'exit' to stop."""
         Try to parse a Front Brain response as delegation JSON.
         
         Handles:
-        - New format: {"reply": "...", "task": "single compound request"}
+        - {"reply": "...", "task": "single compound request"}
+        - {"reply": "...", "route": {"brain": "...", "payload": {...}}}
         - Legacy format: {"reply": "...", "tasks": [...]}
         - Raw JSON, markdown-fenced JSON, JSON embedded in text
         """
         import json
-        import re
         
         if not response:
             return None
         
+        def _valid(parsed) -> bool:
+            return (
+                isinstance(parsed, dict)
+                and any(k in parsed for k in ("task", "tasks", "route"))
+            )
+        
         # 1. Try raw JSON
         try:
             parsed = json.loads(response.strip())
-            if isinstance(parsed, dict) and ("task" in parsed or "tasks" in parsed):
+            if _valid(parsed):
                 return parsed
         except (json.JSONDecodeError, TypeError):
             pass
         
-        # 2. Try extracting from markdown code fences
-        fence_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', response, re.DOTALL)
-        if fence_match:
-            try:
-                parsed = json.loads(fence_match.group(1).strip())
-                if isinstance(parsed, dict) and ("task" in parsed or "tasks" in parsed):
-                    return parsed
-            except (json.JSONDecodeError, TypeError):
-                pass
-        
-        # 3. Try finding JSON object with "task" key in the text
-        brace_match = re.search(r'\{[^{}]*"task(?:s)?"\s*:.*?\}', response, re.DOTALL)
-        if brace_match:
-            try:
-                parsed = json.loads(brace_match.group(0))
-                if isinstance(parsed, dict) and ("task" in parsed or "tasks" in parsed):
-                    return parsed
-            except (json.JSONDecodeError, TypeError):
-                pass
+        # 2. Scan for balanced {...} candidates anywhere in the text
+        #    (covers markdown fences, prose, and nested route payloads —
+        #    a lazy regex stops at the first '}' and misses them).
+        for start in (i for i, c in enumerate(response) if c == "{"):
+            depth = 0
+            for i in range(start, len(response)):
+                if response[i] == "{":
+                    depth += 1
+                elif response[i] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        try:
+                            parsed = json.loads(response[start:i + 1])
+                            if _valid(parsed):
+                                return parsed
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                        break
         
         return None
     
@@ -537,6 +602,8 @@ Type 'quit' or 'exit' to stop."""
                 output_text += f"Code execution output:\n{content}\n\n"
             elif kind == "code_only":
                 output_text += f"Generated code (no output):\n{content[:500]}\n\n"
+            elif kind == "action":
+                output_text += f"Action performed:\n{content}\n\n"
             elif kind == "preview":
                 output_text += f"Deployment: {content}\n\n"
             elif kind == "files":
@@ -544,7 +611,7 @@ Type 'quit' or 'exit' to stop."""
         
         # Find the user's original question from conversation history
         user_question = ""
-        for msg in reversed(self._conversation_history):
+        for msg in reversed(self._history_for(self._last_session_id)):
             if msg.get("role") == "user":
                 user_question = msg.get("content", "")
                 break
@@ -568,7 +635,10 @@ Type 'quit' or 'exit' to stop."""
                             "- NEVER invent URLs, domains, or deployment links. Only mention a URL if one appears in the task output\n"
                             "- If a preview_url is provided in the output, use EXACTLY that URL — do not modify it\n"
                             "- If files were written but no preview is running, say the code was generated (not deployed)\n"
-                            "- Mention which algorithms/items were actually tested vs what research found"
+                            "- Mention which algorithms/items were actually tested vs what research found\n"
+                            "- Report ONLY actions the task output explicitly confirms. NEVER claim a task was created, a board item was added, a file was saved, or a message was sent unless the output says so\n"
+                            "- Do not invent file names, storage locations, or record formats not shown in the output (e.g. where or how data was saved)\n"
+                            "- If the output does NOT accomplish what the user asked, say honestly what actually happened instead of pretending success"
                         )},
                         {"role": "user", "content": (
                             f"User's question: {user_question}\n\n"
@@ -608,7 +678,7 @@ Type 'quit' or 'exit' to stop."""
         await self.bus.broadcast_event(
             source=self.name,
             event_type="chat.done",
-            payload={"text": text},
+            payload={"text": text, "session_id": self._last_session_id},
             priority=Priority.NORMAL,
         )
 
@@ -620,6 +690,7 @@ Type 'quit' or 'exit' to stop."""
             payload={
                 "role": role,
                 "text": text,
+                "session_id": self._last_session_id,
             },
             priority=Priority.NORMAL,
         )
@@ -900,6 +971,11 @@ Type 'quit' or 'exit' to stop."""
                     elif data.get("generated_code"):
                         raw_outputs.append(("code_only", data["generated_code"]))
                         workspace_hint = workspace_hint or "python-dev"
+                    elif data.get("message"):
+                        # Structured action results (e.g. the taskboard
+                        # brain): the action's own confirmation IS the
+                        # output the summarizer must relay.
+                        raw_outputs.append(("action", data["message"]))
                     # Capture preview URL if server started
                     if data.get("preview_port") and data.get("server_running"):
                         raw_outputs.append(("preview", f"Preview server running at https://preview.clawos.fr (port {data['preview_port']})"))

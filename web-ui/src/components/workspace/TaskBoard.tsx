@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Plus,
@@ -272,15 +272,13 @@ function AddTaskForm({
       .map((t) => t.trim())
       .filter(Boolean);
 
-    const assignees = ['Alpha', 'Beta', 'Gamma'];
-
     onAdd({
-      id: `t-${Date.now()}`,
+      id: `local-${Date.now()}`,
       title: title.trim(),
       description: description.trim(),
       status,
       tags: tagList,
-      assignee: assignees[Math.floor(Math.random() * assignees.length)],
+      assignee: 'You',
       priority,
       createdAt: Date.now(),
     });
@@ -515,8 +513,13 @@ function KanbanColumn({
 }
 
 export function TaskBoard() {
-  const { tasks, updateTask, addTask, deleteTask } = useAppStore();
+  const { tasks, updateTask, createBoardTask, deleteTask, fetchBoardTasks } = useAppStore();
   const [dragOverColumn, setDragOverColumn] = useState<TaskStatus | null>(null);
+
+  // The persistent board lives server-side (data/tasks.json) — load it.
+  useEffect(() => {
+    fetchBoardTasks();
+  }, [fetchBoardTasks]);
 
   const handleDrop = useCallback(
     (e: React.DragEvent, status: TaskStatus) => {
@@ -590,7 +593,7 @@ export function TaskBoard() {
               column={col}
               tasks={tasksByColumn[col.id]}
               onDrop={handleDrop}
-              onAddTask={addTask}
+              onAddTask={createBoardTask}
               onDeleteTask={deleteTask}
               isDragOver={dragOverColumn === col.id}
               onDragOver={() => setDragOverColumn(col.id)}

@@ -42,6 +42,23 @@ export default function App() {
 
     connection.on('onStatusChange', (status) => {
       setConnectionStatus(status as 'connected' | 'connecting' | 'disconnected');
+      // Real sessions: list them on connect, and start one if the client
+      // has none (first visit / cleared storage) so messages have a home.
+      if (status === 'connected') {
+        const store = useAppStore.getState();
+        store.refreshSessions();
+        // A persisted session key that the server does not know (e.g.
+        // a stale mock key from an older build: 'default', 'coding') is
+        // discarded — a fresh session starts instead of minting junk ids.
+        const legacyKey = store.activeSessionKey && !store.activeSessionKey.startsWith('sess-');
+        if ((!store.activeSessionKey || legacyKey) && connection.createSession) {
+          connection.createSession((session) => {
+            if (session?.id) {
+              useAppStore.getState().setActiveSessionKey(session.id);
+            }
+          });
+        }
+      }
     });
 
     connection.on('onMessage', (msg) => {
@@ -64,8 +81,11 @@ export default function App() {
 
     connection.on('onAgentActivity', (activity) => {
       useAppStore.getState().addAgentActivity(activity);
-      useAppStore.getState().applyBusActivity(activity);
       useAppStore.getState().applyRunEvent(activity);
+      // The agent created a board task → pull the persistent board.
+      if (activity.type === 'taskboard.task_created') {
+        useAppStore.getState().fetchBoardTasks();
+      }
       // Streaming only while a run is actually in flight. Startup frames
       // (brain.status etc.) must not leave the typing indicator stuck on.
       const runEvents = [
