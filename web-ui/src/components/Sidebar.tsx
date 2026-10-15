@@ -3,7 +3,6 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Search,
   Home,
-  Compass,
   Briefcase,
   History,
   Settings,
@@ -17,7 +16,6 @@ const sidebarItems: { id: string; icon: React.ComponentType<{ size?: number; str
   { id: 'avatar', icon: null, tooltip: 'New Chat', isAvatar: true },
   { id: 'search', icon: Search, tooltip: 'Search (Ctrl+K)' },
   { id: 'home', icon: Home, tooltip: 'Home' },
-  { id: 'compass', icon: Compass, tooltip: 'Explore' },
   { id: 'briefcase', icon: Briefcase, tooltip: 'Workspace' },
   { id: 'history', icon: History, tooltip: 'History' },
   { id: 'settings', icon: Settings, tooltip: 'Settings' },
@@ -48,9 +46,6 @@ function SidebarContent({ onItemClick }: { onItemClick?: () => void }) {
         break;
       case 'home':
         setView('welcome');
-        break;
-      case 'compass':
-        setView('workspace');
         break;
       case 'briefcase':
         setView('workspace');
