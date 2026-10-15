@@ -55,6 +55,19 @@
       </div>
     </dialog>
 
+    <!-- Fluid background: slow-moving contour lines and water blobs -->
+    <div id="fluid-bg" aria-hidden="true">
+      <div class="blob blob-1"></div>
+      <div class="blob blob-2"></div>
+      <div class="blob blob-3"></div>
+      <svg class="contours" viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice">
+        <path d="M-60,180 C240,120 420,260 720,200 S1240,120 1500,220" />
+        <path d="M-60,320 C280,240 520,400 820,330 S1300,260 1500,360" />
+        <path d="M-60,560 C220,480 540,640 860,560 S1260,500 1500,600" />
+        <path d="M-60,740 C320,660 560,820 900,740 S1280,680 1500,780" />
+      </svg>
+    </div>
+
     <!-- Panel grid -->
     <main id="grid-container"></main>
 
@@ -80,5 +93,14 @@
 
   <script type="module" src="/static/app.js?v=20260327b"></script>
   <script type="module" src="/static/settings.js?v=20260327b"></script>
+  <!-- Replayable morph gate: add ?demo=morph to the URL (Phase 6.4) -->
+  <script>
+    if (location.search.includes('demo=morph')) {
+      const s = document.createElement('script');
+      s.type = 'module';
+      s.src = '/static/demo-morph.js';
+      document.head.appendChild(s);
+    }
+  </script>
 </body>
 </html>

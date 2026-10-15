@@ -199,24 +199,52 @@ function springToLinearCSS(opts = {}, resolution = 10) {
 // ============================================================
 
 const SPRING_PRESETS = {
-  /** Default panel morph — responsive, slight overshoot */
-  panel: { stiffness: 120, damping: 14, mass: 1.0 },
+  /** Default panel morph — smooth glide, imperceptible overshoot (Phase 6
+   *  tuning: near-critically-damped; the previous bouncier values read
+   *  as janky once morphs actually started playing). */
+  panel: { stiffness: 130, damping: 20, mass: 1.0 },
 
   /** Quick snap — for small element transitions */
-  snap: { stiffness: 300, damping: 20, mass: 0.8 },
+  snap: { stiffness: 320, damping: 26, mass: 0.9 },
 
   /** Gentle ease — for breathing grid proportion changes */
-  breathe: { stiffness: 80, damping: 18, mass: 1.2 },
+  breathe: { stiffness: 90, damping: 22, mass: 1.2 },
 
-  /** Bouncy — for attention highlights */
-  bounce: { stiffness: 200, damping: 10, mass: 1.0 },
+  /** Bouncy — for attention highlights (used sparingly, on purpose) */
+  bounce: { stiffness: 200, damping: 12, mass: 1.0 },
 
   /** Stiff — for status strip expand/collapse */
-  stiff: { stiffness: 250, damping: 25, mass: 1.0 },
+  stiff: { stiffness: 250, damping: 28, mass: 1.0 },
 };
 
-// Pre-compute CSS linear() strings for each preset (avoids runtime recalc)
+// Pre-compute CSS easing strings for each preset (avoids runtime recalc)
 const _cssCache = {};
+
+/**
+ * Whether the runtime parses CSS `linear()`. `linear()` needs Chrome 113+ /
+ * Firefox 112+ / Safari 17.2+; an unparsed easing makes WAAPI `animate()`
+ * throw — which previously killed whole layouts (Phase 6 fix).
+ */
+const SUPPORTS_LINEAR_EASING =
+  typeof CSS !== 'undefined' &&
+  typeof CSS.supports === 'function' &&
+  CSS.supports('transition-timing-function', 'linear(0, 1)');
+
+/**
+ * cubic-bezier fallbacks per preset, tuned to approximate the matching
+ * spring's feel (slight overshoot for panel/snap, gentle for breathe,
+ * pronounced for bounce). Duration still comes from calcSpringDuration,
+ * but the curve itself is a fixed bezier.
+ */
+const _BEZIER_FALLBACKS = {
+  panel: 'cubic-bezier(0.22, 1.12, 0.36, 1)',
+  snap: 'cubic-bezier(0.3, 1.2, 0.4, 1)',
+  breathe: 'cubic-bezier(0.33, 0.9, 0.35, 1)',
+  bounce: 'cubic-bezier(0.34, 1.56, 0.64, 1)',
+  stiff: 'cubic-bezier(0.4, 0.9, 0.3, 1)',
+};
+const _DEFAULT_BEZIER = _BEZIER_FALLBACKS.panel;
+
 function getSpringCSS(presetOrOpts) {
   const key =
     typeof presetOrOpts === 'string'
@@ -224,11 +252,19 @@ function getSpringCSS(presetOrOpts) {
       : JSON.stringify(presetOrOpts);
 
   if (!_cssCache[key]) {
-    const opts =
-      typeof presetOrOpts === 'string'
-        ? SPRING_PRESETS[presetOrOpts] || SPRING_PRESETS.panel
-        : presetOrOpts;
-    _cssCache[key] = springToLinearCSS(opts);
+    if (!SUPPORTS_LINEAR_EASING) {
+      // Fallback: a bezier that approximates the preset's spring feel.
+      _cssCache[key] =
+        typeof presetOrOpts === 'string'
+          ? (_BEZIER_FALLBACKS[presetOrOpts] || _DEFAULT_BEZIER)
+          : _DEFAULT_BEZIER;
+    } else {
+      const opts =
+        typeof presetOrOpts === 'string'
+          ? SPRING_PRESETS[presetOrOpts] || SPRING_PRESETS.panel
+          : presetOrOpts;
+      _cssCache[key] = springToLinearCSS(opts);
+    }
   }
   return _cssCache[key];
 }
@@ -240,14 +276,20 @@ function getSpringCSS(presetOrOpts) {
 /**
  * Snapshot the bounding rect of every panel in the grid.
  *
+ * Panels are keyed by their STABLE identity: `data-panel-type` (set once by
+ * BasePanel.mount and never workspace-scoped), falling back to
+ * `data-panel-id`. Keying by panelId (`${workspace}-${slot}`) broke FLIP on
+ * every workspace switch — the "first" snapshot could never match the new
+ * ids, so all morphs degraded to fade-ins (Phase 6 fix).
+ *
  * @param {HTMLElement} container - Grid container
- * @returns {Map<string, DOMRect>} Panel id → bounding rect
+ * @returns {Map<string, DOMRect>} Stable panel key → bounding rect
  */
 function snapshotPanels(container) {
   const map = new Map();
   for (const panel of container.querySelectorAll('[data-panel-id]')) {
-    const id = panel.dataset.panelId;
-    map.set(id, panel.getBoundingClientRect());
+    const key = panel.dataset.panelType || panel.dataset.panelId;
+    map.set(key, panel.getBoundingClientRect());
   }
   return map;
 }
@@ -259,6 +301,10 @@ function snapshotPanels(container) {
  *   const first = snapshotPanels(grid);
  *   grid.className = 'layout-focus';   // apply new layout
  *   flipPanels(grid, first, { preset: 'panel' });
+ *
+ * Snapshot keys come from snapshotPanels (stable panel type). Panels that
+ * kept their DOM element across the layout change morph smoothly; panels
+ * with no snapshot entry (genuinely new) fade in.
  *
  * @param {HTMLElement} container - Grid container
  * @param {Map<string, DOMRect>} firstSnapshot - Positions before layout change
@@ -283,8 +329,9 @@ function flipPanels(container, firstSnapshot, options = {}) {
   const panels = container.querySelectorAll('[data-panel-id]');
 
   for (const panel of panels) {
-    const id = panel.dataset.panelId;
-    const first = firstSnapshot.get(id);
+    // Same stable key as snapshotPanels: type first, id fallback.
+    const key = panel.dataset.panelType || panel.dataset.panelId;
+    const first = firstSnapshot.get(key);
 
     if (!first) {
       // New panel — fade in
@@ -500,6 +547,7 @@ export {
   SPRING_DEFAULTS,
   SPRING_PRESETS,
   getSpringCSS,
+  SUPPORTS_LINEAR_EASING,
   // FLIP engine
   snapshotPanels,
   flipPanels,

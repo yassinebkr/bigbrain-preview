@@ -194,7 +194,6 @@ class MorphableUI {
     const wsDef = WORKSPACE_DEFAULTS[workspaceName] || WORKSPACE_DEFAULTS.default;
 
     this.morphThrottle.request(() => {
-      try {
       // FIRST: snapshot current positions
       const first = snapshotPanels(this.gridContainer);
 
@@ -204,40 +203,50 @@ class MorphableUI {
       // Apply new layout
       this.slotManager.applyLayout(wsDef.layout);
 
-      // Create and mount panels (reuse persistent panels when possible)
+      // Create and mount panels (reuse persistent panels when possible).
+      // Error isolation (Phase 6): one failing panel skips alone; it never
+      // takes down the whole grid.
+      const failedPanels = [];
+      try {
       for (const [slotName, panelDef] of Object.entries(wsDef.panels)) {
         const panelId = `${workspaceName}-${slotName}`;
         let panel;
 
-        // Check if we have a persistent instance of this panel type
-        if (this._persistentPanels.has(panelDef.type)) {
-          panel = this._persistentPanels.get(panelDef.type);
-          this._persistentPanels.delete(panelDef.type);
-          // Re-attach to grid (subscriptions still active)
-          this.gridContainer.appendChild(panel.el);
-          // Update grid position
-          this.slotManager.assignPanel(slotName, panelId, panel.el);
-        } else {
-          // Create fresh panel
-          panel = createPanel(panelDef.type, panelId, {
-            title: panelDef.title,
-            icon: panelDef.icon,
-          });
-          panel.mount(this.gridContainer);
-          this.slotManager.assignPanel(slotName, panelId, panel.el);
-          panel.subscribe(this.bus);
+        try {
+          // Check if we have a persistent instance of this panel type
+          if (this._persistentPanels.has(panelDef.type)) {
+            panel = this._persistentPanels.get(panelDef.type);
+            this._persistentPanels.delete(panelDef.type);
+            // Re-attach to grid (subscriptions still active)
+            this.gridContainer.appendChild(panel.el);
+            // Update grid position
+            this.slotManager.assignPanel(slotName, panelId, panel.el);
+          } else {
+            // Create fresh panel
+            panel = createPanel(panelDef.type, panelId, {
+              title: panelDef.title,
+              icon: panelDef.icon,
+            });
+            panel.mount(this.gridContainer);
+            this.slotManager.assignPanel(slotName, panelId, panel.el);
+            panel.subscribe(this.bus);
 
-          // Hydrate result panels from global buffers
-          if (panelDef.type === 'code-output' && this._codeResults.length) {
-            for (const msg of this._codeResults) panel._addResult(msg);
+            // Hydrate result panels from global buffers
+            if (panelDef.type === 'code-output' && this._codeResults.length) {
+              for (const msg of this._codeResults) panel._addResult(msg);
+            }
+            if (panelDef.type === 'research-results' && this._researchFindings.length) {
+              for (const msg of this._researchFindings) panel._addFinding(msg);
+            }
           }
-          if (panelDef.type === 'research-results' && this._researchFindings.length) {
-            for (const msg of this._researchFindings) panel._addFinding(msg);
-          }
+
+          // Track
+          this.panels.set(panelId, panel);
+        } catch (panelError) {
+          console.error(`[switchWorkspace] panel '${panelDef.type}' failed:`, panelError);
+          this.slotManager.collapseSlot(slotName);
+          failedPanels.push(panelDef.type);
         }
-
-        // Track
-        this.panels.set(panelId, panel);
       }
 
       // Collapse specified slots
@@ -283,12 +292,38 @@ class MorphableUI {
       // Update workspace selector in UI
       this._updateWorkspaceSelector(workspaceName);
 
+      // Error isolation (Phase 6): never replace the grid with a stack
+      // trace. Surface failures as a toast + console; the workspace that
+      // DID mount stays visible and usable.
+      if (failedPanels.length) {
+        this._uiToast(
+          `Workspace "${workspaceName}" loaded, but panel(s) failed: ${failedPanels.join(', ')}`,
+          'error',
+        );
+      }
       } catch (e) {
+        // Unexpected failure outside a single panel (layout, teardown…):
+        // report, keep whatever is on screen, never nuke the grid.
         console.error('[switchWorkspace] ERROR:', e);
-        document.getElementById('grid-container').innerHTML =
-          `<div style="color:red;padding:20px;font-family:monospace;white-space:pre-wrap">${e.stack || e.message}</div>`;
+        this._uiToast(`Workspace switch to "${workspaceName}" failed: ${e.message || e}`, 'error');
       }
     });
+  }
+
+  /**
+   * Non-blocking error/info toast. Errors must never take down the grid.
+   *
+   * @param {string} message - Text to show
+   * @param {string} [kind='info'] - 'info' | 'error'
+   */
+  _uiToast(message, kind = 'info') {
+    console.error(`[MorphableUI] ${message}`);
+    const toast = document.createElement('div');
+    toast.className = `morph-toast ${kind}`;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    // Auto-dismiss; a stack trace in a toast would be unusable anyway.
+    setTimeout(() => toast.remove(), kind === 'error' ? 8000 : 4000);
   }
 
   /**
@@ -752,9 +787,13 @@ function boot() {
     window.__bigbrain = app;
     console.log('[BOOT] Complete');
   } catch (e) {
+    // Error isolation (Phase 6): a boot failure is reported as a toast +
+    // console, never as a stack trace replacing the grid.
     console.error('[BOOT] FATAL:', e);
-    document.getElementById('grid-container').innerHTML =
-      `<div style="color:red;padding:20px;font-family:monospace;white-space:pre-wrap">${e.stack || e.message}</div>`;
+    const toast = document.createElement('div');
+    toast.className = 'morph-toast error';
+    toast.textContent = `Boot failed: ${e.message || e}. Check the console for details.`;
+    document.body.appendChild(toast);
   }
 }
 
