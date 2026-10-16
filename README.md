@@ -213,7 +213,7 @@ bigbrain/
   voice/           optional STT/TTS (Deepgram, Cartesia)
   tui/, ui/        Textual app, Rich fallback
 web-ui/            React 18 + TypeScript + Vite + Zustand product
-docs/              AUTH.md, MODELS.md, HARNESS-DETERMINISTE.md
+docs/              AUTH.md, MODELS.md, HARNESS-DETERMINISTE.md (fr/ = French originals)
 ```
 
 ## License
