@@ -181,13 +181,41 @@ class MemoryManager:
     
     def store_conversation_turn(self, message_type: str, content: str,
                                metadata: Dict[str, Any] = None) -> None:
-        """Store conversation turn in working memory."""
+        """Store conversation turn in working memory AND persist it.
+
+        The working copy serves the live context window. The persistent
+        copy (global scope, memory_type "conversation") is what makes
+        semantic recall possible months later — the openclaw lesson:
+        store everything (storage is free of LLM tokens), retrieve a
+        handful of lines per turn.
+        """
         enhanced_metadata = {
             "brain": self.brain_name,
             "project": self.project_name,
             **(metadata or {})
         }
         self.working.add_conversation_turn(message_type, content, enhanced_metadata)
+
+        text = str(content or "").strip()
+        if not text:
+            return
+        session_id = enhanced_metadata.get("session_id", "") or ""
+        try:
+            self.persistent.store(
+                content=f"{message_type}: {text}"[:2000],
+                scope="global",
+                brain=self.brain_name,
+                memory_type="conversation",
+                tags="conversation",
+                extra_metadata={
+                    "role": message_type,
+                    "session_id": session_id,
+                    "project": self.project_name,
+                },
+            )
+        except Exception:
+            # Persistence must never break the conversation.
+            pass
     
     def get_conversation_context(self, turns: int = 10) -> List[Dict[str, Any]]:
         """Get recent conversation context."""

@@ -646,10 +646,27 @@ export const useAppStore = create<AppState>()(
           isStreaming: true,
           streamingText: '',
         }));
-        // The message belongs to the active server session (empty → the
-        // server lazily creates one and remembers it).
-        state.connection?.send(text, state.attachments,
-                                state.activeSessionKey || undefined);
+        // Attachments: upload the files first (POST /api/attachments),
+        // then send the message with server refs — the front brain
+        // records them in persistent memory. Offline: the message goes
+        // out without the files (upload failure never blocks the text).
+        (async () => {
+          const refs: { id: string; name: string; type: string }[] = [];
+          for (const att of state.attachments) {
+            if (!att.file) continue;
+            try {
+              const body = new FormData();
+              body.append('file', att.file, att.name);
+              const r = await fetch('/api/attachments', { method: 'POST', body });
+              if (r.ok) {
+                const rec = await r.json();
+                refs.push({ id: rec.id, name: rec.name, type: rec.type });
+              }
+            } catch { /* offline: text still sends */ }
+          }
+          state.connection?.send(text, refs,
+                                  state.activeSessionKey || undefined);
+        })();
       },
 
       // Stop button: cancel server-side (front brain stream + orchestrated

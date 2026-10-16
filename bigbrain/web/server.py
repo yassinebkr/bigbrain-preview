@@ -258,6 +258,8 @@ class WebServer:
         setup_evidence_routes(self._app)
         from .taskboard import setup_taskboard_routes
         setup_taskboard_routes(self._app)
+        from .attachments import setup_attachment_routes
+        setup_attachment_routes(self._app)
 
         # Per-role model lineup (the top-left dropdown) + OpenRouter key.
         self._app.router.add_get("/api/models/roles", self._handle_model_roles)
@@ -815,11 +817,20 @@ class WebServer:
 
         from ..bus.message import BusMessage, MessageType, Priority
 
+        # Attachment refs uploaded via POST /api/attachments travel with
+        # the message so the front brain can record them in memory.
+        attachments = [
+            {"id": a.get("id"), "name": a.get("name"), "type": a.get("type")}
+            for a in (payload.get("attachments") or [])
+            if isinstance(a, dict) and a.get("id")
+        ]
+
         await self.bus.send(BusMessage(
             type=MessageType.TASK,
             source="morphable_ui",
             target="front_brain",
             payload={"type": "user_message", "text": text,
+                     "attachments": attachments,
                      "session_id": session["id"]},
             priority=Priority.NORMAL,
         ))

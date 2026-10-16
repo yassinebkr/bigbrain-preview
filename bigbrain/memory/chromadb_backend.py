@@ -4,6 +4,7 @@ Uses a single collection with scope/workspace metadata for unified
 Tier 2+3 storage. Falls back gracefully when chromadb is not installed.
 """
 
+import os
 import time
 import uuid
 from pathlib import Path
@@ -34,7 +35,11 @@ class ChromaMemoryBackend:
     """
 
     def __init__(self, storage_dir: Path = None):
-        self.storage_dir = storage_dir or DEFAULT_STORAGE
+        # Env override is read LAZILY (not at import) so tests and
+        # subprocesses can redirect storage per-process.
+        default = Path(os.environ.get("BIGBRAIN_MEMORY_DIR",
+                                      str(DEFAULT_STORAGE)))
+        self.storage_dir = storage_dir or default
         self._fallback_entries: List[Dict[str, Any]] = []
         self._collection = None
         self._client = None

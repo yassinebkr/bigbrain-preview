@@ -74,6 +74,13 @@ BIGBRAIN_CONTRACTS=1              # 0 disables pre-implementation approval
 BIGBRAIN_EVIDENCE_ROOT=data/evidence
 BIGBRAIN_SESSIONS_DIR=data/sessions
 
+# Memory (pip install -e ".[memory]" enables ChromaDB persistence)
+BIGBRAIN_RECALL=1                 # 0 disables per-turn semantic recall
+BIGBRAIN_SOUL=1                   # 0 disables the consolidated soul
+BIGBRAIN_SOUL_TURNS=50            # one LLM call per N user turns
+BIGBRAIN_MEMORY_DIR=              # default ~/.bigbrain/memory/chroma
+BIGBRAIN_ATTACHMENTS_DIR=data/attachments
+
 # Voice (optional extra: pip install -e ".[voice]")
 DEEPGRAM_API_KEY=...
 CARTESIA_API_KEY=...
@@ -118,21 +125,28 @@ openclaw's approach burned tokens re-injecting everything, every turn).
 BigBrain's memory is deliberately frugal:
 
 - **Working memory** — ephemeral, per-brain, capped (size and age).
-- **Persistent memory** — a single ChromaDB collection
-  (`~/.bigbrain/memory/`) with a `scope` field: `workspace` entries die
+- **Persistent memory** — a single ChromaDB collection (`BIGBRAIN_MEMORY_DIR`,
+  default `~/.bigbrain/memory/`) with a `scope` field: `workspace` entries die
   with their project, `global` entries survive everything. Conversation
-  turns, user preferences (name, focus mode) and learned context are
-  written there; the `memory/` JSON files in the repo are its runtime
-  state. Without ChromaDB installed it degrades to an in-process store.
-- **Token budget by design** — the LLM prompt gets the last 20 turns of
-  the current session and the loaded preferences, nothing more. Memory
-  writes cost no LLM tokens; nothing is re-summarized on each turn.
-
-What is deliberately *not* there yet: per-turn semantic recall (memories
-are stored, but nothing retrieves the relevant ones into the prompt
-today), image memory, and a consolidation/"soul" process. Wiring
-top-k retrieval into the prompt is the intended next step — with the
-same frugality rule: a handful of retrieved lines, not a replayed life.
+  turns, user preferences and learned context are written there. Install
+  with `pip install -e ".[memory]"`; without ChromaDB it degrades to an
+  in-process store (no recall across restarts).
+- **Per-turn recall** — every user turn searches persistent memory
+  (top-4, embedding search) and injects the relevant lines into the
+  prompt, deduplicated against the live context window. This is the
+  "you sent me this months ago" capability. Retrieval costs zero LLM
+  tokens; kill switch: `BIGBRAIN_RECALL=0`.
+- **Attachment memory** — files shared in the chat are uploaded
+  (`POST /api/attachments`, 10 MB cap), stored under
+  `BIGBRAIN_ATTACHMENTS_DIR`, and recorded in persistent memory. The
+  LLM sees the name and type only — no vision claim.
+- **The soul** — a compact identity summary (3-6 lines) consolidated by
+  ONE LLM call every `BIGBRAIN_SOUL_TURNS` user turns (default 50), then
+  injected as a few lines per turn. openclaw's soul, at batch cost.
+  Kill switch: `BIGBRAIN_SOUL=0`.
+- **Token budget by design** — the prompt gets the last 20 turns, up to
+  4 recalled lines, and the soul block. Nothing else is ever re-injected;
+  nothing is re-summarized per turn.
 
 ## Verification harness
 

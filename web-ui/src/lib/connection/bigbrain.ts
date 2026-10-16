@@ -79,14 +79,21 @@ export class BigBrainConnection implements ConnectionLike {
     this.connect();
   }
 
-  send(text: string, _attachments?: any[], sessionId?: string): string {
+  send(text: string, attachments?: any[], sessionId?: string): string {
     this.messageIdCounter += 1;
     const messageId = `msg-${Date.now()}-${this.messageIdCounter}`;
     this._emitStatus(messageId, 'sending');
     try {
       this.ws?.send(JSON.stringify({
         type: 'chat.send',
-        payload: { text, messageId, sessionId },
+        payload: {
+          text,
+          messageId,
+          sessionId,
+          // Uploaded attachment refs ({id, name, type}) — recorded in
+          // persistent memory by the front brain.
+          attachments: (attachments || []).filter((a) => a && a.id),
+        },
       }));
     } catch (e) {
       this.callbacks.onSendError?.({ message: String(e) }, messageId);
