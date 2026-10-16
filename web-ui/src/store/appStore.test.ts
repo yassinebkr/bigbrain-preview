@@ -328,3 +328,13 @@ describe('dismissNudge', () => {
     expect(useAppStore.getState().dismissedNudges).toEqual(['k1', 'k2']);
   });
 });
+
+describe('runPanelDismissed — new run reopens the panel', () => {
+  it('task.received resets the dismissal', () => {
+    useAppStore.setState({ activeRun: null, runPanelDismissed: true });
+    useAppStore.getState().applyRunEvent(
+      ev('task.received', { task_id: 't9', description: 'nouveau run' }));
+    expect(useAppStore.getState().activeRun?.id).toBe('t9');
+    expect(useAppStore.getState().runPanelDismissed).toBe(false);
+  });
+});

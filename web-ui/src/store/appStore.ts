@@ -106,6 +106,11 @@ interface AppState {
   applyRunEvent: (activity: Omit<AgentActivity, 'ts'>) => void;
   runPanelOpen: boolean;
   setRunPanelOpen: (open: boolean) => void;
+  // The user closed the run panel (X). The NudgeBar reads this to surface
+  // a REMINDER only when the record is hidden — never as a duplicate of
+  // the visible panel.
+  runPanelDismissed: boolean;
+  setRunPanelDismissed: (dismissed: boolean) => void;
 
   // Working project (mirrors /api/fs/current-project) — sandbox nudge.
   currentProject: string | null;
@@ -300,6 +305,8 @@ export const useAppStore = create<AppState>()(
       activeRun: null,
       runPanelOpen: false,
       setRunPanelOpen: (runPanelOpen) => set({ runPanelOpen }),
+      runPanelDismissed: false,
+      setRunPanelDismissed: (runPanelDismissed) => set({ runPanelDismissed }),
       currentProject: null,
       setCurrentProject: (currentProject) => set({ currentProject }),
       pendingOpenFile: null,
@@ -356,7 +363,7 @@ export const useAppStore = create<AppState>()(
               steps: [],
               files: [],
             };
-            return { activeRun: fresh };
+            return { activeRun: fresh, runPanelDismissed: false };
           }
           case 'subtask.started': {
             if (!run || run.status !== 'running') return state;

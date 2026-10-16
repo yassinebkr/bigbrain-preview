@@ -3,9 +3,13 @@
 // contracts; the run is PAUSED until the user approves or rejects them.
 // The verdict is traced on the evidence DesignSpec (revision stamped by
 // the orchestrator).
+//
+// Rendered INSIDE the message flow with the assistant bubble style (same
+// shape/border as MessageBubble): it reads as the agent asking something,
+// not as a floating system popup.
 
 import { motion, AnimatePresence } from 'framer-motion';
-import { ScrollText, Check, X, Loader2 } from 'lucide-react';
+import { Check, X, Loader2 } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 
 export function ContractCard() {
@@ -17,74 +21,80 @@ export function ContractCard() {
     <AnimatePresence>
       {proposal && (
         <motion.div
-          initial={{ opacity: 0, y: 10 }}
+          initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -6 }}
-          transition={{ duration: 0.25 }}
-          className="w-full max-w-[720px] mx-auto rounded-xl p-4"
-          style={{
-            backgroundColor: 'var(--bg-secondary, #1a1a2e)',
-            border: '1px solid var(--border-subtle, #2a2a3e)',
-          }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.3, ease: [0, 0, 0.2, 1] }}
+          className="flex justify-start w-full"
         >
-          <div className="flex items-center gap-2 mb-1">
-            <ScrollText size={15} className="flex-shrink-0" style={{ color: 'var(--accent, #7c6ff0)' }} />
-            <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary, #fff)' }}>
-              Proposed contracts
-            </span>
-            <span
-              className="text-[11px] px-1.5 py-0.5 rounded"
+          <div className="flex flex-row items-start gap-2 w-full max-w-[92%] sm:max-w-[85%] md:max-w-[82%] lg:max-w-[78%] xl:max-w-[75%]">
+            {/* Avatar — same as assistant messages */}
+            <div
+              className="w-7 h-7 rounded-full flex-shrink-0 flex items-center justify-center mt-1"
+              style={{ backgroundColor: '#0071e3' }}
+            >
+              <img src="/robot-icon.png" alt="AI" className="w-4 h-4 object-contain" />
+            </div>
+
+            {/* Bubble — assistant styling: transparent, subtle border */}
+            <div
+              className="px-4 py-3 flex flex-col"
               style={{
-                backgroundColor: 'var(--bg-tertiary, #23233a)',
-                color: 'var(--text-tertiary, #888)',
+                backgroundColor: 'transparent',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: '18px 18px 18px 4px',
+                maxWidth: '100%',
               }}
             >
-                execution paused
-            </span>
-          </div>
+              <p className="text-[15px] leading-relaxed m-0" style={{ color: 'var(--text-primary)' }}>
+                Before I write code — approve these contracts:
+              </p>
 
-          {proposal.request && (
-            <p className="text-[12px] mb-2" style={{ color: 'var(--text-tertiary, #999)' }}>
-              “{proposal.request.slice(0, 160)}{proposal.request.length > 160 ? '…' : ''}”
-            </p>
-          )}
+              <ul className="list-disc pl-5 my-1.5 space-y-1">
+                {proposal.contracts.map((contract, i) => (
+                  <li
+                    key={i}
+                    className="text-[13.5px] leading-relaxed"
+                    style={{ color: 'var(--text-secondary)' }}
+                  >
+                    {contract}
+                  </li>
+                ))}
+              </ul>
 
-          <ul className="flex flex-col gap-1.5 mb-3">
-            {proposal.contracts.map((contract, i) => (
-              <li key={i} className="flex items-start gap-2 text-[13px]" style={{ color: 'var(--text-secondary, #ccc)' }}>
-                <Check size={13} className="flex-shrink-0 mt-0.5" style={{ color: 'var(--success, #34c759)' }} />
-                <span>{contract}</span>
-              </li>
-            ))}
-          </ul>
+              <p className="text-[12px] mt-1 mb-2 m-0" style={{ color: 'var(--text-tertiary)' }}>
+                Execution is paused until you decide.
+              </p>
 
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => sendContractDecision(true)}
-              disabled={sending}
-              className="flex items-center gap-1.5 text-[12px] font-medium px-3 py-1.5 rounded-lg transition-opacity"
-              style={{
-                backgroundColor: 'var(--success, #34c759)',
-                color: '#0a0a14',
-                opacity: sending ? 0.6 : 1,
-              }}
-            >
-              {sending ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
-              Approve &amp; run
-            </button>
-            <button
-              onClick={() => sendContractDecision(false)}
-              disabled={sending}
-              className="flex items-center gap-1.5 text-[12px] font-medium px-3 py-1.5 rounded-lg transition-opacity"
-              style={{
-                border: '1px solid var(--border-subtle, #2a2a3e)',
-                color: 'var(--text-secondary, #ccc)',
-                opacity: sending ? 0.6 : 1,
-              }}
-            >
-              <X size={12} />
-              Reject
-            </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => sendContractDecision(true)}
+                  disabled={sending}
+                  className="flex items-center gap-1.5 text-[12.5px] font-medium px-3 py-1.5 rounded-lg transition-opacity"
+                  style={{
+                    backgroundColor: 'var(--success, #34c759)',
+                    color: '#0a0a14',
+                    opacity: sending ? 0.6 : 1,
+                  }}
+                >
+                  {sending ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                  Approve &amp; run
+                </button>
+                <button
+                  onClick={() => sendContractDecision(false)}
+                  disabled={sending}
+                  className="flex items-center gap-1.5 text-[12.5px] font-medium px-3 py-1.5 rounded-lg transition-opacity"
+                  style={{
+                    border: '1px solid var(--border-subtle)',
+                    color: 'var(--text-secondary)',
+                    opacity: sending ? 0.6 : 1,
+                  }}
+                >
+                  <X size={12} />
+                  Reject
+                </button>
+              </div>
+            </div>
           </div>
         </motion.div>
       )}

@@ -1,6 +1,7 @@
 // NudgeBar — one contextual, REAL suggestion above the chat input.
-// The nudge derives from run state (lib/nudges.ts); a dismissed key
-// never reappears. Zero mock: no state-derived nudge = no bar.
+// It surfaces what the run record says ONLY when the user closed the
+// run panel (X): a visible panel already shows this information, and
+// a second surface repeating it is noise. No state = no bar.
 
 import { AnimatePresence, motion } from 'framer-motion';
 import { X, Zap } from 'lucide-react';
@@ -12,15 +13,23 @@ export function NudgeBar() {
   const viewerFilePath = useAppStore((s) => s.viewerFilePath);
   const dismissed = useAppStore((s) => s.dismissedNudges);
   const dismissNudge = useAppStore((s) => s.dismissNudge);
+  const runPanelDismissed = useAppStore((s) => s.runPanelDismissed);
   const openFileViewer = useAppStore((s) => s.openFileViewer);
   const setView = useAppStore((s) => s.setView);
   const setRunPanelOpen = useAppStore((s) => s.setRunPanelOpen);
+  const setRunPanelDismissed = useAppStore((s) => s.setRunPanelDismissed);
 
   const nudge = deriveNudge({ run, viewerFilePath });
   if (!nudge || dismissed.includes(nudge.key)) return null;
+  // The run panel shows all of this live — the bar is only a reminder
+  // for when the user closed it.
+  if (!runPanelDismissed) return null;
 
   const act = () => {
     if (nudge.action === 'open_run') {
+      // Un-dismiss + expand: the bar is the reminder, the panel is the
+      // record it reopens.
+      setRunPanelDismissed(false);
       setRunPanelOpen(true);
     } else if (nudge.action === 'view_evidence') {
       setView('evidence');

@@ -11,7 +11,7 @@
 // files written (clickable: opens the code viewer), errors, and a
 // nudge when files landed in sandbox/ with no project selected.
 
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Loader2,
@@ -108,11 +108,12 @@ export function RunPanel() {
   const run = useAppStore((s) => s.activeRun);
   const expanded = useAppStore((s) => s.runPanelOpen);
   const setExpanded = useAppStore((s) => s.setRunPanelOpen);
+  const dismissed = useAppStore((s) => s.runPanelDismissed);
+  const setDismissed = useAppStore((s) => s.setRunPanelDismissed);
   const setView = useAppStore((s) => s.setView);
   const currentProject = useAppStore((s) => s.currentProject);
   const setCurrentProject = useAppStore((s) => s.setCurrentProject);
   const openFileViewer = useAppStore((s) => s.openFileViewer);
-  const [dismissed, setDismissed] = useState(false);
 
   // The store's project mirror is only filled by the file explorer; when a
   // run writes into sandbox/, fetch the authoritative value once so the
