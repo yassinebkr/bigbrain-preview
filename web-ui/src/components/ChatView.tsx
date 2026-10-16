@@ -7,6 +7,8 @@ import { TypingIndicator } from './TypingIndicator';
 import { ChatInput } from './ChatInput';
 import { GenUICanvas } from './GenUICanvas';
 import { RunPanel } from './RunPanel';
+import { ContractCard } from './ContractCard';
+import { NudgeBar } from './NudgeBar';
 
 export function ChatView() {
   const { messages, isStreaming } = useAppStore();
@@ -49,6 +51,10 @@ export function ChatView() {
           {isStreaming && !streamingText.trim() && <TypingIndicator />}
         </AnimatePresence>
 
+        {/* Contract approval card — the run is paused until the user
+            decides. Shown in the message flow: it answers the last ask. */}
+        <ContractCard />
+
         </div>
 
         {/* Bottom anchor for auto-scroll */}
@@ -71,6 +77,7 @@ export function ChatView() {
         }}
       >
         <div className="max-w-[720px] mx-auto w-full">
+          <NudgeBar />
           <ChatInput />
         </div>
       </div>

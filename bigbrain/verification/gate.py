@@ -92,13 +92,22 @@ class RunGate:
         """
         if requested_file is None:
             requested_file = extract_requested_file(user_request)
-        spec = self.build_spec(user_request, requested_file)
-        try:
-            self.repository.save_spec(spec)
-        except ImmutableRunError:
-            # Same design_id with different content — keep the stored spec;
-            # the manifest still hash-links to what THIS attempt consumed.
-            spec = self.repository.load_spec(spec.design_id, spec.revision) or spec
+        # Contract approval flow: if a spec was already proposed and
+        # approved for this design, the manifest must link to THAT spec
+        # (approved contracts + approval trace), not a fresh bare one.
+        design_id = "task-" + hashlib.sha256(
+            user_request.encode("utf-8")).hexdigest()[:16]
+        approved_spec = self.repository.load_latest_spec(design_id)
+        if approved_spec is not None:
+            spec = approved_spec
+        else:
+            spec = self.build_spec(user_request, requested_file)
+            try:
+                self.repository.save_spec(spec)
+            except ImmutableRunError:
+                # Same design_id with different content — keep the stored spec;
+                # the manifest still hash-links to what THIS attempt consumed.
+                spec = self.repository.load_spec(spec.design_id, spec.revision) or spec
 
         # Artifacts first: content-addressed, deduplicated across attempts.
         code_ref = self.repository.put_artifact(

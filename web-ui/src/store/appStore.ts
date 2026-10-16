@@ -106,6 +106,11 @@ interface AppState {
   applyRunEvent: (activity: Omit<AgentActivity, 'ts'>) => void;
   runPanelOpen: boolean;
   setRunPanelOpen: (open: boolean) => void;
+  // The user closed the run panel (X). The NudgeBar reads this to surface
+  // a REMINDER only when the record is hidden — never as a duplicate of
+  // the visible panel.
+  runPanelDismissed: boolean;
+  setRunPanelDismissed: (dismissed: boolean) => void;
 
   // Working project (mirrors /api/fs/current-project) — sandbox nudge.
   currentProject: string | null;
@@ -117,6 +122,16 @@ interface AppState {
   viewerFilePath: string | null;
   openFileViewer: (path: string) => void;
   closeFileViewer: () => void;
+
+  // Contract approval (Phase B): before the agent writes code, it proposes
+  // checkable contracts; the user approves → execution resumes, the
+  // approval is traced in the evidence DesignSpec.
+  contractProposal: { designId: string; planId: string; request: string; contracts: string[] } | null;
+  contractSending: boolean;
+  setContractProposal: (
+    proposal: { designId: string; planId: string; request: string; contracts: string[] } | null
+  ) => void;
+  sendContractDecision: (approve: boolean) => Promise<void>;
 
   // Sidebar
   sidebarOpen: boolean;
@@ -159,6 +174,11 @@ interface AppState {
   deleteTask: (id: string) => void;
   workspaceView: 'files' | 'tasks' | 'research';
   setWorkspaceView: (view: 'files' | 'tasks' | 'research') => void;
+
+  // Proactive nudges (Phase B) — real suggestions derived from run state.
+  // Only the DISMISSAL is stored; the nudge itself is always derived.
+  dismissedNudges: string[];
+  dismissNudge: (key: string) => void;
 
   // Actions
   sendMessage: () => void;
@@ -285,6 +305,8 @@ export const useAppStore = create<AppState>()(
       activeRun: null,
       runPanelOpen: false,
       setRunPanelOpen: (runPanelOpen) => set({ runPanelOpen }),
+      runPanelDismissed: false,
+      setRunPanelDismissed: (runPanelDismissed) => set({ runPanelDismissed }),
       currentProject: null,
       setCurrentProject: (currentProject) => set({ currentProject }),
       pendingOpenFile: null,
@@ -292,6 +314,37 @@ export const useAppStore = create<AppState>()(
       viewerFilePath: null,
       openFileViewer: (path) => set({ viewerFilePath: path }),
       closeFileViewer: () => set({ viewerFilePath: null }),
+
+      contractProposal: null,
+      contractSending: false,
+      setContractProposal: (proposal) =>
+        set({ contractProposal: proposal, contractSending: false }),
+      sendContractDecision: async (approve) => {
+        const proposal = get().contractProposal;
+        if (!proposal || get().contractSending) return;
+        set({ contractSending: true });
+        try {
+          const r = await fetch('/api/contracts/approve', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              design_id: proposal.designId,
+              plan_id: proposal.planId,
+              approve,
+            }),
+          });
+          if (r.ok) {
+            // The orchestrator also broadcasts contracts.approved /
+            // contracts.rejected which clear the card — clearing here
+            // makes the UI immediate; both are idempotent.
+            set({ contractProposal: null, contractSending: false });
+          } else {
+            set({ contractSending: false });
+          }
+        } catch {
+          set({ contractSending: false });
+        }
+      },
 
       // Fold bus events into the current run. Pure state machine:
       // task.received opens a run; subtask.* upsert steps;
@@ -310,7 +363,7 @@ export const useAppStore = create<AppState>()(
               steps: [],
               files: [],
             };
-            return { activeRun: fresh };
+            return { activeRun: fresh, runPanelDismissed: false };
           }
           case 'subtask.started': {
             if (!run || run.status !== 'running') return state;
@@ -568,6 +621,14 @@ export const useAppStore = create<AppState>()(
       workspaceView: 'files',
       setWorkspaceView: (workspaceView) => set({ workspaceView }),
 
+      // Proactive nudges — dismissed keys are persisted so a suggestion
+      // the user closed does not come back on the next render/reload.
+      dismissedNudges: [],
+      dismissNudge: (key) =>
+        set((state) => ({
+          dismissedNudges: [...new Set([...state.dismissedNudges, key])].slice(-50),
+        })),
+
       // Actions
       sendMessage: () => {
         const state = get();
@@ -608,6 +669,12 @@ export const useAppStore = create<AppState>()(
         // The last run is the RECORD of what the agent did (steps, files
         // written) — it must survive a page reload, not just tab switches.
         activeRun: state.activeRun,
+        // Layout persistence: where the user was working (view + workspace
+        // tab + the open code file) survives a reload.
+        view: state.view,
+        workspaceView: state.workspaceView,
+        viewerFilePath: state.viewerFilePath,
+        dismissedNudges: state.dismissedNudges,
       }),
     }
   )

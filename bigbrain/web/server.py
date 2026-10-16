@@ -103,6 +103,9 @@ class WebServer:
             "brain.started", "brain.complete",
             "chat.message",  # Front brain summary / chat responses
             "chat.done",    # Final text of a streamed reply
+            # Contract approval proposals are LIVE PENDING STATE — a client
+            # reconnecting while a plan awaits approval must see the card.
+            "contracts.proposal",
             # NOTE: chat.delta is deliberately absent — transient chunks.
         }
 
@@ -222,6 +225,8 @@ class WebServer:
         self._app.router.add_get("/ws", self._handle_websocket)
         self._app.router.add_get("/api/focus", self._handle_focus_get)
         self._app.router.add_post("/api/focus", self._handle_focus_set)
+        self._app.router.add_post("/api/contracts/approve",
+                                  self._handle_contracts_approve)
         self._app.router.add_get("/api/status", self._handle_status)
         self._app.router.add_get("/api/preview-logs", self._handle_preview_logs)
 
@@ -576,6 +581,40 @@ class WebServer:
                 if mode_enum:
                     self.focus_manager.set_focus_mode(mode_enum, "ui")
 
+        return web.json_response({"ok": True})
+
+    async def _handle_contracts_approve(self, request: web.Request) -> web.Response:
+        """User verdict on a proposed contract set (Phase B approval flow).
+
+        Forwards the decision to the orchestrator over the bus — the
+        orchestrator resumes or cancels the paused plan and stamps the
+        approval on the DesignSpec (evidence).
+        """
+        try:
+            data = await request.json()
+        except json.JSONDecodeError:
+            return web.json_response({"error": "Invalid JSON"}, status=400)
+
+        design_id = data.get("design_id")
+        plan_id = data.get("plan_id")
+        if not design_id or not plan_id:
+            return web.json_response(
+                {"error": "design_id and plan_id are required"}, status=400)
+
+        await self.bus.send_task(
+            # Source MUST be a bus-authenticated component ("morphable_ui"
+            # has an HMAC token, like chat.send) — an unknown source is
+            # silently DROPPED by the authenticated bus and the plan would
+            # wait forever.
+            source="morphable_ui",
+            target="orchestrator_default",
+            task_data={
+                "type": "contracts.approval",
+                "design_id": design_id,
+                "plan_id": plan_id,
+                "approve": bool(data.get("approve")),
+            },
+        )
         return web.json_response({"ok": True})
 
     # ================================================================

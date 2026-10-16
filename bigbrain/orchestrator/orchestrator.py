@@ -18,6 +18,10 @@ from .execution_modes import BrainExecutionConfig, ExecutionMode
 from .task_tracker import TaskTracker
 from .checkpoint import FileCheckpoint
 from .risk import classify_risk, RiskLevel, get_risk_description
+from ..verification.contracts import (
+    approval_flow_enabled as _contracts_approval_flow_enabled,
+    plan_needs_approval as _plan_needs_approval,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +69,10 @@ class TaskPlan:
     error: Optional[str] = None
     tracker: Optional['TaskTracker'] = None
     execution_mode: str = "dag"  # "todo" or "dag"
+    # Contract approval gate (Phase B): a plan that writes code waits for
+    # the user to approve its contracts before any subtask is dispatched.
+    awaiting_approval: bool = False
+    approval_design_id: Optional[str] = None
     
     def get_ready_subtasks(self) -> List[SubTask]:
         """Get subtasks that are ready to execute (dependencies satisfied)."""
@@ -329,7 +337,12 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         """Handle incoming task requests."""
         print(f"[ORCH] _handle_task_request from {message.source} type={message.payload.get('type','?')}")
         task_data = message.payload
-        
+
+        # Contract approval verdict from the UI (approve/reject buttons)
+        if task_data.get("type") == "contracts.approval":
+            await self._handle_contracts_approval(task_data)
+            return
+
         # Create task plan
         plan = await self._create_task_plan(message)
         self.task_plans[plan.id] = plan
@@ -352,9 +365,102 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         # Auto-checkpoint before execution (for file-based projects)
         await self._auto_checkpoint_before_execution(plan)
         
+        # Contract gate (Phase B): plans that WRITE code propose their
+        # contracts and wait for explicit user approval. Kill switch:
+        # BIGBRAIN_CONTRACTS=0 disables the gate entirely.
+        if (plan.subtasks and plan.awaiting_approval is False
+                and _contracts_approval_flow_enabled()
+                and _plan_needs_approval(plan.subtasks)):
+            user_request = (
+                task_data.get("user_request")
+                or task_data.get("request")
+                or task_data.get("query")
+                or task_data.get("description")
+                or str(task_data)
+            )
+            spec = await self._propose_contracts(plan, user_request)
+            if spec is not None:
+                plan.awaiting_approval = True
+                plan.status = TaskStatus.RUNNING
+                return  # subtasks dispatch only after approval
+        
         # Start executing ready subtasks
         plan.status = TaskStatus.RUNNING
         await self._execute_ready_subtasks(plan)
+
+    async def _propose_contracts(self, plan: TaskPlan,
+                                 user_request: str):
+        """Draft contracts, persist the spec, notify the UI. Returns the
+        DesignSpec (None if the proposal could not be persisted)."""
+        from ..verification.contracts import (
+            build_proposal_spec,
+            draft_contracts,
+        )
+        from ..verification.evidence import ImmutableRunError, default_repository
+
+        contracts = await draft_contracts(self.llm_provider, user_request)
+        spec = build_proposal_spec(user_request, contracts)
+        try:
+            default_repository().save_spec(spec)
+        except ImmutableRunError:
+            # Same request already proposed before — reuse the stored spec.
+            stored = default_repository().load_latest_spec(spec.design_id)
+            if stored is not None:
+                spec = stored
+        plan.approval_design_id = spec.design_id
+        await self.bus.broadcast_event(
+            source=self.name,
+            event_type="contracts.proposal",
+            payload={
+                "design_id": spec.design_id,
+                "plan_id": plan.id,
+                "user_request": user_request,
+                "contracts": list(spec.contracts),
+            },
+            workspace=self.workspace,
+            priority=Priority.NORMAL,
+        )
+        return spec
+
+    async def _handle_contracts_approval(self, task_data: dict) -> None:
+        """Resume or cancel a plan after the user's verdict."""
+        from ..verification.evidence import default_repository
+
+        plan_id = task_data.get("plan_id")
+        design_id = task_data.get("design_id")
+        approved = bool(task_data.get("approve"))
+        plan = self.task_plans.get(plan_id)
+        if plan is None or not plan.awaiting_approval:
+            return  # unknown or already-resolved proposal
+
+        plan.awaiting_approval = False
+        try:
+            default_repository().approve_spec(
+                design_id or plan.approval_design_id or "",
+                plan_id=plan.id,
+                decision="approved" if approved else "rejected",
+            )
+        except Exception as e:
+            logger.warning("Contract approval persistence failed: %s", e)
+
+        if approved:
+            await self.bus.broadcast_event(
+                source=self.name,
+                event_type="contracts.approved",
+                payload={"design_id": design_id, "plan_id": plan.id},
+                workspace=self.workspace,
+                priority=Priority.NORMAL,
+            )
+            await self._execute_ready_subtasks(plan)
+        else:
+            await self.bus.broadcast_event(
+                source=self.name,
+                event_type="contracts.rejected",
+                payload={"design_id": design_id, "plan_id": plan.id},
+                workspace=self.workspace,
+                priority=Priority.NORMAL,
+            )
+            await self._cancel_task(plan.id, "soft")
     
     async def _create_task_plan(self, message: BusMessage) -> TaskPlan:
         """
@@ -988,6 +1094,11 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         # Don't dispatch if plan is already complete/failed
         if plan.status in (TaskStatus.COMPLETE, TaskStatus.FAILED, TaskStatus.CANCELLED):
             print(f"[ORCH] Skipping _execute_ready_subtasks: plan {plan.id[-8:]} is {plan.status.value}")
+            return
+        
+        # Contract gate: nothing dispatches until the user approves.
+        if plan.awaiting_approval:
+            print(f"[ORCH] Plan {plan.id[-8:]} awaits contract approval — not dispatching")
             return
         
         # Prevent re-entrant execution (bus delivers synchronously, so a dispatched

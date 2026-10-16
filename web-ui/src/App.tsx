@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { AnimatePresence } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
 import { useAppStore } from '@/store/appStore';
 import { Layout } from '@/components/Layout';
 import { LoginPage } from '@/components/LoginPage';
@@ -86,6 +86,21 @@ export default function App() {
       if (activity.type === 'taskboard.task_created') {
         useAppStore.getState().fetchBoardTasks();
       }
+      // Contract approval flow (Phase B): a proposal arrives → show the
+      // card; a verdict arrives → the card is resolved.
+      if (activity.type === 'contracts.proposal') {
+        const d = activity.detail || {};
+        if (d.design_id && d.plan_id) {
+          useAppStore.getState().setContractProposal({
+            designId: d.design_id,
+            planId: d.plan_id,
+            request: d.user_request || '',
+            contracts: Array.isArray(d.contracts) ? d.contracts : [],
+          });
+        }
+      } else if (activity.type === 'contracts.approved' || activity.type === 'contracts.rejected') {
+        useAppStore.getState().setContractProposal(null);
+      }
       // Streaming only while a run is actually in flight. Startup frames
       // (brain.status etc.) must not leave the typing indicator stuck on.
       const runEvents = [
@@ -168,21 +183,30 @@ export default function App() {
   return (
     <Layout>
       <AnimatePresence mode="wait">
+        <motion.div
+          key={view}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -6 }}
+          transition={{ duration: 0.18, ease: 'easeOut' }}
+          className="h-full"
+        >
         {view === 'welcome' ? (
-          <WelcomeScreen key="welcome" />
+          <WelcomeScreen />
         ) : view === 'workspace' ? (
-          <Workspace key="workspace" />
+          <Workspace />
         ) : view === 'discover' ? (
-          <DiscoverView key="discover" />
+          <DiscoverView />
         ) : view === 'tasks' ? (
-          <TasksView key="tasks" />
+          <TasksView />
         ) : view === 'brains' ? (
-          <BrainsView key="brains" />
+          <BrainsView />
         ) : view === 'evidence' ? (
-          <EvidenceView key="evidence" />
+          <EvidenceView />
         ) : (
-          <ChatView key="chat" />
+          <ChatView />
         )}
+        </motion.div>
       </AnimatePresence>
       {/* Global file viewer — opened from the run panel or the explorer */}
       <CodeViewer />

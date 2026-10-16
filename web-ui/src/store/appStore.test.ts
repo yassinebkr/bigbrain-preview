@@ -272,3 +272,69 @@ describe('sessions', () => {
     expect(conn.send).toHaveBeenCalledWith('bonjour', [], 'sess-live');
   });
 });
+
+describe('contract approval (Phase B)', () => {
+  beforeEach(() => {
+    useAppStore.setState({ contractProposal: null, contractSending: false });
+  });
+
+  it('setContractProposal stores and clears the pending proposal', () => {
+    useAppStore.getState().setContractProposal({
+      designId: 'task-abc',
+      planId: 'p1',
+      request: 'écris fibonacci.py',
+      contracts: ['fibonacci.py existe'],
+    });
+    expect(useAppStore.getState().contractProposal?.designId).toBe('task-abc');
+    useAppStore.getState().setContractProposal(null);
+    expect(useAppStore.getState().contractProposal).toBeNull();
+  });
+
+  it('sendContractDecision posts the verdict and clears on success', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', fetchMock);
+    useAppStore.getState().setContractProposal({
+      designId: 'task-abc', planId: 'p1', request: 'x', contracts: ['c'],
+    });
+    await useAppStore.getState().sendContractDecision(true);
+    expect(fetchMock).toHaveBeenCalledWith('/api/contracts/approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ design_id: 'task-abc', plan_id: 'p1', approve: true }),
+    });
+    expect(useAppStore.getState().contractProposal).toBeNull();
+    vi.unstubAllGlobals();
+  });
+
+  it('sendContractDecision keeps the card on failure', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false });
+    vi.stubGlobal('fetch', fetchMock);
+    useAppStore.getState().setContractProposal({
+      designId: 'task-abc', planId: 'p1', request: 'x', contracts: ['c'],
+    });
+    await useAppStore.getState().sendContractDecision(false);
+    expect(useAppStore.getState().contractProposal).not.toBeNull();
+    expect(useAppStore.getState().contractSending).toBe(false);
+    vi.unstubAllGlobals();
+  });
+});
+
+describe('dismissNudge', () => {
+  it('records a dismissal without duplicates and stays bounded', () => {
+    useAppStore.setState({ dismissedNudges: [] });
+    useAppStore.getState().dismissNudge('k1');
+    useAppStore.getState().dismissNudge('k1');
+    useAppStore.getState().dismissNudge('k2');
+    expect(useAppStore.getState().dismissedNudges).toEqual(['k1', 'k2']);
+  });
+});
+
+describe('runPanelDismissed — new run reopens the panel', () => {
+  it('task.received resets the dismissal', () => {
+    useAppStore.setState({ activeRun: null, runPanelDismissed: true });
+    useAppStore.getState().applyRunEvent(
+      ev('task.received', { task_id: 't9', description: 'nouveau run' }));
+    expect(useAppStore.getState().activeRun?.id).toBe('t9');
+    expect(useAppStore.getState().runPanelDismissed).toBe(false);
+  });
+});
