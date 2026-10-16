@@ -109,6 +109,31 @@ user ──▶ Front Brain ──task──▶ Orchestrator ──subtask──�
 A focus system filters which bus events reach the user by attention
 mode (deep focus / normal / overview).
 
+## Memory
+
+Memory was a core part of the original vision (the scratchy / openclaw
+lesson: a system that remembers you is qualitatively different — but
+openclaw's approach burned tokens re-injecting everything, every turn).
+
+BigBrain's memory is deliberately frugal:
+
+- **Working memory** — ephemeral, per-brain, capped (size and age).
+- **Persistent memory** — a single ChromaDB collection
+  (`~/.bigbrain/memory/`) with a `scope` field: `workspace` entries die
+  with their project, `global` entries survive everything. Conversation
+  turns, user preferences (name, focus mode) and learned context are
+  written there; the `memory/` JSON files in the repo are its runtime
+  state. Without ChromaDB installed it degrades to an in-process store.
+- **Token budget by design** — the LLM prompt gets the last 20 turns of
+  the current session and the loaded preferences, nothing more. Memory
+  writes cost no LLM tokens; nothing is re-summarized on each turn.
+
+What is deliberately *not* there yet: per-turn semantic recall (memories
+are stored, but nothing retrieves the relevant ones into the prompt
+today), image memory, and a consolidation/"soul" process. Wiring
+top-k retrieval into the prompt is the intended next step — with the
+same frugality rule: a handful of retrieved lines, not a replayed life.
+
 ## Verification harness
 
 Every Python execution attempt is evaluated against what was asked:
