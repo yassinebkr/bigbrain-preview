@@ -1,6 +1,6 @@
 """Deterministic harness P2 — executors, gate, and the Honk-loop wiring.
 
-See docs/HARNESS-DETERMINISTE.md.
+See docs/DETERMINISTIC-HARNESS.md.
 """
 
 import json

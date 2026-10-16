@@ -8,7 +8,7 @@ recorded, immutable, and replayable. A React web UI is the primary interface.
 
 This is an active development repository. Details live in `docs/`:
 [AUTH.md](docs/AUTH.md), [MODELS.md](docs/MODELS.md),
-[HARNESS-DETERMINISTE.md](docs/HARNESS-DETERMINISTE.md).
+[DETERMINISTIC-HARNESS.md](docs/DETERMINISTIC-HARNESS.md).
 
 ## Quick start
 
@@ -213,7 +213,7 @@ bigbrain/
   voice/           optional STT/TTS (Deepgram, Cartesia)
   tui/, ui/        Textual app, Rich fallback
 web-ui/            React 18 + TypeScript + Vite + Zustand product
-docs/              AUTH.md, MODELS.md, HARNESS-DETERMINISTE.md (fr/ = French originals)
+docs/              AUTH.md, MODELS.md, DETERMINISTIC-HARNESS.md (fr/ = French originals)
 ```
 
 ## License

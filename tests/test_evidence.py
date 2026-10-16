@@ -1,5 +1,5 @@
 """Evidence core (harness P1) — versioned manifests, immutability,
-content-addressed artifacts. See docs/HARNESS-DETERMINISTE.md."""
+content-addressed artifacts. See docs/DETERMINISTIC-HARNESS.md."""
 
 import json
 

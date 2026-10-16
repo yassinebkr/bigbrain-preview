@@ -1,6 +1,6 @@
 """Harness P3 — replay from manifests and the golden corpus.
 
-See docs/HARNESS-DETERMINISTE.md.
+See docs/DETERMINISTIC-HARNESS.md.
 """
 
 import pytest
