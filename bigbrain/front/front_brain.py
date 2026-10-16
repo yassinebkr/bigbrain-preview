@@ -67,6 +67,15 @@ class FrontBrain:
         # Set by the stop button (chat.cancel): the current LLM stream
         # breaks at the next delta and returns what it already has.
         self._stop_requested = False
+
+        # The soul: batch-consolidated identity memory (memory/soul.py).
+        # Injected as a few lines per turn; consolidated by ONE LLM call
+        # every BIGBRAIN_SOUL_TURNS user turns.
+        from ..memory.soul import SoulStore, soul_enabled
+        self._soul_store = SoulStore()
+        self._soul_turns_since = 0
+        self._soul_task = None
+        self._soul_enabled = soul_enabled()
         
         # Brain registry for system prompt
         self._registered_brains: Dict[str, str] = {}
@@ -159,8 +168,12 @@ class FrontBrain:
         history.append({"role": "user", "content": input_text})
         self.memory.store_conversation_turn("user", input_text, {
             "type": input_type,
+            "session_id": session_id,
             "conversation_id": self._current_conversation_id
         })
+        # Soul: count user turns; every N turns a background task
+        # consolidates the recent transcript once (batch, not per-turn).
+        self._soul_tick()
         
         # Handle built-in commands first (no LLM needed)
         command = input_text.lower().strip()
@@ -192,6 +205,92 @@ class FrontBrain:
         
         return response
     
+    def _soul_tick(self) -> None:
+        """One user turn counted; trigger batch consolidation every N."""
+        from ..memory.soul import soul_turn_interval
+        if not self._soul_enabled or not self.llm_provider:
+            return
+        self._soul_turns_since += 1
+        if self._soul_turns_since < soul_turn_interval():
+            return
+        self._soul_turns_since = 0
+        if self._soul_task and not self._soul_task.done():
+            return  # a consolidation is still running
+        import asyncio
+        self._soul_task = asyncio.create_task(self._consolidate_soul())
+
+    async def _consolidate_soul(self) -> None:
+        """ONE LLM call distilling recent turns into the updated soul."""
+        from ..memory.soul import (SOUL_PROMPT, collect_recent_transcript)
+        try:
+            transcript = collect_recent_transcript(self._soul_store.updated_at)
+            if not transcript:
+                return
+            excerpt = "\n".join(
+                f"{role}: {text[:300]}" for role, text, _ in transcript[-60:])
+            previous = self._soul_store.summary or "(none yet)"
+            response = await self.llm_provider.chat_complete(
+                messages=[
+                    {"role": "system", "content": SOUL_PROMPT},
+                    {"role": "user", "content": (
+                        f"Previous soul:\n{previous}\n\n"
+                        f"Recent transcript:\n{excerpt[:6000]}")},
+                ],
+                stream=False,
+            )
+            summary = str(response or "").strip()
+            if summary:
+                self._soul_store.save(summary)
+        except Exception as e:
+            # Consolidation is best-effort: never break a conversation.
+            print(f"[FrontBrain] soul consolidation failed: {e}")
+
+    def _recall_relevant(self, query: str,
+                         history: List[Dict[str, str]]) -> List[str]:
+        """Persistent-memory recall for one turn. Frugal and honest:
+
+        - top-4 results, each capped, deduplicated against the live
+          context window and against each other,
+        - retrieval costs zero LLM tokens (ChromaDB embedding search),
+        - no ChromaDB → no recall (no fake keyword matching),
+        - kill switch: BIGBRAIN_RECALL=0.
+        """
+        import os
+        if os.environ.get("BIGBRAIN_RECALL", "1") == "0":
+            return []
+        text = (query or "").strip()
+        if not text:
+            return []
+        try:
+            # Direct persistent query (both scopes): MemoryManager.recall
+            # forces a workspace filter that would exclude global
+            # (cross-project) memories — the personal ones matter most.
+            results = self.memory.persistent.query(text, limit=4)
+        except Exception:
+            return []
+
+        # The live window already carries these turns — never re-inject.
+        window_heads = set()
+        for msg in history:
+            content = (msg.get("content") or "").strip()
+            if content:
+                window_heads.add(content[:80].lower())
+
+        recalled: List[str] = []
+        seen: set = set()
+        for r in results:
+            content = (r.get("content") or "").strip()
+            metadata = r.get("metadata") or {}
+            role = metadata.get("role")
+            if isinstance(role, str) and content.lower().startswith(f"{role}: "):
+                content = content[len(role) + 2:].strip()
+            head = content[:80].lower()
+            if not content or head in window_heads or head in seen:
+                continue
+            seen.add(head)
+            recalled.append(content[:200])
+        return recalled
+
     def _current_project(self) -> str | None:
         """The selected working project, if any (and if web is loaded)."""
         try:
@@ -216,6 +315,14 @@ class FrontBrain:
 
         messages = [{"role": "system", "content": system_prompt}]
 
+        # The soul: a few consolidated lines about the user — the outcome
+        # of openclaw's soul, at a batch cost instead of a per-turn cost.
+        if self._soul_enabled and self._soul_store.summary:
+            messages.append({"role": "system", "content": (
+                "What you remember about this user (consolidated long-term "
+                "memory — use silently, never mention this block):\n"
+                + self._soul_store.summary)})
+
         # Project context: the chat knows which project the user works in;
         # generated files land there (the pool's work_dir follows it too).
         project = self._current_project()
@@ -235,6 +342,19 @@ class FrontBrain:
         # Add conversation history (keep last 20 turns for context)
         history = self._history_for(session_id)[-20:]
         messages.extend(history)
+        
+        # Semantic recall (memory phase): a handful of PERSISTENT memories
+        # relevant to this turn — the "you sent me this months ago" magic.
+        # Frugal by design: top-4 capped lines, deduplicated against the
+        # live window, zero LLM tokens spent on retrieval.
+        recalled = self._recall_relevant(input_text, history)
+        if recalled:
+            messages.insert(1, {"role": "system", "content": (
+                "Older memories that may be relevant to this conversation:\n"
+                + "\n".join(f"- {line}" for line in recalled)
+                + "\nUse them silently if useful; do not mention them "
+                  "unless the user brings them up."
+            )})
         
         try:
             # STREAMING: consume the provider's delta stream and broadcast
@@ -434,6 +554,21 @@ Type 'quit' or 'exit' to stop."""
             return
         session_id = message.payload.get("session_id")
 
+        # Attachments (uploaded via POST /api/attachments): record each
+        # file in persistent memory — recall makes it findable months
+        # later. The LLM gets an honest note (name/type only — no vision).
+        attachments = [
+            a for a in (message.payload.get("attachments") or [])
+            if isinstance(a, dict) and a.get("name")
+        ]
+        if attachments:
+            names = ", ".join(
+                f"{a.get('name')} ({a.get('type') or 'file'})"
+                for a in attachments)
+            text = (f"{text}\n\n[attached file(s): {names} — the file is "
+                    "saved on the server; you cannot see its content]")
+            self._remember_attachments(attachments, session_id)
+
         try:
             # Process through the normal input pipeline
             response = await self.handle_user_input(text, input_type="web",
@@ -535,6 +670,29 @@ Type 'quit' or 'exit' to stop."""
             traceback.print_exc()
             await self._emit_chat_message("system", f"Error: {e}")
     
+    def _remember_attachments(self, attachments: list,
+                              session_id: Optional[str]) -> None:
+        """One persistent memory entry per attached file (global scope).
+
+        Never raises: persistence must not break the conversation.
+        """
+        for attachment in attachments:
+            try:
+                self.memory.persistent.store(
+                    content=(f"The user shared a file: {attachment.get('name')} "
+                             f"({attachment.get('type') or 'file'})"),
+                    scope="global",
+                    brain=self.name,
+                    memory_type="attachment",
+                    tags="attachment",
+                    extra_metadata={
+                        "attachment_id": str(attachment.get("id") or ""),
+                        "session_id": session_id or "",
+                    },
+                )
+            except Exception:
+                pass
+
     @staticmethod
     def _try_parse_delegation(response: str) -> dict | None:
         """
