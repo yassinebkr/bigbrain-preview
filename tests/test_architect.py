@@ -380,7 +380,8 @@ class TestArchitectPhase:
         assert isinstance(spec, ProjectSpec)
         assert spec.project_name == "realtime-chat"
         assert len(spec.data_models) == 2
-        assert len(spec.file_specs) == 6
+        assert len(spec.file_specs) == 7
+        assert spec.get_file_spec("tests/test_acceptance.py") is not None
         assert spec.entry_point == "main.py"
 
     @pytest.mark.asyncio

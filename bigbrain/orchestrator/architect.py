@@ -272,7 +272,8 @@ Your specification must be detailed enough that SEPARATE developers (who cannot 
 - Otherwise executable defaults to true and the entry point must be clear (which file to run, what command)
 - When executable=true, entry_point MUST be present in file_specs, run non-interactively with no arguments, and print a meaningful demo/result (never silent exit 0)
 - When executable=false, entry_point MUST be null and no artificial runner/demo may be added
-- Keep to 3-8 files for most projects. Don't over-engineer.
+- Every executable project MUST include at least one tests/test_*.py acceptance test that asserts the user-visible requested behavior, not merely imports or exit code
+- Keep to 3-8 implementation files for most projects, plus acceptance tests. Don't over-engineer.
 - Current year: {current_year}
 
 ## Output Format
@@ -493,6 +494,8 @@ class ArchitectPhase:
 
         executable = raw.get("executable", True) is not False
         entry_point = str(raw.get("entry_point") or "main.py") if executable else None
+        implementation_paths = [spec.path for spec in file_specs
+                                if not spec.path.startswith("tests/")]
         if executable and file_specs and not any(spec.path == entry_point for spec in file_specs):
             # Repair a structurally invalid LLM spec deterministically. The
             # dedicated worker will generate the missing executable adapter.
@@ -507,6 +510,23 @@ class ArchitectPhase:
                     "and must not call input()."
                 ),
                 edge_cases=["no command-line arguments", "stdin unavailable"],
+            ))
+            implementation_paths.append(entry_point)
+
+        if executable and file_specs and not any(
+                spec.path.startswith("tests/") and spec.path.endswith(".py")
+                for spec in file_specs):
+            file_specs.append(FileSpec(
+                path="tests/test_acceptance.py",
+                purpose="Acceptance tests for the user-visible requested behavior",
+                dependencies=list(dict.fromkeys(implementation_paths)),
+                imports_from={},
+                implementation_notes=(
+                    "Write deterministic pytest acceptance tests derived from the "
+                    "user request. Assert meaningful domain output/state and reject "
+                    "empty placeholders; do not merely test imports or exit code."
+                ),
+                edge_cases=["empty generated domain data", "placeholder-only output"],
             ))
 
         return ProjectSpec(

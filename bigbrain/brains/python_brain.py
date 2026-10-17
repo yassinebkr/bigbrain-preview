@@ -1500,6 +1500,14 @@ Rules:
                                for s in manifest.stages],
                 }
                 await self._notify_verification(manifest, verdict)
+                if verdict != "passed":
+                    success = False
+                    result["success"] = False
+                    result["runnable"] = False
+                    (project_dir / ".project.json").unlink(missing_ok=True)
+                    result["error"] = (
+                        f"Project verification {verdict}; it is not deliverable"
+                    )
             except Exception as gate_error:
                 result["verification"] = {
                     "verdict": None, "error": str(gate_error)[:200]}

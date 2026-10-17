@@ -11,6 +11,36 @@ from bigbrain.verification.gate import RunGate
 
 
 @pytest.mark.asyncio
+async def test_assemble_fails_when_acceptance_tests_fail(tmp_path, monkeypatch):
+    import sys
+
+    monkeypatch.setenv("BIGBRAIN_WORKSPACE_DIR", str(tmp_path))
+    monkeypatch.setenv("BIGBRAIN_EVIDENCE_ROOT", str(tmp_path / "evidence"))
+    brain = PythonBrain("python_brain_test", MessageBus(auth=None), "default",
+                        work_dir=tmp_path)
+    project = tmp_path / "broken-project"
+    (project / "tests").mkdir(parents=True)
+    (project / "main.py").write_text("print('looks fine')\n")
+    (project / "tests" / "test_acceptance.py").write_text(
+        "def test_requested_behavior():\n    assert False, 'feature is unusable'\n")
+
+    async def current_python(_project_dir):
+        return Path(sys.executable)
+
+    monkeypatch.setattr(brain, "_setup_project_venv", current_python)
+    result = await brain._assemble_and_run({
+        "project_name": "broken-project",
+        "user_request": "build a usable feature",
+        "all_files": [{"path": "main.py"}, {"path": "tests/test_acceptance.py"}],
+        "entry_point": "main.py",
+    })
+
+    assert result["success"] is False
+    assert result["verification"]["verdict"] == "failed"
+    assert not (project / ".project.json").exists()
+
+
+@pytest.mark.asyncio
 async def test_assemble_validates_explicit_non_executable_project(tmp_path, monkeypatch):
     import json
 
