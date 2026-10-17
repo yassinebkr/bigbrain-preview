@@ -103,6 +103,7 @@ class WebServer:
             "brain.started", "brain.complete",
             "chat.message",  # Front brain summary / chat responses
             "chat.done",    # Final text of a streamed reply
+            "task.routing", # Session-scoped pre-orchestrator activity
             # Contract approval proposals are LIVE PENDING STATE — a client
             # reconnecting while a plan awaits approval must see the card.
             "contracts.proposal",
@@ -1019,6 +1020,14 @@ class WebServer:
     }
 
     def _maybe_buffer(self, msg_type: str, event: str, data: dict) -> None:
+        # A terminal task also resolves the pre-orchestrator routing marker.
+        # There is only one foreground routed run in the current UI.
+        if event in ("task.complete", "task.failed", "task.cancelled"):
+            self._replay_buffer = [
+                (ts, buffered) for ts, buffered in self._replay_buffer
+                if (buffered.get("payload") or {}).get("event") != "task.routing"
+            ]
+
         """Store important messages for replay on reconnect.
         
         Uses supersede logic: brain.complete removes buffered brain.started

@@ -1384,30 +1384,14 @@ Rules:
         run_env["PATH"] = f"{venv_bin}:{run_env.get('PATH', '')}"
 
         try:
-            # stdin = DEVNULL: a program that reads stdin gets an immediate
-            # EOF instead of blocking forever (no interactive input exists
-            # in an agent run — this used to hang until the timeout).
-            process = await asyncio.create_subprocess_exec(
-                str(venv_python), str(entry_path),
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            # Multi-file projects use the same line streaming path as
+            # single-file executions. -u disables Python child buffering.
+            stdout_str, stderr_str, exit_code, timed_out = await self._exec_streamed(
+                [str(venv_python), "-u", str(entry_path)],
                 cwd=str(project_dir),
                 env=run_env,
+                timeout=timeout,
             )
-            timed_out = False
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    process.communicate(), timeout=timeout
-                )
-                exit_code = process.returncode
-            except asyncio.TimeoutError:
-                process.kill()
-                await process.wait()
-                stdout = b""
-                stderr = f"Execution timed out after {timeout} seconds".encode()
-                exit_code = -1
-                timed_out = True
                 
         except Exception as e:
             end_time = time.time()
@@ -1419,8 +1403,6 @@ Rules:
             }
         
         end_time = time.time()
-        stdout_str = stdout.decode("utf-8", errors="replace")
-        stderr_str = stderr.decode("utf-8", errors="replace")
         success = exit_code == 0
         
         # Build project summary

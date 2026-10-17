@@ -33,6 +33,7 @@ export interface RunVerification {
 }
 
 export interface RunState {
+  sessionId: string;
   id: string;
   description: string;
   status: 'running' | 'done' | 'failed' | 'cancelled';
@@ -106,6 +107,8 @@ interface AppState {
 
   // Orchestrated run state (task/subtask/file events) — RunPanel v2.
   activeRun: RunState | null;
+  // Finished runs are timeline records, grouped by their chat session.
+  completedRuns: RunState[];
   applyRunEvent: (activity: Omit<AgentActivity, 'ts'>) => void;
   runPanelOpen: boolean;
   setRunPanelOpen: (open: boolean) => void;
@@ -312,6 +315,7 @@ export const useAppStore = create<AppState>()(
       })),
 
       activeRun: null,
+      completedRuns: [],
       runPanelOpen: false,
       setRunPanelOpen: (runPanelOpen) => set({ runPanelOpen }),
       runPanelDismissed: false,
@@ -346,7 +350,7 @@ export const useAppStore = create<AppState>()(
             // The orchestrator also broadcasts contracts.approved /
             // contracts.rejected which clear the card — clearing here
             // makes the UI immediate; both are idempotent.
-            set({ contractProposal: null, contractSending: false });
+            set({ contractProposal: null, contractSending: false, isStreaming: approve });
           } else {
             set({ contractSending: false });
           }
@@ -356,15 +360,29 @@ export const useAppStore = create<AppState>()(
       },
 
       // Fold bus events into the current run. Pure state machine:
-      // task.received opens a run; subtask.* upsert steps;
+      // task.routing opens a run immediately; subtask.* upsert steps;
       // workspace.file_written collects files; task.complete/failed
-      // closes it (the panel lingers on the summary afterwards).
+      // docks the finished record into its conversation timeline.
       applyRunEvent: (activity) => set((state) => {
         const d = activity.detail || {};
         const run = state.activeRun;
         switch (activity.type) {
+          case 'task.routing': {
+            const sessionId = String(d.session_id || state.activeSessionKey || '');
+            const fresh: RunState = {
+              sessionId,
+              id: `routing-${Date.now()}`,
+              description: String(d.description || 'Preparing task').slice(0, 140),
+              status: 'running',
+              startedAt: Date.now(),
+              steps: [],
+              files: [],
+            };
+            return { activeRun: fresh, runPanelDismissed: false };
+          }
           case 'task.received': {
             const fresh: RunState = {
+              sessionId: run?.sessionId || state.activeSessionKey || '',
               id: d.task_id || `run-${Date.now()}`,
               description: String(d.description || 'Task').slice(0, 140),
               status: 'running',
@@ -457,17 +475,18 @@ export const useAppStore = create<AppState>()(
           case 'task.failed':
           case 'task.cancelled': {
             if (!run) return state;
-            const status =
+            const status: RunState['status'] =
               activity.type === 'task.complete' ? 'done'
               : activity.type === 'task.cancelled' ? 'cancelled'
               : 'failed';
             return {
-              activeRun: {
+              activeRun: null,
+              completedRuns: [...state.completedRuns, {
                 ...run,
                 status,
                 finishedAt: Date.now(),
                 error: d.error ? String(d.error).slice(0, 200) : run.error,
-              },
+              }].slice(-100),
             };
           }
           default:
@@ -505,7 +524,7 @@ export const useAppStore = create<AppState>()(
         // A run belongs to its conversation — the record of the previous
         // one must not follow the user into the next.
         set({ activeSessionKey: key, messages: [], view: 'welcome',
-              activeRun: null, runPanelDismissed: false });
+              runPanelDismissed: false });
       },
       // Pull the session list from the server into the store.
       refreshSessions: () => {
@@ -532,7 +551,6 @@ export const useAppStore = create<AppState>()(
               view: 'welcome',
               streamingText: '',
               isStreaming: false,
-              activeRun: null,
               runPanelDismissed: false,
             });
             get().refreshSessions();
@@ -545,7 +563,6 @@ export const useAppStore = create<AppState>()(
             view: 'welcome',
             streamingText: '',
             isStreaming: false,
-            activeRun: null,
             runPanelDismissed: false,
           });
         }
@@ -558,7 +575,6 @@ export const useAppStore = create<AppState>()(
           messages: [],
           streamingText: '',
           isStreaming: false,
-          activeRun: null,
           runPanelDismissed: false,
         });
         get().connection?.loadHistory((frame: any) => {
@@ -568,7 +584,9 @@ export const useAppStore = create<AppState>()(
                 id: m.id || `hist-${Date.now()}-${Math.random()}`,
                 role: m.role === 'user' ? 'user' : 'assistant',
                 content: m.content,
-                timestamp: m.timestamp || Date.now(),
+                timestamp: m.timestamp
+                  ? (m.timestamp < 1e12 ? m.timestamp * 1000 : m.timestamp)
+                  : Date.now(),
               })),
               view: 'chat',
             });
@@ -752,6 +770,7 @@ export const useAppStore = create<AppState>()(
         // The last run is the RECORD of what the agent did (steps, files
         // written) — it must survive a page reload, not just tab switches.
         activeRun: state.activeRun,
+        completedRuns: state.completedRuns,
         // Layout persistence: where the user was working (view + workspace
         // tab + the open code file) survives a reload.
         view: state.view,

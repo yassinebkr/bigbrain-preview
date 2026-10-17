@@ -1,3 +1,35 @@
+
+
+def test_terminal_task_removes_routing_marker_from_replay(tmp_path, monkeypatch):
+    monkeypatch.setenv("BIGBRAIN_SESSIONS_DIR", str(tmp_path / "sessions"))
+    server = WebServer(bus=MessageBus(auth=None))
+    routing = {
+        "type": "event",
+        "source": "front_brain",
+        "payload": {
+            "event": "task.routing",
+            "session_id": "sess-1",
+            "description": "build fitness app",
+        },
+    }
+    server._maybe_buffer("event", "task.routing", routing)
+    assert len(server._replay_buffer) == 1
+
+    completed = {
+        "type": "event",
+        "source": "orchestrator_default",
+        "payload": {
+            "event": "task.complete",
+            "task_id": "plan-1",
+        },
+    }
+    server._maybe_buffer("event", "task.complete", completed)
+
+    events = [
+        item["payload"]["event"] for _, item in server._replay_buffer
+    ]
+    assert "task.routing" not in events
+    assert "task.complete" in events
 """Regression tests for persisted chat context and contract replay state."""
 
 from unittest.mock import AsyncMock

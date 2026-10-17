@@ -7,6 +7,8 @@ import { useAppStore } from '@/store/appStore';
 function reset() {
   useAppStore.setState({
     activeRun: null,
+    completedRuns: [],
+    activeSessionKey: 'sess-live',
     isStreaming: false,
     streamingText: '',
     messages: [],
@@ -83,24 +85,26 @@ describe('applyRunEvent — run state machine', () => {
     expect(run.status).toBe('running');
   });
 
-  it('task.complete / failed / cancelled close the run', () => {
+  it('task.complete / failed / cancelled dock the run in its conversation', () => {
     const s = useAppStore.getState();
     s.applyRunEvent(ev('task.received', { task_id: 't1' }));
     s.applyRunEvent(ev('task.complete', { task_id: 't1' }));
-    expect(useAppStore.getState().activeRun!.status).toBe('done');
+    expect(useAppStore.getState().activeRun).toBeNull();
+    expect(useAppStore.getState().completedRuns.at(-1)?.status).toBe('done');
+    expect(useAppStore.getState().completedRuns.at(-1)?.sessionId).toBe('sess-live');
 
     useAppStore.setState({ activeRun: null });
     const s2 = useAppStore.getState();
     s2.applyRunEvent(ev('task.received', { task_id: 't2' }));
     s2.applyRunEvent(ev('task.failed', { task_id: 't2', error: 'boom' }));
-    expect(useAppStore.getState().activeRun!.status).toBe('failed');
-    expect(useAppStore.getState().activeRun!.error).toBe('boom');
+    expect(useAppStore.getState().completedRuns.at(-1)?.status).toBe('failed');
+    expect(useAppStore.getState().completedRuns.at(-1)?.error).toBe('boom');
 
     useAppStore.setState({ activeRun: null });
     const s3 = useAppStore.getState();
     s3.applyRunEvent(ev('task.received', { task_id: 't3' }));
     s3.applyRunEvent(ev('task.cancelled', { task_id: 't3' }));
-    expect(useAppStore.getState().activeRun!.status).toBe('cancelled');
+    expect(useAppStore.getState().completedRuns.at(-1)?.status).toBe('cancelled');
   });
 
   it('a second task.received replaces the previous run', () => {
@@ -371,15 +375,24 @@ describe('applyFsRunEvent — streaming manual runs', () => {
 });
 
 describe('run record is scoped to its conversation', () => {
-  it('opening another session clears the run panel state', () => {
+  it('opening another session preserves the originating run', () => {
     useAppStore.setState({
-      activeRun: { id: 'old', description: 'old run', status: 'done',
+      activeSessionKey: 'sess-origin',
+      activeRun: { sessionId: 'sess-origin', id: 'old', description: 'old run', status: 'running',
                    startedAt: 1, steps: [], files: [] },
       runPanelDismissed: true,
     });
     useAppStore.getState().openSession('sess-other');
-    expect(useAppStore.getState().activeRun).toBeNull();
+    expect(useAppStore.getState().activeRun?.sessionId).toBe('sess-origin');
+    expect(useAppStore.getState().activeSessionKey).toBe('sess-other');
     expect(useAppStore.getState().runPanelDismissed).toBe(false);
+  });
+
+  it('task.routing immediately opens a run for the named session', () => {
+    useAppStore.getState().applyRunEvent(
+      ev('task.routing', { session_id: 'sess-origin', description: 'préparation' }));
+    expect(useAppStore.getState().activeRun?.sessionId).toBe('sess-origin');
+    expect(useAppStore.getState().activeRun?.description).toBe('préparation');
   });
 });
 

@@ -626,6 +626,7 @@ Type 'quit' or 'exit' to stop."""
             if parsed and route_valid:
                 reply_text = parsed.get("reply", "Working on it...")
                 await self._emit_chat_message("assistant", reply_text)
+                await self._emit_task_routing(text)
                 
                 ws = "default"  # Always route to the single orchestrator
                 task_data = {
@@ -644,6 +645,7 @@ Type 'quit' or 'exit' to stop."""
                 # Front Brain wants to delegate — send the reply part to chat
                 reply_text = parsed.get("reply", "Working on it...")
                 await self._emit_chat_message("assistant", reply_text)
+                await self._emit_task_routing(str(parsed["task"]))
                 
                 # Send ONE compound task to the orchestrator.
                 # Always route to "default" workspace — the system only creates
@@ -669,6 +671,7 @@ Type 'quit' or 'exit' to stop."""
                 # Legacy multi-task format — merge into single compound request
                 reply_text = parsed.get("reply", "Working on it...")
                 await self._emit_chat_message("assistant", reply_text)
+                await self._emit_task_routing(text)
                 
                 tasks = parsed.get("tasks", [])
                 combined_request = "; then ".join(
@@ -826,20 +829,35 @@ Type 'quit' or 'exit' to stop."""
         no LLM is available.
         """
         # Build context from raw outputs
-        output_text = ""
-        for kind, content in raw_outputs:
+        # Concrete execution evidence must survive even when research is
+        # verbose. The old global 3k prefix could omit successful code.
+        priority = {"code": 0, "files": 1, "preview": 2,
+                    "action": 3, "code_only": 4, "research": 5}
+        ordered_outputs = sorted(
+            enumerate(raw_outputs),
+            key=lambda item: (priority.get(item[1][0], 9), item[0]),
+        )
+        chunks = []
+        per_kind_limit = {"code": 3500, "research": 1500,
+                          "code_only": 800}
+        for _, (kind, content) in ordered_outputs:
+            content = str(content)
+            limit = per_kind_limit.get(kind, 1200)
+            if len(content) > limit:
+                content = content[:limit] + "\n[truncated]"
             if kind == "research":
-                output_text += f"Research findings:\n{content}\n\n"
+                chunks.append(f"Research findings:\n{content}")
             elif kind == "code":
-                output_text += f"Code execution output:\n{content}\n\n"
+                chunks.append(f"Code execution output:\n{content}")
             elif kind == "code_only":
-                output_text += f"Generated code (no output):\n{content[:500]}\n\n"
+                chunks.append(f"Generated code (no output):\n{content}")
             elif kind == "action":
-                output_text += f"Action performed:\n{content}\n\n"
+                chunks.append(f"Action performed:\n{content}")
             elif kind == "preview":
-                output_text += f"Deployment: {content}\n\n"
+                chunks.append(f"Deployment: {content}")
             elif kind == "files":
-                output_text += f"{content}\n\n"
+                chunks.append(content)
+        output_text = "\n\n".join(chunks)
         
         # Find the user's original question from conversation history
         user_question = ""
@@ -874,7 +892,7 @@ Type 'quit' or 'exit' to stop."""
                         )},
                         {"role": "user", "content": (
                             f"User's question: {user_question}\n\n"
-                            f"Task output:\n{output_text[:3000]}"
+                            f"Task output:\n{output_text[:7000]}"
                         )},
                     ],
                     stream=False,
@@ -926,7 +944,19 @@ Type 'quit' or 'exit' to stop."""
             },
             priority=Priority.NORMAL,
         )
-    
+
+    async def _emit_task_routing(self, description: str) -> None:
+        """Keep the initiating conversation visibly busy during planning."""
+        await self.bus.broadcast_event(
+            source=self.name,
+            event_type="task.routing",
+            payload={
+                "description": description[:140],
+                "session_id": self._last_session_id,
+            },
+            priority=Priority.NORMAL,
+        )
+
     async def _process_filtered_event(self, event: BusMessage) -> None:
         """
         Process an event that passed focus filtering.

@@ -106,6 +106,7 @@ function VerificationSection({ verification }: { verification: RunVerification }
 
 export function RunPanel() {
   const run = useAppStore((s) => s.activeRun);
+  const activeSessionKey = useAppStore((s) => s.activeSessionKey);
   const expanded = useAppStore((s) => s.runPanelOpen);
   const setExpanded = useAppStore((s) => s.setRunPanelOpen);
   const dismissed = useAppStore((s) => s.runPanelDismissed);
@@ -132,7 +133,7 @@ export function RunPanel() {
     if (run) setDismissed(false);
   }, [run?.id]);
 
-  if (!run || dismissed) return null;
+  if (!run || run.sessionId !== activeSessionKey || dismissed) return null;
 
   const stepsDone = run.steps.filter((s) => s.status !== 'running').length;
   const running = run.steps.find((s) => s.status === 'running');

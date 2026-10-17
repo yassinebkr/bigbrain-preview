@@ -9,6 +9,7 @@ import { GenUICanvas } from './GenUICanvas';
 import { RunPanel } from './RunPanel';
 import { ContractCard } from './ContractCard';
 import { NudgeBar } from './NudgeBar';
+import { RunTimelineCard } from './RunTimelineCard';
 
 export function ChatView() {
   const { messages, isStreaming } = useAppStore();
@@ -16,6 +17,18 @@ export function ChatView() {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const streamingText = useAppStore((s) => s.streamingText);
+  const completedRuns = useAppStore((s) => s.completedRuns);
+  const activeSessionKey = useAppStore((s) => s.activeSessionKey);
+  const timeline = [
+    ...messages.map((message) => ({
+      kind: 'message' as const, ts: message.timestamp, message,
+    })),
+    ...completedRuns
+      .filter((run) => run.sessionId === activeSessionKey && run.finishedAt)
+      .map((run) => ({
+        kind: 'run' as const, ts: run.finishedAt!, run,
+      })),
+  ].sort((a, b) => a.ts - b.ts);
 
   // Auto-scroll: instant while the streamed text grows (following the
   // cursor without flicker), smooth for whole new messages.
@@ -35,8 +48,10 @@ export function ChatView() {
         className="flex-1 overflow-y-auto px-2 sm:px-3 md:px-6 lg:px-10 py-3 sm:py-4 md:py-6 flex flex-col gap-3 sm:gap-4 md:gap-5"
       >
         <div className="w-full max-w-[1200px] mx-auto flex flex-col gap-3 sm:gap-4 md:gap-5">
-        {messages.map((message, index) => (
-          <MessageBubble key={message.id} message={message} index={index} />
+        {timeline.map((item, index) => (
+          item.kind === 'message'
+            ? <MessageBubble key={item.message.id} message={item.message} index={index} />
+            : <RunTimelineCard key={`run-${item.run.id}`} run={item.run} />
         ))}
 
         {/* Streaming message — only once text exists (the typing

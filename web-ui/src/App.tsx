@@ -108,7 +108,7 @@ export default function App() {
       // Streaming only while a run is actually in flight. Startup frames
       // (brain.status etc.) must not leave the typing indicator stuck on.
       const runEvents = [
-        'task.received', 'subtask.started', 'brain.started', 'thinking',
+        'task.routing', 'task.received', 'subtask.started', 'brain.started', 'thinking',
       ];
       const endEvents = [
         'task.complete', 'task.failed', 'subtask.complete', 'subtask.failed',

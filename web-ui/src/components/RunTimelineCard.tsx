@@ -1,0 +1,71 @@
+import { useState } from 'react';
+import {
+  CheckCircle2, XCircle, Ban, ChevronDown, ChevronUp, FileEdit,
+} from 'lucide-react';
+import { useAppStore, type RunState } from '@/store/appStore';
+
+export function RunTimelineCard({ run }: { run: RunState }) {
+  const [open, setOpen] = useState(false);
+  const openFileViewer = useAppStore((s) => s.openFileViewer);
+  const Icon = run.status === 'done'
+    ? CheckCircle2 : run.status === 'cancelled' ? Ban : XCircle;
+  const color = run.status === 'done'
+    ? 'var(--success, #34c759)' : 'var(--warning, #ff9500)';
+
+  return (
+    <div className="flex justify-start w-full">
+      <div
+        className="ml-9 w-full max-w-[720px] rounded-xl px-3 py-2 text-[12px]"
+        style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)' }}
+      >
+        <button
+          className="w-full flex items-center gap-2 cursor-pointer"
+          onClick={() => setOpen(!open)}
+          aria-expanded={open}
+        >
+          <Icon size={13} style={{ color }} className="flex-shrink-0" />
+          <span className="truncate flex-1 text-left" style={{ color: 'var(--text-secondary)' }}>
+            {run.status === 'done' ? 'Run complete' : run.status === 'cancelled' ? 'Run cancelled' : 'Run failed'}
+            {' — '}{run.description}
+          </span>
+          {run.files.length > 0 && (
+            <span style={{ color: 'var(--text-tertiary)' }}>
+              {run.files.length} file{run.files.length > 1 ? 's' : ''}
+            </span>
+          )}
+          {open ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+        </button>
+        {open && (
+          <div className="mt-2 pt-2 space-y-1.5" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+            {run.steps.map((step) => (
+              <div key={step.id} className="flex items-center gap-2" style={{ color: 'var(--text-tertiary)' }}>
+                <span>{step.status === 'done' ? '✓' : step.status === 'failed' ? '×' : '•'}</span>
+                {step.brain && <span style={{ color: 'var(--accent-blue)' }}>{step.brain}</span>}
+                <span className="truncate">{step.description}</span>
+              </div>
+            ))}
+            {run.files.map((file) => (
+              <button
+                key={file.path}
+                onClick={() => openFileViewer(file.path)}
+                className="flex items-center gap-2 cursor-pointer"
+                style={{ color: 'var(--accent-blue)' }}
+              >
+                <FileEdit size={11} />
+                <span>{file.path}</span>
+              </button>
+            ))}
+            {run.error && (
+              <div style={{ color: 'var(--warning, #ff9500)' }}>{run.error}</div>
+            )}
+            {run.verification && (
+              <div style={{ color: 'var(--text-tertiary)' }}>
+                Verification: {run.verification.verdict}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
