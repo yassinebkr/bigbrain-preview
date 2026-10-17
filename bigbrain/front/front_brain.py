@@ -887,6 +887,7 @@ Type 'quit' or 'exit' to stop."""
                             "- Research provides context and analysis; code provides measurements — present both\n"
                             "- Be concise (3-5 sentences)\n"
                             "- Don't show raw code or describe the process\n"
+                            "- For a generated project with a preview, do not enumerate or reproduce its content; confirm completion in at most 2 sentences and tell the user to use the preview/project controls\n"
                             "- Start with the main answer, then add supporting details\n"
                             "- If output was truncated or incomplete, say so — don't fabricate results\n"
                             "- NEVER invent URLs, domains, or deployment links. Only mention a URL if one appears in the task output\n"
@@ -1246,8 +1247,8 @@ Type 'quit' or 'exit' to stop."""
                         # output the summarizer must relay.
                         raw_outputs.append(("action", data["message"]))
                     # Capture preview URL if server started
-                    if data.get("preview_port") and data.get("server_running"):
-                        raw_outputs.append(("preview", f"Preview server running at https://preview.clawos.fr (port {data['preview_port']})"))
+                    if data.get("preview_url") and data.get("server_running"):
+                        raw_outputs.append(("preview", f"Preview ready: {data['preview_url']}"))
                     elif data.get("files_written"):
                         files = data.get("files_written", [])
                         raw_outputs.append(("files", f"Project files written: {', '.join(files)}"))

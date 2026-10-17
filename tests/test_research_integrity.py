@@ -1,11 +1,12 @@
 """Regressions for honest research and cross-brain result summaries."""
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from bigbrain.brains.researcher import ResearcherBrain, UnavailableSearch
 from bigbrain.bus.bus import MessageBus
+from bigbrain.bus.message import BusMessage, MessageType
 from bigbrain.front.front_brain import FrontBrain
 
 
@@ -48,3 +49,28 @@ async def test_result_summary_prioritizes_execution_over_verbose_research():
     assert "PYTHON_RESULT_PRESENT" in prompt
     assert prompt.index("Code execution output") < prompt.index("Research findings")
     assert len(prompt) < 7000
+
+
+@pytest.mark.asyncio
+async def test_web_result_uses_only_worker_preview_url():
+    brain = FrontBrain(MessageBus(auth=None), llm_provider=None)
+    brain._summarize_result = AsyncMock(return_value="Aperçu prêt.")
+    brain._emit_chat_message = AsyncMock()
+    brain.memory.store = MagicMock()
+    preview_url = "http://127.0.0.1:3241"
+
+    await brain._handle_task_result(BusMessage(
+        type=MessageType.RESULT,
+        source="orchestrator",
+        target=brain.name,
+        payload={"success": True, "results": {"preview": {"data": {
+            "success": True,
+            "server_running": True,
+            "preview_url": preview_url,
+            "preview_port": 3241,
+        }}}},
+    ))
+
+    raw_outputs = brain._summarize_result.await_args.args[0]
+    assert raw_outputs == [("preview", f"Preview ready: {preview_url}")]
+    assert "clawos" not in str(raw_outputs).lower()

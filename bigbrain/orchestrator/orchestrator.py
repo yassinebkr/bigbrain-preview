@@ -1628,6 +1628,10 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                     "project_name": data["project_name"],
                     **({"project_path": data["project_path"]} if data.get("project_path") else {}),
                     "entry_point": data["entry_point"],
+                    **({"deliverable_type": data["deliverable_type"]}
+                       if data.get("deliverable_type") else {}),
+                    **({"preview_url": data["preview_url"]}
+                       if data.get("preview_url") else {}),
                     "runnable": bool(data.get("success") and (
                         data.get("runnable") is True
                         or data.get("stdout", "").strip()

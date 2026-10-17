@@ -48,6 +48,7 @@ async def test_web_app_brain_creates_verified_preview_manifest(tmp_path):
     try:
         assert result["success"] is True
         assert result["runnable"] is True
+        assert result["deliverable_type"] == "web_app"
         assert result["preview_url"].startswith("http://127.0.0.1:")
         manifest = json.loads((tmp_path / "fitness" / ".project.json").read_text())
         assert manifest["deliverable_type"] == "web_app"

@@ -598,6 +598,31 @@ class TestWorkspaceOrchestrator:
             "runnable": True,
         }
 
+    def test_project_metadata_preserves_web_preview(self, orchestrator):
+        plan = TaskPlan(id="web-plan", original_task=None)
+        subtask = SubTask(id="preview", description="preview web app",
+                          brain_target="web_app_brain", payload={})
+        subtask.status = TaskStatus.COMPLETE
+        subtask.result = {"success": True, "data": {
+            "success": True,
+            "project_name": "zbrush-course",
+            "project_path": "sandbox/zbrush-course",
+            "entry_point": "index.html",
+            "deliverable_type": "web_app",
+            "preview_url": "http://127.0.0.1:3200",
+            "server_running": True,
+        }}
+        plan.subtasks = [subtask]
+
+        assert orchestrator._project_result_metadata(plan) == {
+            "project_name": "zbrush-course",
+            "project_path": "sandbox/zbrush-course",
+            "entry_point": "index.html",
+            "deliverable_type": "web_app",
+            "preview_url": "http://127.0.0.1:3200",
+            "runnable": True,
+        }
+
     @pytest.mark.asyncio
     async def test_plan_failure(self, orchestrator, mock_bus):
         """Test handling task plan with failed subtask."""

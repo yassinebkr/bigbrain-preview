@@ -46,6 +46,8 @@ export interface RunState {
   projectName?: string;
   projectPath?: string;
   entryPoint?: string;
+  deliverableType?: string;
+  previewUrl?: string;
   runnable?: boolean;
   awaitingApproval?: boolean;
 }
@@ -512,6 +514,8 @@ export const useAppStore = create<AppState>()(
                 projectName: d.project_name ? String(d.project_name) : run.projectName,
                 projectPath: d.project_path ? String(d.project_path) : run.projectPath,
                 entryPoint: d.entry_point ? String(d.entry_point) : run.entryPoint,
+                deliverableType: d.deliverable_type ? String(d.deliverable_type) : run.deliverableType,
+                previewUrl: d.preview_url ? String(d.preview_url) : run.previewUrl,
                 runnable: typeof d.runnable === 'boolean' ? d.runnable : run.runnable,
               }].slice(-100),
             };

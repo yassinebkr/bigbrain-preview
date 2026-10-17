@@ -448,10 +448,12 @@ it('keeps project launch metadata for a single-file modification', () => {
     ev('task.received', { task_id: 'edit-1', description: 'edit programme.py' }));
   useAppStore.getState().applyRunEvent(ev('task.complete', {
     task_id: 'edit-1', project_name: 'fitness',
-    project_path: 'sandbox/fitness', entry_point: 'main.py', runnable: true,
+    project_path: 'sandbox/fitness', entry_point: 'index.html', runnable: true,
+    deliverable_type: 'web_app', preview_url: 'http://127.0.0.1:3200',
   }));
   expect(useAppStore.getState().completedRuns.at(-1)).toMatchObject({
     projectName: 'fitness', projectPath: 'sandbox/fitness',
-    entryPoint: 'main.py', runnable: true,
+    entryPoint: 'index.html', deliverableType: 'web_app',
+    previewUrl: 'http://127.0.0.1:3200', runnable: true,
   });
 });

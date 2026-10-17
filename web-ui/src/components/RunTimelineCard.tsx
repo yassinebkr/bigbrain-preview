@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   CheckCircle2, XCircle, Ban, ChevronDown, ChevronUp, FileEdit,
-  FolderOpen, Play, Loader2,
+  FolderOpen, Play, Loader2, Maximize2, Minimize2, ExternalLink,
 } from 'lucide-react';
 import { useAppStore, type RunState } from '@/store/appStore';
 
 export function RunTimelineCard({ run }: { run: RunState }) {
   const [open, setOpen] = useState(false);
+  const [previewExpanded, setPreviewExpanded] = useState(false);
   const openFileViewer = useAppStore((s) => s.openFileViewer);
   const setView = useAppStore((s) => s.setView);
   const setPendingOpenFile = useAppStore((s) => s.setPendingOpenFile);
@@ -14,19 +15,12 @@ export function RunTimelineCard({ run }: { run: RunState }) {
   const [runId, setRunId] = useState<string | null>(null);
   const liveRun = useAppStore((s) => runId ? s.liveRuns[runId] : undefined);
   const outputRef = useRef<HTMLPreElement>(null);
-  const previewWindowRef = useRef<Window | null>(null);
+  const previewUrl = liveRun?.result?.previewUrl || run.previewUrl;
 
   useEffect(() => {
     const el = outputRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [liveRun?.out, liveRun?.err]);
-  useEffect(() => {
-    const previewUrl = liveRun?.result?.previewUrl;
-    if (previewUrl && previewWindowRef.current && !previewWindowRef.current.closed) {
-      previewWindowRef.current.location.href = previewUrl;
-      previewWindowRef.current = null;
-    }
-  }, [liveRun?.result]);
   const entryPath = run.projectPath && run.entryPoint
     ? `${run.projectPath}/${run.entryPoint}`
     : run.entryPoint
@@ -59,9 +53,6 @@ export function RunTimelineCard({ run }: { run: RunState }) {
   const runProject = async () => {
     if (!entryPath || (runId && !liveRun?.done)) return;
     setOpen(true);
-    if (entryPath.endsWith('.html')) {
-      previewWindowRef.current = window.open('', '_blank');
-    }
     try {
       const response = await fetch('/api/fs/run', {
         method: 'POST',
@@ -72,8 +63,6 @@ export function RunTimelineCard({ run }: { run: RunState }) {
       if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
       if (body.runId) setRunId(body.runId);
     } catch {
-      previewWindowRef.current?.close();
-      previewWindowRef.current = null;
       setRunId(null);
     }
   };
@@ -120,6 +109,35 @@ export function RunTimelineCard({ run }: { run: RunState }) {
           )}
           {open ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
         </div>
+        {previewUrl && (
+          <div className="mt-2 overflow-hidden rounded-lg" style={{ border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-primary)' }}>
+            <div className="flex items-center gap-2 px-2.5 py-1.5" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+              <span className="font-medium flex-1" style={{ color: 'var(--text-secondary)' }}>Aperçu</span>
+              <button
+                onClick={() => setPreviewExpanded((expanded) => !expanded)}
+                className="inline-flex items-center gap-1 rounded px-1.5 py-1 cursor-pointer"
+                style={{ color: 'var(--text-secondary)' }}
+                aria-label={previewExpanded ? 'Réduire l’aperçu' : 'Agrandir l’aperçu'}
+                title={previewExpanded ? 'Réduire' : 'Agrandir'}
+              >
+                {previewExpanded ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
+                {previewExpanded ? 'Réduire' : 'Agrandir'}
+              </button>
+              <a href={previewUrl} target="_blank" rel="noreferrer"
+                className="inline-flex items-center gap-1 rounded px-1.5 py-1"
+                style={{ color: 'var(--accent-blue)' }} title="Ouvrir dans un nouvel onglet">
+                <ExternalLink size={12} /> Ouvrir
+              </a>
+            </div>
+            <iframe
+              src={previewUrl}
+              title={`Aperçu de ${run.projectName || run.description}`}
+              sandbox="allow-scripts allow-same-origin"
+              className="block w-full bg-white transition-[height] duration-300"
+              style={{ height: previewExpanded ? 'min(65vh, 620px)' : '220px' }}
+            />
+          </div>
+        )}
         {open && (
           <div className="mt-2 pt-2 space-y-1.5" style={{ borderTop: '1px solid var(--border-subtle)' }}>
             {run.steps.map((step) => (
@@ -182,13 +200,6 @@ export function RunTimelineCard({ run }: { run: RunState }) {
                 {liveRun.out}{liveRun.err}
                 {liveRun.done && !liveRun.out && !liveRun.err ? '(no output)' : ''}
               </pre>
-            )}
-            {liveRun?.result?.previewUrl && (
-              <a href={liveRun.result.previewUrl} target="_blank" rel="noreferrer"
-                className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md"
-                style={{ color: 'var(--accent-blue)', border: '1px solid var(--border-subtle)' }}>
-                Open preview
-              </a>
             )}
             {run.verification && (
               <div style={{ color: 'var(--text-tertiary)' }}>

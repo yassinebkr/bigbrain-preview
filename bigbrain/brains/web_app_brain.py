@@ -228,6 +228,7 @@ Rules:
         return {
             "success": True, "runnable": True, "project_name": project_name.name,
             "project_path": project_path, "entry_point": "index.html",
+            "deliverable_type": "web_app",
             "files_written": validation["files"], "preview_url": url,
             "preview_port": port, "server_running": True,
             "server_pid": self._preview_process.pid, "verification": validation,
