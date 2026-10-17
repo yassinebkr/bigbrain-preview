@@ -113,7 +113,9 @@ timeout de 300s.
 - Question sets versionnés — la comparaison corpus/model est reproductible.
 
 **Application BigBrain + near_agi** : c'est le pattern exact pour évaluer
-Laya fine-tuné comme routeur local (le v002bis de near_agi) : mode ombre
+Laya post-entraînée comme routeur local. Décision 2026-10-17 : ne pas
+l'implémenter avant d'avoir analysé les résultats de `v2 bis` dans
+`near_agi`. Si ces résultats sont concluants, commencer uniquement en mode ombre
 sur le vrai trafic BigBrain, corpus gelé versionné de routes BigBrain,
 labels séparés. La leçon v001 de near_agi (raccourcis de surface features)
 est déjà le complément : le corpus doit randomiser identifiants/chemins.
@@ -147,7 +149,7 @@ contrats typés par espace (brain/project/workspace) — même direction que
 1. **Après le port UI Aplot (Phase A)** : la route sémantique (§1) côté
    front brain — déjà efficace et token-efficient SANS Laya/Jev (petite
    call LLM, schéma strict, économie sur planning/brains/clarifications).
-2. **Mode ombre Laya** (§5) : option d'amélioration une fois la base en
+2. **Mode ombre Laya** (§5) : option postérieure aux résultats `near_agi` `v2 bis`, une fois la base en
    prod — corpus gelé BigBrain + ombre sur trafic réel (réutilise le
    harnais near_agi et le pattern shopifast). Gain : taux de réussite sur
    les cas limites, et vitesse quasi instantanée qui rend viable le
