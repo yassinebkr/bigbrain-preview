@@ -140,13 +140,17 @@ class WorkspaceOrchestrator(BusParticipant):
     COMPLEXITY_SYSTEM_PROMPT = """The current year is {current_year}. Always use {current_year} in research queries.
 
 You are a project complexity assessor. Given a user request, determine if it needs:
-1. "script" — a single Python file can handle it (utility, algorithm, simple tool)
-2. "project" — multiple files needed (backend+frontend, library+tests, multi-concern app)
+1. "script" — a single source file can handle it
+2. "project" — multiple files needed
+
+Also select the deliverable from the requested user experience:
+- "python" for Python scripts, CLI, libraries, services or automation
+- "web_app" for an interactive browser application
 
 Also determine if research is needed before coding (new APIs, best practices, state of the art).
 
 Respond with ONLY a JSON object, no explanation:
-{{"mode": "script"|"project", "needs_research": true|false, "research_queries": ["query1"], "reason": "brief reason"}}
+{{"mode": "script"|"project", "deliverable_type": "python"|"web_app", "needs_research": true|false, "research_queries": ["query1"], "reason": "brief reason"}}
 
 Examples:
 - "write a fibonacci function" → {{"mode": "script", "needs_research": false, "research_queries": [], "reason": "single algorithm"}}
@@ -665,6 +669,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                                                     existing_subtasks=subtasks)
 
         project_name = spec.project_name
+        worker_brain = "web_app_brain" if spec.deliverable_type == "web_app" else "python_brain"
         
         logger.info("Architect spec: %s — %d files, %d data models",
                      project_name, len(spec.file_specs), len(spec.data_models))
@@ -680,6 +685,8 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                 "tech_decisions": spec.tech_decisions,
                 "executable": spec.executable,
                 "entry_point": spec.entry_point,
+                "deliverable_type": spec.deliverable_type,
+                "interaction_mode": spec.interaction_mode,
             },
             workspace=self.workspace,
             priority=Priority.NORMAL,
@@ -725,9 +732,9 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             subtasks.append(SubTask(
                 id=sid,
                 description=f"Write {fs.path}: {fs.purpose}",
-                brain_target="python_brain",
+                brain_target=worker_brain,
                 payload={
-                    "type": "write_project_file",
+                    "type": "write_web_file" if spec.deliverable_type == "web_app" else "write_project_file",
                     "user_request": user_request,
                     "project_name": project_name,
                     "file_path": fs.path,
@@ -755,15 +762,17 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         subtasks.append(SubTask(
             id=assembler_sid,
             description=f"Assemble and {'run' if spec.executable else 'validate'} {project_name}",
-            brain_target="python_brain",
+            brain_target=worker_brain,
             payload={
-                "type": "assemble_and_run",
+                "type": "assemble_and_preview" if spec.deliverable_type == "web_app" else "assemble_and_run",
                 "user_request": user_request,
                 "project_name": project_name,
                 "all_files": all_files_summary,
                 "executable": spec.executable,
                 "entry_point": spec.entry_point,
                 "execution_strategy": spec.execution_strategy,
+                "deliverable_type": spec.deliverable_type,
+                "interaction_mode": spec.interaction_mode,
             },
             dependencies=all_file_sids,
         ))
@@ -1052,6 +1061,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             "execute_code": "python_brain",
             "generate_and_execute": "python_brain",
             "run_file": "python_brain",
+            "run_web_project": "web_app_brain",
             "research": "researcher",
             "web_search": "researcher",
             "board_task": "taskboard",
@@ -1612,8 +1622,13 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             if data.get("project_name") and data.get("entry_point"):
                 return {
                     "project_name": data["project_name"],
+                    **({"project_path": data["project_path"]} if data.get("project_path") else {}),
                     "entry_point": data["entry_point"],
-                    "runnable": bool(data.get("success") and data.get("stdout", "").strip()),
+                    "runnable": bool(data.get("success") and (
+                        data.get("runnable") is True
+                        or data.get("stdout", "").strip()
+                        or data.get("server_running") is True
+                    )),
                 }
         task_payload = plan.original_task.payload or {}
         project_path = task_payload.get("project_path")
@@ -1863,7 +1878,10 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         """
         # Only checkpoint for projects that will write files
         has_file_tasks = any(
-            subtask.payload.get("type") in ("write_project_file", "assemble_and_run")
+            subtask.payload.get("type") in (
+                "write_project_file", "assemble_and_run",
+                "write_web_file", "assemble_and_preview",
+            )
             for subtask in plan.subtasks
         )
         

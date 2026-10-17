@@ -14,11 +14,19 @@ export function RunTimelineCard({ run }: { run: RunState }) {
   const [runId, setRunId] = useState<string | null>(null);
   const liveRun = useAppStore((s) => runId ? s.liveRuns[runId] : undefined);
   const outputRef = useRef<HTMLPreElement>(null);
+  const previewWindowRef = useRef<Window | null>(null);
 
   useEffect(() => {
     const el = outputRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [liveRun?.out, liveRun?.err]);
+  useEffect(() => {
+    const previewUrl = liveRun?.result?.previewUrl;
+    if (previewUrl && previewWindowRef.current && !previewWindowRef.current.closed) {
+      previewWindowRef.current.location.href = previewUrl;
+      previewWindowRef.current = null;
+    }
+  }, [liveRun?.result]);
   const entryPath = run.projectPath && run.entryPoint
     ? `${run.projectPath}/${run.entryPoint}`
     : run.entryPoint
@@ -51,6 +59,9 @@ export function RunTimelineCard({ run }: { run: RunState }) {
   const runProject = async () => {
     if (!entryPath || (runId && !liveRun?.done)) return;
     setOpen(true);
+    if (entryPath.endsWith('.html')) {
+      previewWindowRef.current = window.open('', '_blank');
+    }
     try {
       const response = await fetch('/api/fs/run', {
         method: 'POST',
@@ -61,6 +72,8 @@ export function RunTimelineCard({ run }: { run: RunState }) {
       if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
       if (body.runId) setRunId(body.runId);
     } catch {
+      previewWindowRef.current?.close();
+      previewWindowRef.current = null;
       setRunId(null);
     }
   };
@@ -169,6 +182,13 @@ export function RunTimelineCard({ run }: { run: RunState }) {
                 {liveRun.out}{liveRun.err}
                 {liveRun.done && !liveRun.out && !liveRun.err ? '(no output)' : ''}
               </pre>
+            )}
+            {liveRun?.result?.previewUrl && (
+              <a href={liveRun.result.previewUrl} target="_blank" rel="noreferrer"
+                className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md"
+                style={{ color: 'var(--accent-blue)', border: '1px solid var(--border-subtle)' }}>
+                Open preview
+              </a>
             )}
             {run.verification && (
               <div style={{ color: 'var(--text-tertiary)' }}>

@@ -529,12 +529,20 @@ class WebServer:
     async def _handle_preview_logs(self, request: web.Request) -> web.Response:
         """Preview server diagnostics — shows active previews, project files, and errors."""
         from ..brains.python_brain import PythonBrain
+        from ..brains.web_app_brain import WebAppBrain
         import glob
 
         previews = []
         for port, proc in PythonBrain._active_previews.items():
             previews.append({
                 "port": port,
+                "pid": proc.pid if proc else None,
+                "alive": proc.returncode is None if proc else False,
+                "exit_code": proc.returncode if proc and proc.returncode is not None else None,
+            })
+        for port, proc in WebAppBrain._active_previews.items():
+            previews.append({
+                "kind": "web_app", "port": port,
                 "pid": proc.pid if proc else None,
                 "alive": proc.returncode is None if proc else False,
                 "exit_code": proc.returncode if proc and proc.returncode is not None else None,

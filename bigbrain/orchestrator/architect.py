@@ -204,6 +204,8 @@ class ProjectSpec:
     executable: bool = True
     entry_point: Optional[str] = "main.py"
     execution_strategy: str = ""  # how to run/test
+    deliverable_type: str = "python"  # python | web_app
+    interaction_mode: str = "cli"  # cli | browser | library
 
     def to_dict(self) -> dict:
         return {
@@ -215,6 +217,8 @@ class ProjectSpec:
             "executable": self.executable,
             "entry_point": self.entry_point,
             "execution_strategy": self.execution_strategy,
+            "deliverable_type": self.deliverable_type,
+            "interaction_mode": self.interaction_mode,
         }
 
     def get_file_spec(self, path: str) -> Optional[FileSpec]:
@@ -263,8 +267,10 @@ ARCHITECT_SYSTEM_PROMPT = """You are a senior software architect. Given a user r
 Your specification must be detailed enough that SEPARATE developers (who cannot talk to each other) can each implement one file and have everything integrate correctly.
 
 ## Rules
-- Python standard library only (no numpy, pandas, Flask, FastAPI, etc.) unless research suggests otherwise
-- For web apps: use `http.server` or `aiohttp` (stdlib-adjacent), templates as raw HTML strings or separate .html files
+- Choose `deliverable_type` from `python` or `web_app` from the requested user experience, never from a keyword rule.
+- Python deliverables use Python and are operated through CLI/library/service semantics.
+- Web app deliverables are browser-first and MUST use separate HTML/CSS/JavaScript files. For this initial capability, prefer dependency-free static web apps with localStorage when persistence is needed.
+- A web app MUST include index.html, styles.css, app.js, and tests/acceptance.json. It must be usable by opening the preview, not by printing a textual imitation to a console.
 - Every function signature must include parameter types and return type
 - Every data model must list all fields with types
 - Dependencies between files must be explicit (what imports what)
@@ -280,6 +286,8 @@ Your specification must be detailed enough that SEPARATE developers (who cannot 
 Respond with ONLY a JSON object matching this schema:
 {{
   "project_name": "short-kebab-name",
+  "deliverable_type": "python|web_app",
+  "interaction_mode": "cli|browser|library",
   "description": "One paragraph describing the project",
   "tech_decisions": ["decision 1: reason", "decision 2: reason"],
   "data_models": [
@@ -317,7 +325,7 @@ Respond with ONLY a JSON object matching this schema:
     }}
   ],
   "executable": true,
-  "entry_point": "main.py",
+  "entry_point": "main.py or index.html",
   "execution_strategy": "python main.py — starts HTTP server on port 8080"
 }}
 
@@ -492,8 +500,14 @@ class ArchitectPhase:
                 edge_cases=fs_raw.get("edge_cases", []),
             ))
 
+        deliverable_type = str(raw.get("deliverable_type") or "python")
+        if deliverable_type not in {"python", "web_app"}:
+            raise ValueError(f"Architect: unsupported deliverable_type {deliverable_type!r}")
+        interaction_mode = str(raw.get("interaction_mode") or (
+            "browser" if deliverable_type == "web_app" else "cli"))
         executable = raw.get("executable", True) is not False
-        entry_point = str(raw.get("entry_point") or "main.py") if executable else None
+        default_entry = "index.html" if deliverable_type == "web_app" else "main.py"
+        entry_point = str(raw.get("entry_point") or default_entry) if executable else None
         implementation_paths = [spec.path for spec in file_specs
                                 if not spec.path.startswith("tests/")]
         if executable and file_specs and not any(spec.path == entry_point for spec in file_specs):
@@ -501,19 +515,42 @@ class ArchitectPhase:
             # dedicated worker will generate the missing executable adapter.
             file_specs.append(FileSpec(
                 path=entry_point,
-                purpose="Executable, non-interactive project entry point",
+                purpose=("Browser application entry point" if deliverable_type == "web_app"
+                         else "Executable, non-interactive project entry point"),
                 dependencies=[spec.path for spec in file_specs],
                 imports_from={},
                 implementation_notes=(
+                    "Wire the local CSS and JavaScript into an accessible, usable page."
+                    if deliverable_type == "web_app" else
                     "Wire the project modules into a runnable demonstration. "
                     "Running with no arguments must print meaningful output "
                     "and must not call input()."
                 ),
-                edge_cases=["no command-line arguments", "stdin unavailable"],
+                edge_cases=(["keyboard navigation", "small viewport"]
+                            if deliverable_type == "web_app" else
+                            ["no command-line arguments", "stdin unavailable"]),
             ))
             implementation_paths.append(entry_point)
 
-        if executable and file_specs and not any(
+        if deliverable_type == "web_app":
+            web_required = {
+                "index.html": ("Semantic browser entry point", "Reference styles.css and app.js with relative URLs."),
+                "styles.css": ("Responsive visual design", "Style every user-visible state and keyboard focus state."),
+                "app.js": ("Browser interaction and state", "Implement the requested interactions without external dependencies."),
+                "tests/acceptance.json": (
+                    "Machine-readable user acceptance scenarios",
+                    'Return JSON {"cases":[{"name":"...","assertions":["..."]}]} covering the requested browser behavior.'),
+            }
+            existing = {spec.path for spec in file_specs}
+            for path, (purpose, notes) in web_required.items():
+                if path not in existing:
+                    file_specs.append(FileSpec(
+                        path=path, purpose=purpose,
+                        dependencies=[] if path != "index.html" else ["styles.css", "app.js"],
+                        implementation_notes=notes,
+                    ))
+
+        if deliverable_type == "python" and executable and file_specs and not any(
                 spec.path.startswith("tests/") and spec.path.endswith(".py")
                 for spec in file_specs):
             file_specs.append(FileSpec(
@@ -538,6 +575,8 @@ class ArchitectPhase:
             executable=executable,
             entry_point=entry_point,
             execution_strategy=raw.get("execution_strategy", ""),
+            deliverable_type=deliverable_type,
+            interaction_mode=interaction_mode,
         )
 
     def _parse_function(self, raw: dict) -> FunctionContract:

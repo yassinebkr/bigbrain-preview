@@ -481,6 +481,68 @@ async def run_file_streaming(rel: str, timeout: float = 30.0,
     return result
 
 
+_manual_web_previews: Dict[str, asyncio.subprocess.Process] = {}
+
+
+async def run_static_preview(rel: str) -> Dict[str, Any]:
+    """Start (or replace) the preview for a verified static web project."""
+    target = _resolve(workspace_root(), rel)
+    if target.name != "index.html" or not target.is_file():
+        raise web.HTTPBadRequest(text=json_error("web preview entry point must be index.html"))
+    project_dir = target.parent
+    manifest_path = project_dir / PROJECT_MANIFEST
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise web.HTTPBadRequest(text=json_error("verified web project manifest missing"))
+    if (manifest.get("deliverable_type") != "web_app"
+            or manifest.get("entry_point") != "index.html"
+            or not manifest.get("verified")):
+        raise web.HTTPBadRequest(text=json_error("web project is not verified runnable"))
+
+    key = project_dir.as_posix()
+    previous = _manual_web_previews.pop(key, None)
+    if previous and previous.returncode is None:
+        previous.terminate()
+        try:
+            await asyncio.wait_for(previous.wait(), timeout=2)
+        except asyncio.TimeoutError:
+            previous.kill()
+            await previous.wait()
+
+    port = None
+    import socket
+    for candidate in range(3300, 3400):
+        with socket.socket() as sock:
+            try:
+                sock.bind(("127.0.0.1", candidate))
+            except OSError:
+                continue
+        port = candidate
+        break
+    if port is None:
+        raise RuntimeError("no free manual preview port in 3300-3399")
+
+    started = time.time()
+    process = await asyncio.create_subprocess_exec(
+        "python3", "-m", "http.server", str(port), "--bind", "127.0.0.1",
+        cwd=str(project_dir), stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    await asyncio.sleep(0.15)
+    if process.returncode is not None:
+        stderr = (await process.stderr.read()).decode(errors="replace")
+        return {"ok": False, "exitCode": process.returncode, "stdout": "",
+                "stderr": stderr[-20000:], "durationMs": int((time.time() - started) * 1000),
+                "timedOut": False}
+    _manual_web_previews[key] = process
+    url = f"http://127.0.0.1:{port}"
+    return {"ok": True, "exitCode": 0, "stdout": f"Preview ready: {url}\n",
+            "stderr": "", "durationMs": int((time.time() - started) * 1000),
+            "timedOut": False, "previewUrl": url, "serverRunning": True,
+            "serverPid": process.pid}
+
+
 async def _run_with_events(rel: str, timeout: float, run_id: str) -> None:
     """Background task behind POST /api/fs/run: stream then finalise."""
     async def sink(stream: str, delta: str) -> None:
@@ -490,14 +552,19 @@ async def _run_with_events(rel: str, timeout: float, run_id: str) -> None:
                                "delta": delta})
 
     try:
-        result = await run_file_streaming(rel, timeout, on_delta=sink)
+        if Path(rel).suffix.lower() == ".html":
+            result = await run_static_preview(rel)
+            if result.get("stdout"):
+                await sink("out", result["stdout"])
+        else:
+            result = await run_file_streaming(rel, timeout, on_delta=sink)
     except web.HTTPNotFound:
         result = {"ok": False, "exitCode": -1, "stdout": "",
                   "stderr": "file not found", "durationMs": 0,
                   "timedOut": False}
     except web.HTTPBadRequest:
         result = {"ok": False, "exitCode": -1, "stdout": "",
-                  "stderr": "only .py files can be run", "durationMs": 0,
+                  "stderr": "only Python files or verified web projects can be run", "durationMs": 0,
                   "timedOut": False}
     except Exception as exc:  # never leave a client without a verdict
         logger.exception("streaming run failed")
@@ -505,7 +572,8 @@ async def _run_with_events(rel: str, timeout: float, run_id: str) -> None:
                   "stderr": f"internal error: {exc}"[:200],
                   "durationMs": 0, "timedOut": False}
 
-    result = await _record_run_evidence(rel, result)
+    if Path(rel).suffix.lower() == ".py":
+        result = await _record_run_evidence(rel, result)
     if _event_sink is not None:
         await _event_sink("fs.run_result", {"runId": run_id, **result})
 
@@ -634,6 +702,23 @@ def setup_fs_routes(app: web.Application) -> None:
     app.router.add_post("/api/fs/move", _handle_move)
     app.router.add_post("/api/fs/run", _handle_run)
     app.router.add_get("/api/fs/search", _handle_search)
+    app.on_cleanup.append(_cleanup_manual_web_previews)
+
+
+async def _cleanup_manual_web_previews(_app: web.Application) -> None:
+    """Never leave UI-started preview servers behind on shutdown."""
+    processes = list(_manual_web_previews.values())
+    _manual_web_previews.clear()
+    for process in processes:
+        if process.returncode is None:
+            process.terminate()
+    for process in processes:
+        if process.returncode is None:
+            try:
+                await asyncio.wait_for(process.wait(), timeout=2)
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.wait()
 
 
 async def _handle_list(request: web.Request) -> web.Response:

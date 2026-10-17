@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .brains.python_brain import PythonBrain
+from .brains.web_app_brain import WebAppBrain
 from .brains.researcher import ResearcherBrain
 from .bus.auth import BusAuth
 from .bus.bus import MessageBus
@@ -356,11 +357,14 @@ class BigBrainSystem:
         brain_descriptions = {
             "researcher": "Web search via Brave API, parallel queries, source triangulation, LLM-powered summarization. Use for fact-finding, research, data gathering, current events",
             "taskboard": "Adds tasks to the user's persistent task board. Use when the user asks to add/create a task or todo (\"ajoute une tâche\", \"add a task to my board\"). The task lands on the board as a to-do by default and survives restarts",
+            "web_app_brain": "Builds and previews interactive browser applications with web-specific validation",
         }
         # Register pool workers with same description
         for name in self.brains:
             if name.startswith("python_brain"):
                 brain_descriptions[name] = "Generates and executes Python code, scripts, simulations, calculations"
+            elif name.startswith("web_app_brain"):
+                brain_descriptions[name] = "Builds and previews interactive browser applications with web-specific validation"
         for brain_name in self.brains:
             desc = brain_descriptions.get(brain_name, brain_name)
             self.front_brain.register_brain(brain_name, desc)
@@ -435,6 +439,11 @@ class BigBrainSystem:
                     requires_approval=False,
                     max_retries=3,
                 )
+            elif brain_name.startswith("web_app_brain"):
+                self.orchestrator.set_execution_mode(
+                    brain_name, ExecutionMode.LIGHTNING,
+                    requires_approval=False, max_retries=3,
+                )
         
         # NOTE: Brain pool registration moved to end of _create_brains()
         # (self.brains is empty at this point — brains are created later)
@@ -498,6 +507,19 @@ class BigBrainSystem:
         # "python_brain" → least-loaded worker from the pool
         if python_pool_names:
             self.orchestrator.register_brain_pool("python_brain", python_pool_names)
+
+        # Browser-first pool with its own contracts, validation and preview.
+        web_pool_size = int(os.environ.get("BIGBRAIN_WEB_POOL", "3"))
+        web_pool_names = []
+        for i in range(web_pool_size):
+            worker_name = f"web_app_brain_{i}"
+            self.brains[worker_name] = WebAppBrain(
+                name=worker_name, bus=self.bus, workspace=self.workspace,
+                work_dir=shared_work_dir, llm_provider=self.llm_provider,
+            )
+            web_pool_names.append(worker_name)
+        self.orchestrator.register_brain_pool("web_app_brain", web_pool_names)
+        print(f"🌐 WebAppBrain pool: {web_pool_size} workers ({', '.join(web_pool_names)})")
         
         # Research brain — real Brave search + shared LLM
         try:
@@ -653,6 +675,7 @@ class BigBrainSystem:
             # Register brains with orchestrator (descriptions help the planner LLM)
             brain_descriptions = {
                 "python_brain": "Generates and executes Python code, scripts, calculations, data processing",
+                "web_app_brain": "Builds browser-first HTML/CSS/JavaScript applications, validates artifacts, and starts previews",
                 "researcher": "Researches topics, gathers information, analyzes data, web searches",
                 "taskboard": "Adds tasks to the user's persistent task board. Use when the user asks to add/create a task or todo. Payload: {\"type\": \"board_task\", \"title\": \"...\", \"description\": \"...\", \"status\": \"todo|in-progress|review|done\"} — status defaults to todo",
             }

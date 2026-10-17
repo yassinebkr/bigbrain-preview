@@ -19,8 +19,10 @@ from typing import Any, List, Optional
 CODEGEN_TYPES = frozenset({
     "generate_and_execute",
     "write_project_file",
+    "write_web_file",
     "batch_write_files",
     "assemble_and_run",
+    "assemble_and_preview",
     "edit_file",
     "compound",
 })
