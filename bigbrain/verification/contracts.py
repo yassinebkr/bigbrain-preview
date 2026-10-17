@@ -37,6 +37,7 @@ Rules:
 - No vague contracts ("works well", "good quality")
 - Only what the output can prove: file existence, printed values,
   program behaviour, structure
+- The architecture context below is authoritative. Do not invent or change its stack.
 - Respond with EXACTLY a JSON array of strings, nothing else
 
 Example:
@@ -45,21 +46,57 @@ Response: ["le fichier fibonacci.py existe dans le projet courant", "l'exécutio
 """
 
 
-async def draft_contracts(llm_provider: Any, user_request: str) -> List[str]:
+def stack_contract(project_spec: Any) -> Optional[str]:
+    """Render the LLM-selected ProjectSpec stack as an explicit contract."""
+    if project_spec is None:
+        return None
+    deliverable = str(getattr(project_spec, "deliverable_type", "") or "").strip()
+    interaction = str(getattr(project_spec, "interaction_mode", "") or "").strip()
+    entry_point = str(getattr(project_spec, "entry_point", "") or "").strip()
+    strategy = str(getattr(project_spec, "execution_strategy", "") or "").strip()
+    decisions = [str(item).strip() for item in
+                 (getattr(project_spec, "tech_decisions", None) or [])
+                 if str(item).strip()]
+    parts = []
+    if deliverable:
+        parts.append(f"livrable={deliverable}")
+    if interaction:
+        parts.append(f"interaction={interaction}")
+    if entry_point:
+        parts.append(f"entrée={entry_point}")
+    if decisions:
+        parts.append("stack=" + "; ".join(decisions))
+    if strategy:
+        parts.append("validation/exécution=" + strategy)
+    return "[Stack] " + " | ".join(parts) if parts else None
+
+
+async def draft_contracts(llm_provider: Any, user_request: str,
+                          project_spec: Any = None) -> List[str]:
     """Ask the LLM for checkable contracts; empty list if unavailable."""
-    if not llm_provider or not user_request.strip():
-        return []
+    architecture = stack_contract(project_spec)
+    if not user_request.strip():
+        return [architecture] if architecture else []
+    if not llm_provider:
+        return [architecture] if architecture else []
     try:
         response = await llm_provider.chat_complete(
             messages=[
                 {"role": "system", "content": CONTRACTS_PROMPT},
-                {"role": "user", "content": user_request[:2000]},
+                {"role": "user", "content": (
+                    user_request[:2000]
+                    + (f"\n\nArchitecture context:\n{architecture}" if architecture else "")
+                )},
             ],
             stream=False,
         )
     except Exception:
-        return []
-    return parse_contracts(str(response))
+        return [architecture] if architecture else []
+    contracts = parse_contracts(str(response))
+    if architecture:
+        contracts = [architecture, *[item for item in contracts
+                                     if not item.lstrip().startswith("[Stack]")]]
+    return contracts
 
 
 def parse_contracts(response: str) -> List[str]:

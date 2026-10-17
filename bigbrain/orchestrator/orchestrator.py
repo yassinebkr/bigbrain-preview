@@ -73,6 +73,7 @@ class TaskPlan:
     # the user to approve its contracts before any subtask is dispatched.
     awaiting_approval: bool = False
     approval_design_id: Optional[str] = None
+    project_spec: Optional[ProjectSpec] = None
     
     def get_ready_subtasks(self) -> List[SubTask]:
         """Get subtasks that are ready to execute (dependencies satisfied)."""
@@ -403,7 +404,8 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         )
         from ..verification.evidence import ImmutableRunError, default_repository
 
-        contracts = await draft_contracts(self.llm_provider, user_request)
+        contracts = await draft_contracts(
+            self.llm_provider, user_request, project_spec=plan.project_spec)
         spec = build_proposal_spec(user_request, contracts)
         try:
             default_repository().save_spec(spec)
@@ -541,8 +543,10 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                 
                 if mode == "project":
                     # Step 2a: Project mode — plan file structure, build DAG
+                    self._last_project_spec = None
                     subtasks = await self._plan_project(plan_id, user_request, 
                                                          needs_research, research_queries)
+                    plan.project_spec = self._last_project_spec
                 else:
                     # Step 2b: Script mode — simple decomposition
                     subtasks = await self._llm_decompose(plan_id, user_request, 
