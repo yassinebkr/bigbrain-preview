@@ -132,3 +132,47 @@ class TestRunWithEvents:
         assert final["runId"] == "fsrun-test2"
         assert final["ok"] is False
         assert "not found" in final["stderr"]
+
+
+class TestPackageAwareRun:
+    async def test_package_entry_point_runs_as_module(self, workspace):
+        # A generated multi-file project: relative imports break a plain
+        # `python cli.py` — the run must switch to `python -m pkg.cli`.
+        (workspace / "todo_cli").mkdir()
+        (workspace / "todo_cli" / "__init__.py").write_text("")
+        (workspace / "todo_cli" / "service.py").write_text(
+            "class TaskService:\n"
+            "    def add(self, items, title):\n"
+            "        return items + [title]\n")
+        (workspace / "todo_cli" / "cli.py").write_text(
+            "from .service import TaskService\n"
+            "print(TaskService().add([], 'ship'))\n")
+
+        result = await fs_api.run_file_streaming("todo_cli/cli.py")
+        assert result["ok"] is True, result
+        assert "ship" in result["stdout"]
+
+        # Same for the blocking path (backwards compat)
+        blocking = fs_api.run_file("todo_cli/cli.py")
+        assert blocking["ok"] is True
+        assert "ship" in blocking["stdout"]
+
+    async def test_namespace_package_relative_import_retry(self, workspace):
+        # No __init__.py, but the file uses a relative import: the first
+        # plain run fails with "attempted relative import" and the runner
+        # retries once as a module.
+        (workspace / "todo_app").mkdir()
+        (workspace / "todo_app" / "service.py").write_text(
+            "NAME = 'ok'\n")
+        (workspace / "todo_app" / "cli.py").write_text(
+            "from .service import NAME\nprint(NAME)\n")
+
+        result = await fs_api.run_file_streaming("todo_app/cli.py")
+        assert result["ok"] is True, result
+        assert "ok" in result["stdout"]
+
+    async def test_plain_script_still_runs_plain(self, workspace):
+        rel = _write(workspace, "plain.py", "print('plain')\n")
+        result = await fs_api.run_file_streaming(rel)
+        assert result["ok"] is True
+        assert result["stdout"] == "plain\n"

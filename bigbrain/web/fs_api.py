@@ -208,33 +208,52 @@ def run_file(rel: str, timeout: float = 30.0) -> Dict[str, Any]:
     if target.suffix != ".py":
         raise web.HTTPBadRequest(text=json_error("only .py files can be run"))
     timeout = min(max(float(timeout), 1.0), 120.0)
-    start = time.time()
-    try:
-        proc = subprocess.run(
-            [sys.executable, str(target)],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd=str(target.parent),
-        )
-        return {
-            "ok": proc.returncode == 0,
-            "exitCode": proc.returncode,
-            "stdout": proc.stdout[-20000:],
-            "stderr": proc.stderr[-20000:],
-            "durationMs": int((time.time() - start) * 1000),
-            "timedOut": False,
-        }
-    except subprocess.TimeoutExpired as exc:
-        out = exc.stdout if isinstance(exc.stdout, str) else ""
-        return {
-            "ok": False,
-            "exitCode": -1,
-            "stdout": out[-20000:],
-            "stderr": f"timed out after {timeout:.0f}s",
-            "durationMs": int((time.time() - start) * 1000),
-            "timedOut": True,
-        }
+
+    def _exec_blocking(args: list, cwd: Path) -> Dict[str, Any]:
+        start = time.time()
+        try:
+            proc = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                cwd=str(cwd),
+            )
+            return {
+                "ok": proc.returncode == 0,
+                "exitCode": proc.returncode,
+                "stdout": proc.stdout[-20000:],
+                "stderr": proc.stderr[-20000:],
+                "durationMs": int((time.time() - start) * 1000),
+                "timedOut": False,
+            }
+        except subprocess.TimeoutExpired as exc:
+            out = exc.stdout if isinstance(exc.stdout, str) else ""
+            return {
+                "ok": False,
+                "exitCode": -1,
+                "stdout": out[-20000:],
+                "stderr": f"timed out after {timeout:.0f}s",
+                "durationMs": int((time.time() - start) * 1000),
+                "timedOut": True,
+            }
+
+    # Package files run as modules (relative imports need a project root).
+    package = _package_module_run(target)
+    if package is not None:
+        project_root, module = package
+        return _exec_blocking([sys.executable, "-u", "-m", module],
+                              cwd=project_root)
+
+    result = _exec_blocking([sys.executable, "-u", str(target)],
+                            cwd=target.parent)
+    if _relative_import_failure(result):
+        retry = _namespace_retry(target)
+        if retry is not None:
+            project_root, module = retry
+            return _exec_blocking([sys.executable, "-u", "-m", module],
+                                  cwd=project_root)
+    return result
 
 
 def search_files(query: str, limit: int = 20) -> Dict[str, Any]:
@@ -327,6 +346,42 @@ async def _record_run_evidence(rel: str, result: Dict[str, Any]) -> Dict[str, An
 MAX_STREAM_BUFFER = 20000  # live tail kept per stream
 
 
+def _package_module_run(target: Path) -> tuple[Path, str] | None:
+    """If the file lives inside a package, the correct invocation is
+    `python -m pkg.mod` from the project root — a plain `python cli.py`
+    breaks relative imports ("attempted relative import with no known
+    parent package"), which is exactly what generated multi-file
+    projects use.
+
+    Returns (project_root, dotted_module) or None for a plain script.
+    """
+    if not (target.parent / "__init__.py").is_file():
+        return None
+    root = target.parent.parent
+    parts = [target.parent.name]
+    # Walk up through enclosing packages (__init__.py present).
+    while (root / "__init__.py").is_file():
+        parts.insert(0, root.name)
+        root = root.parent
+    parts.append(target.stem)
+    return root, ".".join(parts)
+
+
+def _relative_import_failure(result: Dict[str, Any]) -> bool:
+    stderr = str(result.get("stderr") or "")
+    return (result.get("exitCode") not in (0, None)
+            and "relative import" in stderr
+            and "ImportError" in stderr)
+
+
+def _namespace_retry(target: Path) -> tuple[Path, str] | None:
+    """Fallback for namespace packages (no __init__.py): the parent dir
+    is the package, its parent the project root."""
+    if target.parent.parent == target.parent:
+        return None  # no room above
+    return target.parent.parent, f"{target.parent.name}.{target.stem}"
+
+
 async def run_file_streaming(rel: str, timeout: float = 30.0,
                               on_delta=None) -> Dict[str, Any]:
     """Run a workspace .py file, forwarding output AS IT IS PRODUCED.
@@ -346,62 +401,80 @@ async def run_file_streaming(rel: str, timeout: float = 30.0,
         raise web.HTTPBadRequest(text=json_error("only .py files can be run"))
     timeout = min(max(float(timeout), 1.0), 120.0)
 
-    start = time.time()
-    proc = await asyncio.create_subprocess_exec(
-        sys.executable, "-u", str(target),
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        cwd=str(target.parent),
-    )
+    async def _exec(args: list, cwd: Path) -> Dict[str, Any]:
+        start = time.time()
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            cwd=str(cwd),
+        )
 
-    async def pump(stream, name: str, sink) -> str:
-        collected: list[str] = []
-        total = 0
-        while True:
-            line = await stream.readline()
-            if not line:
-                break
-            text = line.decode("utf-8", errors="replace")
-            collected.append(text)
-            total += len(text)
-            if sink is not None:
-                try:
-                    await sink(name, text)
-                except Exception:
-                    pass  # streaming must never break the execution
-        return "".join(collected)[-MAX_STREAM_BUFFER:]
+        async def pump(stream, name: str, sink) -> str:
+            collected: list[str] = []
+            while True:
+                line = await stream.readline()
+                if not line:
+                    break
+                text = line.decode("utf-8", errors="replace")
+                collected.append(text)
+                if sink is not None:
+                    try:
+                        await sink(name, text)
+                    except Exception:
+                        pass  # streaming must never break the execution
+            return "".join(collected)[-MAX_STREAM_BUFFER:]
 
-    async def pump_all() -> tuple[str, str]:
-        out_task = asyncio.create_task(pump(proc.stdout, "out", on_delta))
-        err_task = asyncio.create_task(pump(proc.stderr, "err", on_delta))
-        out = await out_task
-        err = await err_task
-        await proc.wait()
-        return out, err
+        async def pump_all() -> tuple[str, str]:
+            out_task = asyncio.create_task(pump(proc.stdout, "out", on_delta))
+            err_task = asyncio.create_task(pump(proc.stderr, "err", on_delta))
+            out = await out_task
+            err = await err_task
+            await proc.wait()
+            return out, err
 
-    try:
-        stdout, stderr = await asyncio.wait_for(pump_all(), timeout=timeout)
-        return {
-            "ok": proc.returncode == 0,
-            "exitCode": proc.returncode,
-            "stdout": stdout,
-            "stderr": stderr,
-            "durationMs": int((time.time() - start) * 1000),
-            "timedOut": False,
-        }
-    except asyncio.TimeoutError:
         try:
-            proc.kill()
-        except ProcessLookupError:
-            pass
-        await proc.wait()
-        return {
-            "ok": False,
-            "exitCode": -1,
-            "stdout": "",
-            "stderr": f"timed out after {timeout:.0f}s",
-            "durationMs": int((time.time() - start) * 1000),
-            "timedOut": True,
-        }
+            stdout, stderr = await asyncio.wait_for(pump_all(), timeout=timeout)
+            return {
+                "ok": proc.returncode == 0,
+                "exitCode": proc.returncode,
+                "stdout": stdout,
+                "stderr": stderr,
+                "durationMs": int((time.time() - start) * 1000),
+                "timedOut": False,
+            }
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+            await proc.wait()
+            return {
+                "ok": False,
+                "exitCode": -1,
+                "stdout": "",
+                "stderr": f"timed out after {timeout:.0f}s",
+                "durationMs": int((time.time() - start) * 1000),
+                "timedOut": True,
+            }
+
+    # Package files (relative imports) must run as modules from the
+    # project root: `python -m todo_app.cli`, not `python cli.py`.
+    package = _package_module_run(target)
+    if package is not None:
+        project_root, module = package
+        return await _exec([sys.executable, "-u", "-m", module],
+                           cwd=project_root)
+
+    result = await _exec([sys.executable, "-u", str(target)],
+                         cwd=target.parent)
+    if _relative_import_failure(result):
+        # Namespace package (no __init__.py): one retry as a module.
+        retry = _namespace_retry(target)
+        if retry is not None:
+            project_root, module = retry
+            return await _exec([sys.executable, "-u", "-m", module],
+                               cwd=project_root)
+    return result
 
 
 async def _run_with_events(rel: str, timeout: float, run_id: str) -> None:

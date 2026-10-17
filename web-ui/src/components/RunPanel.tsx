@@ -194,6 +194,16 @@ export function RunPanel() {
             <button
               onClick={(e) => {
                 e.stopPropagation();
+                // Closing the record = the user has SEEN this run's
+                // outcome: the derived reminders (failed / verdict /
+                // written file) must not pop back in its place.
+                const dismissNudge = useAppStore.getState().dismissNudge;
+                dismissNudge(`run-failed-${run.id}`);
+                dismissNudge(`run-verdict-${run.id}-failed`);
+                dismissNudge(`run-verdict-${run.id}-inconclusive`);
+                const last = run.files.length > 0
+                  ? run.files[run.files.length - 1].path : null;
+                if (last) dismissNudge(`run-file-${run.id}-${last}`);
                 setDismissed(true);
               }}
               className="p-0.5 rounded-md cursor-pointer flex-shrink-0"

@@ -369,3 +369,16 @@ describe('applyFsRunEvent — streaming manual runs', () => {
     expect(useAppStore.getState().liveRuns).toEqual({});
   });
 });
+
+describe('run record is scoped to its conversation', () => {
+  it('opening another session clears the run panel state', () => {
+    useAppStore.setState({
+      activeRun: { id: 'old', description: 'old run', status: 'done',
+                   startedAt: 1, steps: [], files: [] },
+      runPanelDismissed: true,
+    });
+    useAppStore.getState().openSession('sess-other');
+    expect(useAppStore.getState().activeRun).toBeNull();
+    expect(useAppStore.getState().runPanelDismissed).toBe(false);
+  });
+});

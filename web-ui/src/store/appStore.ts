@@ -478,7 +478,10 @@ export const useAppStore = create<AppState>()(
       setActiveSessionKey: (activeSessionKey) => set({ activeSessionKey }),
       switchSession: (key) => {
         get().connection?.switchSession(key);
-        set({ activeSessionKey: key, messages: [], view: 'welcome' });
+        // A run belongs to its conversation — the record of the previous
+        // one must not follow the user into the next.
+        set({ activeSessionKey: key, messages: [], view: 'welcome',
+              activeRun: null, runPanelDismissed: false });
       },
       // Pull the session list from the server into the store.
       refreshSessions: () => {
@@ -505,6 +508,8 @@ export const useAppStore = create<AppState>()(
               view: 'welcome',
               streamingText: '',
               isStreaming: false,
+              activeRun: null,
+              runPanelDismissed: false,
             });
             get().refreshSessions();
           });
@@ -516,6 +521,8 @@ export const useAppStore = create<AppState>()(
             view: 'welcome',
             streamingText: '',
             isStreaming: false,
+            activeRun: null,
+            runPanelDismissed: false,
           });
         }
       },
@@ -527,6 +534,8 @@ export const useAppStore = create<AppState>()(
           messages: [],
           streamingText: '',
           isStreaming: false,
+          activeRun: null,
+          runPanelDismissed: false,
         });
         get().connection?.loadHistory((frame: any) => {
           if (frame?.ok && frame.payload?.messages) {
