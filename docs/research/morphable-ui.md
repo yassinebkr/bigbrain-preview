@@ -1,243 +1,248 @@
-# Recherche approfondie — Generative UI, agents et interfaces morphables
+# Deep research — Generative UI, agents and morphable interfaces
 
-État de l'art au 17 octobre 2026 · Rapport de recherche (GPT-6 Thinking, high) pour la
-phase "morphable UI" (item 7) de BigBrain. Sauvegardé tel quel hors artefacts de rendu.
+State of the art as of October 17, 2026 · Research report (GPT-6 Thinking, high)
+for BigBrain's "morphable UI" phase (roadmap item 7). Saved as-is minus
+rendering artifacts. The French original lives at
+[fr/morphable-ui.md](../fr/morphable-ui.md).
 
-## Synthèse exécutive
+## Executive summary
 
-La vision est techniquement réalisable, mais ses trois composantes n'ont pas la même
-valeur produit ni le même niveau de risque.
+The vision is technically feasible, but its three components do not carry the
+same product value or the same level of risk.
 
-L'idée la plus solide n'est pas le robot flottant. C'est la combinaison d'un espace de
-travail contextuel, d'un catalogue de composants contrôlé et d'un état partagé entre
-l'agent et l'interface.
+The strongest idea is not the floating robot. It is the combination of a
+contextual work surface, a controlled component catalog, and shared state
+between the agent and the interface.
 
-| Priorité | Composante | Verdict |
+| Priority | Component | Verdict |
 |---|---|---|
-| 1 | Templates par tâche + composants contraints | Valeur élevée, risque maîtrisable. Construire autour de surfaces stables, de données typées et de règles explicites de composition. |
-| 1 | Surface de travail droite contextuelle | Potentiel élevé pour la recherche, le code et les opérations longues. Principal risque : l'instabilité spatiale. |
-| Expérimental | Compagnon flottant et mobile | Différenciation visuelle intéressante, bénéfice fonctionnel non démontré. À tester contre une simple présence ancrée. |
+| 1 | Task-based templates + constrained components | High value, manageable risk. Build on stable surfaces, typed data, and explicit composition rules. |
+| 1 | Contextual right-hand work surface | High potential for research, code and long operations. Main risk: spatial instability. |
+| Experimental | Floating, mobile companion | Interesting visual differentiation, functional benefit undemonstrated. To be tested against a simple anchored presence. |
 
-Ces niveaux de priorité sont des jugements d'architecture produit, pas des scores
-scientifiques.
+These priority levels are product-architecture judgments, not scientific
+scores.
 
-### Une distinction fondamentale : trois couches, trois responsabilités
+### A fundamental distinction: three layers, three responsibilities
 
-| Couche | Technologie de référence | Responsabilité |
+| Layer | Reference technology | Responsibility |
 |---|---|---|
-| Communication et exécution | AG-UI | Flux agent ↔ frontend, états, outils, interruptions |
-| Description de l'interface | A2UI ou schéma propriétaire | Déclarer quoi afficher et quelles interactions autoriser |
-| Orchestration de l'espace | Notre reconciler | Décider où, quand et comment afficher les surfaces |
+| Communication & execution | AG-UI | Agent ↔ frontend flow, states, tools, interruptions |
+| Interface description | A2UI or a proprietary schema | Declare what to display and which interactions are allowed |
+| Spatial orchestration | Our reconciler | Decide where, when and how to display surfaces |
 
-Ce découpage est déterminant : A2UI ne remplace pas AG-UI, et aucun des deux ne
-résolvent à eux seuls le problème du layout morphable.
+This decomposition is decisive: A2UI does not replace AG-UI, and neither
+solves the morphable-layout problem alone.
 
-Découverte importante : A2UI v0.9 n'est plus la version courante — v0.9.1 est la
-version de production, v1.0 est candidate. Examiner les différences avant de figer
-un schéma interne.
+Important finding: A2UI v0.9 is no longer the current production version —
+v0.9.1 is production, v1.0 is a candidate. Examine the differences before
+freezing an internal schema.
 
-**Recommandation centrale : l'agent choisit une intention de présentation, jamais la
-géométrie de l'écran. Le produit garde la maîtrise du placement, de la visibilité, du
-focus, des transitions et des autorisations.**
+**Central recommendation: the agent chooses a presentation INTENT, never
+screen geometry. The product keeps control of placement, visibility, focus,
+transitions and permissions.**
 
-## 1. État de l'art : protocoles, produits et recherche
+## 1. State of the art: protocols, products and research
 
-### 1.1. A2UI — la référence la plus proche de notre architecture
+### 1.1. A2UI — the closest reference to our architecture
 
-Spécification publique (Google / open source), v0.9.1 courante. A2UI décrit des
-interfaces sous forme de messages JSON indépendants, transportables en JSONL,
-WebSocket ou autre. Le renderer transforme ces descriptions en composants natifs.
-Ce n'est ni du HTML généré par le modèle ni de l'exécution de JS arbitraire.
+Public specification (Google / open source), v0.9.1 current. A2UI describes
+interfaces as independent JSON messages, transportable over JSONL, WebSocket
+or anything else. The renderer turns these descriptions into native
+components. It is neither model-generated HTML nor arbitrary JS execution.
 
-Opérations serveur → client (v0.9) :
+Server → client operations (v0.9):
 
-| Opération | Fonction |
+| Operation | Function |
 |---|---|
-| `createSurface` | Créer une surface avec `surfaceId`, `catalogId`, thème optionnel |
-| `updateComponents` | Ajouter/modifier les composants de la surface |
-| `updateDataModel` | Mettre à jour les valeurs liées aux composants |
-| `deleteSurface` | Supprimer une surface et son contenu |
+| `createSurface` | Create a surface with `surfaceId`, `catalogId`, optional theme |
+| `updateComponents` | Add/modify the surface's components |
+| `updateDataModel` | Update the values components are bound to |
+| `deleteSurface` | Delete a surface and its content |
 
-Les composants ont des identifiants stables et forment un arbre par références
-d'identifiants. Données séparées de la structure, accessibles par JSON Pointers.
-Renderer progressif.
+Components have stable identifiers and form a tree defined by id references.
+Data is separated from structure and accessed via JSON Pointers. The renderer
+can receive components and data progressively.
 
-Exemple conforme v0.9 :
+v0.9-conformant example:
 
 ```
 {"version":"v0.9","createSurface":{"surfaceId":"run_evidence","catalogId":"https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json"}}
 {"version":"v0.9","updateComponents":{"surfaceId":"run_evidence","components":[{"id":"root","component":"Card","child":"status"},{"id":"status","component":"Text","text":{"path":"/run/status"}}]}}
-{"version":"v0.9","updateDataModel":{"surfaceId":"run_evidence","path":"/run","value":{"status":"Analyse en cours"}}}
+{"version":"v0.9","updateDataModel":{"surfaceId":"run_evidence","path":"/run","value":{"status":"Analyzing"}}}
 ```
 
-Dans notre produit, le `catalogId` désignerait notre propre catalogue versionné.
+In our product, the `catalogId` would designate our own versioned catalog.
 
-**Interactions et callbacks (point crucial)** :
-- Actions serveur (`submit_form`) avec `surfaceId`, `sourceComponentId`, timestamp, contexte.
-- Fonctions locales `functionCall`, exécutées par le renderer seulement si enregistrées dans son catalogue.
-- Validations locales prédéfinies (`required`, `regex`, `email`).
-- `sendDataModel` optionnel — renvoie l'état complet de la surface quand actif : recommander des événements ciblés ou projections minimales plutôt qu'un partage intégral systématique.
+**Interactions and callbacks (the crucial point):**
+- Server actions (`submit_form`) carrying `surfaceId`, `sourceComponentId`, timestamp, context.
+- Local functions via `functionCall`, executed by the renderer only if registered in its catalog.
+- Predefined local validations (`required`, `regex`, `email`).
+- Optional `sendDataModel` — when active, the surface's full state is sent back with related client → server messages: recommend targeted events or minimal projections rather than systematic full sharing.
 
-Une action A2UI n'est pas un tool call d'agent : le bouton émet une intention ; le
-contrôleur serveur décide si elle déclenche un outil, un changement d'état ou une
+An A2UI action is NOT an agent tool call: the button emits an intent; the
+server controller decides whether it triggers a tool, a state change or a
 confirmation.
 
-**Adopter / adapter / ignorer** :
+**Adopt / adapt / ignore:**
 
-| Décision | Élément | Justification |
+| Decision | Element | Rationale |
 |---|---|---|
-| Adopter | Surfaces identifiées et persistantes | Plusieurs espaces actifs sans confusion |
-| Adopter | Catalogue validé côté serveur | Contraint le vocabulaire de l'agent |
-| Adopter | Séparation composants / données | Pas de reconstruction d'UI pour un changement de statut |
-| Adopter | Mises à jour incrémentales | Idéal pour code, résultats, evidence streamés |
-| Adapter | `createSurface` | Ne doit pas signifier automatiquement « ouvrir un panneau » |
-| Adapter | `deleteSurface` | Masquer ou conserver dans l'historique plutôt que détruire |
-| Adapter | Actions client → serveur | Registre d'actions autorisées + permissions |
-| Adapter | `sendDataModel` | Partager uniquement les champs nécessaires |
-| Différer | Multiples renderers natifs | Inutile tant qu'on cible React Web |
-| Ignorer | Transport A2A obligatoire | Notre WebSocket suffit |
-| Éviter | Génération libre de propriétés stylistiques | L'agent ne devient pas responsable du design system |
+| Adopt | Identified, persistent surfaces | Several active spaces without confusion |
+| Adopt | Server-validated catalog | Constrains the agent's vocabulary |
+| Adopt | Component/data separation | No UI rebuild for a status change |
+| Adopt | Incremental updates | Ideal for streamed code, results, evidence |
+| Adapt | `createSurface` | Must not automatically mean "open a panel" |
+| Adapt | `deleteSurface` | Hide or keep in history rather than destroy |
+| Adapt | Client → server actions | Allowed-action registry + permission control |
+| Adapt | `sendDataModel` | Share only the necessary fields |
+| Defer | Multiple native renderers | Useless while we target React Web |
+| Ignore | Mandatory A2A transport | Our WebSocket is enough |
+| Avoid | Free generation of stylistic properties | The agent does not own our design system |
 
-A2UI doit être une **inspiration de contrat et d'interopérabilité**, pas une
-dépendance imposée dès la première phase. Privilégier un schéma interne réduit,
-compilable vers A2UI v0.9.1 quand la compat externe devient utile. La v1.0 candidate
-introduit `actionId`, `actionResponse` RPC client, évolutions de surface — ne pas
-implémenter comme si v0.9.
+A2UI should be a **contract and interoperability inspiration**, not a
+dependency imposed from the first phase. Prefer a reduced internal schema,
+compilable to A2UI v0.9.1 when external compatibility becomes useful. The
+v1.0 candidate introduces `actionId`, client-side `actionResponse` RPC,
+surface evolutions — do not implement them as if they were v0.9.
 
-### 1.2. AG-UI — le modèle de synchronisation à retenir
+### 1.2. AG-UI — the synchronization model to keep
 
-Protocole événementiel agent ↔ application (ne prescrit pas l'apparence).
+An event-driven agent ↔ application protocol (it does not prescribe
+appearance).
 
-| Famille | Événements utiles |
+| Family | Useful events |
 |---|---|
-| Exécution | `RUN_STARTED`, `RUN_FINISHED`, `RUN_ERROR` |
-| Étapes | `STEP_STARTED`, `STEP_FINISHED` |
+| Execution | `RUN_STARTED`, `RUN_FINISHED`, `RUN_ERROR` |
+| Steps | `STEP_STARTED`, `STEP_FINISHED` |
 | Chat | `TEXT_MESSAGE_START/CONTENT/END` |
-| Outils | `TOOL_CALL_START/ARGS/END/RESULT` |
-| État | `STATE_SNAPSHOT`, `STATE_DELTA` (JSON Patch RFC 6902) |
-| Activité | Événements subagents, attribution |
+| Tools | `TOOL_CALL_START/ARGS/END/RESULT` |
+| State | `STATE_SNAPSHOT`, `STATE_DELTA` (JSON Patch RFC 6902) |
+| Activity | Subagent events, attribution |
 
-**Le « working memory partagé »** est la partie la plus intéressante pour notre
-vision : l'agent expose un état structuré observable par l'interface ; le frontend
-peut faire évoluer des champs autorisés. Snapshot → base cohérente ; deltas →
-modifications ciblées ; resynchronisation prévue si les patchs deviennent
-incohérents.
+**The "shared working memory"** is the most interesting part for our vision:
+the agent exposes a structured state the interface can observe; the frontend
+can evolve authorized fields. Snapshot → consistent base; deltas → targeted
+changes; resynchronization is planned when patches become incoherent.
 
-Mais état bidirectionnel ≠ propriété indifférenciée. Trois domaines recommandés :
+But bidirectional state ≠ undifferentiated ownership. Three recommended
+domains:
 
-| État | Autorité principale | Exemple |
+| State | Primary authority | Example |
 |---|---|---|
-| Exécution | Backend / orchestrateur | Étape active, statut, artefacts, progression |
-| Workspace | Frontend / utilisateur | Panneau épinglé, dimension, onglet actif |
-| Collaboratif | Partagé, mais arbitré | Sélections board, annotations, propositions |
+| Execution | Backend / orchestrator | Active step, status, artifacts, progress |
+| Workspace | Frontend / user | Pinned panel, dimension, active tab |
+| Collaborative | Shared, but arbitrated | Board selections, annotations, proposals |
 
-Un modèle qui peut lire l'état du layout n'a pas le droit de l'écraser : il propose,
-une politique d'application décide. AG-UI ne résout pas automatiquement conflits,
-permissions, persistance — sa doc recommande explicitement de les traiter.
+A model that can read the layout state does not get the right to overwrite
+it: it proposes, an application policy decides. AG-UI does not
+automatically solve conflicts, permissions or persistence — its docs
+explicitly recommend handling them.
 
-**Décision : emprunter le vocabulaire AG-UI pour normaliser notre bus existant ;
-ne migrer vers son runtime complet que si interopérabilité réelle.**
+**Decision: borrow the AG-UI vocabulary to normalize our existing bus; migrate
+to its full runtime only if real interoperability requires it.**
 
-### 1.3. OpenAI : ce qui est effectivement livré
+### 1.3. OpenAI: what is actually shipped
 
-- **Canvas** (oct. 2024) — collaboration côte à côte ; l'enseignement reste : séparer
-  un artefact persistant du flux conversationnel.
-- **Apps SDK / MCP Apps** (2025–2026) — widgets interactifs dans le chat, pilotés par
-  des outils MCP ; UI web en iframe communiquant avec l'hôte.
-- **ChatGPT Work** (juil. 2026) — tâches longues, artefacts, suivi de l'avancement,
-  correction de cap, approbation d'actions.
-- **Intelligent UI** (7 oct. 2026) — LA découverte majeure : composants natifs
-  streamables, compilateur incrémental qui traite l'interface pendant la génération,
-  entraînement du modèle à décider de l'organisation, de l'interactivité, et des
-  situations où du texte simple suffit. Le point clé : un bon système GenUI apprend
-  **quand ne pas générer d'interface**. Valide le couple catalogue contraint +
-  rendu incrémental ; ne démontre pas que le modèle doit contrôler toute
-  l'organisation persistante d'un workspace.
+- **Canvas** (Oct 2024) — side-by-side collaboration; the lesson stands:
+  separate a persistent artifact from the conversational flow.
+- **Apps SDK / MCP Apps** (2025–2026) — interactive chat widgets driven by MCP
+  tools; a web UI in an iframe communicating with its host.
+- **ChatGPT Work** (Jul 2026) — long tasks, artifacts, progress tracking,
+  course correction, action approval.
+- **Intelligent UI** (Oct 7, 2026) — THE major finding: streamable native
+  components, an incremental compiler processing the interface during
+  generation, and model training to decide organization, interactivity, and
+  when plain text is enough. The key point: a good GenUI system learns
+  **when not to generate an interface**. It validates the constrained
+  catalog + incremental rendering pair; it does not demonstrate that the
+  model should control the entire persistent organization of a workspace.
 
-**Open-JSON-UI** : présenté par AG-UI/CopilotKit comme standardisation du schéma
-interne OpenAI, mais **aucune source primaire OpenAI vérifiable** d'un schéma
-normatif versionné. Verdict : piste de veille, pas un fondement. Pour implémenter
-aujourd'hui : A2UI et AG-UI sont bien mieux documentés.
+**Open-JSON-UI**: presented by AG-UI/CopilotKit as the standardization of
+OpenAI's internal schema, but **no verifiable primary OpenAI source** of a
+versioned normative schema exists. Verdict: a watchlist lead, not a
+foundation. To implement today, A2UI and AG-UI are far better publicly
+documented.
 
-### 1.4. Apple : ce qu'il faut réellement retenir
+### 1.4. Apple: what to actually keep
 
-- **Liquid Glass** : hiérarchie contenus/contrôles, couches translucides, navigation
-  contextualisée. Recommandations officielles : réserver aux contrôles et
-  navigation, éviter l'accumulation dans la couche de contenu. Ce n'est PAS une
-  démonstration de l'efficacité des interfaces génératives — c'est un langage visuel.
-- **visionOS Ornaments** : le modèle conceptuel directement utilisable pour notre
-  compagnon — un contrôle secondaire peut flotter près d'une fenêtre, rester **lié**
-  à elle et conserver sa position au défilement. « Flottant visuellement, ancré
-  fonctionnellement. » Recommandations : limiter le nombre de fenêtres, éviter les
-  mouvements périphériques distrayants.
-- **Siri contextuel (App Intents WWDC26)** : relier les éléments visibles à des
-  entités et actions métier (« le troisième », « cette conversation »). pertinent
-  pour notre board : l'agent a besoin des **identifiants structurés** de la
-  sélection courante, pas d'une capture d'écran. → Proposition d'un **context
-  registry** exposant sélection, artefacts visibles, run actif. Plus innovant
-  qu'un robot qui suit le pointeur.
-- Aucune spécification Apple n'établit un « Siri spatial » animé libre sur desktop
-  comme pattern éprouvé.
+- **Liquid Glass**: content/control hierarchy, translucent layers,
+  contextualized navigation. Official guidance: reserve it for controls and
+  navigation, avoid accumulation in the content layer. It is NOT a
+  demonstration of generative-UI effectiveness — it is a visual language.
+- **visionOS Ornaments**: the directly usable conceptual model for our
+  companion — a secondary control can float near a window, stay **bound** to
+  it and keep its position while content scrolls. "Visually floating,
+  functionally anchored." Recommendations: limit window counts, avoid
+  distracting peripheral movement.
+- **Contextual Siri (App Intents, WWDC26)**: linking visible elements to
+  business entities and actions ("the third one", "this conversation").
+  Relevant to our board: the agent needs the **structured identifiers** of
+  the current selection, not a screenshot. → Proposal: a **context registry**
+  exposing selection, visible artifacts, active run. More innovative than a
+  robot following the pointer.
+- No Apple specification establishes an animated "spatial Siri" freely moving
+  on a desktop as a proven pattern.
 
-### 1.5. Recherche académique : résultats favorables et défavorables
+### 1.5. Academic research: favorable and unfavorable results
 
-| Étude | Résultat | Conséquence pour nous |
+| Study | Result | Consequence for us |
 |---|---|---|
-| Chen et al., 2025 — Generative Interfaces for LMs | Préférence humaine pour les interfaces générées dans >70 % des cas | La présentation interactive peut dépasser le chat linéaire |
-| Cao et al., CHI 2025 — Generative and Malleable UIs | Problèmes de continuité et de contrôle liés à la régénération | Structures et data models évolutifs, pas des remplacements complets |
-| Peng et al., avr. 2026 — Efficient Personalization | 12 000 jugements ; divergences marquées entre designers | Le layout optimal n'est pas universel : enregistrer préférences et corrections |
-| Design Theater, juil. 2026 | Sur 120 UI générées, >25 % des justifications de design et 34 % des exigences fonctionnelles non reflétées dans le résultat | **Ne jamais valider un layout sur l'explication convaincante du LLM** |
-| EvoGenUI-Bench, août 2026 | Meilleur modèle : 74,9 % de réussite par tour, seulement 37,3 % d'épisodes complets de 5 tours | Le vrai problème est la stabilité multi-tour, pas la génération initiale |
-| GenUI-Harness, oct. 2026 | Workflows avec bases de données : tours de dialogue moyens 3,4 → 1,2 | Les représentations structurées réduisent la friction dans des workflows précis |
+| Chen et al., 2025 — Generative Interfaces for LMs | Human preference for generated interfaces in >70% of cases | Interactive presentation can genuinely beat linear chat |
+| Cao et al., CHI 2025 — Generative and Malleable UIs | Continuity and control problems tied to UI regeneration | Evolving structures and data models, not full replacements |
+| Peng et al., Apr 2026 — Efficient Personalization | 12,000 judgments; marked divergences between designers | The optimal layout is not universal: record preferences and corrections |
+| Design Theater, Jul 2026 | Of 120 generated UIs, >25% of design rationales and 34% of functional requirements not reflected in the result | **Never validate a layout on the LLM's convincing explanation** |
+| EvoGenUI-Bench, Aug 2026 | Best model: 74.9% per-turn success, only 37.3% of full five-turn episodes | The real problem is multi-turn stability, not initial generation quality |
+| GenUI-Harness, Oct 2026 | Database workflows: average dialogue turns 3.4 → 1.2 | Structured representations reduce friction in specific workflows |
 
-Conclusion nuancée : la GenUI a un intérêt empirique, mais les modèles restent
-sensiblement moins fiables quand une interface doit **survivre à plusieurs
-modifications**. Cela soutient fortement l'idée de templates curés. Les trois
-dernières publications sont des prépublications décrivant leurs propres benchmarks.
+Nuanced conclusion: GenUI has empirical value, but models remain notably less
+reliable when an interface must **survive several modifications**. This
+strongly supports curated templates. The last three publications are
+preprints describing their own benchmarks.
 
-Pour le spatial : « Context Matters! » (oct. 2026) propose un cadre spatial/social/
-sémantique pour agents incarnés — cadre préliminaire AR, pas une validation d'un
-robot flottant desktop.
+For the spatial side: "Context Matters!" (Oct 2026) proposes a
+spatial/social/semantic framework for embodied agents — a preliminary AR
+framework, not a validation of a desktop floating robot.
 
-## 2. Templates par type de tâche : critique et proposition
+## 2. Task-type templates: critique and proposal
 
-### 2.1. Le piège : supposer qu'une tâche = un template
+### 2.1. The trap: assuming one task = one template
 
-Fonctionne pour des intentions simples (recherche, code, rédaction, board) mais
-devient ambigu pour des tâches multi-agents (« Recherche les implémentations de
-Madgwick en C++, compare-les, crée un benchmark et ajoute les conclusions au
-board »). La bonne unité de composition n'est pas la tâche globale mais **la phase
-active du workflow et les artefacts qu'elle produit**.
+It works for simple intents (research, code, writing, board) but becomes
+ambiguous for multi-agent tasks ("Research Madgwick implementations in C++,
+compare them, build a benchmark and add the conclusions to the board"). The
+right unit of composition is not the overall task but **the active phase of
+the workflow and the artifacts it produces**.
 
-Architecture à deux niveaux : Task Intent (objectif, type de travail, artefacts
-attendus) → Workspace Reconciler (permissions, focus, surfaces existantes,
-préférences, espace) → Surface contextuelle (vue de l'artefact actif). Le changement
-de template = changement de mode de présentation, pas remplacement du workspace.
+Two-level architecture: Task Intent (goal, work type, expected artifacts) →
+Workspace Reconciler (permissions, focus, existing surfaces, preferences,
+space) → Contextual surface (view of the active artifact). A template change
+is a presentation-mode change, not a workspace replacement.
 
-### 2.2. Les templates à construire
+### 2.2. The templates to build
 
-| Template | Surface principale | Éléments secondaires | Déclenchement |
+| Template | Main surface | Secondary elements | Trigger |
 |---|---|---|---|
-| `conversation` | Chat | Statut compact | Question simple, discussion |
-| `research` | Evidence / sources | Synthèse, citations, progression | Recherche multi-sources |
-| `code` | Éditeur / diff / résultat | Tests, terminal, logs | Code en production/exécution |
-| `document` | Artefact éditable | Historique, commentaires | Rédaction ou transformation |
-| `board` | Canvas structuré | Inspecteur, evidence, relations | Manipulation d'objets |
-| `review` | Comparaison / validation | Risques, changements, approbation | Décision utilisateur requise |
+| `conversation` | Chat | Compact status | Simple question, discussion |
+| `research` | Evidence / sources | Synthesis, citations, progress | Multi-source research |
+| `code` | Editor / diff / run result | Tests, terminal, logs | Code being produced or executed |
+| `document` | Editable artifact | History, comments, revisions | Writing or transformation |
+| `board` | Structured canvas | Inspector, evidence, relations | Object manipulation and organization |
+| `review` | Comparison / validation | Risks, changes, approval | User decision required |
 
-Ajouter une couche de composition transversale (ex. `EvidencePanel` partagé entre
-`research` et `code`). Distinguer composants **visuels** (texte, bouton, liste,
-tabs, conteneur) des composants **métier** (`RunOutput`, `EvidenceCard`,
-`DiffViewer`, `ArtifactPreview`, `ApprovalCard`, `BoardSelection`). Commencer avec
-le catalogue actuel, n'ajouter que les composants métier dont les tests prouvent
-la valeur.
+Add a cross-cutting composition layer (e.g. an `EvidencePanel` shared by
+`research` and `code`). Distinguish **visual** components (text, button, list,
+tabs, container) from **business** components (`RunOutput`, `EvidenceCard`,
+`DiffViewer`, `ArtifactPreview`, `ApprovalCard`, `BoardSelection`). Start
+with the current catalog; add only the business components whose tests prove
+value.
 
-### 2.3. Comment l'agent choisit le template
+### 2.3. How the agent chooses the template
 
-Ne pas demander au LLM « quelle interface afficher ? » (trop imprécis, instable à
-chaque tour). Trois étapes : (A) détection d'intention — l'objectif et les artefacts
-attendus ; (B) **proposition de présentation typée** ; (C) réconciliation
-déterministe — le frontend accepte, ajuste ou rejette.
+Do not ask the LLM "which interface should be displayed?" (too vague,
+unstable across turns). Three steps: (A) intent detection — goal and expected
+artifacts; (B) a **typed presentation proposal**; (C) deterministic
+reconciliation — the frontend accepts, adjusts or rejects.
 
 ```ts
 type TemplateId = "conversation" | "research" | "code" | "document" | "board" | "review";
@@ -255,18 +260,18 @@ type PresentationProposal = {
 };
 ```
 
-Ce qui manque volontairement : `positionX`, `positionY`, `width`, `height`,
-`zIndex`, `html`, `css`. **L'agent indique le besoin ; le renderer décide de la
-géométrie.** C'est cette séparation qui rend le système prévisible.
+Deliberately missing: `positionX`, `positionY`, `width`, `height`, `zIndex`,
+`html`, `css`. **The agent states the need; the renderer decides geometry.**
+This separation is what makes the system predictable.
 
-### 2.4. Le reconciler : le véritable cœur du produit
+### 2.4. The reconciler: the true heart of the product
 
-Cinq responsabilités :
-1. **Validation** — schéma, artefacts réels, provenance, permissions.
-2. **Résolution** — intention → configuration compatible (largeur, template actif, préférences).
-3. **Conservation** — sélection, focus, scroll, formulaires en cours, composants épinglés.
-4. **Application** — ensemble cohérent de modifications, pas une succession de déplacements visibles.
-5. **Récupération** — rejouer la dernière configuration valide après erreur, reconnexion WS, proposition invalide.
+Five responsibilities:
+1. **Validation** — schema, real artifacts, provenance, permissions.
+2. **Resolution** — intent → configuration compatible with screen width, active template, user preferences.
+3. **Conservation** — selection, focus, scroll position, forms being edited, pinned components.
+4. **Application** — a coherent set of changes, not a succession of visible moves triggered by each event.
+5. **Recovery** — replay the last valid configuration after an error, WS reconnection, or an invalid proposal.
 
 ```ts
 function shouldApply(proposal: PresentationProposal, workspace: WorkspaceState): boolean {
@@ -277,128 +282,128 @@ function shouldApply(proposal: PresentationProposal, workspace: WorkspaceState):
 }
 ```
 
-(Pseudo-code architectural — la version réelle vérifie aussi permissions, identité
-du run, ordre des événements, existence des surfaces.)
+(Architectural pseudocode — the real version also checks permissions, run
+identity, event ordering, surface existence.)
 
-**Trois niveaux d'autonomie** : Automatique (mettre à jour les données d'un composant
-visible, statut compact) / Suggestion (nouvelle surface, changement de template) /
-Confirmation (action externe sensible, écrasement, suppression). « Une interface qui
-change toute seule n'est pas forcément une interface intelligente » (Horvitz, CHI
-1999 : coûts d'une initiative automatique mal synchronisée).
+**Three levels of autonomy**: Automatic (update data of a visible component,
+compact status) / Suggestion (new surface, template change) / Confirmation
+(sensitive external action, overwrite, deletion). "An interface that changes
+by itself is not necessarily an intelligent interface" (Horvitz, CHI 1999:
+the costs of automatic initiative poorly synchronized with attention).
 
-### 2.5. Layout libre vs templates curés : verdict
+### 2.5. Free layout vs curated templates: verdict
 
-Le layout libre peut inventer des compositions imprévues, mais : validation
-ergonomique, continuité entre tours, surface d'attaque, repères de l'utilisateur —
-quatre difficultés sérieuses (CHI 2025, EvoGenUI-Bench).
+Free layout can invent unforeseen compositions, but carries four serious
+difficulties: ergonomics validation, cross-turn continuity, attack surface,
+and the user's landmarks (CHI 2025, EvoGenUI-Bench).
 
-**Rétention : 80–90 % de structure décidée par notre design system, 10–20 % de
-composition contextuelle pilotée par l'agent.** (Orientation de conception, pas un
-résultat expérimental.) Le modèle doit avoir assez de liberté pour choisir quoi
-montrer, pas assez pour réinventer les conventions.
+**Retention: 80–90% of structure decided by our design system, 10–20% of
+contextual composition driven by the agent.** (A design orientation, not an
+experimental result.) The model must have enough freedom to choose what to
+show, not enough to reinvent conventions.
 
-## 3. Le robot compagnon : interaction, attention et anthropomorphisme
+## 3. The companion robot: interaction, attention and anthropomorphism
 
-### 3.1. Le meilleur argument CONTRE le concept vient de la recherche
+### 3.1. The best argument AGAINST the concept comes from research
 
-Rickenberg & Reeves (CHI 2000) : des personnages donnant l'impression de surveiller
-l'activité **augmentaient l'anxiété et dégradaient la performance**, tout en
-accroissant la confiance accordée au site. Un personnage peut rendre une interface
-plus engageante ou crédible **sans améliorer la qualité du travail** — exactement le
-piège potentiel de notre robot.
+Rickenberg & Reeves (CHI 2000): characters giving the impression of watching
+the activity **increased anxiety and degraded performance**, while increasing
+trust in the site. A character can make an interface more engaging or
+credible **without improving work quality** — exactly our robot's potential
+trap.
 
-Calm technology (Weiser & Brown, 1995) : l'information doit pouvoir passer entre le
-centre et la périphérie de l'attention sans solliciter constamment. Le robot doit
-être un **périphérique informationnel**, pas un personnage cherchant à être regardé.
+Calm technology (Weiser & Brown, 1995): information should move between the
+center and the periphery of attention without constantly soliciting the
+user. The robot should be an **informational peripheral**, not a character
+seeking to be looked at.
 
-### 3.2. Le bon comportement : une machine à états
+### 3.2. The right behavior: a state machine
 
-| État | Signal visuel | Mouvement |
+| State | Visual signal | Movement |
 |---|---|---|
-| `idle` | Présence minimale, éventuellement masquée | Aucun |
-| `working` | Activité discrète, étape en cours | Animation locale très subtile |
-| `result-ready` | Indicateur de résultat disponible | Transition courte, uniquement si utile |
-| `needs-input` | Demande explicite d'attention | Ancrage près de la zone d'action |
-| `blocked` | Échec ou conflit identifié | Signal d'état, pas d'agitation |
-| `user-engaged` | Commandes rapides ouvertes | Immobilité pendant l'interaction |
+| `idle` | Minimal presence, possibly hidden | None |
+| `working` | Discrete activity, current step | Very subtle local animation |
+| `result-ready` | Result-available indicator | Short transition, only if useful |
+| `needs-input` | Explicit attention request | Anchor near the action zone |
+| `blocked` | Identified failure or conflict | Status signal, no agitation |
+| `user-engaged` | Quick actions open | Immobility during interaction |
 
-Un robot qui se déplace continuellement pour montrer qu'il travaille n'apporte guère
-plus qu'un indicateur d'activité animé. Un robot qui permet de comprendre quel
-agent travaille, sur quoi, avec quel résultat et quelle intervention est attendue
-peut devenir une vraie interface.
+A robot that keeps moving to show it is working adds little over an animated
+activity indicator. A robot that lets you understand which agent works, on
+what, with what result and what intervention is expected can become a real
+interface.
 
-### 3.3. Politique de mouvement
+### 3.3. Movement policy
 
-- **Déplacement justifié** : invocation par l'utilisateur, drag volontaire, rattachement demandé.
-- **Transition discrète** : une surface s'ouvre, le compagnon préserve un ancrage cohérent sans masquer le contenu.
-- **À proscrire** : suivre le curseur, traverser le chat, flotter devant le code, se repositionner à chaque changement de sub-agent, attirer l'attention pour un résultat mineur.
-- **Règle simple** : aucun déplacement autonome pendant une interaction exigeant de la précision (rédaction, sélection, édition de code, drag, comparaison d'evidence).
+- **Justified movement**: user invocation, voluntary drag, requested re-anchoring.
+- **Discreet transition**: a surface opens and the companion keeps a coherent visual anchor without covering content.
+- **Forbidden**: following the cursor, crossing the chat, floating over code, repositioning on every subagent change, attracting attention for a minor result.
+- **Simple rule**: no autonomous movement during precision interaction (writing, text selection, code editing, drag, evidence comparison).
 
-Transitions framer-motion courtes, easing cohérent, respect de
-`prefers-reduced-motion` (WCAG 2.2 : risques des animations non essentielles).
-150–250 ms comme point de départ à tester.
+Short framer-motion transitions, consistent easing, respect
+`prefers-reduced-motion` (WCAG 2.2: risks of non-essential animations).
+150–250 ms as a starting point to test.
 
-### 3.4. Ancrage : trois variantes à tester
+### 3.4. Anchoring: three variants to test
 
-Ancré (coin inférieur, position persistante connue) — **défaut recommandé** ;
-Contextuel (rattaché à la surface active selon règles déterministes) — sur demande ;
-Libre — à évaluer. ISMAR 2026 : aucune stratégie d'ancrage ne domine universellement.
-« Beyond Activation » (oct. 2026, AR) : le résultat le plus transférable n'est pas le
-regard comme déclencheur mais la **clarté des transitions d'état**.
+Anchored (bottom corner, known persistent position) — **recommended default**;
+Contextual (bound to the active surface by deterministic rules) — on demand;
+Free — to evaluate. ISMAR 2026: no anchoring strategy dominates universally.
+"Beyond Activation" (Oct 2026, AR): the most transferable finding is not
+gaze as a trigger but **clarity of state transitions**.
 
-### 3.5. Signaux anthropomorphiques
+### 3.5. Anthropomorphic signals
 
-L'apparence doit correspondre aux capacités réelles. Iconographie expressive pour
-les statuts : oui. Animations prétendant manifester émotion/inquiétude/impatience :
-mise en scène superflue. Le robot représente l'activité du système, pas une
-personnalité humaine. **Garder un mode « sans compagnon »** offrant exactement les
-mêmes actions — indispensable pour déterminer si le robot est fonctionnellement
-utile.
+Appearance must match real capabilities. Expressive status iconography: yes.
+Animations pretending to manifest emotion/worry/impatience: superfluous
+staging. The robot represents system activity, not a human personality.
+**Keep a "no companion" mode** offering exactly the same actions — essential
+to determine whether the robot is functionally useful.
 
-## 4. La surface droite : une meilleure utilisation de l'espace
+## 4. The right-hand surface: better use of available space
 
-### 4.1. Apparition selon la valeur de l'information
+### 4.1. Appearance according to information value
 
-« C'est vide, donc il faut le remplir » est dangereux : l'espace vide participe à la
-concentration. Règle : **ouvrir une surface supplémentaire uniquement quand elle
-permet d'agir, de vérifier ou de comparer plus facilement que dans le chat.**
+"it's empty, so it must be filled" is dangerous: empty space participates in
+concentration. Rule: **open an extra surface only when it lets the user act,
+verify or compare more easily than in chat.**
 
-Trois états : **Focus** (chat seul, espace libre) → **Peek** (résultat compact sans
-imposer un changement de layout) → **Workspace** (surface ouverte). Le peek est
-particulièrement intéressant.
+Three states: **Focus** (chat alone, free space) → **Peek** (compact result
+without imposing a layout change) → **Workspace** (open surface). Peek is
+particularly interesting.
 
-### 4.2. Quand ouvrir, remplir ou fermer
+### 4.2. When to open, fill or close
 
-| Événement | Comportement recommandé |
+| Event | Recommended behavior |
 |---|---|
-| Réponse conversationnelle simple | Ne rien ouvrir |
-| Début de recherche | Statut compact |
-| Première source utile | Proposer un accès à l'evidence |
-| Plusieurs éléments à comparer | Ouvrir la comparaison si non bloquée par l'utilisateur |
-| Exécution de code | Afficher l'activité ; sortie détaillée si elle apporte de la valeur |
-| Test en échec | Rendre l'échec accessible immédiatement, priorité supérieure |
-| Document généré | Proposer le document éditable |
-| Agent en attente d'approbation | Demande claire dans une zone stable |
-| Utilisateur épingle une surface | Ne plus la remplacer automatiquement |
-| Run terminé | Conserver les résultats ; permettre de replier |
-| Nouvelle conversation | Restaurer ou fermer selon la politique utilisateur |
+| Simple conversational reply | Open nothing |
+| Research starts | Compact status |
+| First useful source | Offer evidence access |
+| Several items to compare | Open the comparison view unless user-blocked |
+| Code execution | Show activity; detailed output only when it adds value |
+| Failing test | Make the failure immediately accessible, higher priority |
+| Generated document | Offer the editable document |
+| Agent awaiting approval | Clear request in a stable zone |
+| User pins a surface | Never replace it automatically again |
+| Run finished | Keep the results; allow collapsing |
+| New conversation | Restore or close per the user's workspace policy |
 
-Deux principes : ne jamais confondre **fermeture et destruction** (un panneau peut
-disparaître visuellement en conservant état et artefacts) ; pas de disparition
-automatique par défaut (si l'utilisateur inspecte une evidence, la fin du run ne
-ferme pas le composant).
+Two principles: never confuse **closing with destruction** (a panel can
+visually disappear while keeping its state and artifacts); no automatic
+disappearance by default (if the user is inspecting evidence, the end of the
+run must not close the component).
 
-### 4.3. La surface droite ne doit pas devenir un second chat
+### 4.3. The right surface must not become a second chat
 
-Le panneau représente des objets stables que le texte linéaire représente mal :
+The panel represents stable objects that linear text represents poorly:
 
-| Domaine | Ce que l'utilisateur manipule |
+| Domain | What the user manipulates |
 |---|---|
-| Recherche | Evidence sourcée, extraits, provenance, contradictions |
-| Code | Diff, fichiers, tests, stdout/stderr, artefacts |
-| Écriture | Texte éditable, historique, suggestions acceptées/rejetées |
-| Board | Nœuds, liens, sélections, propriétés |
-| Multi-agent | Étapes, délégations, propriétaires des résultats, blocages |
+| Research | Sourced evidence, excerpts, provenance, contradictions |
+| Code | Diff, files, tests, stdout/stderr, artifacts |
+| Writing | Editable text, history, accepted/rejected suggestions |
+| Board | Nodes, links, selections, object properties |
+| Multi-agent | Steps, delegations, result owners, blockers |
 
 ```ts
 type Evidence = {
@@ -409,43 +414,43 @@ type Evidence = {
 };
 ```
 
-Le `verificationStatus` doit résulter du pipeline de provenance, pas d'une
-affirmation libre de l'agent — éviter qu'un résultat agent soit présenté comme une
-preuve vérifiée parce qu'il est dans une belle carte.
+`verificationStatus` must come from the provenance pipeline, not from a free
+agent claim — avoid presenting an agent result as verified evidence because
+it sits in a nice card.
 
-### 4.4. Responsive et continuité spatiale
+### 4.4. Responsive and spatial continuity
 
-Desktop large : split-view redimensionnable. Viewport intermédiaire : surface unique
-bascuable. Mobile : panneau plein écran / drawer / navigation explicite. Seuils
-déterminés par les tailles minimales réelles des composants, pas par la seule
-classification mobile/tablette/desktop. WCAG 2.2 : reflow sans perte.
+Wide desktop: resizable split-view. Intermediate viewport: single switchable
+surface. Mobile: full-screen panel / drawer / explicit navigation. Thresholds
+determined by the real minimum sizes of our components, not by the
+mobile/tablet/desktop classification alone. WCAG 2.2: reflow without loss.
 
-Règle : une surface ouverte ne change pas d'identité parce que l'agent change de
-sous-tâche — nouvelles informations dans des onglets identifiés, sélection stable.
+Rule: an open surface does not change identity because the agent switched
+subtasks — new information in identified tabs, stable current selection.
 
-## 5. Architecture technique et plan d'implémentation
+## 5. Technical architecture and implementation plan
 
-### 5.1. Architecture cible adaptée à notre stack
+### 5.1. Target architecture for our stack
 
-Ne pas remplacer React, Zustand ou le WebSocket. Construire une couche de gestion
-des présentations AU-DESSUS de l'existant :
+Do not replace React, Zustand or the WebSocket. Build a presentation
+management layer ON TOP of the existing infrastructure:
 
 ```
-Backend multi-agents + Event Bus
-  (text deltas · run events · tool events · artefacts · UI proposals)
-    → WebSocket Protocol Adapter (framing · séquencement · validation · reconnexion · compat AG-UI)
-    → Event Store (événements · runs · états · artefacts)
-    → Workspace Reconciler (policies · focus · permissions · propositions)
-    → Zustand (projection de l'état — PAS un bus d'événements supplémentaire)
+Multi-agent backend + Event Bus
+  (text deltas · run events · tool events · artifacts · UI proposals)
+    → WebSocket Protocol Adapter (framing · sequencing · validation · reconnection · AG-UI compat)
+    → Event Store (events · runs · states · artifacts)
+    → Workspace Reconciler (policies · focus · permissions · proposals)
+    → Zustand (state projection — NOT another event bus)
     → React 18 + TypeScript + Vite + framer-motion (Surface Renderer · Chat · Companion)
 ```
 
-Flux : `WebSocket → validation → event reducer → état normalisé → reconciler →
-renderer`. Les composants React n'interprètent jamais directement les messages du
-LLM. L'état durable du run vit côté serveur ; Zustand n'est pas la source de
-vérité de l'exécution.
+Flow: `WebSocket → validation → event reducer → normalized state → reconciler
+→ renderer`. React components never interpret LLM messages directly. The
+run's durable state lives server-side; Zustand is not the source of truth
+for execution.
 
-### 5.2. Synchronisation multi-agents : identités et concurrence
+### 5.2. Multi-agent synchronization: identities and concurrency
 
 ```ts
 type AgentEvent = {
@@ -454,157 +459,161 @@ type AgentEvent = {
 };
 ```
 
-`seq` : ordre monotone par run (un horodatage ne suffit pas). Stratégie : événements
-idempotents (pas de doublon après reconnexion), snapshot + deltas ordonnés,
-détection de trous de séquence + resynchronisation, révisions d'état contre les
-écritures concurrentes silencieuses, attribution des surfaces à leur producteur
-vérifié, reprise de l'inspection d'un artefact après échec WS.
+`seq`: monotonic order per run (a timestamp does not suffice to order
+asynchronous events). Strategy: idempotent events (no duplicates after
+reconnection), snapshot + ordered deltas, sequence-gap detection +
+resynchronization, state revisions against silent concurrent writes,
+surface attribution to verified producers, resumable artifact inspection
+after WS failure.
 
-### 5.3. Sécurité : le catalogue est nécessaire mais insuffisant
+### 5.3. Security: the catalog is necessary but insufficient
 
-Une interface déclarative contraint ce que le modèle produit ; elle ne neutralise
-pas les injections indirectes (un document de recherche malveillant peut demander au
-LLM de créer un composant trompeur ou une action non autorisée — OWASP LLM01).
+A declarative interface constrains what the model produces; it does not
+neutralize indirect injections (a malicious research document can ask the
+LLM to create a deceptive component or an unauthorized action — OWASP
+LLM01).
 
-| Risque | Défense |
+| Risk | Defense |
 |---|---|
-| Composant inconnu | Validation stricte, rejet |
-| Propriété non autorisée | Schéma fermé |
-| Action arbitraire | Registre d'actions + permissions serveur |
-| Faux agent privilégié | Identité du bus authentifié, pas du payload |
-| HTML/script injecté | Rendu React sûr, Markdown/URL stricts |
-| Surface recouvrant des contrôles critiques | Contraintes géométriques du layout engine |
-| Trop de composants | Limites de profondeur, volume, fréquence |
-| Événement ancien écrasant le nouveau | Révisions + numéros de séquence |
-| Fausse confirmation de succès | Statut dérivé du résultat réel de l'outil |
-| Exfiltration via URL | Politique d'URL, contrôle des origines |
+| Unknown component | Strict validation, reject |
+| Unauthorized property | Closed schema |
+| Arbitrary action | Action registry + server permissions |
+| Fake privileged agent | Identity from the authenticated bus, not the payload |
+| Injected HTML/script | Safe React rendering, strict Markdown/URL handling |
+| Surface covering critical controls | Geometric constraints from the layout engine |
+| Too many components | Depth, volume, frequency limits |
+| Old event overwriting new | Revisions + sequence numbers |
+| False success confirmation | Status derived from the real tool result |
+| Exfiltration via URL | URL policy, origin control, destination validation |
 
-Jamais un agent ne modifie les permissions, ne masque un contrôle de sécurité, ni ne
-génère une demande d'approbation hors du mécanisme d'autorisation du produit. Un
-`ApprovalCard` est alimenté par une demande authentifiée par le backend.
+Never may an agent modify permissions, hide a security control, or generate
+an approval request outside the product's authorization mechanism. An
+`ApprovalCard` is fed by a backend-authenticated request.
 
-### 5.4. Plan incrémental en quatre phases
+### 5.4. Four-phase incremental plan
 
-**Phase 1 — Workspace adaptatif déterministe** (fondations, instrumentation).
-`WorkspaceStore`, `SurfaceRegistry`, `WorkspaceReconciler` ; trois états de panneau
-(fermé / peek / ouvert). **Pas de LLM dans le choix d'interface à ce stade** —
-déclencher sur les événements existants (artefact créé, run lancé, evidence prête).
-Testable : stabilité du focus, restauration après rechargement, responsive,
-absence de perte d'artefacts, performance. Risque : des transitions qui perturbent
-alors même que le choix des surfaces est correct.
+**Phase 1 — Deterministic adaptive workspace** (foundations,
+instrumentation). `WorkspaceStore`, `SurfaceRegistry`,
+`WorkspaceReconciler`; three panel states (closed / peek / open). **No LLM
+in interface choice at this stage** — trigger on existing events (artifact
+created, run started, evidence ready). Testable: focus stability,
+restoration after reload, responsive behavior, no artifact loss, render
+performance. Risk: transitions that disturb even when the surface choice is
+correct.
 
-**Phase 2 — Templates curés et propositions LLM** (intelligence de présentation).
-Templates `research/code/document/board/review` ; schéma de proposition validé,
-règles de priorité, mécanisme de refus. **Shadow mode d'abord** : l'agent propose,
-l'UI de référence ne change pas ; comparer aux scénarios attendus, puis activer
-progressivement ce qui est sûr. Testable : pertinence, stabilité entre tours,
-changements évitables, taux de rejet, conformité catalogue. Risque : interpréter
-une proposition séduisante comme un besoin réel.
+**Phase 2 — Curated templates and LLM proposals** (presentation
+intelligence). Templates `research/code/document/board/review`; validated
+proposal schema, priority rules, rejection mechanism. **Shadow mode first**:
+the agent proposes, the reference UI does not change; compare against
+expected scenarios, then progressively enable what is safe. Testable:
+relevance, cross-turn stability, avoidable changes, reconciler rejection
+rate, catalog conformance. Risk: mistaking a seductive proposal for a real
+need.
 
-**Phase 3 — État collaboratif et evidence vivante** (avantage fonctionnel).
-Snapshots/deltas, identifiants durables d'artefacts, contexte de sélection partagé,
-actions frontend autorisées. Ex. : une sélection d'evidence sur le board devient une
-référence structurée dans la demande suivante. Cycles de validation :
-proposition d'action → approbation → exécution → résultat → trace. Testable :
-synchronisation multi-agents, reprise WS, conflits, provenance. Risque : confusion
-entre état de présentation, état métier et autorité d'exécution.
+**Phase 3 — Collaborative state and living evidence** (functional
+advantage). Snapshots/deltas, durable artifact identifiers, shared
+selection context, authorized frontend actions. E.g.: an evidence selection
+on the board becomes a structured reference in the user's next request.
+Validation cycles: action proposal → approval → execution → result → trace.
+Testable: multi-agent sync, WS recovery, conflicts, provenance. Risk:
+confusing presentation state, business state and execution authority.
 
-**Phase 4 — Compagnon contextuel et orchestration avancée** (différenciation, sous
-condition de preuve). Machine à états, **mode ancré d'abord** ; déplacement
-contextuel derrière un feature flag. Testable : temps d'accès aux commandes,
-interruptions, erreurs de clic, gêne perçue, désactivation volontaire. Risque :
-investir dans une signature visuelle dont la contribution fonctionnelle reste faible.
+**Phase 4 — Contextual companion and advanced orchestration**
+(differentiation, conditional on proof). State machine, **anchored mode
+first**; contextual movement behind a feature flag. Testable: time to
+commands, interruptions, click errors, perceived nuisance, voluntary
+disablement. Risk: investing in a visual signature whose functional
+contribution remains low.
 
-### 5.5. Stratégie de tests
+### 5.5. Testing strategy
 
-Comparaisons contrôlées : (A) chat + artefacts accessibles manuellement ; (B) chat +
-surface contextuelle déterministe ; (C) B + propositions de présentation de l'agent.
-Le robot en expérimentation **séparée**.
+Controlled comparisons: (A) chat + manually accessible artifacts; (B) chat +
+deterministic contextual surface; (C) B + agent presentation proposals. The
+robot gets a **separate** experiment.
 
-Métriques prioritaires : temps jusqu'à l'information utile ; taux de complétion ;
-actions de navigation évitées ; erreurs de contexte (mauvais artefact/run) ;
-changements de layout non souhaités ; perte de focus ; stabilité multi-tour ;
-charge subjective.
+Priority metrics: time to useful information; completion rate; avoided
+navigation actions; context errors (wrong artifact/run); unwanted layout
+changes; focus loss; multi-turn stability; subjective load.
 
-Scénarios reproductibles : recherche multi-sources, exécution de code en échec,
-changement de sub-agent, modification du board pendant un run, reconnexion,
-injection malveillante, désactivation des animations. **Chaque scénario inclut
-plusieurs tours successifs**, pas une capture finale.
+Reproducible scenarios: multi-source research, failing code execution,
+subagent switch, board modification during a run, reconnection, malicious
+injection, animation disablement. **Each scenario includes several
+successive turns**, not a final screenshot.
 
-## 6. Évaluation critique de la vision
+## 6. Critical evaluation of the vision
 
-| Hypothèse produit | Évaluation | Ce qui doit être prouvé |
+| Product hypothesis | Assessment | What must be proven |
 |---|---|---|
-| Le robot donne une sensation de travail vivant | Plausible | La présence améliore-t-elle la compréhension des statuts ? |
-| Le déplacement libre rend l'agent plus naturel | **Faiblement étayé** | Réduit-il les interactions, plutôt que de les perturber ? |
-| Le template par tâche réduit la friction | Solide, sous conditions | Meilleure continuité sur les tâches hybrides ? |
-| Un catalogue contraint améliore la fiabilité | Fortement justifié | Limite-t-il réellement les erreurs et surfaces non désirées ? |
-| Le panneau droit contextuel améliore l'efficacité | Prometteur | Accélère-t-il l'inspection et la comparaison ? |
-| Un état partagé agent/UI améliore la collaboration | Très prometteur | Évite-t-il références ambiguës et répétitions ? |
-| Une UI totalement morphable est toujours supérieure | **Non démontré** | Les gains excèdent-ils le coût de l'instabilité spatiale ? |
-| L'interface doit être livrée avec l'agent | Bonne direction | Quelles décisions le modèle doit-il réellement contrôler ? |
+| The robot gives a feeling of living work | Plausible | Does its presence improve status comprehension? |
+| Free movement makes the agent more natural | **Weakly supported** | Does it reduce interactions rather than disrupting them? |
+| Task templates reduce friction | Solid, conditionally | Better continuity on hybrid tasks? |
+| A constrained catalog improves reliability | Strongly justified architecturally | Does it really limit errors and unwanted surfaces? |
+| The contextual right panel improves efficiency | Promising | Does it speed up artifact inspection and comparison? |
+| Shared agent/UI state improves collaboration | Very promising | Does it avoid ambiguous references and user repetition? |
+| A fully morphable UI is always superior | **Undemonstrated** | Do the gains exceed the cost of spatial instability? |
+| The interface should ship with the agent | Good direction | Which decisions should the model really control? |
 
-**Où se situe l'avantage compétitif** : pas dans l'apparence du compagnon ni dans le
-nombre de layouts d'un LLM, mais dans la capacité à rendre un travail d'agent
-**immédiatement inspectable, manipulable, vérifiable et reprenable**. Une interface
-qui permet de comprendre le processus (agent collecte → artefact → exécution →
-erreur → correction → décision) et d'intervenir au bon niveau, sans explorer des
-dizaines de messages.
+**Where the competitive advantage lies**: not in the companion's appearance
+nor in the number of layouts an LLM can produce, but in the ability to make
+agent work **immediately inspectable, manipulable, verifiable and
+resumable**. An interface that lets you understand the process (agent
+collects → artifact → execution → error → correction → decision) and
+intervene at the right level, without exploring dozens of messages.
 
 > The interface follows the work, not the agent's imagination.
 > The interface ships with the agent — but control stays with the user.
 
-## 7. Bibliographie
+## 7. Bibliography
 
-### Protocoles et implémentations
-- A2UI officiel : https://a2ui.org — Spec v0.9 : https://a2ui.org/specification/v0.9-a2ui/ — v0.9.1 : https://a2ui.org/specification/v0.9.1-a2ui/ — v1.0 candidate : https://a2ui.org/specification/v1.0-a2ui/ — Evolution Guide : https://a2ui.org/specification/v0.9.1-evolution-guide/
-- A2UI + A2A Extension : https://github.com/a2ui-project/a2ui/blob/main/specification/v0_9/docs/a2ui_extension_specification.md
-- AG-UI : https://github.com/ag-ui-protocol/ag-ui — Events : https://docs.ag-ui.com/concepts/events — State : https://docs.ag-ui.com/concepts/state — Generative UI specs : https://docs.ag-ui.com/concepts/generative-ui-specs
-- CopilotKit Generative UI : https://github.com/CopilotKit/generative-ui — Dojo : https://dojo.ag-ui.com/
+### Protocols and implementations
+- A2UI official: https://a2ui.org — Spec v0.9: https://a2ui.org/specification/v0.9-a2ui/ — v0.9.1: https://a2ui.org/specification/v0.9.1-a2ui/ — v1.0 candidate: https://a2ui.org/specification/v1.0-a2ui/ — Evolution Guide: https://a2ui.org/specification/v0.9.1-evolution-guide/
+- A2UI + A2A Extension: https://github.com/a2ui-project/a2ui/blob/main/specification/v0_9/docs/a2ui_extension_specification.md
+- AG-UI: https://github.com/ag-ui-protocol/ag-ui — Events: https://docs.ag-ui.com/concepts/events — State: https://docs.ag-ui.com/concepts/state — Generative UI specs: https://docs.ag-ui.com/concepts/generative-ui-specs
+- CopilotKit Generative UI: https://github.com/CopilotKit/generative-ui — Dojo: https://dojo.ag-ui.com/
 
-### OpenAI et Apple
-- OpenAI Intelligent UI (7 oct. 2026) : https://openai.com/index/gpt-6-for-everyone/
-- OpenAI Generative UI Structured Outputs : https://github.com/openai/openai-structured-outputs-samples/blob/main/generative-ui/README.md
-- OpenAI Structured Outputs : https://developers.openai.com/api/docs/guides/structured-outputs
-- Canvas : https://openai.com/index/introducing-canvas/ — Apps SDK : https://openai.com/index/introducing-apps-in-chatgpt/
-- Apple Materials/Liquid Glass : https://developer.apple.com/design/human-interface-guidelines/materials
-- Apple Ornaments : https://developer.apple.com/design/human-interface-guidelines/ornaments
-- Apple Spatial Layout : https://developer.apple.com/design/human-interface-guidelines/spatial-layout
-- App Intents / Siri : https://developer.apple.com/documentation/appintents/apple-intelligence-and-siri-ai — WWDC26 session 343 : https://developer.apple.com/videos/play/wwdc2026/343/
+### OpenAI and Apple
+- OpenAI Intelligent UI (Oct 7, 2026): https://openai.com/index/gpt-6-for-everyone/
+- OpenAI Generative UI Structured Outputs: https://github.com/openai/openai-structured-outputs-samples/blob/main/generative-ui/README.md
+- OpenAI Structured Outputs: https://developers.openai.com/api/docs/guides/structured-outputs
+- Canvas: https://openai.com/index/introducing-canvas/ — Apps SDK: https://openai.com/index/introducing-apps-in-chatgpt/
+- Apple Materials/Liquid Glass: https://developer.apple.com/design/human-interface-guidelines/materials
+- Apple Ornaments: https://developer.apple.com/design/human-interface-guidelines/ornaments
+- Apple Spatial Layout: https://developer.apple.com/design/human-interface-guidelines/spatial-layout
+- App Intents / Siri: https://developer.apple.com/documentation/appintents/apple-intelligence-and-siri-ai — WWDC26 session 343: https://developer.apple.com/videos/play/wwdc2026/343/
 
-### Recherche académique
-- Chen et al. (2025), Generative Interfaces for Language Models : https://arxiv.org/abs/2508.19227
-- Cao, Jiang & Xia (CHI 2025), Generative and Malleable User Interfaces : https://doi.org/10.1145/3706598.3713285
-- Peng et al. (2026), Efficient Personalization of Generative User Interfaces : https://arxiv.org/abs/2604.09876
-- Imteyaz et al. (2026), Design Theater : https://arxiv.org/abs/2607.22928
-- Peng et al. (2026), EvoGenUI-Bench : https://arxiv.org/abs/2608.29387
-- Li et al. (2026), When Interfaces Speak : https://arxiv.org/abs/2610.11123
-- Cunningham et al. (2026), Context Matters! : https://arxiv.org/abs/2610.21484
-- Ma et al. (2026), Beyond Activation : https://arxiv.org/abs/2610.09284
-- IEEE ISMAR 2026, Spatial User Interfaces : https://www.ieeeismar.net/2026/papers/
-- Rickenberg & Reeves (CHI 2000), The Effects of Animated Characters… : https://doi.org/10.1145/332040.332406
-- Horvitz (CHI 1999), Principles of Mixed-Initiative User Interfaces : https://doi.org/10.1145/302979.303030
-- Iqbal & Bailey (CHI 2008), Effects of Intelligent Notification Management… : https://doi.org/10.1145/1357054.1357070
-- Weiser & Brown (1995), Designing Calm Technology : https://calmtech.com/papers/designing-calm-technology
+### Academic research
+- Chen et al. (2025), Generative Interfaces for Language Models: https://arxiv.org/abs/2508.19227
+- Cao, Jiang & Xia (CHI 2025), Generative and Malleable User Interfaces: https://doi.org/10.1145/3706598.3713285
+- Peng et al. (2026), Efficient Personalization of Generative User Interfaces: https://arxiv.org/abs/2604.09876
+- Imteyaz et al. (2026), Design Theater: https://arxiv.org/abs/2607.22928
+- Peng et al. (2026), EvoGenUI-Bench: https://arxiv.org/abs/2608.29387
+- Li et al. (2026), When Interfaces Speak: https://arxiv.org/abs/2610.11123
+- Cunningham et al. (2026), Context Matters!: https://arxiv.org/abs/2610.21484
+- Ma et al. (2026), Beyond Activation: https://arxiv.org/abs/2610.09284
+- IEEE ISMAR 2026, Spatial User Interfaces: https://www.ieeeismar.net/2026/papers/
+- Rickenberg & Reeves (CHI 2000), The Effects of Animated Characters…: https://doi.org/10.1145/332040.332406
+- Horvitz (CHI 1999), Principles of Mixed-Initiative User Interfaces: https://doi.org/10.1145/302979.303030
+- Iqbal & Bailey (CHI 2008), Effects of Intelligent Notification Management…: https://doi.org/10.1145/1357054.1357070
+- Weiser & Brown (1995), Designing Calm Technology: https://calmtech.com/papers/designing-calm-technology
 
-### Sécurité et accessibilité
-- OWASP LLM Prompt Injection : https://genai.owasp.org/llmrisk/llm01-prompt-injection/
-- WCAG 2.2 Animation from Interactions : https://www.w3.org/WAI/WCAG22/Understanding/animation-from-interactions
-- WCAG 2.2 Reflow : https://www.w3.org/WAI/WCAG22/Understanding/reflow.html
+### Security and accessibility
+- OWASP LLM Prompt Injection: https://genai.owasp.org/llmrisk/llm01-prompt-injection/
+- WCAG 2.2 Animation from Interactions: https://www.w3.org/WAI/WCAG22/Understanding/animation-from-interactions
+- WCAG 2.2 Reflow: https://www.w3.org/WAI/WCAG22/Understanding/reflow.html
 
-## Conclusion — décisions recommandées
+## Conclusion — recommended decisions
 
-1. Conserver le WebSocket et le catalogue React existants. Introduire A2UI/AG-UI
-   progressivement, sans migration imposée par principe.
-2. Construire le reconciler AVANT de laisser un LLM modifier les surfaces.
-3. Templates = modes de travail composables, pas six écrans exclusifs.
-4. Panneau droit = espace d'artefacts, pas un second flux conversationnel.
-5. Reporter le robot mobile à une expérimentation isolée ; un compagnon ancré,
-   discret et immédiatement utile est une base plus défendable.
+1. Keep the WebSocket and the existing React catalog. Introduce A2UI/AG-UI
+   progressively, no migration on principle.
+2. Build the reconciler BEFORE letting an LLM modify surfaces.
+3. Templates are composable work modes, not six mutually exclusive screens.
+4. Right panel = artifact space, not a second conversational stream.
+5. Defer the mobile robot to an isolated experiment; an anchored, discreet,
+   immediately useful companion is a more defensible base.
 
-Premier jalon concret : un utilisateur lance une tâche, voit apparaître seulement
-les surfaces nécessaires, consulte preuves et sorties en temps réel, modifie le
-board, reprend le travail sans perte de contexte ni réorganisation intempestive.
-**Si cette expérience fonctionne sans robot, l'essentiel du problème est résolu.**
-Le compagnon devient ensuite l'interface incarnée de cette capacité, au lieu
-d'essayer de la remplacer.
+Concrete first milestone: a user launches a task, sees only the necessary
+surfaces appear, consults evidence and execution output in real time,
+edits the board, then resumes work without context loss or untimely
+reorganization. **If this experience works without a robot, the essential
+part of the problem is solved.** The companion can then become the embodied
+interface of that capability, instead of trying to replace it.
