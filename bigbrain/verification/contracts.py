@@ -59,16 +59,16 @@ def stack_contract(project_spec: Any) -> Optional[str]:
                  if str(item).strip()]
     parts = []
     if deliverable:
-        parts.append(f"livrable={deliverable}")
+        parts.append(f"livrable {deliverable}")
     if interaction:
-        parts.append(f"interaction={interaction}")
+        parts.append(f"interaction {interaction}")
     if entry_point:
-        parts.append(f"entrée={entry_point}")
+        parts.append(f"point d’entrée {entry_point}")
     if decisions:
-        parts.append("stack=" + "; ".join(decisions))
+        parts.append("technologies " + ", ".join(decisions))
     if strategy:
-        parts.append("validation/exécution=" + strategy)
-    return "[Stack] " + " | ".join(parts) if parts else None
+        parts.append("validation " + strategy)
+    return "[Stack] " + " · ".join(parts) if parts else None
 
 
 async def draft_contracts(llm_provider: Any, user_request: str,

@@ -12,6 +12,23 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Check, X, Loader2 } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 
+function StackSummary({ value }: { value: string }) {
+  const fields = value.replace(/^\[Stack\]\s*/, '').split(' · ');
+  return (
+    <div className="rounded-xl px-3 py-2.5 mb-3" style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)' }}>
+      <div className="text-[10px] uppercase tracking-[0.12em] mb-2" style={{ color: 'var(--text-tertiary)' }}>Architecture retenue</div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5">
+        {fields.map((field, i) => {
+          const split = field.indexOf(' ');
+          const label = split > 0 ? field.slice(0, split) : 'détail';
+          const text = split > 0 ? field.slice(split + 1) : field;
+          return <div key={i} className="text-[12px] leading-snug"><span style={{ color: 'var(--text-tertiary)' }}>{label} </span><span style={{ color: 'var(--text-primary)' }}>{text}</span></div>;
+        })}
+      </div>
+    </div>
+  );
+}
+
 export function ContractCard() {
   const proposal = useAppStore((s) => s.contractProposal);
   const sending = useAppStore((s) => s.contractSending);
@@ -50,8 +67,11 @@ export function ContractCard() {
                 Before I write code — approve these contracts:
               </p>
 
+              {proposal.contracts.some((contract) => contract.startsWith('[Stack]')) && (
+                <StackSummary value={proposal.contracts.find((contract) => contract.startsWith('[Stack]'))!} />
+              )}
               <ul className="list-disc pl-5 my-1.5 space-y-1">
-                {proposal.contracts.map((contract, i) => (
+                {proposal.contracts.filter((contract) => !contract.startsWith('[Stack]')).map((contract, i) => (
                   <li
                     key={i}
                     className="text-[13.5px] leading-relaxed"

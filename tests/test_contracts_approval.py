@@ -73,7 +73,7 @@ class TestContractParsing:
             provider, "crée un programme fitness", project_spec=project_spec)
 
         assert contracts[0].startswith("[Stack]")
-        assert "livrable=web_app" in contracts[0]
+        assert "livrable web_app" in contracts[0]
         assert "HTML/CSS/JavaScript sans dépendance" in contracts[0]
         assert "entrée=index.html" in contracts[0]
         assert "Architecture context:" in provider.user_prompt
