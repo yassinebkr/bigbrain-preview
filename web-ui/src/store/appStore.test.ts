@@ -338,3 +338,47 @@ describe('runPanelDismissed — new run reopens the panel', () => {
     expect(useAppStore.getState().runPanelDismissed).toBe(false);
   });
 });
+
+describe('applyFsRunEvent — streaming manual runs', () => {
+  beforeEach(() => {
+    useAppStore.setState({ liveRuns: {} });
+  });
+
+  it('accumulates output deltas per stream then finalises', () => {
+    const s = useAppStore.getState();
+    s.applyFsRunEvent(ev('fs.run_output', { runId: 'r1', stream: 'out', delta: 'hello\n' }));
+    s.applyFsRunEvent(ev('fs.run_output', { runId: 'r1', stream: 'err', delta: 'warn\n' }));
+    s.applyFsRunEvent(ev('fs.run_output', { runId: 'r1', stream: 'out', delta: 'world\n' }));
+    let run = useAppStore.getState().liveRuns.r1;
+    expect(run.out).toBe('hello\nworld\n');
+    expect(run.err).toBe('warn\n');
+    expect(run.done).toBe(false);
+
+    s.applyFsRunEvent(ev('fs.run_result', {
+      runId: 'r1', ok: true, exitCode: 0,
+      stdout: 'hello\nworld\n', stderr: '', durationMs: 5, timedOut: false,
+    }));
+    run = useAppStore.getState().liveRuns.r1;
+    expect(run.done).toBe(true);
+    expect(run.result.ok).toBe(true);
+    expect(run.result.runId).toBeUndefined(); // the id is not part of the result
+  });
+
+  it('ignores events without a runId', () => {
+    useAppStore.getState().applyFsRunEvent(ev('fs.run_output', { delta: 'orphan' }));
+    expect(useAppStore.getState().liveRuns).toEqual({});
+  });
+});
+
+describe('run record is scoped to its conversation', () => {
+  it('opening another session clears the run panel state', () => {
+    useAppStore.setState({
+      activeRun: { id: 'old', description: 'old run', status: 'done',
+                   startedAt: 1, steps: [], files: [] },
+      runPanelDismissed: true,
+    });
+    useAppStore.getState().openSession('sess-other');
+    expect(useAppStore.getState().activeRun).toBeNull();
+    expect(useAppStore.getState().runPanelDismissed).toBe(false);
+  });
+});

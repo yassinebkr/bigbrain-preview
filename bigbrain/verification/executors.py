@@ -13,8 +13,8 @@ fpga backend's split between *what to verify* (policy) and *how*
 * :func:`stage_tests`   — pytest over the work_dir when test files
   exist; absent tests are ``not_applicable`` (never a disguised pass),
   a missing pytest is ``inconclusive``.
-* :func:`stage_contracts` — the file the request named ("crée un script
-  hello.py") exists in the working project.
+* :func:`stage_contracts` — every file named by the request or architect
+  project plan exists in the working project.
 
 Stages never raise for a bad script: a failure IS the result. Only
 programming errors in the stage itself propagate.
@@ -30,6 +30,7 @@ import platform
 import re
 import sys
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -164,9 +165,12 @@ async def stage_tests(work_dir: Path, *, timeout: float = 60.0) -> StageResult:
     * tests ran         → ``passed`` / ``failed`` on the exit code
     * run exceeded time → ``inconclusive``
     """
-    test_files = sorted(
-        {p for pattern in ("test_*.py", "*_test.py") for p in work_dir.glob(pattern)}
-    )
+    test_files = sorted({
+        p for pattern in ("test_*.py", "*_test.py")
+        for p in work_dir.rglob(pattern)
+        if not any(part in {".venv", "venv", ".git", "node_modules"}
+                   for part in p.relative_to(work_dir).parts)
+    })
     if not test_files:
         return StageResult(
             name="tests", status="not_applicable", tool="pytest",
@@ -179,7 +183,7 @@ async def stage_tests(work_dir: Path, *, timeout: float = 60.0) -> StageResult:
         )
     process = await asyncio.create_subprocess_exec(
         sys.executable, "-m", "pytest", "-q", "--no-header", "-p", "no:cacheprovider",
-        *[p.name for p in test_files],
+        *[str(p.relative_to(work_dir)) for p in test_files],
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
         cwd=str(work_dir),
     )
@@ -198,35 +202,54 @@ async def stage_tests(work_dir: Path, *, timeout: float = 60.0) -> StageResult:
         name="tests", status=status, tool="pytest", tool_version=_PY,
         details={
             "returncode": process.returncode,
-            "tests": [p.name for p in test_files],
+            "tests": [str(p.relative_to(work_dir)) for p in test_files],
             "output_tail": output[-2000:],
         },
     )
 
 
-def stage_contracts(work_dir: Path, requested_file: str | None,
-                    *, persisted_file: str | None = None) -> StageResult:
-    """The file the request named exists at the expected place.
-
-    This is the stage that catches the classic agent lie: "hello.py
-    créé avec succès" while the workspace holds a different name.
-    """
-    if not requested_file:
+def stage_contracts(
+    work_dir: Path,
+    requested_file: str | Sequence[str] | None,
+    *,
+    persisted_file: str | Sequence[str] | None = None,
+) -> StageResult:
+    """Verify that every file named by the request or project plan exists."""
+    requested = ([requested_file] if isinstance(requested_file, str)
+                 else list(requested_file or []))
+    persisted = ([persisted_file] if isinstance(persisted_file, str)
+                 else list(persisted_file or []))
+    if not requested:
         return StageResult(
             name="contracts", status="not_applicable", tool="pathlib",
             details={"reason": "request names no file"},
         )
-    target = work_dir / requested_file
-    if target.is_file():
+
+    present = []
+    missing = []
+    for path in requested:
+        target = work_dir / path
+        if target.is_file():
+            present.append({"path": path, "size_bytes": target.stat().st_size})
+        else:
+            missing.append(path)
+
+    if not missing:
         return StageResult(
             name="contracts", status="passed", tool="pathlib",
-            details={"file": requested_file, "size_bytes": target.stat().st_size,
-                     "persisted_as": persisted_file},
+            details={
+                "files": present,
+                "file": requested[0] if len(requested) == 1 else None,
+                "size_bytes": present[0]["size_bytes"] if len(present) == 1 else None,
+                "persisted_as": persisted[0] if len(persisted) == 1 else persisted,
+            },
         )
     return StageResult(
         name="contracts", status="failed", tool="pathlib",
         details={
-            "expected": requested_file,
-            "reason": "requested file missing from the working project",
+            "expected": requested[0] if len(requested) == 1 else requested,
+            "missing": missing,
+            "present": [item["path"] for item in present],
+            "reason": "requested project files missing from the working project",
         },
     )

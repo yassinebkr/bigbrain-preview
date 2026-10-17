@@ -113,6 +113,9 @@ export function FileExplorer() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [viewingPath, setViewingPath] = useState<string | null>(null);
+  const [openPaths, setOpenPaths] = useState<string[]>([]);
+  const [explorerWidth, setExplorerWidth] = useState(36);
+  const rootRef = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
   const currentProject = useAppStore((s) => s.currentProject);
@@ -124,7 +127,10 @@ export function FileExplorer() {
   // Open a file requested from elsewhere (e.g. the code viewer's
   // "Workspace" button): show it in the inline CodeSurface.
   useEffect(() => {
-    if (pendingOpenFile) setViewingPath(pendingOpenFile);
+    if (pendingOpenFile) {
+      setViewingPath(pendingOpenFile);
+      setOpenPaths((paths) => paths.includes(pendingOpenFile) ? paths : [...paths, pendingOpenFile]);
+    }
     if (pendingOpenFile) setPendingOpenFile(null);
   }, [pendingOpenFile, setPendingOpenFile]);
 
@@ -215,6 +221,9 @@ export function FileExplorer() {
     }
     // Keep the open viewer pointing at the file that still exists.
     const newPath = dir ? `${dir}/${newName}` : newName;
+    setOpenPaths((paths) => paths.map((path) =>
+      path === entry.path ? newPath :
+      path.startsWith(entry.path + "/") ? newPath + path.slice(entry.path.length) : path));
     if (viewingPath === entry.path) setViewingPath(newPath);
     else if (viewingPath && viewingPath.startsWith(entry.path + '/')) {
       setViewingPath(newPath + viewingPath.slice(entry.path.length));
@@ -232,9 +241,11 @@ export function FileExplorer() {
       return;
     }
     // The open viewer must not outlive the file it shows.
-    if (viewingPath === entry.path ||
-        (viewingPath && viewingPath.startsWith(entry.path + '/'))) {
-      setViewingPath(null);
+    const deletedTabs = openPaths.filter((path) =>
+      path === entry.path || path.startsWith(entry.path + "/"));
+    setOpenPaths((paths) => paths.filter((path) => !deletedTabs.includes(path)));
+    if (viewingPath && deletedTabs.includes(viewingPath)) {
+      setViewingPath(openPaths.find((path) => !deletedTabs.includes(path)) || null);
     }
     await refresh(dir);
   };
@@ -242,19 +253,42 @@ export function FileExplorer() {
   const openFile = (entry: FsEntry) => {
     setError(null);
     setViewingPath(entry.path);
+    setOpenPaths((paths) => paths.includes(entry.path) ? paths : [...paths, entry.path]);
+  };
+
+  const closeTab = (path: string) => {
+    const index = openPaths.indexOf(path);
+    const remaining = openPaths.filter((item) => item !== path);
+    setOpenPaths(remaining);
+    if (viewingPath === path) {
+      setViewingPath(remaining[Math.min(index, remaining.length - 1)] || null);
+    }
+  };
+
+  const startResize = (event: React.PointerEvent) => {
+    event.preventDefault();
+    const move = (moveEvent: PointerEvent) => {
+      const bounds = rootRef.current?.getBoundingClientRect();
+      if (!bounds) return;
+      const percent = ((moveEvent.clientX - bounds.left) / bounds.width) * 100;
+      setExplorerWidth(Math.min(65, Math.max(22, percent)));
+    };
+    const stop = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
   };
 
   return (
-    <div className="relative flex h-full min-h-0">
+    <div ref={rootRef} className="relative flex h-full min-h-0">
       {/* Explorer column (files, breadcrumbs, project selector).
           Full width until a file is open on desktop — a fixed 340px
           column next to empty space looked broken. */}
       <div
-        className={
-          'flex flex-col h-full min-w-0 flex-1 ' +
-          (viewingPath ? 'lg:flex-none lg:w-[380px] lg:border-r' : '')
-        }
-        style={{ borderColor: 'var(--border-subtle)' }}
+        className={'flex flex-col h-full min-w-0 flex-1 ' + (viewingPath ? 'lg:flex-none' : '')}
+        style={{ borderColor: "var(--border-subtle)", width: viewingPath ? explorerWidth + "%" : undefined }}
       >
       {/* Header: breadcrumbs + actions */}
       <div className="flex items-center gap-1.5 px-3 h-11 flex-shrink-0 border-b"
@@ -410,10 +444,18 @@ export function FileExplorer() {
       {/* Footer count */}
       <div className="flex items-center gap-3 px-3 h-8 flex-shrink-0 border-t text-[11px]"
            style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-tertiary)' }}>
+        <strong style={{ color: 'var(--text-secondary)' }}>{currentProject || 'Workspace'}</strong>
+        <span>{dir || 'project root'}</span>
         <span>{entries.filter((e) => e.type === 'file').length} files</span>
         <span>{entries.filter((e) => e.type === 'folder').length} folders</span>
       </div>
       </div>
+
+      {viewingPath && (
+        <div className="hidden lg:block w-1 cursor-col-resize flex-shrink-0"
+          style={{ backgroundColor: "var(--border-subtle)" }} onPointerDown={startResize}
+          role="separator" aria-orientation="vertical" aria-label="Resize project explorer" />
+      )}
 
       {/* Desktop: inline code surface (highlight, run, edit) next to the
           list — same surface as the chat's CodeViewer modal, presented
@@ -421,10 +463,20 @@ export function FileExplorer() {
       {viewingPath && (
         <div className="hidden lg:flex flex-1 min-w-0 p-3">
           <div
-            className="flex-1 rounded-xl overflow-hidden"
+            className="flex flex-col flex-1 min-h-0 rounded-xl overflow-hidden"
             style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)' }}
           >
-            <CodeSurface path={viewingPath} onClose={() => setViewingPath(null)} />
+            <div className="flex h-9 overflow-x-auto border-b" style={{ borderColor: "var(--border-subtle)" }}>
+              {openPaths.map((path) => (
+                <button key={path} onClick={() => setViewingPath(path)}
+                  className="flex items-center gap-2 px-3 text-[11px] border-r flex-shrink-0"
+                  style={{ color: path === viewingPath ? "var(--accent-blue)" : "var(--text-secondary)", borderColor: "var(--border-subtle)", backgroundColor: path === viewingPath ? "var(--bg-primary)" : "transparent" }}>
+                  <span>{path.split("/").pop()}</span>
+                  <span onClick={(event) => { event.stopPropagation(); closeTab(path); }} aria-label={"Close " + path}>×</span>
+                </button>
+              ))}
+            </div>
+            <div className="flex-1 min-h-0"><CodeSurface path={viewingPath} onClose={() => closeTab(viewingPath)} /></div>
           </div>
         </div>
       )}

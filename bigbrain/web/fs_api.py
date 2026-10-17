@@ -30,6 +30,18 @@ MAX_READ_BYTES = 512 * 1024
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
+# Streaming runs: the server registers an async broadcast so the fs
+# module can push live output to the WS clients without holding a bus
+# reference (fs_api stays a standalone module).
+_EventSink = Any
+_event_sink: _EventSink = None
+
+
+def set_event_sink(sink: _EventSink) -> None:
+    """Register `async def sink(event_type, payload) -> None`."""
+    global _event_sink
+    _event_sink = sink
+
 
 def workspace_root() -> Path:
     """The shared workspace root (agent + UI)."""
@@ -196,33 +208,52 @@ def run_file(rel: str, timeout: float = 30.0) -> Dict[str, Any]:
     if target.suffix != ".py":
         raise web.HTTPBadRequest(text=json_error("only .py files can be run"))
     timeout = min(max(float(timeout), 1.0), 120.0)
-    start = time.time()
-    try:
-        proc = subprocess.run(
-            [sys.executable, str(target)],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd=str(target.parent),
-        )
-        return {
-            "ok": proc.returncode == 0,
-            "exitCode": proc.returncode,
-            "stdout": proc.stdout[-20000:],
-            "stderr": proc.stderr[-20000:],
-            "durationMs": int((time.time() - start) * 1000),
-            "timedOut": False,
-        }
-    except subprocess.TimeoutExpired as exc:
-        out = exc.stdout if isinstance(exc.stdout, str) else ""
-        return {
-            "ok": False,
-            "exitCode": -1,
-            "stdout": out[-20000:],
-            "stderr": f"timed out after {timeout:.0f}s",
-            "durationMs": int((time.time() - start) * 1000),
-            "timedOut": True,
-        }
+
+    def _exec_blocking(args: list, cwd: Path) -> Dict[str, Any]:
+        start = time.time()
+        try:
+            proc = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                cwd=str(cwd),
+            )
+            return {
+                "ok": proc.returncode == 0,
+                "exitCode": proc.returncode,
+                "stdout": proc.stdout[-20000:],
+                "stderr": proc.stderr[-20000:],
+                "durationMs": int((time.time() - start) * 1000),
+                "timedOut": False,
+            }
+        except subprocess.TimeoutExpired as exc:
+            out = exc.stdout if isinstance(exc.stdout, str) else ""
+            return {
+                "ok": False,
+                "exitCode": -1,
+                "stdout": out[-20000:],
+                "stderr": f"timed out after {timeout:.0f}s",
+                "durationMs": int((time.time() - start) * 1000),
+                "timedOut": True,
+            }
+
+    # Package files run as modules (relative imports need a project root).
+    package = _package_module_run(target)
+    if package is not None:
+        project_root, module = package
+        return _exec_blocking([sys.executable, "-u", "-m", module],
+                              cwd=project_root)
+
+    result = _exec_blocking([sys.executable, "-u", str(target)],
+                            cwd=target.parent)
+    if _relative_import_failure(result):
+        retry = _namespace_retry(target)
+        if retry is not None:
+            project_root, module = retry
+            return _exec_blocking([sys.executable, "-u", "-m", module],
+                                  cwd=project_root)
+    return result
 
 
 def search_files(query: str, limit: int = 20) -> Dict[str, Any]:
@@ -261,7 +292,14 @@ async def run_file_with_evidence(rel: str, timeout: float = 30.0) -> Dict[str, A
     BIGBRAIN_EVIDENCE=0.
     """
     result = await asyncio.to_thread(run_file, rel, timeout)
+    return await _record_run_evidence(rel, result)
 
+
+async def _record_run_evidence(rel: str, result: Dict[str, Any]) -> Dict[str, Any]:
+    """Attach the deterministic gate verdict to an executed run result.
+
+    Best effort — a recording failure never breaks a manual run.
+    """
     if os.environ.get("BIGBRAIN_EVIDENCE", "1") == "0":
         return result
 
@@ -301,6 +339,173 @@ async def run_file_with_evidence(rel: str, timeout: float = 30.0) -> Dict[str, A
     except Exception:
         pass
     return result
+
+
+# ── streaming manual runs ──────────────────────────────────────────────────
+
+MAX_STREAM_BUFFER = 20000  # live tail kept per stream
+
+
+def _package_module_run(target: Path) -> tuple[Path, str] | None:
+    """If the file lives inside a package, the correct invocation is
+    `python -m pkg.mod` from the project root — a plain `python cli.py`
+    breaks relative imports ("attempted relative import with no known
+    parent package"), which is exactly what generated multi-file
+    projects use.
+
+    Returns (project_root, dotted_module) or None for a plain script.
+    """
+    if not (target.parent / "__init__.py").is_file():
+        return None
+    root = target.parent.parent
+    parts = [target.parent.name]
+    # Walk up through enclosing packages (__init__.py present).
+    while (root / "__init__.py").is_file():
+        parts.insert(0, root.name)
+        root = root.parent
+    parts.append(target.stem)
+    return root, ".".join(parts)
+
+
+def _relative_import_failure(result: Dict[str, Any]) -> bool:
+    stderr = str(result.get("stderr") or "")
+    return (result.get("exitCode") not in (0, None)
+            and "relative import" in stderr
+            and "ImportError" in stderr)
+
+
+def _namespace_retry(target: Path) -> tuple[Path, str] | None:
+    """Fallback for namespace packages (no __init__.py): the parent dir
+    is the package, its parent the project root."""
+    if target.parent.parent == target.parent:
+        return None  # no room above
+    return target.parent.parent, f"{target.parent.name}.{target.stem}"
+
+
+async def run_file_streaming(rel: str, timeout: float = 30.0,
+                              on_delta=None) -> Dict[str, Any]:
+    """Run a workspace .py file, forwarding output AS IT IS PRODUCED.
+
+    Same contract as :func:`run_file` (bounded, parent cwd, evidence-ready
+    result dict) plus `on_delta(stream, chunk)` callbacks fired while the
+    program runs. The child runs with ``python -u`` so prints stream as
+    they happen instead of waiting for the block-buffered pipe to flush.
+    """
+    import sys
+
+    root = workspace_root()
+    target = _resolve(root, rel)
+    if not target.is_file():
+        raise web.HTTPNotFound(text=json_error("file not found"))
+    if target.suffix != ".py":
+        raise web.HTTPBadRequest(text=json_error("only .py files can be run"))
+    timeout = min(max(float(timeout), 1.0), 120.0)
+
+    async def _exec(args: list, cwd: Path) -> Dict[str, Any]:
+        start = time.time()
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            cwd=str(cwd),
+        )
+
+        async def pump(stream, name: str, sink) -> str:
+            collected: list[str] = []
+            while True:
+                line = await stream.readline()
+                if not line:
+                    break
+                text = line.decode("utf-8", errors="replace")
+                collected.append(text)
+                if sink is not None:
+                    try:
+                        await sink(name, text)
+                    except Exception:
+                        pass  # streaming must never break the execution
+            return "".join(collected)[-MAX_STREAM_BUFFER:]
+
+        async def pump_all() -> tuple[str, str]:
+            out_task = asyncio.create_task(pump(proc.stdout, "out", on_delta))
+            err_task = asyncio.create_task(pump(proc.stderr, "err", on_delta))
+            out = await out_task
+            err = await err_task
+            await proc.wait()
+            return out, err
+
+        try:
+            stdout, stderr = await asyncio.wait_for(pump_all(), timeout=timeout)
+            return {
+                "ok": proc.returncode == 0,
+                "exitCode": proc.returncode,
+                "stdout": stdout,
+                "stderr": stderr,
+                "durationMs": int((time.time() - start) * 1000),
+                "timedOut": False,
+            }
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+            await proc.wait()
+            return {
+                "ok": False,
+                "exitCode": -1,
+                "stdout": "",
+                "stderr": f"timed out after {timeout:.0f}s",
+                "durationMs": int((time.time() - start) * 1000),
+                "timedOut": True,
+            }
+
+    # Package files (relative imports) must run as modules from the
+    # project root: `python -m todo_app.cli`, not `python cli.py`.
+    package = _package_module_run(target)
+    if package is not None:
+        project_root, module = package
+        return await _exec([sys.executable, "-u", "-m", module],
+                           cwd=project_root)
+
+    result = await _exec([sys.executable, "-u", str(target)],
+                         cwd=target.parent)
+    if _relative_import_failure(result):
+        # Namespace package (no __init__.py): one retry as a module.
+        retry = _namespace_retry(target)
+        if retry is not None:
+            project_root, module = retry
+            return await _exec([sys.executable, "-u", "-m", module],
+                               cwd=project_root)
+    return result
+
+
+async def _run_with_events(rel: str, timeout: float, run_id: str) -> None:
+    """Background task behind POST /api/fs/run: stream then finalise."""
+    async def sink(stream: str, delta: str) -> None:
+        if _event_sink is not None:
+            await _event_sink("fs.run_output",
+                              {"runId": run_id, "stream": stream,
+                               "delta": delta})
+
+    try:
+        result = await run_file_streaming(rel, timeout, on_delta=sink)
+    except web.HTTPNotFound:
+        result = {"ok": False, "exitCode": -1, "stdout": "",
+                  "stderr": "file not found", "durationMs": 0,
+                  "timedOut": False}
+    except web.HTTPBadRequest:
+        result = {"ok": False, "exitCode": -1, "stdout": "",
+                  "stderr": "only .py files can be run", "durationMs": 0,
+                  "timedOut": False}
+    except Exception as exc:  # never leave a client without a verdict
+        logger.exception("streaming run failed")
+        result = {"ok": False, "exitCode": -1, "stdout": "",
+                  "stderr": f"internal error: {exc}"[:200],
+                  "durationMs": 0, "timedOut": False}
+
+    result = await _record_run_evidence(rel, result)
+    if _event_sink is not None:
+        await _event_sink("fs.run_result", {"runId": run_id, **result})
+
+
 
 PROJECT_MANIFEST = ".project.json"
 SANDBOX_PROJECT = "sandbox"
@@ -457,12 +662,19 @@ async def _handle_move(request: web.Request) -> web.Response:
 
 
 async def _handle_run(request: web.Request) -> web.Response:
-    """Execute a workspace .py file off the event loop — with evidence."""
+    """Start a streaming workspace run — output flows over the WS.
+
+    Returns {runId} immediately; the client follows `fs.run_output`
+    deltas and the final `fs.run_result` (same payload shape as the old
+    blocking response, evidence included) over its WebSocket.
+    """
+    import uuid
+
     body = await request.json()
-    result = await run_file_with_evidence(
-        body.get("path", ""), body.get("timeout", 30.0)
-    )
-    return web.json_response(result)
+    run_id = f"fsrun-{uuid.uuid4().hex[:10]}"
+    asyncio.create_task(_run_with_events(
+        body.get("path", ""), body.get("timeout", 30.0), run_id))
+    return web.json_response({"runId": run_id, "streaming": True})
 
 
 async def _handle_search(request: web.Request) -> web.Response:

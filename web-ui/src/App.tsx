@@ -82,6 +82,10 @@ export default function App() {
     connection.on('onAgentActivity', (activity) => {
       useAppStore.getState().addAgentActivity(activity);
       useAppStore.getState().applyRunEvent(activity);
+      // Streaming manual runs: live output + final verdict.
+      if (activity.type === 'fs.run_output' || activity.type === 'fs.run_result') {
+        useAppStore.getState().applyFsRunEvent(activity);
+      }
       // The agent created a board task → pull the persistent board.
       if (activity.type === 'taskboard.task_created') {
         useAppStore.getState().fetchBoardTasks();

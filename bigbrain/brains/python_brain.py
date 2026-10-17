@@ -614,8 +614,17 @@ Rules:
                 }
             
             try:
-                # Ensure we're writing to the work directory
-                full_path = self.work_dir / file_path
+                # Reject absolute paths and traversal before writing.
+                root = self.work_dir.resolve()
+                full_path = (root / file_path).resolve()
+                try:
+                    full_path.relative_to(root)
+                except ValueError:
+                    return {
+                        "path": file_path,
+                        "success": False,
+                        "error": "File path escapes the working directory",
+                    }
                 full_path.parent.mkdir(parents=True, exist_ok=True)
                 
                 # Use asyncio.to_thread for the actual I/O to avoid blocking
@@ -665,7 +674,7 @@ Rules:
             })
             
             return {
-                "success": len(successful_writes) > 0,  # Success if any file was written
+                "success": len(successful_writes) == len(processed_results),
                 "results": processed_results,
                 "summary": {
                     "total_files": len(files_to_write),
@@ -675,7 +684,7 @@ Rules:
                 },
                 "stdout": f"Batch write: {len(successful_writes)}/{len(files_to_write)} files written",
                 "stderr": "",
-                "exit_code": 0 if len(successful_writes) > 0 else 1
+                "exit_code": 0 if len(successful_writes) == len(processed_results) else 1
             }
             
         except Exception as e:
@@ -1430,6 +1439,37 @@ Rules:
             "files_written": list(written_files.keys()),
             "project_summary": file_summary,
         }
+
+        # Project evidence covers the complete planned file set, not only
+        # the entry point. Nested tests are discovered from the project root.
+        if self._evidence_enabled:
+            try:
+                import platform as _platform
+                from ..verification.evidence import default_repository
+                from ..verification.gate import RunGate
+
+                planned_files = [f["path"] for f in all_files]
+                manifest, verdict = await RunGate(default_repository()).evaluate_attempt(
+                    user_request=user_request or f"assemble project {project_name}",
+                    code=written_files[entry_point],
+                    execution=result,
+                    work_dir=project_dir,
+                    requested_files=planned_files,
+                    persisted_files=list(written_files),
+                    toolchain={"python": _platform.python_version(), "brain": self.name},
+                    filename=entry_point,
+                )
+                result["verification"] = {
+                    "run_id": manifest.run_id,
+                    "verdict": verdict,
+                    "stages": [{"name": s.name, "status": s.status}
+                               for s in manifest.stages],
+                }
+                await self._notify_verification(manifest, verdict)
+            except Exception as gate_error:
+                result["verification"] = {
+                    "verdict": None, "error": str(gate_error)[:200]}
+
         
         if not success:
             result["error"] = f"Entry point {entry_point} failed with exit code {exit_code}"

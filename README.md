@@ -151,7 +151,7 @@ BigBrain's memory is deliberately frugal:
 
 ## Verification harness
 
-Every Python execution attempt is evaluated against what was asked:
+Every Python execution attempt is evaluated against what was asked. Project runs verify every file from the architect plan, discover nested tests recursively, and fail partial batch writes:
 
 ```
 DesignSpec (request + contracts)
@@ -181,7 +181,7 @@ contracts, the verdict chip, and who approved.
 
 Chat with token streaming, a run panel (live steps, written files,
 gate verdict), a persistent multi-conversation history, a workspace
-file explorer with per-project sub-workspaces, a real task board
+file explorer with per-project sub-workspaces, multi-file tabs, a project summary and a draggable explorer/editor split, a real task board
 (persisted in `data/tasks.json`), brains and evidence tabs. No mock
 data anywhere: if the board is empty, it is empty.
 
