@@ -81,6 +81,25 @@ def test_global_sandbox_contains_new_web_projects(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_web_brain_uses_selected_model(tmp_path, monkeypatch):
+    calls = []
+
+    class Provider:
+        async def chat_complete(self, **kwargs):
+            calls.append(kwargs)
+            return "<main>ok</main>"
+
+    monkeypatch.setenv("BIGBRAIN_WEB_MODEL", "openai/gpt-6.1-sol")
+    brain = WebAppBrain("web_app_test", MessageBus(auth=None), "default",
+                        work_dir=tmp_path, llm_provider=Provider(), model="fallback")
+    await brain._write_web_file({
+        "project_name": "course", "file_path": "index.html",
+        "user_request": "course", "purpose": "entry",
+    })
+    assert calls[0]["model"] == "openai/gpt-6.1-sol"
+
+
+@pytest.mark.asyncio
 async def test_web_app_brain_creates_verified_preview_manifest(tmp_path):
     _, files = _write_web_project(tmp_path)
     brain = WebAppBrain("web_app_test", MessageBus(auth=None), "default", work_dir=tmp_path)

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import socket
 import time
@@ -27,11 +28,12 @@ class WebAppBrain(BaseBrain):
     _preview_ports = range(3200, 3300)
 
     def __init__(self, name, bus, workspace=None, *, work_dir: Path,
-                 llm_provider=None):
+                 llm_provider=None, model: str | None = None):
         super().__init__(name, bus, workspace)
         self.work_dir = Path(work_dir)
         self.work_dir.mkdir(parents=True, exist_ok=True)
         self.llm_provider = llm_provider
+        self.model = model
         self._preview_process: Optional[asyncio.subprocess.Process] = None
 
     async def handle_task(self, message: BusMessage) -> Dict[str, Any]:
@@ -131,6 +133,7 @@ Rules:
         raw = await self.llm_provider.chat_complete(
             messages=[{"role": "system", "content": "You implement production-quality web application files."},
                       {"role": "user", "content": prompt}],
+            model=os.getenv("BIGBRAIN_WEB_MODEL", self.model or "default"),
             stream=False, max_tokens=8192, temperature=0.2,
         )
         content = self._extract_code(raw)

@@ -48,8 +48,8 @@ the TUI needs keyboard shortcuts the integrated terminal captures.
 
 ```bash
 # Providers — at least one, or connect one from the Providers panel
-OPENROUTER_API_KEY=sk-or-v1-...   # unlocks gpt-sol, kimi-k3, opus-5.5,
-                                  # kimi-k2.7-code, gpt-luna via OpenRouter
+OPENROUTER_API_KEY=sk-or-v1-...   # unlocks gpt-6.1-sol, gpt-5.6-sol, kimi-k3,
+                                  # opus-5.5 and gpt-luna via OpenRouter
 MISTRAL_API_KEY=...               # medium 3.5 + GLM 5.3 (set automatically
                                   # by the Connect-with-Mistral button)
 KIMI_API_KEY=...                  # Kimi K3 direct coding endpoint

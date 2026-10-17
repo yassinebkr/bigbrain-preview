@@ -46,9 +46,10 @@ class BigBrainConfig:
     kimi_api_key: Optional[str] = field(default_factory=lambda: os.getenv("KIMI_API_KEY"))
 
     # Model to use (litellm format: "gpt-4o", "claude-sonnet-4-20250514", "gemini/gemini-2.0-flash", etc.)
-    default_model: str = field(default_factory=lambda: os.getenv("BIGBRAIN_MODEL", "gpt-4o-mini"))
+    default_model: str = field(default_factory=lambda: os.getenv("BIGBRAIN_MODEL", "default"))
     front_brain_model: str = field(default_factory=lambda: os.getenv("BIGBRAIN_FRONT_MODEL", ""))
     code_model: str = field(default_factory=lambda: os.getenv("BIGBRAIN_CODE_MODEL", ""))
+    web_model: str = field(default_factory=lambda: os.getenv("BIGBRAIN_WEB_MODEL", ""))
     planner_model: str = field(default_factory=lambda: os.getenv("BIGBRAIN_PLANNER_MODEL", ""))
     # Model for sub-brains / sub-agents (defaults to the front brain model).
     subagent_model: str = field(default_factory=lambda: os.getenv("BIGBRAIN_SUBAGENT_MODEL", ""))
@@ -101,6 +102,11 @@ class BigBrainConfig:
     def effective_code_model(self) -> str:
         """Model for code generation (falls back to default)."""
         return self.code_model or self.default_model
+
+    @property
+    def effective_web_model(self) -> str:
+        """Model for browser application generation."""
+        return self.web_model or self.effective_code_model
 
     @property
     def effective_planner_model(self) -> str:

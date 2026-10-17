@@ -544,18 +544,18 @@ class TestModelRoles:
     def test_default_lineup_covers_all_roles(self):
         from bigbrain.web import model_roles
         lineup = model_roles.current_lineup()
-        assert set(lineup) == {"front", "planner", "code", "subagent"}
+        assert set(lineup) == {"front", "planner", "code", "web", "subagent"}
         assert lineup["front"]["key"]
         assert lineup["subagent"]["key"]
 
     def test_set_role_persists_and_mirrors_env(self, monkeypatch):
         from bigbrain.web import model_roles
-        result = model_roles.set_role("front", "openrouter-kimi-k3")
+        result = model_roles.set_role("web", "openrouter-kimi-k3")
         assert result["model_id"] == "moonshotai/kimi-k3"
-        assert "moonshotai/kimi-k3" == __import__("os").environ["BIGBRAIN_FRONT_MODEL"]
+        assert "moonshotai/kimi-k3" == __import__("os").environ["BIGBRAIN_WEB_MODEL"]
         # Persisted: a fresh read reflects the change.
         lineup = model_roles.current_lineup()
-        assert lineup["front"]["key"] == "openrouter-kimi-k3"
+        assert lineup["web"]["key"] == "openrouter-kimi-k3"
 
     def test_set_role_rejects_unknown(self):
         import pytest as _pytest

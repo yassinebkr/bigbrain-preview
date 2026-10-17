@@ -135,7 +135,7 @@ async def test_non_reasoning_model_sends_no_effort():
         captured.update(json.loads(request.content))
         return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
 
-    provider = _provider(handler, key="openrouter-kimi-k2.7-code")
+    provider = _provider(handler, key="openrouter-mistral-large-4")
     await provider.chat_complete([{"role": "user", "content": "x"}], max_tokens=100)
     assert captured["max_tokens"] == 100
     assert "reasoning_effort" not in captured

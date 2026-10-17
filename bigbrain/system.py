@@ -516,6 +516,7 @@ class BigBrainSystem:
             self.brains[worker_name] = WebAppBrain(
                 name=worker_name, bus=self.bus, workspace=self.workspace,
                 work_dir=shared_work_dir, llm_provider=self.llm_provider,
+                model=app_config.effective_web_model,
             )
             web_pool_names.append(worker_name)
         self.orchestrator.register_brain_pool("web_app_brain", web_pool_names)

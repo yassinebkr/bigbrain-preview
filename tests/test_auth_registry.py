@@ -25,7 +25,7 @@ def test_priority_oauth_first(monkeypatch):
 def test_priority_openrouter_before_mistral(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     monkeypatch.setenv("MISTRAL_API_KEY", "k")
-    assert registry.select_registry_key() == "openrouter-gpt-sol"
+    assert registry.select_registry_key() == "openrouter-gpt-6.1-sol"
 
 
 def test_priority_mistral_then_kimi_then_codex(monkeypatch):

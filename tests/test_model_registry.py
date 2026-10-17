@@ -14,11 +14,11 @@ from bigbrain.llm.model_registry import (
 def test_registry_contains_all_phase3_models():
     keys = {entry["key"] for entry in list_models()}
     expected = {
+        "openrouter-gpt-6.1-sol",
         "openrouter-gpt-sol",
         "openrouter-kimi-k3",
         "openrouter-opus-5.5",
         "openrouter-mistral-large-4",
-        "openrouter-kimi-k2.7-code",
         "openrouter-luna",
         "kimi-k3",
         "mistral-vibe",
@@ -27,12 +27,13 @@ def test_registry_contains_all_phase3_models():
         "anthropic-oauth",
     }
     assert expected <= keys
+    assert "openrouter-kimi-k2.7-code" not in keys
 
 
 def test_all_openrouter_entries_share_one_key_env():
     entries = [get_model(k) for k in (
         "openrouter-gpt-sol", "openrouter-kimi-k3", "openrouter-opus-5.5",
-        "openrouter-mistral-large-4", "openrouter-kimi-k2.7-code",
+        "openrouter-mistral-large-4", "openrouter-gpt-6.1-sol",
         "openrouter-luna",
     )]
     assert all(e.api_key_env == "OPENROUTER_API_KEY" for e in entries)
@@ -48,18 +49,17 @@ def test_env_overrides_read_at_call_time(monkeypatch):
     assert entry.base_url == "https://example.test/v1"
 
 
-def test_reasoning_models_declare_efforts():
-    entry = get_model("openrouter-kimi-k3")
+def test_sol_6_1_capabilities_are_declared():
+    entry = get_model("openrouter-gpt-6.1-sol")
+    assert entry.model_id == "openai/gpt-6.1-sol"
     assert entry.reasoning is True
-    assert entry.reasoning_effort_default == "low"
-    assert "low" in entry.reasoning_efforts
-
-
-def test_role_defaults_are_distinct():
-    roles = {r: role_default_key(r) for r in ("front", "code", "planner", "subagent")}
-    assert roles["subagent"] == "openrouter-luna"
-    assert roles["code"] == "openrouter-kimi-k2.7-code"
-    assert len(set(roles.values())) >= 3
+    assert entry.reasoning_effort_default == "medium"
+    assert entry.reasoning_efforts == ["low", "medium", "high", "xhigh", "max"]
+    assert entry.vision is True
+    assert entry.context_window == 1_050_000
+def test_all_role_defaults_use_sol_6_1():
+    roles = {r: role_default_key(r) for r in ("front", "code", "planner", "web", "subagent")}
+    assert set(roles.values()) == {"openrouter-gpt-6.1-sol"}
 
 
 def test_unknown_key_raises():
@@ -122,7 +122,6 @@ def test_vision_capability_is_explicit_and_exposed():
     assert get_model("openrouter-kimi-k3").vision is True
     assert get_model("kimi-k3").vision is True
     assert get_model("mistral-glm-5.3").vision is False
-    assert get_model("openrouter-kimi-k2.7-code").vision is True
     assert get_model("openrouter-mistral-large-4").vision is False
     assert get_model("mistral-studio-large-4").vision is True
     models = {m["key"]: m for m in list_models()}
@@ -130,6 +129,5 @@ def test_vision_capability_is_explicit_and_exposed():
     assert models["openrouter-kimi-k3"]["vision"] is True
     assert models["kimi-k3"]["vision"] is True
     assert models["mistral-glm-5.3"]["vision"] is False
-    assert models["openrouter-kimi-k2.7-code"]["vision"] is True
     assert models["openrouter-mistral-large-4"]["vision"] is False
     assert models["mistral-studio-large-4"]["vision"] is True
