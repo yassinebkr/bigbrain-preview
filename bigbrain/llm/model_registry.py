@@ -111,6 +111,7 @@ _REGISTRY: dict[str, ModelEntry] = {
         reasoning=True,
         reasoning_efforts=["low", "medium", "high"],
         reasoning_effort_default="low",
+        vision=True,
     ),
     "openrouter-opus-5.5": ModelEntry(
         key="openrouter-opus-5.5",
@@ -157,6 +158,7 @@ _REGISTRY: dict[str, ModelEntry] = {
         reasoning=True,
         reasoning_efforts=["low", "medium", "high"],
         reasoning_effort_default="low",
+        vision=True,
     ),
     "mistral-vibe": ModelEntry(
         key="mistral-vibe",
@@ -185,6 +187,7 @@ _REGISTRY: dict[str, ModelEntry] = {
         reasoning=True,
         reasoning_efforts=["low", "high", "max"],
         reasoning_effort_default="low",
+        vision=True,
     ),
     # -- Subscription-backed (no API key; local credential store) --------------
     "codex-chatgpt": ModelEntry(
