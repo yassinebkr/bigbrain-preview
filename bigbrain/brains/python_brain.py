@@ -1333,8 +1333,38 @@ Rules:
                 "files_with_errors": syntax_errors,
             }
         
-        # The architect owns the entry point contract. Never guess by running
-        # the last file: that turned passive modules into false successes.
+        # The architect owns the entry point contract. A non-executable
+        # deliverable is allowed only through its explicit structured flag.
+        executable = payload.get("executable", True) is not False
+        if not executable:
+            import time
+            project_manifest = {
+                "name": project_name,
+                "created": time.time(),
+                "executable": False,
+                "entry_point": None,
+            }
+            (project_dir / ".project.json").write_text(
+                json.dumps(project_manifest, indent=2), encoding="utf-8")
+            await self.send_progress({
+                "stage": "completed",
+                "success": True,
+                "files_verified": len(written_files),
+                "runnable": False,
+            })
+            return {
+                "success": True,
+                "stdout": "",
+                "stderr": "",
+                "exit_code": None,
+                "project_name": project_name,
+                "entry_point": None,
+                "runnable": False,
+                "files_written": list(written_files.keys()),
+            }
+
+        # Never guess by running the last file: that turned passive modules
+        # into false successes.
         entry_point = str(payload.get("entry_point") or "main.py")
         if entry_point not in written_files:
             return {

@@ -678,6 +678,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                 "total_files": len(spec.file_specs),
                 "data_models": [dm.name for dm in spec.data_models],
                 "tech_decisions": spec.tech_decisions,
+                "executable": spec.executable,
                 "entry_point": spec.entry_point,
             },
             workspace=self.workspace,
@@ -753,13 +754,14 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
 
         subtasks.append(SubTask(
             id=assembler_sid,
-            description=f"Assemble and run {project_name}",
+            description=f"Assemble and {'run' if spec.executable else 'validate'} {project_name}",
             brain_target="python_brain",
             payload={
                 "type": "assemble_and_run",
                 "user_request": user_request,
                 "project_name": project_name,
                 "all_files": all_files_summary,
+                "executable": spec.executable,
                 "entry_point": spec.entry_point,
                 "execution_strategy": spec.execution_strategy,
             },

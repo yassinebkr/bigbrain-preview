@@ -14,6 +14,24 @@ from bigbrain.orchestrator.architect import (
 )
 
 
+def test_parse_spec_respects_explicit_non_executable_deliverable():
+    architect = ArchitectPhase(llm_provider=None)
+    spec = architect._parse_spec({
+        "project_name": "fitness-models",
+        "executable": False,
+        "entry_point": None,
+        "file_specs": [{
+            "path": "models.py",
+            "purpose": "Reusable domain models only",
+            "dependencies": [],
+        }],
+    })
+
+    assert spec.executable is False
+    assert spec.entry_point is None
+    assert [file.path for file in spec.file_specs] == ["models.py"]
+
+
 def test_parse_spec_repairs_missing_entry_point():
     architect = ArchitectPhase(llm_provider=None)
     spec = architect._parse_spec({

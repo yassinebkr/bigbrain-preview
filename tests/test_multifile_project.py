@@ -11,6 +11,32 @@ from bigbrain.verification.gate import RunGate
 
 
 @pytest.mark.asyncio
+async def test_assemble_validates_explicit_non_executable_project(tmp_path, monkeypatch):
+    import json
+
+    monkeypatch.setenv("BIGBRAIN_WORKSPACE_DIR", str(tmp_path))
+    brain = PythonBrain("python_brain_test", MessageBus(auth=None), "default",
+                        work_dir=tmp_path)
+    project = tmp_path / "models-only"
+    project.mkdir()
+    (project / "models.py").write_text("VALUE = 1\n")
+
+    result = await brain._assemble_and_run({
+        "project_name": "models-only",
+        "all_files": [{"path": "models.py"}],
+        "executable": False,
+        "entry_point": None,
+    })
+
+    assert result["success"] is True
+    assert result["runnable"] is False
+    assert result["entry_point"] is None
+    manifest = json.loads((project / ".project.json").read_text())
+    assert manifest["executable"] is False
+    assert manifest["entry_point"] is None
+
+
+@pytest.mark.asyncio
 async def test_assemble_refuses_missing_declared_entry_point(tmp_path, monkeypatch):
     monkeypatch.setenv("BIGBRAIN_WORKSPACE_DIR", str(tmp_path))
     brain = PythonBrain("python_brain_test", MessageBus(auth=None), "default",
