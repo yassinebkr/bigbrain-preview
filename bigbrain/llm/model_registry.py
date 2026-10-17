@@ -133,6 +133,7 @@ _REGISTRY: dict[str, ModelEntry] = {
         base_url=_OPENROUTER_DEFAULT_BASE_URL,
         health_path="/auth/key",
         reasoning=False,
+        vision=True,
     ),
     "openrouter-luna": ModelEntry(
         key="openrouter-luna",
@@ -187,7 +188,6 @@ _REGISTRY: dict[str, ModelEntry] = {
         reasoning=True,
         reasoning_efforts=["low", "high", "max"],
         reasoning_effort_default="low",
-        vision=True,
     ),
     # -- Subscription-backed (no API key; local credential store) --------------
     "codex-chatgpt": ModelEntry(

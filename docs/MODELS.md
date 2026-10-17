@@ -11,11 +11,11 @@ env var, base URL, and capability flags (reasoning, vision).
 | `openrouter-gpt-sol` | OpenRouter | `openai/gpt-5.6-sol` | `OPENROUTER_API_KEY` | yes (low default) | yes |
 | `openrouter-kimi-k3` | OpenRouter | `moonshotai/kimi-k3` | `OPENROUTER_API_KEY` | yes | yes |
 | `openrouter-opus-5.5` | OpenRouter | `anthropic/claude-opus-5.5` | `OPENROUTER_API_KEY` | no | yes |
-| `openrouter-kimi-k2.7-code` | OpenRouter | `moonshotai/kimi-k2.7-code` | `OPENROUTER_API_KEY` | no | no |
+| `openrouter-kimi-k2.7-code` | OpenRouter | `moonshotai/kimi-k2.7-code` | `OPENROUTER_API_KEY` | no | yes |
 | `openrouter-luna` | OpenRouter | `openai/gpt-5.6-luna` | `OPENROUTER_API_KEY` | no | no |
 | `kimi-k3` | Kimi direct | `k3` | `KIMI_API_KEY` | yes | yes |
 | `mistral-vibe` | Mistral | `mistral-medium-3-5` | `MISTRAL_API_KEY` | no | no |
-| `mistral-glm-5.3` | Mistral hosted | `zai-glm-5-3` | `MISTRAL_API_KEY` | yes (low default) | yes |
+| `mistral-glm-5.3` | Mistral hosted | `zai-glm-5-3` | `MISTRAL_API_KEY` | yes (low default) | no |
 | `codex-chatgpt` | codex app-server | `gpt-5.6-luna` | `~/.codex` (ChatGPT login) | via effort | no |
 | `anthropic-oauth` | Anthropic OAuth | `claude-sonnet-4-6` | stored token | no | no |
 
