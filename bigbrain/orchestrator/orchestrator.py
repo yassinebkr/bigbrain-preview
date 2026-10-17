@@ -1615,6 +1615,28 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                     "entry_point": data["entry_point"],
                     "runnable": bool(data.get("success") and data.get("stdout", "").strip()),
                 }
+        task_payload = plan.original_task.payload or {}
+        project_path = task_payload.get("project_path")
+        if isinstance(project_path, str) and project_path.strip():
+            try:
+                from ..web.fs_api import workspace_root
+
+                root = workspace_root().resolve()
+                project_dir = (root / project_path).resolve()
+                if root not in project_dir.parents:
+                    return {}
+                manifest = json.loads(
+                    (project_dir / ".project.json").read_text(encoding="utf-8"))
+                entry_point = manifest.get("entry_point")
+                if entry_point:
+                    return {
+                        "project_name": manifest.get("name") or project_dir.name,
+                        "project_path": project_dir.relative_to(root).as_posix(),
+                        "entry_point": entry_point,
+                        "runnable": bool(manifest.get("run")),
+                    }
+            except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                pass
         return {}
 
     async def _handle_cancel_request(self, message: BusMessage) -> None:

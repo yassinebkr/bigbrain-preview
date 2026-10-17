@@ -13,12 +13,14 @@ export function RunTimelineCard({ run }: { run: RunState }) {
   const setCurrentProject = useAppStore((s) => s.setCurrentProject);
   const [runId, setRunId] = useState<string | null>(null);
   const liveRun = useAppStore((s) => runId ? s.liveRuns[runId] : undefined);
-  const entryPath = run.entryPoint
-    ? run.files.find((file) =>
-        file.path === run.entryPoint || file.path.endsWith(`/${run.entryPoint}`))?.path
-    : undefined;
-  const projectPath = entryPath?.includes('/')
-    ? entryPath.slice(0, entryPath.lastIndexOf('/')) : undefined;
+  const entryPath = run.projectPath && run.entryPoint
+    ? `${run.projectPath}/${run.entryPoint}`
+    : run.entryPoint
+      ? run.files.find((file) =>
+          file.path === run.entryPoint || file.path.endsWith(`/${run.entryPoint}`))?.path
+      : undefined;
+  const projectPath = run.projectPath || (entryPath?.includes('/')
+    ? entryPath.slice(0, entryPath.lastIndexOf('/')) : undefined);
   const Icon = run.status === 'done'
     ? CheckCircle2 : run.status === 'cancelled' ? Ban : XCircle;
   const color = run.status === 'done'

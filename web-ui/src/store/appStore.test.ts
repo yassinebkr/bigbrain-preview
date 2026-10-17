@@ -439,3 +439,17 @@ describe('applyRunEvent — execution.output streaming', () => {
     expect(useAppStore.getState().activeRun).toBeNull();
   });
 });
+
+it('keeps project launch metadata for a single-file modification', () => {
+  useAppStore.setState({ activeRun: null });
+  useAppStore.getState().applyRunEvent(
+    ev('task.received', { task_id: 'edit-1', description: 'edit programme.py' }));
+  useAppStore.getState().applyRunEvent(ev('task.complete', {
+    task_id: 'edit-1', project_name: 'fitness',
+    project_path: 'sandbox/fitness', entry_point: 'main.py', runnable: true,
+  }));
+  expect(useAppStore.getState().completedRuns.at(-1)).toMatchObject({
+    projectName: 'fitness', projectPath: 'sandbox/fitness',
+    entryPoint: 'main.py', runnable: true,
+  });
+});

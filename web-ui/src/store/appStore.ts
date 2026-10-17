@@ -44,6 +44,7 @@ export interface RunState {
   error?: string;
   verification?: RunVerification;
   projectName?: string;
+  projectPath?: string;
   entryPoint?: string;
   runnable?: boolean;
 }
@@ -506,6 +507,7 @@ export const useAppStore = create<AppState>()(
                 finishedAt: Date.now(),
                 error: d.error ? String(d.error).slice(0, 200) : run.error,
                 projectName: d.project_name ? String(d.project_name) : run.projectName,
+                projectPath: d.project_path ? String(d.project_path) : run.projectPath,
                 entryPoint: d.entry_point ? String(d.entry_point) : run.entryPoint,
                 runnable: typeof d.runnable === 'boolean' ? d.runnable : run.runnable,
               }].slice(-100),

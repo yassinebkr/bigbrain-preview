@@ -568,6 +568,36 @@ class TestWorkspaceOrchestrator:
         assert result_data["success"] is True
         assert "results" in result_data
     
+    def test_project_metadata_falls_back_to_selected_project_manifest(
+            self, orchestrator, tmp_path, monkeypatch):
+        import json
+
+        monkeypatch.setenv("BIGBRAIN_WORKSPACE_DIR", str(tmp_path))
+        project = tmp_path / "sandbox" / "existing-project"
+        project.mkdir(parents=True)
+        (project / ".project.json").write_text(json.dumps({
+            "name": "existing-project",
+            "entry_point": "main.py",
+            "run": ["python", "main.py"],
+        }))
+        original_task = BusMessage(
+            id="original", type=MessageType.TASK, source="user", target="orch",
+            payload={"project_path": "sandbox/existing-project"},
+        )
+        plan = TaskPlan(id="plan", original_task=original_task)
+        subtask = SubTask(id="edit", description="edit one file",
+                          brain_target="python_brain", payload={})
+        subtask.status = TaskStatus.COMPLETE
+        subtask.result = {"success": True, "file_path": "programme.py"}
+        plan.subtasks = [subtask]
+
+        assert orchestrator._project_result_metadata(plan) == {
+            "project_name": "existing-project",
+            "project_path": "sandbox/existing-project",
+            "entry_point": "main.py",
+            "runnable": True,
+        }
+
     @pytest.mark.asyncio
     async def test_plan_failure(self, orchestrator, mock_bus):
         """Test handling task plan with failed subtask."""
