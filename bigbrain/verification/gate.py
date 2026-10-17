@@ -55,13 +55,14 @@ class RunGate:
 
     # -- spec ---------------------------------------------------------------
 
-    def build_spec(self, user_request: str, requested_file: str | None) -> DesignSpec:
+    def build_spec(self, user_request: str, requested_file: str | list[str] | None) -> DesignSpec:
         design_id = "task-" + hashlib.sha256(
             user_request.encode("utf-8")).hexdigest()[:16]
         contracts = []
-        if requested_file:
-            contracts.append(
-                f"file {requested_file} exists in the working project")
+        requested_files = ([requested_file] if isinstance(requested_file, str)
+                           else list(requested_file or []))
+        contracts.extend(f"file {path} exists in the working project"
+                         for path in requested_files)
         return DesignSpec(
             design_id=design_id,
             name=user_request.strip()[:60] or "unnamed request",
@@ -78,8 +79,10 @@ class RunGate:
         code: str,
         execution: Mapping[str, Any],
         work_dir: Path,
-        requested_file: str | None = None,
-        persisted_file: str | None = None,
+        requested_file: str | list[str] | None = None,
+        persisted_file: str | list[str] | None = None,
+        requested_files: list[str] | None = None,
+        persisted_files: list[str] | None = None,
         attempt: int = 1,
         parent_run_id: str | None = None,
         toolchain: Mapping[str, str] | None = None,
@@ -90,8 +93,12 @@ class RunGate:
         Returns ``(manifest, verdict)`` where verdict is the conservative
         derived verdict ("passed" / "failed" / "inconclusive").
         """
-        if requested_file is None:
+        if requested_files is not None:
+            requested_file = requested_files
+        elif requested_file is None:
             requested_file = extract_requested_file(user_request)
+        if persisted_files is not None:
+            persisted_file = persisted_files
         # Contract approval flow: if a spec was already proposed and
         # approved for this design, the manifest must link to THAT spec
         # (approved contracts + approval trace), not a fresh bare one.
@@ -172,6 +179,8 @@ class RunGate:
                 "attempt": attempt,
                 "requested_file": requested_file,
                 "persisted_file": persisted_file,
+                "requested_files": requested_file if isinstance(requested_file, list) else None,
+                "persisted_files": persisted_file if isinstance(persisted_file, list) else None,
             },
         })
         self.repository.save_manifest(manifest)

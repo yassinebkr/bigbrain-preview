@@ -21,9 +21,7 @@ export function Workspace() {
         className="flex-shrink-0 px-4 py-3 border-b"
         style={{ borderColor: 'var(--border-subtle)' }}
       >
-        <div className="max-w-2xl mx-auto">
-          <ResearchBar />
-        </div>
+        <ResearchBar />
       </div>
 
       {/* File explorer — full width, files only */}
