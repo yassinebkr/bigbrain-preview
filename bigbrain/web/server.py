@@ -254,6 +254,21 @@ class WebServer:
         # Real workspace filesystem API (replaces the UI's mock file tree).
         from .fs_api import setup_fs_routes
         setup_fs_routes(self._app)
+
+        # Streaming manual runs: fs_api pushes fs.run_output / fs.run_result
+        # through the bus so every connected browser sees them on its WS.
+        from .fs_api import set_event_sink
+        from ..bus.message import Priority as _Priority
+
+        async def _fs_event_sink(event_type: str, payload: dict) -> None:
+            await self.bus.broadcast_event(
+                source="morphable_ui",
+                event_type=event_type,
+                payload=payload,
+                priority=_Priority.NORMAL,
+            )
+
+        set_event_sink(_fs_event_sink)
         from .evidence_api import setup_evidence_routes
         setup_evidence_routes(self._app)
         from .taskboard import setup_taskboard_routes

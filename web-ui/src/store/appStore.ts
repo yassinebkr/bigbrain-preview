@@ -180,6 +180,12 @@ interface AppState {
   dismissedNudges: string[];
   dismissNudge: (key: string) => void;
 
+  // Streaming manual runs (POST /api/fs/run): the server streams
+  // fs.run_output deltas and a final fs.run_result over the WS. The
+  // output appears AS IT IS PRODUCED instead of at the end.
+  liveRuns: Record<string, { out: string; err: string; done: boolean; result: any }>;
+  applyFsRunEvent: (activity: Omit<AgentActivity, 'ts'>) => void;
+
   // Actions
   sendMessage: () => void;
   stopGeneration: () => void;
@@ -628,6 +634,33 @@ export const useAppStore = create<AppState>()(
         set((state) => ({
           dismissedNudges: [...new Set([...state.dismissedNudges, key])].slice(-50),
         })),
+
+      liveRuns: {},
+      applyFsRunEvent: (activity) => set((state) => {
+        const d = activity.detail || {};
+        const runId = d.runId;
+        if (!runId) return state;
+        if (activity.type === 'fs.run_output') {
+          const current = state.liveRuns[runId] || { out: '', err: '', done: false, result: null };
+          const delta = String(d.delta || '');
+          const stream = d.stream === 'err' ? 'err' : 'out';
+          const merged = stream === 'err'
+            ? { ...current, err: (current.err + delta).slice(-20000) }
+            : { ...current, out: (current.out + delta).slice(-20000) };
+          return { liveRuns: { ...state.liveRuns, [runId]: merged } };
+        }
+        if (activity.type === 'fs.run_result') {
+          const { runId: _drop, ...result } = d;
+          const current = state.liveRuns[runId] || { out: '', err: '', done: false, result: null };
+          return {
+            liveRuns: {
+              ...state.liveRuns,
+              [runId]: { ...current, done: true, result },
+            },
+          };
+        }
+        return state;
+      }),
 
       // Actions
       sendMessage: () => {

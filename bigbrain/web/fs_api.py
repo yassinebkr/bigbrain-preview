@@ -30,6 +30,18 @@ MAX_READ_BYTES = 512 * 1024
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
+# Streaming runs: the server registers an async broadcast so the fs
+# module can push live output to the WS clients without holding a bus
+# reference (fs_api stays a standalone module).
+_EventSink = Any
+_event_sink: _EventSink = None
+
+
+def set_event_sink(sink: _EventSink) -> None:
+    """Register `async def sink(event_type, payload) -> None`."""
+    global _event_sink
+    _event_sink = sink
+
 
 def workspace_root() -> Path:
     """The shared workspace root (agent + UI)."""
@@ -261,7 +273,14 @@ async def run_file_with_evidence(rel: str, timeout: float = 30.0) -> Dict[str, A
     BIGBRAIN_EVIDENCE=0.
     """
     result = await asyncio.to_thread(run_file, rel, timeout)
+    return await _record_run_evidence(rel, result)
 
+
+async def _record_run_evidence(rel: str, result: Dict[str, Any]) -> Dict[str, Any]:
+    """Attach the deterministic gate verdict to an executed run result.
+
+    Best effort — a recording failure never breaks a manual run.
+    """
     if os.environ.get("BIGBRAIN_EVIDENCE", "1") == "0":
         return result
 
@@ -301,6 +320,119 @@ async def run_file_with_evidence(rel: str, timeout: float = 30.0) -> Dict[str, A
     except Exception:
         pass
     return result
+
+
+# ── streaming manual runs ──────────────────────────────────────────────────
+
+MAX_STREAM_BUFFER = 20000  # live tail kept per stream
+
+
+async def run_file_streaming(rel: str, timeout: float = 30.0,
+                              on_delta=None) -> Dict[str, Any]:
+    """Run a workspace .py file, forwarding output AS IT IS PRODUCED.
+
+    Same contract as :func:`run_file` (bounded, parent cwd, evidence-ready
+    result dict) plus `on_delta(stream, chunk)` callbacks fired while the
+    program runs. The child runs with ``python -u`` so prints stream as
+    they happen instead of waiting for the block-buffered pipe to flush.
+    """
+    import sys
+
+    root = workspace_root()
+    target = _resolve(root, rel)
+    if not target.is_file():
+        raise web.HTTPNotFound(text=json_error("file not found"))
+    if target.suffix != ".py":
+        raise web.HTTPBadRequest(text=json_error("only .py files can be run"))
+    timeout = min(max(float(timeout), 1.0), 120.0)
+
+    start = time.time()
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, "-u", str(target),
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        cwd=str(target.parent),
+    )
+
+    async def pump(stream, name: str, sink) -> str:
+        collected: list[str] = []
+        total = 0
+        while True:
+            line = await stream.readline()
+            if not line:
+                break
+            text = line.decode("utf-8", errors="replace")
+            collected.append(text)
+            total += len(text)
+            if sink is not None:
+                try:
+                    await sink(name, text)
+                except Exception:
+                    pass  # streaming must never break the execution
+        return "".join(collected)[-MAX_STREAM_BUFFER:]
+
+    async def pump_all() -> tuple[str, str]:
+        out_task = asyncio.create_task(pump(proc.stdout, "out", on_delta))
+        err_task = asyncio.create_task(pump(proc.stderr, "err", on_delta))
+        out = await out_task
+        err = await err_task
+        await proc.wait()
+        return out, err
+
+    try:
+        stdout, stderr = await asyncio.wait_for(pump_all(), timeout=timeout)
+        return {
+            "ok": proc.returncode == 0,
+            "exitCode": proc.returncode,
+            "stdout": stdout,
+            "stderr": stderr,
+            "durationMs": int((time.time() - start) * 1000),
+            "timedOut": False,
+        }
+    except asyncio.TimeoutError:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        await proc.wait()
+        return {
+            "ok": False,
+            "exitCode": -1,
+            "stdout": "",
+            "stderr": f"timed out after {timeout:.0f}s",
+            "durationMs": int((time.time() - start) * 1000),
+            "timedOut": True,
+        }
+
+
+async def _run_with_events(rel: str, timeout: float, run_id: str) -> None:
+    """Background task behind POST /api/fs/run: stream then finalise."""
+    async def sink(stream: str, delta: str) -> None:
+        if _event_sink is not None:
+            await _event_sink("fs.run_output",
+                              {"runId": run_id, "stream": stream,
+                               "delta": delta})
+
+    try:
+        result = await run_file_streaming(rel, timeout, on_delta=sink)
+    except web.HTTPNotFound:
+        result = {"ok": False, "exitCode": -1, "stdout": "",
+                  "stderr": "file not found", "durationMs": 0,
+                  "timedOut": False}
+    except web.HTTPBadRequest:
+        result = {"ok": False, "exitCode": -1, "stdout": "",
+                  "stderr": "only .py files can be run", "durationMs": 0,
+                  "timedOut": False}
+    except Exception as exc:  # never leave a client without a verdict
+        logger.exception("streaming run failed")
+        result = {"ok": False, "exitCode": -1, "stdout": "",
+                  "stderr": f"internal error: {exc}"[:200],
+                  "durationMs": 0, "timedOut": False}
+
+    result = await _record_run_evidence(rel, result)
+    if _event_sink is not None:
+        await _event_sink("fs.run_result", {"runId": run_id, **result})
+
+
 
 PROJECT_MANIFEST = ".project.json"
 SANDBOX_PROJECT = "sandbox"
@@ -457,12 +589,19 @@ async def _handle_move(request: web.Request) -> web.Response:
 
 
 async def _handle_run(request: web.Request) -> web.Response:
-    """Execute a workspace .py file off the event loop — with evidence."""
+    """Start a streaming workspace run — output flows over the WS.
+
+    Returns {runId} immediately; the client follows `fs.run_output`
+    deltas and the final `fs.run_result` (same payload shape as the old
+    blocking response, evidence included) over its WebSocket.
+    """
+    import uuid
+
     body = await request.json()
-    result = await run_file_with_evidence(
-        body.get("path", ""), body.get("timeout", 30.0)
-    )
-    return web.json_response(result)
+    run_id = f"fsrun-{uuid.uuid4().hex[:10]}"
+    asyncio.create_task(_run_with_events(
+        body.get("path", ""), body.get("timeout", 30.0), run_id))
+    return web.json_response({"runId": run_id, "streaming": True})
 
 
 async def _handle_search(request: web.Request) -> web.Response:

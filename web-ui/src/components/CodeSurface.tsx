@@ -7,6 +7,7 @@
 
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useAppStore } from '@/store/appStore';
 import {
   FileCode2, X, Copy, Check, FolderOpen, Play, Loader2, Pencil, Ban,
 } from 'lucide-react';
@@ -78,6 +79,21 @@ export function CodeSurface({ path, onClose, onOpenInWorkspace }: CodeSurfacePro
   const [copied, setCopied] = useState(false);
   const [running, setRunning] = useState(false);
   const [runResult, setRunResult] = useState<RunResult | null>(null);
+
+  // Streaming run: the server answers {runId} immediately and pushes
+  // the output over the WS while the program runs.
+  const [liveRunId, setLiveRunId] = useState<string | null>(null);
+  const liveRun = useAppStore((s) => (liveRunId ? s.liveRuns[liveRunId] : undefined));
+
+  useEffect(() => {
+    // Final verdict arrived: the authoritative result replaces the
+    // live buffer (full stdout/stderr + gate stages).
+    if (liveRun?.done && liveRun.result) {
+      setRunResult(liveRun.result as RunResult);
+      setRunning(false);
+      setLiveRunId(null);
+    }
+  }, [liveRun?.done, liveRun?.result]);
 
   // Edit mode: draft + save via the FS write API.
   const [editing, setEditing] = useState(false);
@@ -160,13 +176,19 @@ export function CodeSurface({ path, onClose, onOpenInWorkspace }: CodeSurfacePro
       });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
-      setRunResult(body as RunResult);
+      if (body.runId) {
+        // Streaming: output arrives over the WS (fs.run_output events).
+        setLiveRunId(body.runId);
+      } else {
+        // Legacy/short path: the full result in one response.
+        setRunResult(body as RunResult);
+        setRunning(false);
+      }
     } catch (e: any) {
       setRunResult({
         ok: false, exitCode: -1, stdout: '',
         stderr: String(e.message || e), durationMs: 0, timedOut: false,
       });
-    } finally {
       setRunning(false);
     }
   };
@@ -332,7 +354,7 @@ export function CodeSurface({ path, onClose, onOpenInWorkspace }: CodeSurfacePro
 
       {/* Run output */}
       <AnimatePresence>
-        {runResult && (
+        {(runResult || (running && liveRun && (liveRun.out || liveRun.err))) && (
           <motion.div
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
@@ -342,6 +364,33 @@ export function CodeSurface({ path, onClose, onOpenInWorkspace }: CodeSurfacePro
             style={{ borderColor: 'var(--border-subtle)' }}
           >
             <div className="px-3 py-2 max-h-[220px] overflow-auto">
+              {running && liveRun ? (
+                <>
+                  <div
+                    className="flex items-center gap-2 text-[11px] mb-1"
+                    style={{ color: 'var(--text-tertiary)' }}
+                  >
+                    running…
+                  </div>
+                  {liveRun.out && (
+                    <pre
+                      className="text-[11.5px] whitespace-pre-wrap"
+                      style={{ color: 'var(--text-primary)', fontFamily: 'var(--font-mono, monospace)' }}
+                    >
+                      {liveRun.out}
+                    </pre>
+                  )}
+                  {liveRun.err && (
+                    <pre
+                      className="text-[11.5px] whitespace-pre-wrap"
+                      style={{ color: 'var(--warning, #ff9500)', fontFamily: 'var(--font-mono, monospace)' }}
+                    >
+                      {liveRun.err}
+                    </pre>
+                  )}
+                </>
+              ) : runResult && (
+              <>
               <div
                 className="flex items-center gap-2 text-[11px] mb-1"
                 style={{ color: runResult.ok ? 'var(--success, #34c759)' : 'var(--warning, #ff9500)' }}
@@ -409,6 +458,8 @@ export function CodeSurface({ path, onClose, onOpenInWorkspace }: CodeSurfacePro
                     );
                   })}
                 </div>
+              )}
+              </>
               )}
             </div>
           </motion.div>

@@ -4,6 +4,170 @@
     "pattern": "other_error",
     "context": "This fails",
     "error": "Something went wrong",
+    "timestamp": 1792197578.7430563
+  },
+  {
+    "type": "success_pattern",
+    "pattern": "unknown_works_well",
+    "context": "Successfully completed 5 unknown tasks",
+    "timestamp": 1792197568.2518346
+  },
+  {
+    "type": "success_pattern",
+    "pattern": "unknown_works_well",
+    "context": "Successfully completed 6 unknown tasks",
+    "timestamp": 1792197567.139874
+  },
+  {
+    "type": "success_pattern",
+    "pattern": "unknown_works_well",
+    "context": "Successfully completed 10 unknown tasks",
+    "timestamp": 1792197565.8272023
+  },
+  {
+    "type": "failure_pattern",
+    "pattern": "other_error",
+    "context": "will-fail",
+    "error": "Simulated failure in worker",
+    "timestamp": 1792197564.0375493
+  },
+  {
+    "type": "failure_pattern",
+    "pattern": "other_error",
+    "context": "will-fail",
+    "error": "Simulated failure in w0",
+    "timestamp": 1792197563.7783496
+  },
+  {
+    "type": "failure_pattern",
+    "pattern": "other_error",
+    "context": "will-fail",
+    "error": "Simulated failure in w0",
+    "timestamp": 1792197563.5277731
+  },
+  {
+    "type": "failure_pattern",
+    "pattern": "other_error",
+    "context": "will-fail",
+    "error": "Simulated failure in flaky",
+    "timestamp": 1792197563.0925155
+  },
+  {
+    "type": "success_pattern",
+    "pattern": "unknown_works_well",
+    "context": "Successfully completed 4 unknown tasks",
+    "timestamp": 1792197562.7412317
+  },
+  {
+    "type": "success_pattern",
+    "pattern": "unknown_works_well",
+    "context": "Successfully completed 2 unknown tasks",
+    "timestamp": 1792197561.838868
+  },
+  {
+    "type": "success_pattern",
+    "pattern": "unknown_works_well",
+    "context": "Successfully completed 3 unknown tasks",
+    "timestamp": 1792197561.3207338
+  },
+  {
+    "type": "success_pattern",
+    "pattern": "unknown_works_well",
+    "context": "Successfully completed 5 unknown tasks",
+    "timestamp": 1792197560.4177897
+  },
+  {
+    "type": "success_pattern",
+    "pattern": "unknown_works_well",
+    "context": "Successfully completed 3 unknown tasks",
+    "timestamp": 1792197559.3892143
+  },
+  {
+    "type": "success_pattern",
+    "pattern": "unknown_works_well",
+    "context": "Successfully completed 2 unknown tasks",
+    "timestamp": 1792197558.6954172
+  },
+  {
+    "type": "success_pattern",
+    "pattern": "unknown_works_well",
+    "context": "Successfully completed 2 unknown tasks",
+    "timestamp": 1792197558.1517384
+  },
+  {
+    "type": "failure_pattern",
+    "pattern": "other_error",
+    "context": "Test",
+    "error": "kaboom",
+    "timestamp": 1792197550.2302382
+  },
+  {
+    "type": "success_pattern",
+    "pattern": "unknown_works_well",
+    "context": "Successfully completed 10 unknown tasks",
+    "timestamp": 1792197546.3929603
+  },
+  {
+    "type": "success_pattern",
+    "pattern": "unknown_works_well",
+    "context": "Successfully completed 10 unknown tasks",
+    "timestamp": 1792197544.3497078
+  },
+  {
+    "type": "success_pattern",
+    "pattern": "unknown_works_well",
+    "context": "Successfully completed 4 unknown tasks",
+    "timestamp": 1792197542.5778027
+  },
+  {
+    "type": "success_pattern",
+    "pattern": "unknown_works_well",
+    "context": "Successfully completed 6 unknown tasks",
+    "timestamp": 1792197541.6413198
+  },
+  {
+    "type": "success_pattern",
+    "pattern": "unknown_works_well",
+    "context": "Successfully completed 4 unknown tasks",
+    "timestamp": 1792197537.2118776
+  },
+  {
+    "type": "failure_pattern",
+    "pattern": "other_error",
+    "context": "doomed",
+    "error": "Unknown error",
+    "timestamp": 1792197536.0002491
+  },
+  {
+    "type": "success_pattern",
+    "pattern": "unknown_works_well",
+    "context": "Successfully completed 3 unknown tasks",
+    "timestamp": 1792197535.3400884
+  },
+  {
+    "type": "success_pattern",
+    "pattern": "unknown_works_well",
+    "context": "Successfully completed 3 unknown tasks",
+    "timestamp": 1792197534.8720782
+  },
+  {
+    "type": "failure_pattern",
+    "pattern": "other_error",
+    "context": "task-1",
+    "error": "Intentional failure on: task-1",
+    "timestamp": 1792197533.4094408
+  },
+  {
+    "type": "success_pattern",
+    "pattern": "unknown_works_well",
+    "context": "Successfully completed 9 unknown tasks",
+    "timestamp": 1792197532.8744736
+  },
+  {
+    "type": "failure_pattern",
+    "pattern": "other_error",
+    "context": "This fails",
+    "error": "Something went wrong",
     "timestamp": 1792196802.3385832
   },
   {
@@ -149,169 +313,5 @@
     "pattern": "unknown_works_well",
     "context": "Successfully completed 3 unknown tasks",
     "timestamp": 1792196758.9525597
-  },
-  {
-    "type": "failure_pattern",
-    "pattern": "other_error",
-    "context": "task-1",
-    "error": "Intentional failure on: task-1",
-    "timestamp": 1792196757.673375
-  },
-  {
-    "type": "success_pattern",
-    "pattern": "unknown_works_well",
-    "context": "Successfully completed 9 unknown tasks",
-    "timestamp": 1792196757.1295373
-  },
-  {
-    "type": "failure_pattern",
-    "pattern": "other_error",
-    "context": "This fails",
-    "error": "Something went wrong",
-    "timestamp": 1792196233.0338778
-  },
-  {
-    "type": "success_pattern",
-    "pattern": "unknown_works_well",
-    "context": "Successfully completed 5 unknown tasks",
-    "timestamp": 1792196222.708367
-  },
-  {
-    "type": "success_pattern",
-    "pattern": "unknown_works_well",
-    "context": "Successfully completed 6 unknown tasks",
-    "timestamp": 1792196221.6451561
-  },
-  {
-    "type": "success_pattern",
-    "pattern": "unknown_works_well",
-    "context": "Successfully completed 10 unknown tasks",
-    "timestamp": 1792196220.0873473
-  },
-  {
-    "type": "failure_pattern",
-    "pattern": "other_error",
-    "context": "will-fail",
-    "error": "Simulated failure in worker",
-    "timestamp": 1792196218.179679
-  },
-  {
-    "type": "failure_pattern",
-    "pattern": "other_error",
-    "context": "will-fail",
-    "error": "Simulated failure in w0",
-    "timestamp": 1792196217.862171
-  },
-  {
-    "type": "failure_pattern",
-    "pattern": "other_error",
-    "context": "will-fail",
-    "error": "Simulated failure in w0",
-    "timestamp": 1792196217.6364546
-  },
-  {
-    "type": "failure_pattern",
-    "pattern": "other_error",
-    "context": "will-fail",
-    "error": "Simulated failure in flaky",
-    "timestamp": 1792196217.1935873
-  },
-  {
-    "type": "success_pattern",
-    "pattern": "unknown_works_well",
-    "context": "Successfully completed 4 unknown tasks",
-    "timestamp": 1792196216.8206446
-  },
-  {
-    "type": "success_pattern",
-    "pattern": "unknown_works_well",
-    "context": "Successfully completed 2 unknown tasks",
-    "timestamp": 1792196215.9217997
-  },
-  {
-    "type": "success_pattern",
-    "pattern": "unknown_works_well",
-    "context": "Successfully completed 3 unknown tasks",
-    "timestamp": 1792196215.359119
-  },
-  {
-    "type": "success_pattern",
-    "pattern": "unknown_works_well",
-    "context": "Successfully completed 5 unknown tasks",
-    "timestamp": 1792196214.7071667
-  },
-  {
-    "type": "success_pattern",
-    "pattern": "unknown_works_well",
-    "context": "Successfully completed 3 unknown tasks",
-    "timestamp": 1792196213.553256
-  },
-  {
-    "type": "success_pattern",
-    "pattern": "unknown_works_well",
-    "context": "Successfully completed 2 unknown tasks",
-    "timestamp": 1792196212.8928354
-  },
-  {
-    "type": "success_pattern",
-    "pattern": "unknown_works_well",
-    "context": "Successfully completed 2 unknown tasks",
-    "timestamp": 1792196212.3913884
-  },
-  {
-    "type": "failure_pattern",
-    "pattern": "other_error",
-    "context": "Test",
-    "error": "kaboom",
-    "timestamp": 1792196206.4488773
-  },
-  {
-    "type": "success_pattern",
-    "pattern": "unknown_works_well",
-    "context": "Successfully completed 10 unknown tasks",
-    "timestamp": 1792196202.656831
-  },
-  {
-    "type": "success_pattern",
-    "pattern": "unknown_works_well",
-    "context": "Successfully completed 10 unknown tasks",
-    "timestamp": 1792196200.7764385
-  },
-  {
-    "type": "success_pattern",
-    "pattern": "unknown_works_well",
-    "context": "Successfully completed 4 unknown tasks",
-    "timestamp": 1792196198.912145
-  },
-  {
-    "type": "success_pattern",
-    "pattern": "unknown_works_well",
-    "context": "Successfully completed 6 unknown tasks",
-    "timestamp": 1792196197.9422882
-  },
-  {
-    "type": "success_pattern",
-    "pattern": "unknown_works_well",
-    "context": "Successfully completed 4 unknown tasks",
-    "timestamp": 1792196192.9177723
-  },
-  {
-    "type": "failure_pattern",
-    "pattern": "other_error",
-    "context": "doomed",
-    "error": "Unknown error",
-    "timestamp": 1792196191.7734184
-  },
-  {
-    "type": "success_pattern",
-    "pattern": "unknown_works_well",
-    "context": "Successfully completed 3 unknown tasks",
-    "timestamp": 1792196191.0964582
-  },
-  {
-    "type": "success_pattern",
-    "pattern": "unknown_works_well",
-    "context": "Successfully completed 3 unknown tasks",
-    "timestamp": 1792196190.620114
   }
 ]
