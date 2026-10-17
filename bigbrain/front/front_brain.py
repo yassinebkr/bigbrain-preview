@@ -144,6 +144,20 @@ class FrontBrain:
             priority=Priority.LOW
         )
     
+    def _hydrate_session_history(self, session_id: Optional[str], messages: Any) -> None:
+        """Restore the exact persisted session window after restarts or tab changes."""
+        if not session_id or not isinstance(messages, list):
+            return
+        normalized = []
+        for item in messages[-20:]:
+            if not isinstance(item, dict):
+                continue
+            role = item.get("role")
+            content = item.get("content")
+            if role in ("user", "assistant") and isinstance(content, str) and content.strip():
+                normalized.append({"role": role, "content": content})
+        self._history_for(session_id)[:] = normalized
+
     async def handle_user_input(self, input_text: str, input_type: str = "text",
                                 session_id: Optional[str] = None,
                                 llm_content: Any = None) -> str:
@@ -557,6 +571,8 @@ Type 'quit' or 'exit' to stop."""
         """
         text = message.payload.get("text", "").strip()
         session_id = message.payload.get("session_id")
+        self._hydrate_session_history(
+            session_id, message.payload.get("conversation_history"))
 
         # Attachments (uploaded via POST /api/attachments): record each
         # file in persistent memory — recall makes it findable months

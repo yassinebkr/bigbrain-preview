@@ -828,6 +828,13 @@ class WebServer:
         session_id = payload.get("sessionId") or self._active_session_id
         session = self._sessions.ensure(session_id)
         self._active_session_id = session["id"]
+        # Exact persisted context before this new turn. The front brain keeps
+        # a fast in-memory window, but it must be rehydratable after restart.
+        conversation_history = [
+            {"role": item.get("role"), "content": item.get("text", "")}
+            for item in (session.get("messages") or [])[-20:]
+            if item.get("role") in ("user", "assistant") and item.get("text")
+        ]
         self._sessions.append_message(session["id"], "user", text)
 
         from ..bus.message import BusMessage, MessageType, Priority
@@ -846,7 +853,8 @@ class WebServer:
             target="front_brain",
             payload={"type": "user_message", "text": text,
                      "attachments": attachments,
-                     "session_id": session["id"]},
+                     "session_id": session["id"],
+                     "conversation_history": conversation_history},
             priority=Priority.NORMAL,
         ))
 
@@ -1016,6 +1024,21 @@ class WebServer:
         Uses supersede logic: brain.complete removes buffered brain.started
         for the same source, preventing stale "WORKING" state on reconnect.
         """
+        # A contract verdict resolves pending state. Remove its proposal from
+        # replay so a newly opened tab cannot resurrect an approved card.
+        if event in ("contracts.approved", "contracts.rejected"):
+            payload = data.get("payload") or {}
+            design_id, plan_id = payload.get("design_id"), payload.get("plan_id")
+            self._replay_buffer = [
+                (ts, buffered) for ts, buffered in self._replay_buffer
+                if not (
+                    (buffered.get("payload") or {}).get("event") == "contracts.proposal"
+                    and (not design_id or (buffered.get("payload") or {}).get("design_id") == design_id)
+                    and (not plan_id or (buffered.get("payload") or {}).get("plan_id") == plan_id)
+                )
+            ]
+            return
+
         should_buffer = (
             msg_type in self._REPLAY_TYPES
             or event in self._REPLAY_EVENTS
