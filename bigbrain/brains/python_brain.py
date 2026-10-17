@@ -1,6 +1,7 @@
 """PythonBrain - Python code execution brain with subprocess isolation."""
 
 import asyncio
+import logging
 import os
 import re
 import signal
@@ -13,6 +14,8 @@ from typing import Any, Dict, List, Optional
 
 from .base import BaseBrain
 from ..bus.message import BusMessage, Priority
+
+logger = logging.getLogger(__name__)
 
 
 class PythonBrain(BaseBrain):

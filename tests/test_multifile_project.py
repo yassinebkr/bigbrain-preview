@@ -80,3 +80,37 @@ async def test_batch_is_atomic_in_its_verdict_and_rejects_traversal(tmp_path, mo
     }
     assert (tmp_path / "project/good.py").is_file()
     assert not (tmp_path.parent / "escape.py").exists()
+
+
+@pytest.mark.asyncio
+async def test_assemble_cleans_stale_files_without_crashing(tmp_path, monkeypatch):
+    """Regression (live): re-running a project whose dir already holds a
+    file NOT in the new plan crashed with NameError — the stale-file
+    cleanup called a logger that was never defined in python_brain."""
+    import sys
+
+    monkeypatch.setenv("BIGBRAIN_WORKSPACE_DIR", str(tmp_path))
+    monkeypatch.setenv("BIGBRAIN_EVIDENCE_ROOT", str(tmp_path / "ev"))
+    brain = PythonBrain("python_brain_test", MessageBus(auth=None), "default",
+                        work_dir=tmp_path)
+
+    project = tmp_path / "web-scraper"
+    project.mkdir()
+    (project / "main.py").write_text("print('new main')\n")
+    (project / "old_module.py").write_text("# stale from a previous run\n")
+
+    async def current_python(_project_dir):
+        return Path(sys.executable)
+
+    monkeypatch.setattr(brain, "_setup_project_venv", current_python)
+    execution = await brain._assemble_and_run({
+        "project_name": "web-scraper",
+        "user_request": "update main.py",
+        "all_files": [{"path": "main.py"}],
+    })
+
+    assert execution["success"] is True, execution
+    assert execution["stdout"].strip() == "new main"
+    # The stale file was cleaned, the planned file kept
+    assert (project / "main.py").is_file()
+    assert not (project / "old_module.py").exists()
