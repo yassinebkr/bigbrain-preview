@@ -75,7 +75,7 @@ class TestContractParsing:
         assert contracts[0].startswith("[Stack]")
         assert "livrable web_app" in contracts[0]
         assert "HTML/CSS/JavaScript sans dépendance" in contracts[0]
-        assert "entrée=index.html" in contracts[0]
+        assert "point d’entrée index.html" in contracts[0]
         assert "Architecture context:" in provider.user_prompt
         assert contracts[1] == "le bouton permet de changer de séance"
 
