@@ -270,6 +270,7 @@ Your specification must be detailed enough that SEPARATE developers (who cannot 
 - Choose `deliverable_type` from `python` or `web_app` from the requested user experience, never from a keyword rule.
 - Python deliverables use Python and are operated through CLI/library/service semantics.
 - Web app deliverables are browser-first and MUST use separate HTML/CSS/JavaScript files. For this initial capability, prefer dependency-free static web apps with localStorage when persistence is needed.
+- `tech_decisions` is UI metadata: list only concise technology choices (for example `HTML/CSS/JavaScript`, `localStorage`). Put explanations and product behaviour in description, file specs, or acceptance contracts — never in `tech_decisions`.
 - A web app MUST include index.html, styles.css, app.js, and tests/acceptance.json. It must be usable by opening the preview, not by printing a textual imitation to a console.
 - Every function signature must include parameter types and return type
 - Every data model must list all fields with types
@@ -289,7 +290,7 @@ Respond with ONLY a JSON object matching this schema:
   "deliverable_type": "python|web_app",
   "interaction_mode": "cli|browser|library",
   "description": "One paragraph describing the project",
-  "tech_decisions": ["decision 1: reason", "decision 2: reason"],
+  "tech_decisions": ["technology or framework", "storage/runtime choice"],
   "data_models": [
     {{
       "name": "ClassName",

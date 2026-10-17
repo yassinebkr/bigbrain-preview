@@ -14,17 +14,25 @@ import { useAppStore } from '@/store/appStore';
 
 function StackSummary({ value }: { value: string }) {
   const fields = value.replace(/^\[Stack\]\s*/, '').split(' · ');
+  const read = (prefix: string) => fields.find((field) => field.startsWith(prefix))?.slice(prefix.length).trim() || '';
+  const deliverable = read('livrable ');
+  const interaction = read('interaction ');
+  const entryPoint = read('point d’entrée ');
+  const technologies = read('technologies ');
+  const validation = read('validation ');
+  const deliverableLabel = deliverable === 'web_app' ? 'Application web' : deliverable.replaceAll('_', ' ');
+  const interactionLabel = interaction === 'browser' ? 'Navigateur' : interaction;
+
   return (
-    <div className="rounded-xl px-3 py-2.5 mb-3" style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)' }}>
-      <div className="text-[10px] uppercase tracking-[0.12em] mb-2" style={{ color: 'var(--text-tertiary)' }}>Architecture retenue</div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5">
-        {fields.map((field, i) => {
-          const split = field.indexOf(' ');
-          const label = split > 0 ? field.slice(0, split) : 'détail';
-          const text = split > 0 ? field.slice(split + 1) : field;
-          return <div key={i} className="text-[12px] leading-snug"><span style={{ color: 'var(--text-tertiary)' }}>{label} </span><span style={{ color: 'var(--text-primary)' }}>{text}</span></div>;
-        })}
+    <div className="rounded-xl px-3.5 py-3 my-3" style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)' }}>
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>Plan technique</span>
+        {deliverableLabel && <span className="rounded-full px-2 py-0.5 text-[11px]" style={{ color: 'var(--accent-blue-light)', backgroundColor: 'rgba(0, 113, 227, 0.12)' }}>{deliverableLabel}</span>}
+        {interactionLabel && <span className="rounded-full px-2 py-0.5 text-[11px]" style={{ color: 'var(--text-secondary)', border: '1px solid var(--border-subtle)' }}>{interactionLabel}</span>}
       </div>
+      {entryPoint && <div className="flex items-baseline gap-2 mb-3 text-[12px]"><span className="shrink-0" style={{ color: 'var(--text-tertiary)' }}>Point d’entrée</span><code className="rounded px-1.5 py-0.5" style={{ color: 'var(--text-primary)', backgroundColor: 'var(--bg-primary)' }}>{entryPoint}</code></div>}
+      {technologies && <div className="mb-3"><div className="text-[10px] uppercase tracking-[0.1em] mb-1" style={{ color: 'var(--text-tertiary)' }}>Choix techniques</div><p className="m-0 text-[12.5px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{technologies}</p></div>}
+      {validation && <div><div className="text-[10px] uppercase tracking-[0.1em] mb-1" style={{ color: 'var(--text-tertiary)' }}>Vérification</div><p className="m-0 text-[12.5px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{validation}</p></div>}
     </div>
   );
 }
