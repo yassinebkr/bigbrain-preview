@@ -154,3 +154,33 @@ async def test_model_param_overrides_entry_default():
         [{"role": "user", "content": "x"}], model="moonshotai/kimi-k3"
     )
     assert captured["model"] == "moonshotai/kimi-k3"
+
+
+def test_image_content_block_encodes_a_data_url():
+    from bigbrain.llm.openai_compat_provider import image_content_block
+
+    block = image_content_block(b"photo-bytes", "image/jpeg")
+    assert block == {
+        "type": "image_url",
+        "image_url": {"url": "data:image/jpeg;base64,cGhvdG8tYnl0ZXM="},
+    }
+    with pytest.raises(ValueError):
+        image_content_block(b"x", "application/pdf")
+
+
+@pytest.mark.asyncio
+async def test_multimodal_content_blocks_are_sent_unchanged():
+    handler = _SSEHandler(content="seen")
+    provider = _provider(handler)
+    content = [
+        {"type": "text", "text": "describe"},
+        {"type": "image_url", "image_url": {
+            "url": "data:image/png;base64,UE5H"}},
+    ]
+
+    result = await provider.chat_complete(
+        [{"role": "user", "content": content}])
+
+    assert result == "seen"
+    body = json.loads(handler.requests[0].content)
+    assert body["messages"][0]["content"] == content

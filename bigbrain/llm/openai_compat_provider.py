@@ -15,6 +15,7 @@ declares supported values.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 from typing import AsyncIterator, Optional
@@ -29,6 +30,17 @@ from .usage import UsageRecord, get_tracker
 # (verified on Kimi K3 and GLM in fpga): requests need reasoning-sized
 # output headroom so the answer is not starved by thinking.
 _REASONING_MAX_TOKENS_HEADROOM = 2048
+
+
+def image_content_block(data: bytes, media_type: str) -> dict:
+    """Build an OpenAI-compatible inline image content block."""
+    if not media_type.startswith("image/"):
+        raise ValueError("media_type must be an image MIME type")
+    encoded = base64.b64encode(data).decode("ascii")
+    return {
+        "type": "image_url",
+        "image_url": {"url": f"data:{media_type};base64,{encoded}"},
+    }
 
 
 class OpenAICompatProvider(LLMProvider):

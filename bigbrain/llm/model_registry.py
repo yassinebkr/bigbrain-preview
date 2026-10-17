@@ -53,6 +53,8 @@ class ModelEntry:
     reasoning: bool = False
     reasoning_efforts: list[str] = field(default_factory=list)
     reasoning_effort_default: str | None = None
+    # Accepts OpenAI-style image_url content blocks.
+    vision: bool = False
     # Optional monthly context window, for budget heuristics only.
     context_window: int | None = None
 
@@ -77,6 +79,7 @@ class ModelEntry:
             reasoning=self.reasoning,
             reasoning_efforts=list(self.reasoning_efforts),
             reasoning_effort_default=reasoning_effort_default,
+            vision=self.vision,
             context_window=self.context_window,
         )
 
@@ -95,6 +98,7 @@ _REGISTRY: dict[str, ModelEntry] = {
         reasoning=True,
         reasoning_efforts=["low", "medium", "high"],
         reasoning_effort_default="low",
+        vision=True,
     ),
     "openrouter-kimi-k3": ModelEntry(
         key="openrouter-kimi-k3",
@@ -107,6 +111,7 @@ _REGISTRY: dict[str, ModelEntry] = {
         reasoning=True,
         reasoning_efforts=["low", "medium", "high"],
         reasoning_effort_default="low",
+        vision=True,
     ),
     "openrouter-opus-5.5": ModelEntry(
         key="openrouter-opus-5.5",
@@ -117,6 +122,20 @@ _REGISTRY: dict[str, ModelEntry] = {
         base_url=_OPENROUTER_DEFAULT_BASE_URL,
         health_path="/auth/key",
         reasoning=False,
+        vision=True,
+    ),
+    "openrouter-mistral-large-4": ModelEntry(
+        key="openrouter-mistral-large-4",
+        display_name="Mistral Large 4 (OpenRouter)",
+        provider="openai_compat",
+        model_id="mistralai/mistral-large-4-0",
+        api_key_env="OPENROUTER_API_KEY",
+        base_url=_OPENROUTER_DEFAULT_BASE_URL,
+        health_path="/auth/key",
+        reasoning=False,
+        # The native model is multimodal, but OpenRouter currently exposes
+        # text/JSON-state input only for this route.
+        vision=False,
     ),
     "openrouter-kimi-k2.7-code": ModelEntry(
         key="openrouter-kimi-k2.7-code",
@@ -127,6 +146,7 @@ _REGISTRY: dict[str, ModelEntry] = {
         base_url=_OPENROUTER_DEFAULT_BASE_URL,
         health_path="/auth/key",
         reasoning=False,
+        vision=True,
     ),
     "openrouter-luna": ModelEntry(
         key="openrouter-luna",
@@ -152,6 +172,7 @@ _REGISTRY: dict[str, ModelEntry] = {
         reasoning=True,
         reasoning_efforts=["low", "medium", "high"],
         reasoning_effort_default="low",
+        vision=True,
     ),
     "mistral-vibe": ModelEntry(
         key="mistral-vibe",
@@ -228,6 +249,7 @@ def list_models() -> list[dict]:
                 "reasoning": entry.reasoning,
                 "reasoning_efforts": list(entry.reasoning_efforts),
                 "reasoning_effort_default": entry.reasoning_effort_default,
+                "vision": entry.vision,
             }
         )
     return entries

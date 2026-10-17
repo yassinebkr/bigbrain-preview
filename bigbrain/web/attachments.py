@@ -6,7 +6,8 @@ dropped them on the floor. Now every attachment is uploaded to
 persistent memory, so the agent can recall months later that the user
 shared this file — the openclaw image-memory lesson, without re-uploading
 anything to an LLM: recall works on the file NAME/type/context, not on
-content (no vision claim, no hidden cost).
+content unless the selected front model declares vision support. Vision images
+are inlined only for the current provider call; they are never stored in chat history.
 """
 
 from __future__ import annotations

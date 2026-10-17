@@ -154,7 +154,7 @@ class TestAttachmentMemory:
         user_turns = [m for m in front._history_for("sess-9")
                       if m["role"] == "user"]
         assert any("chat.png" in t["content"] for t in user_turns)
-        assert any("cannot see its content" in t["content"]
+        assert any("selected model cannot see image content" in t["content"]
                    for t in user_turns)
 
         # The attachment lives in persistent memory
