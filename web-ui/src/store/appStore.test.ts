@@ -382,3 +382,30 @@ describe('run record is scoped to its conversation', () => {
     expect(useAppStore.getState().runPanelDismissed).toBe(false);
   });
 });
+
+describe('applyRunEvent — execution.output streaming', () => {
+  beforeEach(() => {
+    useAppStore.setState({ activeRun: null, isStreaming: false });
+  });
+
+  it('attaches streamed deltas to the matching running step', () => {
+    useAppStore.getState().applyRunEvent(
+      ev('task.received', { task_id: 't1', description: 'project' }));
+    useAppStore.getState().applyRunEvent(
+      ev('subtask.started', { task_id: 't1', subtask_id: 's1', brain: 'python_brain_0', description: 'write a.py' }));
+
+    useAppStore.getState().applyRunEvent(
+      ev('execution.output', { brain: 'python_brain_0', subtask_id: 's1', stream: 'out', delta: 'compiling…\n' }));
+    useAppStore.getState().applyRunEvent(
+      ev('execution.output', { brain: 'python_brain_0', subtask_id: 's1', stream: 'out', delta: 'done\n' }));
+
+    const run = useAppStore.getState().activeRun!;
+    expect(run.steps[0].liveOutput).toBe('compiling…\ndone\n');
+  });
+
+  it('ignores output when no run is active', () => {
+    useAppStore.getState().applyRunEvent(
+      ev('execution.output', { delta: 'orphan' }));
+    expect(useAppStore.getState().activeRun).toBeNull();
+  });
+});

@@ -245,25 +245,41 @@ export function RunPanel() {
                   {run.steps.length > 0 && (
                     <div className="flex flex-col gap-1">
                       {run.steps.map((step) => (
-                        <div key={step.id} className="flex items-center gap-2 text-[11.5px]">
-                          <span style={{ color: statusColor(step.status) }}>
-                            <StatusIcon status={step.status} size={11} />
-                          </span>
-                          {step.brain && (
-                            <span
-                              className="flex-shrink-0 px-1.5 py-px rounded"
-                              style={{ color: 'var(--accent-blue)', border: '1px solid var(--border-subtle)' }}
+                        <div key={step.id} className="flex flex-col gap-0.5">
+                          <div className="flex items-center gap-2 text-[11.5px]">
+                            <span style={{ color: statusColor(step.status) }}>
+                              <StatusIcon status={step.status} size={11} />
+                            </span>
+                            {step.brain && (
+                              <span
+                                className="flex-shrink-0 px-1.5 py-px rounded"
+                                style={{ color: 'var(--accent-blue)', border: '1px solid var(--border-subtle)' }}
+                              >
+                                {step.brain}
+                              </span>
+                            )}
+                            <span className="truncate flex-1 min-w-0" style={{ color: 'var(--text-secondary)' }}>
+                              {step.description}
+                            </span>
+                            {step.durationMs != null && step.status !== 'running' && (
+                              <span className="flex-shrink-0" style={{ color: 'var(--text-tertiary)' }}>
+                                {(step.durationMs / 1000).toFixed(1)}s
+                              </span>
+                            )}
+                          </div>
+                          {/* Live output — what the brain's program is
+                              printing RIGHT NOW (execution.output). */}
+                          {step.liveOutput && (
+                            <pre
+                              className="ml-[23px] mr-2 max-h-[84px] overflow-hidden px-2 py-1 rounded-md text-[10.5px] leading-snug whitespace-pre-wrap"
+                              style={{
+                                color: 'var(--text-tertiary)',
+                                backgroundColor: 'var(--bg-primary)',
+                                fontFamily: 'var(--font-mono, monospace)',
+                              }}
                             >
-                              {step.brain}
-                            </span>
-                          )}
-                          <span className="truncate flex-1 min-w-0" style={{ color: 'var(--text-secondary)' }}>
-                            {step.description}
-                          </span>
-                          {step.durationMs != null && step.status !== 'running' && (
-                            <span className="flex-shrink-0" style={{ color: 'var(--text-tertiary)' }}>
-                              {(step.durationMs / 1000).toFixed(1)}s
-                            </span>
+                              {step.liveOutput}
+                            </pre>
                           )}
                         </div>
                       ))}

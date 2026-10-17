@@ -20,6 +20,9 @@ export interface RunStep {
   description: string;
   status: 'running' | 'done' | 'failed';
   durationMs?: number;
+  // Live output streamed by the brain while it works
+  // (execution.output events, capped tail).
+  liveOutput?: string;
 }
 
 export interface RunVerification {
@@ -383,6 +386,27 @@ export const useAppStore = create<AppState>()(
               activeRun: {
                 ...run,
                 steps: [...run.steps.filter((s) => s.id !== step.id), step],
+              },
+            };
+          }
+          case 'execution.output': {
+            // The brain streams its program output while it runs —
+            // attach it to the matching step so the user sees the work.
+            if (!run || run.status !== 'running') return state;
+            const delta = String(d.delta || '');
+            if (!delta) return state;
+            const targetId = d.subtask_id
+              ? String(d.subtask_id)
+              : (run.steps.find((s) => s.status === 'running')?.id || null);
+            if (!targetId) return state;
+            return {
+              activeRun: {
+                ...run,
+                steps: run.steps.map((s) =>
+                  s.id === targetId
+                    ? { ...s, liveOutput: ((s.liveOutput || '') + delta).slice(-4000) }
+                    : s
+                ),
               },
             };
           }

@@ -49,8 +49,10 @@ class TestAdaptiveComplexity:
                  self._make_subtask("s3"), self._make_subtask("s4")]
         assert orchestrator._analyze_execution_mode(tasks, "four tasks") == "todo"
 
-    def test_chain_returns_todo(self, orchestrator):
-        """Linear chain (1 independent) → todo"""
+    def test_chain_returns_dag(self, orchestrator):
+        """A linear chain has dependency structure → dag (the engine
+        still runs one task at a time, but the plan is a real DAG and
+        never gets serialized by size)."""
         tasks = [
             self._make_subtask("s1"),
             self._make_subtask("s2", ["s1"]),
@@ -58,7 +60,7 @@ class TestAdaptiveComplexity:
             self._make_subtask("s4", ["s3"]),
             self._make_subtask("s5", ["s4"]),
         ]
-        assert orchestrator._analyze_execution_mode(tasks, "chain") == "todo"
+        assert orchestrator._analyze_execution_mode(tasks, "chain") == "dag"
 
     def test_wide_graph_returns_dag(self, orchestrator):
         """>2 independent AND >4 total → dag"""
@@ -85,15 +87,17 @@ class TestAdaptiveComplexity:
         mode = orchestrator._analyze_execution_mode(tasks, "mixed")
         assert mode == "dag"
 
-    def test_three_independent_but_only_four_total_todo(self, orchestrator):
-        """3 independent but ≤4 total → todo (total count wins)"""
+    def test_small_fan_in_project_returns_dag(self, orchestrator):
+        """A small fan-in PROJECT plan (3 parallel writes + 1 assembler)
+        must run in dag: the 3 writes dispatch to the worker pool in
+        PARALLEL — the ≤4-total rule used to serialize real projects."""
         tasks = [
             self._make_subtask("s1"),
             self._make_subtask("s2"),
             self._make_subtask("s3"),
             self._make_subtask("s4", ["s1", "s2", "s3"]),
         ]
-        assert orchestrator._analyze_execution_mode(tasks, "small fan-in") == "todo"
+        assert orchestrator._analyze_execution_mode(tasks, "small fan-in") == "dag"
 
 
 # ─── Todo mode sequential execution ───────────────────────────────────────
