@@ -50,6 +50,7 @@ export function RunTimelineCard({ run }: { run: RunState }) {
 
   const runProject = async () => {
     if (!entryPath || (runId && !liveRun?.done)) return;
+    setOpen(true);
     try {
       const response = await fetch('/api/fs/run', {
         method: 'POST',
