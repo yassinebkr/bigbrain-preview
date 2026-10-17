@@ -214,6 +214,7 @@ def run_file(rel: str, timeout: float = 30.0) -> Dict[str, Any]:
         try:
             proc = subprocess.run(
                 args,
+                stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
                 timeout=timeout,
@@ -403,8 +404,11 @@ async def run_file_streaming(rel: str, timeout: float = 30.0,
 
     async def _exec(args: list, cwd: Path) -> Dict[str, Any]:
         start = time.time()
+        # stdin = DEVNULL: a manual run has no interactive input — a
+        # program reading stdin must get EOF, not hang until the timeout.
         proc = await asyncio.create_subprocess_exec(
             *args,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             cwd=str(cwd),
         )

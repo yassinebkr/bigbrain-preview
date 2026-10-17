@@ -189,3 +189,34 @@ class TestParallelProjectDispatch:
 
         await orch.stop()
         await bus.close()
+
+
+class TestStdinEof:
+    """Regression (live web-scraper project): main.py with no args did
+    sys.stdin.read() and BLOCKED forever — the run inherited the server's
+    never-closing stdin and died only on its 30s timeout. Every runner
+    now gives stdin-reading programs an immediate EOF."""
+
+    async def test_agent_execution_gives_stdin_eof(self, workspace):
+        brain, bus = _brain(workspace)
+        result = await brain._execute_code(
+            "import sys\n"
+            "print('before-read')\n"
+            "data = sys.stdin.read()\n"
+            "print(f'read: {data!r}')\n",
+            timeout=5,
+        )
+        assert result["success"] is True, result
+        assert "before-read" in result["stdout"]
+        assert "read: ''" in result["stdout"]  # EOF, not a hang
+
+    async def test_manual_run_gives_stdin_eof(self, workspace):
+        from bigbrain.web import fs_api
+        (workspace / "reads_stdin.py").write_text(
+            "import sys\nprint('eof' if sys.stdin.read() == '' else 'data')\n")
+        result = await fs_api.run_file_streaming("reads_stdin.py", timeout=5)
+        assert result["ok"] is True, result
+        assert result["stdout"].strip() == "eof"
+        # and the blocking path
+        blocking = fs_api.run_file("reads_stdin.py")
+        assert blocking["ok"] is True

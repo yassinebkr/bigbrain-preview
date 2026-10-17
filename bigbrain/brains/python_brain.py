@@ -1381,14 +1381,18 @@ Rules:
         run_env["PATH"] = f"{venv_bin}:{run_env.get('PATH', '')}"
 
         try:
+            # stdin = DEVNULL: a program that reads stdin gets an immediate
+            # EOF instead of blocking forever (no interactive input exists
+            # in an agent run — this used to hang until the timeout).
             process = await asyncio.create_subprocess_exec(
                 str(venv_python), str(entry_path),
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(project_dir),
                 env=run_env,
             )
-            
+            timed_out = False
             try:
                 stdout, stderr = await asyncio.wait_for(
                     process.communicate(), timeout=timeout
@@ -1400,6 +1404,7 @@ Rules:
                 stdout = b""
                 stderr = f"Execution timed out after {timeout} seconds".encode()
                 exit_code = -1
+                timed_out = True
                 
         except Exception as e:
             end_time = time.time()
@@ -1425,6 +1430,7 @@ Rules:
             "stderr": stderr_str,
             "exit_code": exit_code,
             "execution_time": end_time - start_time,
+            "timed_out": timed_out,
             "entry_point": entry_point,
             "project_name": project_name,
             "files_written": list(written_files.keys()),
@@ -2375,8 +2381,11 @@ Output ONLY the corrected file content, no explanation."""
         """
         from ..bus.message import Priority
 
+        # stdin = DEVNULL: an input() or sys.stdin.read() gets an
+        # immediate EOF instead of hanging the run until its timeout.
         process = await asyncio.create_subprocess_exec(
             *args,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=str(cwd),
