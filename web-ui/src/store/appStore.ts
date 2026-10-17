@@ -43,6 +43,9 @@ export interface RunState {
   files: { path: string; ts: number }[];
   error?: string;
   verification?: RunVerification;
+  projectName?: string;
+  entryPoint?: string;
+  runnable?: boolean;
 }
 
 interface AppState {
@@ -350,7 +353,7 @@ export const useAppStore = create<AppState>()(
             // The orchestrator also broadcasts contracts.approved /
             // contracts.rejected which clear the card — clearing here
             // makes the UI immediate; both are idempotent.
-            set({ contractProposal: null, contractSending: false, isStreaming: approve });
+            set({ contractProposal: null, contractSending: false });
           } else {
             set({ contractSending: false });
           }
@@ -382,9 +385,25 @@ export const useAppStore = create<AppState>()(
           }
           case 'task.received': {
             const fresh: RunState = {
-              sessionId: run?.sessionId || state.activeSessionKey || '',
+              sessionId: String(d.session_id || run?.sessionId || state.activeSessionKey || ''),
               id: d.task_id || `run-${Date.now()}`,
               description: String(d.description || 'Task').slice(0, 140),
+              status: 'running',
+              startedAt: Date.now(),
+              steps: [],
+              files: [],
+            };
+            return { activeRun: fresh, runPanelDismissed: false };
+          }
+          case 'contracts.proposal': {
+            const sessionId = String(d.session_id || run?.sessionId || state.activeSessionKey || '');
+            if (run && run.status === 'running') {
+              return { activeRun: { ...run, sessionId }, runPanelDismissed: false };
+            }
+            const fresh: RunState = {
+              sessionId,
+              id: String(d.plan_id || `approval-${Date.now()}`),
+              description: String(d.user_request || 'Awaiting contract approval').slice(0, 140),
               status: 'running',
               startedAt: Date.now(),
               steps: [],
@@ -486,6 +505,9 @@ export const useAppStore = create<AppState>()(
                 status,
                 finishedAt: Date.now(),
                 error: d.error ? String(d.error).slice(0, 200) : run.error,
+                projectName: d.project_name ? String(d.project_name) : run.projectName,
+                entryPoint: d.entry_point ? String(d.entry_point) : run.entryPoint,
+                runnable: typeof d.runnable === 'boolean' ? d.runnable : run.runnable,
               }].slice(-100),
             };
           }

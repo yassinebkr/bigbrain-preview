@@ -356,7 +356,8 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                 "task_id": plan.id,
                 "description": task_desc or f"{len(plan.subtasks)} subtask(s)",
                 "workspace": self.workspace,
-                "subtasks_count": len(plan.subtasks)
+                "subtasks_count": len(plan.subtasks),
+                "session_id": task_data.get("session_id"),
             },
             workspace=self.workspace,
             priority=Priority.NORMAL
@@ -416,6 +417,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                 "plan_id": plan.id,
                 "user_request": user_request,
                 "contracts": list(spec.contracts),
+                "session_id": (plan.original_task.payload or {}).get("session_id"),
             },
             workspace=self.workspace,
             priority=Priority.NORMAL,
@@ -447,7 +449,10 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             await self.bus.broadcast_event(
                 source=self.name,
                 event_type="contracts.approved",
-                payload={"design_id": design_id, "plan_id": plan.id},
+                payload={
+                    "design_id": design_id, "plan_id": plan.id,
+                    "session_id": (plan.original_task.payload or {}).get("session_id"),
+                },
                 workspace=self.workspace,
                 priority=Priority.NORMAL,
             )
@@ -456,7 +461,10 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             await self.bus.broadcast_event(
                 source=self.name,
                 event_type="contracts.rejected",
-                payload={"design_id": design_id, "plan_id": plan.id},
+                payload={
+                    "design_id": design_id, "plan_id": plan.id,
+                    "session_id": (plan.original_task.payload or {}).get("session_id"),
+                },
                 workspace=self.workspace,
                 priority=Priority.NORMAL,
             )
@@ -1582,12 +1590,31 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                     "status": plan.status.value,
                     "workspace": self.workspace,
                     "subtasks_total": len(plan.subtasks),
+                    "session_id": (plan.original_task.payload or {}).get("session_id"),
+                    **self._project_result_metadata(plan),
                     **fail_payload,
                 },
                 workspace=self.workspace,
                 priority=Priority.NORMAL
             )
     
+    @staticmethod
+    def _project_result_metadata(plan: TaskPlan) -> dict:
+        """Expose only launch/navigation metadata from completed subtasks."""
+        for result in reversed(list(plan.get_results().values())):
+            if not isinstance(result, dict):
+                continue
+            data = result.get("data", result)
+            if not isinstance(data, dict):
+                continue
+            if data.get("project_name") and data.get("entry_point"):
+                return {
+                    "project_name": data["project_name"],
+                    "entry_point": data["entry_point"],
+                    "runnable": bool(data.get("success") and data.get("stdout", "").strip()),
+                }
+        return {}
+
     async def _handle_cancel_request(self, message: BusMessage) -> None:
         """Handle task cancellation requests."""
         task_id = message.payload.get("task_id")

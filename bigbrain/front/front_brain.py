@@ -634,6 +634,7 @@ Type 'quit' or 'exit' to stop."""
                     "brain": route_brain,
                     "reply_to_ui": True,
                     "user_request": text,
+                    "session_id": session_id,
                 }
                 await self.bus.send_task(
                     source=self.name,
@@ -664,6 +665,7 @@ Type 'quit' or 'exit' to stop."""
                         "description": description,
                         "user_request": task_request,
                         "reply_to_ui": True,
+                        "session_id": session_id,
                     },
                     priority=Priority.NORMAL,
                 )
@@ -688,6 +690,7 @@ Type 'quit' or 'exit' to stop."""
                         "description": description,
                         "user_request": combined_request,
                         "reply_to_ui": True,
+                        "session_id": session_id,
                     },
                     priority=Priority.NORMAL,
                 )

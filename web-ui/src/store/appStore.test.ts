@@ -1,3 +1,20 @@
+
+  it('contracts.proposal restores a session-scoped active run', () => {
+    useAppStore.setState({
+      activeRun: null,
+      activeSessionKey: 'sess-other',
+      runPanelDismissed: true,
+    });
+    useAppStore.getState().applyRunEvent(ev('contracts.proposal', {
+      plan_id: 'plan-approval',
+      session_id: 'sess-origin',
+      user_request: 'build fitness project',
+    }));
+    const run = useAppStore.getState().activeRun;
+    expect(run?.id).toBe('plan-approval');
+    expect(run?.sessionId).toBe('sess-origin');
+    expect(useAppStore.getState().runPanelDismissed).toBe(false);
+  });
 // Store edge cases — the run state machine (applyRunEvent) and the
 // streaming finalize guard. Pure state logic; no React needed.
 

@@ -14,6 +14,24 @@ from bigbrain.orchestrator.architect import (
 )
 
 
+def test_parse_spec_repairs_missing_entry_point():
+    architect = ArchitectPhase(llm_provider=None)
+    spec = architect._parse_spec({
+        "project_name": "fitness",
+        "file_specs": [{
+            "path": "models.py",
+            "purpose": "models",
+            "dependencies": [],
+        }],
+        "entry_point": "main.py",
+    })
+
+    assert spec.entry_point == "main.py"
+    main = spec.get_file_spec("main.py")
+    assert main is not None
+    assert main.dependencies == ["models.py"]
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

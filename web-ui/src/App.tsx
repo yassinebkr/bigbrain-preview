@@ -22,7 +22,6 @@ export default function App() {
     setConnectionStatus,
     addMessage,
     appendStreamingText,
-    setIsStreaming,
     finalizeStreaming,
     setCommandPaletteOpen,
     commandPaletteOpen,
@@ -105,15 +104,8 @@ export default function App() {
       } else if (activity.type === 'contracts.approved' || activity.type === 'contracts.rejected') {
         useAppStore.getState().setContractProposal(null);
       }
-      // Streaming only while a run is actually in flight. Startup frames
-      // (brain.status etc.) must not leave the typing indicator stuck on.
-      const runEvents = [
-        'task.routing', 'task.received', 'subtask.started', 'brain.started', 'thinking',
-      ];
-      const endEvents = [
-        'task.complete', 'task.failed', 'subtask.complete', 'subtask.failed',
-        'brain.complete', 'done',
-      ];
+      // Typing belongs to assistant text generation, never task progress.
+      // The session-scoped RunPanel is the sole execution indicator.
       if (activity.type === 'task.failed') {
         finalizeStreaming();
         const detail = activity.detail || {};
@@ -128,10 +120,6 @@ export default function App() {
           content: `Task failed: ${reason || 'unknown error'}`,
           timestamp: Date.now(),
         });
-      } else if (endEvents.includes(activity.type) || activity.phase === 'end') {
-        finalizeStreaming();
-      } else if (runEvents.includes(activity.type)) {
-        setIsStreaming(true);
       }
     });
 

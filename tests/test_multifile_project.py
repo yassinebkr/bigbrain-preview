@@ -10,6 +10,54 @@ from bigbrain.verification.executors import stage_contracts, stage_tests
 from bigbrain.verification.gate import RunGate
 
 
+@pytest.mark.asyncio
+async def test_assemble_refuses_missing_declared_entry_point(tmp_path, monkeypatch):
+    monkeypatch.setenv("BIGBRAIN_WORKSPACE_DIR", str(tmp_path))
+    brain = PythonBrain("python_brain_test", MessageBus(auth=None), "default",
+                        work_dir=tmp_path)
+    project = tmp_path / "passive-project"
+    project.mkdir()
+    (project / "models.py").write_text("VALUE = 1\n")
+
+    result = await brain._assemble_and_run({
+        "project_name": "passive-project",
+        "all_files": [{"path": "models.py"}],
+        "entry_point": "main.py",
+    })
+
+    assert result["success"] is False
+    assert result["exit_code"] == -5
+    assert "Declared entry point is missing" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_assemble_rejects_silent_entry_point(tmp_path, monkeypatch):
+    import sys
+
+    monkeypatch.setenv("BIGBRAIN_WORKSPACE_DIR", str(tmp_path))
+    monkeypatch.setenv("BIGBRAIN_EVIDENCE", "0")
+    brain = PythonBrain("python_brain_test", MessageBus(auth=None), "default",
+                        work_dir=tmp_path)
+    project = tmp_path / "silent-project"
+    project.mkdir()
+    (project / "main.py").write_text("value = 1\n")
+
+    async def current_python(_project_dir):
+        return Path(sys.executable)
+
+    monkeypatch.setattr(brain, "_setup_project_venv", current_python)
+    result = await brain._assemble_and_run({
+        "project_name": "silent-project",
+        "all_files": [{"path": "main.py"}],
+        "entry_point": "main.py",
+    })
+
+    assert result["success"] is False
+    assert result["exit_code"] == -6
+    assert "produced no output" in result["stderr"]
+    assert not (project / ".project.json").exists()
+
+
 TODO_FILES = {
     "todo/model.py": "from dataclasses import dataclass\n\n@dataclass\nclass Todo:\n    title: str\n    done: bool = False\n",
     "todo/store.py": "import json\nfrom pathlib import Path\nfrom .model import Todo\n\ndef save(path: Path, items: list[Todo]) -> None:\n    path.write_text(json.dumps([item.__dict__ for item in items]))\n\ndef load(path: Path) -> list[Todo]:\n    if not path.exists():\n        return []\n    return [Todo(**row) for row in json.loads(path.read_text())]\n",
@@ -38,6 +86,7 @@ async def test_cli_todo_project_contract_tests_and_gate(tmp_path, monkeypatch):
         "project_name": "todo-cli",
         "user_request": "Build a multi-file todo CLI",
         "all_files": [{"path": path} for path in TODO_FILES],
+        "entry_point": "main.py",
     })
     project_dir = tmp_path / "todo-cli"
     assert execution["exit_code"] == 0, execution
@@ -107,6 +156,7 @@ async def test_assemble_cleans_stale_files_without_crashing(tmp_path, monkeypatc
         "project_name": "web-scraper",
         "user_request": "update main.py",
         "all_files": [{"path": "main.py"}],
+        "entry_point": "main.py",
     })
 
     assert execution["success"] is True, execution

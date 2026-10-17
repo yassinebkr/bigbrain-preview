@@ -267,6 +267,9 @@ Your specification must be detailed enough that SEPARATE developers (who cannot 
 - Every data model must list all fields with types
 - Dependencies between files must be explicit (what imports what)
 - Entry point must be clear (which file to run, what command)
+- The entry_point MUST be present in file_specs
+- The entry point MUST run non-interactively with no arguments
+- With no arguments it MUST print a meaningful demo/result, never silent exit 0
 - Keep to 3-8 files for most projects. Don't over-engineer.
 - Current year: {current_year}
 
@@ -485,13 +488,30 @@ class ArchitectPhase:
                 edge_cases=fs_raw.get("edge_cases", []),
             ))
 
+        entry_point = str(raw.get("entry_point") or "main.py")
+        if file_specs and not any(spec.path == entry_point for spec in file_specs):
+            # Repair a structurally invalid LLM spec deterministically. The
+            # dedicated worker will generate the missing executable adapter.
+            file_specs.append(FileSpec(
+                path=entry_point,
+                purpose="Executable, non-interactive project entry point",
+                dependencies=[spec.path for spec in file_specs],
+                imports_from={},
+                implementation_notes=(
+                    "Wire the project modules into a runnable demonstration. "
+                    "Running with no arguments must print meaningful output "
+                    "and must not call input()."
+                ),
+                edge_cases=["no command-line arguments", "stdin unavailable"],
+            ))
+
         return ProjectSpec(
             project_name=raw.get("project_name", "project"),
             description=raw.get("description", ""),
             tech_decisions=raw.get("tech_decisions", []),
             data_models=data_models,
             file_specs=file_specs,
-            entry_point=raw.get("entry_point", "main.py"),
+            entry_point=entry_point,
             execution_strategy=raw.get("execution_strategy", ""),
         )
 

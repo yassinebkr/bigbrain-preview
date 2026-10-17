@@ -1,6 +1,7 @@
 """PythonBrain - Python code execution brain with subprocess isolation."""
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -1332,17 +1333,20 @@ Rules:
                 "files_with_errors": syntax_errors,
             }
         
-        # Find the entry point (main.py, app.py, or last file in the list)
-        entry_point = None
-        for f in all_files:
-            path = f["path"]
-            if path in ("main.py", "run.py", "server.py", "app.py"):
-                entry_point = path
-                break
-        if not entry_point:
-            # Use the last Python file
-            py_files = [f["path"] for f in all_files if f["path"].endswith(".py")]
-            entry_point = py_files[-1] if py_files else all_files[-1]["path"]
+        # The architect owns the entry point contract. Never guess by running
+        # the last file: that turned passive modules into false successes.
+        entry_point = str(payload.get("entry_point") or "main.py")
+        if entry_point not in written_files:
+            return {
+                "success": False,
+                "error": f"Declared entry point is missing: {entry_point}",
+                "stdout": "",
+                "stderr": f"{entry_point} is not present in the project plan",
+                "exit_code": -5,
+                "entry_point": entry_point,
+                "project_name": project_name,
+                "files_written": list(written_files.keys()),
+            }
         
         # Detect if this is a web server project
         is_web = self._is_web_project(written_files)
@@ -1403,7 +1407,15 @@ Rules:
             }
         
         end_time = time.time()
-        success = exit_code == 0
+        success = exit_code == 0 and bool(stdout_str.strip())
+        if exit_code == 0 and not stdout_str.strip():
+            exit_code = -6
+            stderr_str = (
+                stderr_str.rstrip() + "\n" if stderr_str.strip() else ""
+            ) + (
+                "Entry point exited successfully but produced no output. "
+                "A runnable project must provide a non-interactive demo/result."
+            )
         
         # Build project summary
         file_summary = "\n".join(f"  {f['path']} ({len(written_files.get(f['path'], ''))} chars)"
@@ -1421,6 +1433,16 @@ Rules:
             "files_written": list(written_files.keys()),
             "project_summary": file_summary,
         }
+
+        if success:
+            project_manifest = {
+                "name": project_name,
+                "created": time.time(),
+                "entry_point": entry_point,
+                "run": ["python", entry_point],
+            }
+            (project_dir / ".project.json").write_text(
+                json.dumps(project_manifest, indent=2), encoding="utf-8")
 
         # Project evidence covers the complete planned file set, not only
         # the entry point. Nested tests are discovered from the project root.
@@ -1454,7 +1476,7 @@ Rules:
 
         
         if not success:
-            result["error"] = f"Entry point {entry_point} failed with exit code {exit_code}"
+            result["error"] = f"Project is not runnable via {entry_point} (exit {exit_code})"
             if stderr_str:
                 result["error"] += f": {stderr_str[:200]}"
         
