@@ -214,6 +214,7 @@ def run_file(rel: str, timeout: float = 30.0) -> Dict[str, Any]:
         try:
             proc = subprocess.run(
                 args,
+                stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
                 timeout=timeout,
@@ -403,8 +404,11 @@ async def run_file_streaming(rel: str, timeout: float = 30.0,
 
     async def _exec(args: list, cwd: Path) -> Dict[str, Any]:
         start = time.time()
+        # stdin = DEVNULL: a manual run has no interactive input — a
+        # program reading stdin must get EOF, not hang until the timeout.
         proc = await asyncio.create_subprocess_exec(
             *args,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             cwd=str(cwd),
         )
@@ -561,11 +565,13 @@ def list_projects() -> Dict[str, Any]:
 
     root = workspace_root()
     projects = []
-    for child in sorted(root.iterdir()):
-        if not child.is_dir():
+    for manifest_path in sorted(root.rglob(PROJECT_MANIFEST)):
+        if any(part in {".venv", "__pycache__", ".git"} for part in manifest_path.parts):
             continue
-        manifest_path = child / PROJECT_MANIFEST
-        if not manifest_path.is_file():
+        child = manifest_path.parent
+        relative = child.relative_to(root)
+        # Root projects plus one nested level (not arbitrary dependency trees).
+        if len(relative.parts) > 2:
             continue
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -573,8 +579,9 @@ def list_projects() -> Dict[str, Any]:
             manifest = {}
         projects.append({
             "name": manifest.get("name") or child.name,
-            "path": child.name,
+            "path": relative.as_posix(),
             "created": manifest.get("created"),
+            "entry_point": manifest.get("entry_point"),
         })
     return {"projects": projects}
 

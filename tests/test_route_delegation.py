@@ -91,6 +91,7 @@ class TestFrontBrainRouteDispatch:
     async def test_route_sends_brain_task_to_orchestrator(self):
         provider = RecordingProvider(ROUTE_JSON)
         front, bus = _make_front(provider)
+        front._current_project = lambda: "sandbox/existing-project"
 
         await front._handle_ui_message(BusMessage(
             type=MessageType.TASK, source="morphable_ui",
@@ -108,6 +109,7 @@ class TestFrontBrainRouteDispatch:
         assert task_data["title"] == "Mettre à jour le README"
         assert task_data["status"] == "todo"
         assert task_data["reply_to_ui"] is True
+        assert task_data["project_path"] == "sandbox/existing-project"
         assert "taskboard" in task_data["user_request"]
 
         # The acknowledgment reached the chat first

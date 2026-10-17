@@ -1,3 +1,21 @@
+
+  it('contracts.proposal restores a session-scoped active run', () => {
+    useAppStore.setState({
+      activeRun: null,
+      activeSessionKey: 'sess-other',
+      runPanelDismissed: true,
+    });
+    useAppStore.getState().applyRunEvent(ev('contracts.proposal', {
+      plan_id: 'plan-approval',
+      session_id: 'sess-origin',
+      user_request: 'build fitness project',
+    }));
+    const run = useAppStore.getState().activeRun;
+    expect(run?.id).toBe('plan-approval');
+    expect(run?.sessionId).toBe('sess-origin');
+    expect(run?.awaitingApproval).toBe(true);
+    expect(useAppStore.getState().runPanelDismissed).toBe(false);
+  });
 // Store edge cases — the run state machine (applyRunEvent) and the
 // streaming finalize guard. Pure state logic; no React needed.
 
@@ -7,6 +25,8 @@ import { useAppStore } from '@/store/appStore';
 function reset() {
   useAppStore.setState({
     activeRun: null,
+    completedRuns: [],
+    activeSessionKey: 'sess-live',
     isStreaming: false,
     streamingText: '',
     messages: [],
@@ -46,6 +66,7 @@ describe('applyRunEvent — run state machine', () => {
     let run = useAppStore.getState().activeRun!;
     expect(run.steps).toHaveLength(1); // upsert, not append
     expect(run.steps[0].status).toBe('running');
+    expect(run.awaitingApproval).toBe(false);
 
     s.applyRunEvent(ev('subtask.complete', {
       task_id: 't1', subtask_id: 's1', execution_time: 1.5,
@@ -83,24 +104,26 @@ describe('applyRunEvent — run state machine', () => {
     expect(run.status).toBe('running');
   });
 
-  it('task.complete / failed / cancelled close the run', () => {
+  it('task.complete / failed / cancelled dock the run in its conversation', () => {
     const s = useAppStore.getState();
     s.applyRunEvent(ev('task.received', { task_id: 't1' }));
     s.applyRunEvent(ev('task.complete', { task_id: 't1' }));
-    expect(useAppStore.getState().activeRun!.status).toBe('done');
+    expect(useAppStore.getState().activeRun).toBeNull();
+    expect(useAppStore.getState().completedRuns.at(-1)?.status).toBe('done');
+    expect(useAppStore.getState().completedRuns.at(-1)?.sessionId).toBe('sess-live');
 
     useAppStore.setState({ activeRun: null });
     const s2 = useAppStore.getState();
     s2.applyRunEvent(ev('task.received', { task_id: 't2' }));
     s2.applyRunEvent(ev('task.failed', { task_id: 't2', error: 'boom' }));
-    expect(useAppStore.getState().activeRun!.status).toBe('failed');
-    expect(useAppStore.getState().activeRun!.error).toBe('boom');
+    expect(useAppStore.getState().completedRuns.at(-1)?.status).toBe('failed');
+    expect(useAppStore.getState().completedRuns.at(-1)?.error).toBe('boom');
 
     useAppStore.setState({ activeRun: null });
     const s3 = useAppStore.getState();
     s3.applyRunEvent(ev('task.received', { task_id: 't3' }));
     s3.applyRunEvent(ev('task.cancelled', { task_id: 't3' }));
-    expect(useAppStore.getState().activeRun!.status).toBe('cancelled');
+    expect(useAppStore.getState().completedRuns.at(-1)?.status).toBe('cancelled');
   });
 
   it('a second task.received replaces the previous run', () => {
@@ -371,14 +394,64 @@ describe('applyFsRunEvent — streaming manual runs', () => {
 });
 
 describe('run record is scoped to its conversation', () => {
-  it('opening another session clears the run panel state', () => {
+  it('opening another session preserves the originating run', () => {
     useAppStore.setState({
-      activeRun: { id: 'old', description: 'old run', status: 'done',
+      activeSessionKey: 'sess-origin',
+      activeRun: { sessionId: 'sess-origin', id: 'old', description: 'old run', status: 'running',
                    startedAt: 1, steps: [], files: [] },
       runPanelDismissed: true,
     });
     useAppStore.getState().openSession('sess-other');
-    expect(useAppStore.getState().activeRun).toBeNull();
+    expect(useAppStore.getState().activeRun?.sessionId).toBe('sess-origin');
+    expect(useAppStore.getState().activeSessionKey).toBe('sess-other');
     expect(useAppStore.getState().runPanelDismissed).toBe(false);
+  });
+
+  it('task.routing immediately opens a run for the named session', () => {
+    useAppStore.getState().applyRunEvent(
+      ev('task.routing', { session_id: 'sess-origin', description: 'préparation' }));
+    expect(useAppStore.getState().activeRun?.sessionId).toBe('sess-origin');
+    expect(useAppStore.getState().activeRun?.description).toBe('préparation');
+  });
+});
+
+describe('applyRunEvent — execution.output streaming', () => {
+  beforeEach(() => {
+    useAppStore.setState({ activeRun: null, isStreaming: false });
+  });
+
+  it('attaches streamed deltas to the matching running step', () => {
+    useAppStore.getState().applyRunEvent(
+      ev('task.received', { task_id: 't1', description: 'project' }));
+    useAppStore.getState().applyRunEvent(
+      ev('subtask.started', { task_id: 't1', subtask_id: 's1', brain: 'python_brain_0', description: 'write a.py' }));
+
+    useAppStore.getState().applyRunEvent(
+      ev('execution.output', { brain: 'python_brain_0', subtask_id: 's1', stream: 'out', delta: 'compiling…\n' }));
+    useAppStore.getState().applyRunEvent(
+      ev('execution.output', { brain: 'python_brain_0', subtask_id: 's1', stream: 'out', delta: 'done\n' }));
+
+    const run = useAppStore.getState().activeRun!;
+    expect(run.steps[0].liveOutput).toBe('compiling…\ndone\n');
+  });
+
+  it('ignores output when no run is active', () => {
+    useAppStore.getState().applyRunEvent(
+      ev('execution.output', { delta: 'orphan' }));
+    expect(useAppStore.getState().activeRun).toBeNull();
+  });
+});
+
+it('keeps project launch metadata for a single-file modification', () => {
+  useAppStore.setState({ activeRun: null });
+  useAppStore.getState().applyRunEvent(
+    ev('task.received', { task_id: 'edit-1', description: 'edit programme.py' }));
+  useAppStore.getState().applyRunEvent(ev('task.complete', {
+    task_id: 'edit-1', project_name: 'fitness',
+    project_path: 'sandbox/fitness', entry_point: 'main.py', runnable: true,
+  }));
+  expect(useAppStore.getState().completedRuns.at(-1)).toMatchObject({
+    projectName: 'fitness', projectPath: 'sandbox/fitness',
+    entryPoint: 'main.py', runnable: true,
   });
 });

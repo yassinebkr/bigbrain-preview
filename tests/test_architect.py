@@ -14,6 +14,42 @@ from bigbrain.orchestrator.architect import (
 )
 
 
+def test_parse_spec_respects_explicit_non_executable_deliverable():
+    architect = ArchitectPhase(llm_provider=None)
+    spec = architect._parse_spec({
+        "project_name": "fitness-models",
+        "executable": False,
+        "entry_point": None,
+        "file_specs": [{
+            "path": "models.py",
+            "purpose": "Reusable domain models only",
+            "dependencies": [],
+        }],
+    })
+
+    assert spec.executable is False
+    assert spec.entry_point is None
+    assert [file.path for file in spec.file_specs] == ["models.py"]
+
+
+def test_parse_spec_repairs_missing_entry_point():
+    architect = ArchitectPhase(llm_provider=None)
+    spec = architect._parse_spec({
+        "project_name": "fitness",
+        "file_specs": [{
+            "path": "models.py",
+            "purpose": "models",
+            "dependencies": [],
+        }],
+        "entry_point": "main.py",
+    })
+
+    assert spec.entry_point == "main.py"
+    main = spec.get_file_spec("main.py")
+    assert main is not None
+    assert main.dependencies == ["models.py"]
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -344,7 +380,8 @@ class TestArchitectPhase:
         assert isinstance(spec, ProjectSpec)
         assert spec.project_name == "realtime-chat"
         assert len(spec.data_models) == 2
-        assert len(spec.file_specs) == 6
+        assert len(spec.file_specs) == 7
+        assert spec.get_file_spec("tests/test_acceptance.py") is not None
         assert spec.entry_point == "main.py"
 
     @pytest.mark.asyncio

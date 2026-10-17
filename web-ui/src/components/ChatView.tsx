@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useAppStore } from '@/store/appStore';
 import { MessageBubble } from './MessageBubble';
@@ -9,20 +9,47 @@ import { GenUICanvas } from './GenUICanvas';
 import { RunPanel } from './RunPanel';
 import { ContractCard } from './ContractCard';
 import { NudgeBar } from './NudgeBar';
+import { RunTimelineCard } from './RunTimelineCard';
+import { ArrowDown } from 'lucide-react';
 
 export function ChatView() {
   const { messages, isStreaming } = useAppStore();
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const [followLatest, setFollowLatest] = useState(true);
 
   const streamingText = useAppStore((s) => s.streamingText);
+  const completedRuns = useAppStore((s) => s.completedRuns);
+  const activeSessionKey = useAppStore((s) => s.activeSessionKey);
+  const timeline = [
+    ...messages.map((message) => ({
+      kind: 'message' as const, ts: message.timestamp, message,
+    })),
+    ...completedRuns
+      .filter((run) => run.sessionId === activeSessionKey && run.finishedAt)
+      .map((run) => ({
+        kind: 'run' as const, ts: run.finishedAt!, run,
+      })),
+  ].sort((a, b) => a.ts - b.ts);
 
   // Auto-scroll: instant while the streamed text grows (following the
   // cursor without flicker), smooth for whole new messages.
   useEffect(() => {
+    if (!followLatest) return;
     const hasStreamText = !!streamingText.trim();
     bottomRef.current?.scrollIntoView({ behavior: hasStreamText ? 'auto' : 'smooth' });
-  }, [messages.length, isStreaming, streamingText]);
+  }, [messages.length, completedRuns.length, isStreaming, streamingText, followLatest]);
+
+  const handleScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setFollowLatest(el.scrollHeight - el.scrollTop - el.clientHeight < 80);
+  };
+
+  const jumpToLatest = () => {
+    setFollowLatest(true);
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
 
   return (
     <div className="flex flex-col h-full">
@@ -32,11 +59,14 @@ export function ChatView() {
         animate={{ opacity: 1 }}
         transition={{ duration: 0.3, delay: 0.1 }}
         ref={scrollRef}
+        onScroll={handleScroll}
         className="flex-1 overflow-y-auto px-2 sm:px-3 md:px-6 lg:px-10 py-3 sm:py-4 md:py-6 flex flex-col gap-3 sm:gap-4 md:gap-5"
       >
         <div className="w-full max-w-[1200px] mx-auto flex flex-col gap-3 sm:gap-4 md:gap-5">
-        {messages.map((message, index) => (
-          <MessageBubble key={message.id} message={message} index={index} />
+        {timeline.map((item, index) => (
+          item.kind === 'message'
+            ? <MessageBubble key={item.message.id} message={item.message} index={index} />
+            : <RunTimelineCard key={`run-${item.run.id}`} run={item.run} />
         ))}
 
         {/* Streaming message — only once text exists (the typing
@@ -59,6 +89,17 @@ export function ChatView() {
 
         {/* Bottom anchor for auto-scroll */}
         <div ref={bottomRef} />
+
+        {!followLatest && (
+          <button
+            onClick={jumpToLatest}
+            className="sticky bottom-3 ml-auto mr-2 flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11.5px] shadow-lg cursor-pointer"
+            style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
+            aria-label="Jump to latest message"
+          >
+            <ArrowDown size={12} /> Latest
+          </button>
+        )}
       </motion.div>
 
       {/* Live agent activity — what is happening, which brain works */}

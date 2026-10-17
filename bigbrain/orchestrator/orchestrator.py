@@ -356,7 +356,8 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                 "task_id": plan.id,
                 "description": task_desc or f"{len(plan.subtasks)} subtask(s)",
                 "workspace": self.workspace,
-                "subtasks_count": len(plan.subtasks)
+                "subtasks_count": len(plan.subtasks),
+                "session_id": task_data.get("session_id"),
             },
             workspace=self.workspace,
             priority=Priority.NORMAL
@@ -416,6 +417,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                 "plan_id": plan.id,
                 "user_request": user_request,
                 "contracts": list(spec.contracts),
+                "session_id": (plan.original_task.payload or {}).get("session_id"),
             },
             workspace=self.workspace,
             priority=Priority.NORMAL,
@@ -447,7 +449,10 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             await self.bus.broadcast_event(
                 source=self.name,
                 event_type="contracts.approved",
-                payload={"design_id": design_id, "plan_id": plan.id},
+                payload={
+                    "design_id": design_id, "plan_id": plan.id,
+                    "session_id": (plan.original_task.payload or {}).get("session_id"),
+                },
                 workspace=self.workspace,
                 priority=Priority.NORMAL,
             )
@@ -456,7 +461,10 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             await self.bus.broadcast_event(
                 source=self.name,
                 event_type="contracts.rejected",
-                payload={"design_id": design_id, "plan_id": plan.id},
+                payload={
+                    "design_id": design_id, "plan_id": plan.id,
+                    "session_id": (plan.original_task.payload or {}).get("session_id"),
+                },
                 workspace=self.workspace,
                 priority=Priority.NORMAL,
             )
@@ -670,6 +678,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                 "total_files": len(spec.file_specs),
                 "data_models": [dm.name for dm in spec.data_models],
                 "tech_decisions": spec.tech_decisions,
+                "executable": spec.executable,
                 "entry_point": spec.entry_point,
             },
             workspace=self.workspace,
@@ -745,13 +754,14 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
 
         subtasks.append(SubTask(
             id=assembler_sid,
-            description=f"Assemble and run {project_name}",
+            description=f"Assemble and {'run' if spec.executable else 'validate'} {project_name}",
             brain_target="python_brain",
             payload={
                 "type": "assemble_and_run",
                 "user_request": user_request,
                 "project_name": project_name,
                 "all_files": all_files_summary,
+                "executable": spec.executable,
                 "entry_point": spec.entry_point,
                 "execution_strategy": spec.execution_strategy,
             },
@@ -1582,12 +1592,53 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                     "status": plan.status.value,
                     "workspace": self.workspace,
                     "subtasks_total": len(plan.subtasks),
+                    "session_id": (plan.original_task.payload or {}).get("session_id"),
+                    **self._project_result_metadata(plan),
                     **fail_payload,
                 },
                 workspace=self.workspace,
                 priority=Priority.NORMAL
             )
     
+    @staticmethod
+    def _project_result_metadata(plan: TaskPlan) -> dict:
+        """Expose only launch/navigation metadata from completed subtasks."""
+        for result in reversed(list(plan.get_results().values())):
+            if not isinstance(result, dict):
+                continue
+            data = result.get("data", result)
+            if not isinstance(data, dict):
+                continue
+            if data.get("project_name") and data.get("entry_point"):
+                return {
+                    "project_name": data["project_name"],
+                    "entry_point": data["entry_point"],
+                    "runnable": bool(data.get("success") and data.get("stdout", "").strip()),
+                }
+        task_payload = plan.original_task.payload or {}
+        project_path = task_payload.get("project_path")
+        if isinstance(project_path, str) and project_path.strip():
+            try:
+                from ..web.fs_api import workspace_root
+
+                root = workspace_root().resolve()
+                project_dir = (root / project_path).resolve()
+                if root not in project_dir.parents:
+                    return {}
+                manifest = json.loads(
+                    (project_dir / ".project.json").read_text(encoding="utf-8"))
+                entry_point = manifest.get("entry_point")
+                if entry_point:
+                    return {
+                        "project_name": manifest.get("name") or project_dir.name,
+                        "project_path": project_dir.relative_to(root).as_posix(),
+                        "entry_point": entry_point,
+                        "runnable": bool(manifest.get("run")),
+                    }
+            except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                pass
+        return {}
+
     async def _handle_cancel_request(self, message: BusMessage) -> None:
         """Handle task cancellation requests."""
         task_id = message.payload.get("task_id")
@@ -1887,34 +1938,41 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
     def _analyze_execution_mode(self, subtasks: List[SubTask], user_request: str) -> str:
         """
         Analyze task complexity and choose execution mode.
-        
-        "plan first, analyze second" approach:
-        - ≤2 independent tasks OR ≤4 total tasks → "todo" mode (sequential, single brain)
-        - >2 independent AND >4 total → "dag" mode (parallel, multi-brain)
-        
+
+        - A plan WITH dependency structure is a DAG by construction
+          (projects: file writes then assembly) -> "dag": independent
+          subtasks dispatch to the worker pool IN PARALLEL, dependent
+          ones wait. Size alone must not serialize a project.
+        - A flat list of small independent tasks stays "todo"
+          (sequential — order matters to the user, overhead is lower).
+        - >2 independent AND >4 total -> "dag" (genuine parallel win).
+
         Args:
             subtasks: List of planned subtasks
             user_request: Original user request for context
-            
+
         Returns:
             "todo" or "dag" execution mode
         """
         if not subtasks:
             return "todo"
-        
+
         total_tasks = len(subtasks)
-        
+
         # Count independent tasks (no dependencies)
         independent_count = sum(1 for st in subtasks if not st.dependencies)
-        
+
+        # A subtask with dependencies means the plan is a real DAG.
+        has_dependencies = any(st.dependencies for st in subtasks)
+
         # Apply decision rules
-        if independent_count <= 2 or total_tasks <= 4:
-            mode = "todo"
-            reason = f"{independent_count} independent tasks, {total_tasks} total (≤2 indep OR ≤4 total)"
-        else:
+        if has_dependencies or (independent_count > 2 and total_tasks > 4):
             mode = "dag"
-            reason = f"{independent_count} independent tasks, {total_tasks} total (>2 indep AND >4 total)"
-        
+            reason = (f"{independent_count} independent, {total_tasks} total, "
+                      f"has_dependencies={has_dependencies}")
+        else:
+            mode = "todo"
+            reason = f"{independent_count} independent tasks, {total_tasks} total (flat small list)"
         logger.info("Execution mode: %s (%s)", mode, reason)
         
         # Emit planning event with mode selection (best-effort)

@@ -144,6 +144,20 @@ class FrontBrain:
             priority=Priority.LOW
         )
     
+    def _hydrate_session_history(self, session_id: Optional[str], messages: Any) -> None:
+        """Restore the exact persisted session window after restarts or tab changes."""
+        if not session_id or not isinstance(messages, list):
+            return
+        normalized = []
+        for item in messages[-20:]:
+            if not isinstance(item, dict):
+                continue
+            role = item.get("role")
+            content = item.get("content")
+            if role in ("user", "assistant") and isinstance(content, str) and content.strip():
+                normalized.append({"role": role, "content": content})
+        self._history_for(session_id)[:] = normalized
+
     async def handle_user_input(self, input_text: str, input_type: str = "text",
                                 session_id: Optional[str] = None,
                                 llm_content: Any = None) -> str:
@@ -557,6 +571,8 @@ Type 'quit' or 'exit' to stop."""
         """
         text = message.payload.get("text", "").strip()
         session_id = message.payload.get("session_id")
+        self._hydrate_session_history(
+            session_id, message.payload.get("conversation_history"))
 
         # Attachments (uploaded via POST /api/attachments): record each
         # file in persistent memory — recall makes it findable months
@@ -610,6 +626,7 @@ Type 'quit' or 'exit' to stop."""
             if parsed and route_valid:
                 reply_text = parsed.get("reply", "Working on it...")
                 await self._emit_chat_message("assistant", reply_text)
+                await self._emit_task_routing(text)
                 
                 ws = "default"  # Always route to the single orchestrator
                 task_data = {
@@ -617,6 +634,8 @@ Type 'quit' or 'exit' to stop."""
                     "brain": route_brain,
                     "reply_to_ui": True,
                     "user_request": text,
+                    "session_id": session_id,
+                    "project_path": self._current_project(),
                 }
                 await self.bus.send_task(
                     source=self.name,
@@ -628,6 +647,7 @@ Type 'quit' or 'exit' to stop."""
                 # Front Brain wants to delegate — send the reply part to chat
                 reply_text = parsed.get("reply", "Working on it...")
                 await self._emit_chat_message("assistant", reply_text)
+                await self._emit_task_routing(str(parsed["task"]))
                 
                 # Send ONE compound task to the orchestrator.
                 # Always route to "default" workspace — the system only creates
@@ -646,6 +666,8 @@ Type 'quit' or 'exit' to stop."""
                         "description": description,
                         "user_request": task_request,
                         "reply_to_ui": True,
+                        "session_id": session_id,
+                        "project_path": self._current_project(),
                     },
                     priority=Priority.NORMAL,
                 )
@@ -653,6 +675,7 @@ Type 'quit' or 'exit' to stop."""
                 # Legacy multi-task format — merge into single compound request
                 reply_text = parsed.get("reply", "Working on it...")
                 await self._emit_chat_message("assistant", reply_text)
+                await self._emit_task_routing(text)
                 
                 tasks = parsed.get("tasks", [])
                 combined_request = "; then ".join(
@@ -669,6 +692,8 @@ Type 'quit' or 'exit' to stop."""
                         "description": description,
                         "user_request": combined_request,
                         "reply_to_ui": True,
+                        "session_id": session_id,
+                        "project_path": self._current_project(),
                     },
                     priority=Priority.NORMAL,
                 )
@@ -810,20 +835,35 @@ Type 'quit' or 'exit' to stop."""
         no LLM is available.
         """
         # Build context from raw outputs
-        output_text = ""
-        for kind, content in raw_outputs:
+        # Concrete execution evidence must survive even when research is
+        # verbose. The old global 3k prefix could omit successful code.
+        priority = {"code": 0, "files": 1, "preview": 2,
+                    "action": 3, "code_only": 4, "research": 5}
+        ordered_outputs = sorted(
+            enumerate(raw_outputs),
+            key=lambda item: (priority.get(item[1][0], 9), item[0]),
+        )
+        chunks = []
+        per_kind_limit = {"code": 3500, "research": 1500,
+                          "code_only": 800}
+        for _, (kind, content) in ordered_outputs:
+            content = str(content)
+            limit = per_kind_limit.get(kind, 1200)
+            if len(content) > limit:
+                content = content[:limit] + "\n[truncated]"
             if kind == "research":
-                output_text += f"Research findings:\n{content}\n\n"
+                chunks.append(f"Research findings:\n{content}")
             elif kind == "code":
-                output_text += f"Code execution output:\n{content}\n\n"
+                chunks.append(f"Code execution output:\n{content}")
             elif kind == "code_only":
-                output_text += f"Generated code (no output):\n{content[:500]}\n\n"
+                chunks.append(f"Generated code (no output):\n{content}")
             elif kind == "action":
-                output_text += f"Action performed:\n{content}\n\n"
+                chunks.append(f"Action performed:\n{content}")
             elif kind == "preview":
-                output_text += f"Deployment: {content}\n\n"
+                chunks.append(f"Deployment: {content}")
             elif kind == "files":
-                output_text += f"{content}\n\n"
+                chunks.append(content)
+        output_text = "\n\n".join(chunks)
         
         # Find the user's original question from conversation history
         user_question = ""
@@ -858,7 +898,7 @@ Type 'quit' or 'exit' to stop."""
                         )},
                         {"role": "user", "content": (
                             f"User's question: {user_question}\n\n"
-                            f"Task output:\n{output_text[:3000]}"
+                            f"Task output:\n{output_text[:7000]}"
                         )},
                     ],
                     stream=False,
@@ -910,7 +950,19 @@ Type 'quit' or 'exit' to stop."""
             },
             priority=Priority.NORMAL,
         )
-    
+
+    async def _emit_task_routing(self, description: str) -> None:
+        """Keep the initiating conversation visibly busy during planning."""
+        await self.bus.broadcast_event(
+            source=self.name,
+            event_type="task.routing",
+            payload={
+                "description": description[:140],
+                "session_id": self._last_session_id,
+            },
+            priority=Priority.NORMAL,
+        )
+
     async def _process_filtered_event(self, event: BusMessage) -> None:
         """
         Process an event that passed focus filtering.

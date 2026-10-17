@@ -247,7 +247,11 @@ export class BigBrainConnection implements ConnectionLike {
     // transcript on reconnect comes from loadHistory, not from replay.
     // EXCEPTION: a replayed contracts.proposal is still PENDING live
     // state (the plan waits for the user) — the card must come back.
-    if (isReplay && event !== 'contracts.proposal') return;
+    const replayableLiveState = new Set([
+      'contracts.proposal', 'task.routing', 'task.received',
+      'subtask.started',
+    ]);
+    if (isReplay && !replayableLiveState.has(event)) return;
 
     if (event === 'chat.delta') {
       this.callbacks.onStreamDelta?.({

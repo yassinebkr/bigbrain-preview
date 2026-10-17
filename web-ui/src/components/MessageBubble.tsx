@@ -1,7 +1,7 @@
 import { motion } from 'framer-motion';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Copy, ThumbsUp, ThumbsDown } from 'lucide-react';
+import { Check, Copy } from 'lucide-react';
 import { useState } from 'react';
 import type { Message } from '@/types';
 
@@ -15,6 +15,16 @@ const easeOut = [0, 0, 0.2, 1] as [number, number, number, number];
 export function MessageBubble({ message }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const [showActions, setShowActions] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const copyMessage = async () => {
+    try {
+      await navigator.clipboard.writeText(message.content);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch { /* clipboard may be unavailable */ }
+  };
+
 
   return (
     <motion.div
@@ -44,7 +54,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           </div>
         )}
 
-        <div className={`flex flex-col ${isUser ? 'items-end' : 'items-start'}`}>
+        <div className={`relative flex flex-col ${isUser ? 'items-end' : 'items-start'}`}>
           {/* Bubble */}
           <div
             className="px-4 py-3"
@@ -151,52 +161,26 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           </span>
 
           {/* Action Buttons (AI messages only) */}
-          {!isUser && showActions && (
+          {!isUser && (
             <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
+              initial={false}
+              animate={{ opacity: showActions || copied ? 1 : 0, y: showActions || copied ? 0 : -2 }}
               transition={{ duration: 0.2 }}
-              className="flex items-center gap-1 mt-1"
+              className="absolute left-2 top-full z-10 flex items-center mt-1"
+              style={{ pointerEvents: showActions || copied ? 'auto' : 'none' }}
             >
               <button
-                className="p-2 rounded-md transition-colors duration-150 cursor-pointer min-w-[36px] min-h-[36px] flex items-center justify-center"
-                style={{ backgroundColor: 'transparent' }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = 'var(--bg-button)';
+                className="h-7 px-2 rounded-md transition-colors duration-150 cursor-pointer flex items-center gap-1.5"
+                style={{
+                  backgroundColor: 'var(--bg-surface)',
+                  border: '1px solid var(--border-subtle)',
+                  color: copied ? 'var(--success, #34c759)' : 'var(--text-tertiary)',
                 }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = 'transparent';
-                }}
-                onClick={() => navigator.clipboard.writeText(message.content)}
+                onClick={copyMessage}
                 aria-label="Copy message"
               >
-                <Copy size={15} style={{ color: 'var(--text-tertiary)' }} />
-              </button>
-              <button
-                className="p-2 rounded-md transition-colors duration-150 cursor-pointer min-w-[36px] min-h-[36px] flex items-center justify-center"
-                style={{ backgroundColor: 'transparent' }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = 'var(--bg-button)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = 'transparent';
-                }}
-                aria-label="Thumbs up"
-              >
-                <ThumbsUp size={15} style={{ color: 'var(--text-tertiary)' }} />
-              </button>
-              <button
-                className="p-2 rounded-md transition-colors duration-150 cursor-pointer min-w-[36px] min-h-[36px] flex items-center justify-center"
-                style={{ backgroundColor: 'transparent' }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = 'var(--bg-button)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = 'transparent';
-                }}
-                aria-label="Thumbs down"
-              >
-                <ThumbsDown size={15} style={{ color: 'var(--text-tertiary)' }} />
+                {copied ? <Check size={13} /> : <Copy size={13} />}
+                <span className="text-[11px]">{copied ? 'Copied' : 'Copy'}</span>
               </button>
             </motion.div>
           )}

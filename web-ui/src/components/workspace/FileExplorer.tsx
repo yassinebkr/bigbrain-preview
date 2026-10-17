@@ -128,6 +128,8 @@ export function FileExplorer() {
   // "Workspace" button): show it in the inline CodeSurface.
   useEffect(() => {
     if (pendingOpenFile) {
+      const parent = pendingOpenFile.includes('/') ? pendingOpenFile.slice(0, pendingOpenFile.lastIndexOf('/')) : '';
+      refreshRef.current?.(parent);
       setViewingPath(pendingOpenFile);
       setOpenPaths((paths) => paths.includes(pendingOpenFile) ? paths : [...paths, pendingOpenFile]);
     }

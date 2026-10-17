@@ -1,6 +1,8 @@
 """PythonBrain - Python code execution brain with subprocess isolation."""
 
 import asyncio
+import json
+import logging
 import os
 import re
 import signal
@@ -13,6 +15,8 @@ from typing import Any, Dict, List, Optional
 
 from .base import BaseBrain
 from ..bus.message import BusMessage, Priority
+
+logger = logging.getLogger(__name__)
 
 
 class PythonBrain(BaseBrain):
@@ -969,24 +973,15 @@ Rules:
             }
 
         try:
-            process = await asyncio.create_subprocess_exec(
-                sys.executable, str(target),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=str(self.work_dir),
-                env=self._get_execution_env(),
-            )
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    process.communicate(), timeout=timeout
-                )
-                exit_code = process.returncode
-            except asyncio.TimeoutError:
-                process.kill()
-                await process.wait()
-                stdout = b""
-                stderr = f"Execution timed out after {timeout} seconds".encode()
-                exit_code = -1
+            stdout_str, stderr_str, exit_code, timed_out = (
+                await self._exec_streamed(
+                    [sys.executable, "-u", str(target)],
+                    cwd=self.work_dir,
+                    env=self._get_execution_env(),
+                    timeout=timeout))
+            if timed_out:
+                stderr_str += (f"Execution timed out after {timeout}"
+                               " seconds")
         except Exception as e:
             return {
                 "success": False,
@@ -1000,9 +995,9 @@ Rules:
             }
 
         result = {
-            "success": exit_code == 0,
-            "stdout": stdout.decode(errors="replace"),
-            "stderr": stderr.decode(errors="replace"),
+            "success": exit_code == 0 and not timed_out,
+            "stdout": stdout_str,
+            "stderr": stderr_str,
             "exit_code": exit_code,
             "files_created": [],
             "execution_time": time.time() - start,
@@ -1338,17 +1333,50 @@ Rules:
                 "files_with_errors": syntax_errors,
             }
         
-        # Find the entry point (main.py, app.py, or last file in the list)
-        entry_point = None
-        for f in all_files:
-            path = f["path"]
-            if path in ("main.py", "run.py", "server.py", "app.py"):
-                entry_point = path
-                break
-        if not entry_point:
-            # Use the last Python file
-            py_files = [f["path"] for f in all_files if f["path"].endswith(".py")]
-            entry_point = py_files[-1] if py_files else all_files[-1]["path"]
+        # The architect owns the entry point contract. A non-executable
+        # deliverable is allowed only through its explicit structured flag.
+        executable = payload.get("executable", True) is not False
+        if not executable:
+            import time
+            project_manifest = {
+                "name": project_name,
+                "created": time.time(),
+                "executable": False,
+                "entry_point": None,
+            }
+            (project_dir / ".project.json").write_text(
+                json.dumps(project_manifest, indent=2), encoding="utf-8")
+            await self.send_progress({
+                "stage": "completed",
+                "success": True,
+                "files_verified": len(written_files),
+                "runnable": False,
+            })
+            return {
+                "success": True,
+                "stdout": "",
+                "stderr": "",
+                "exit_code": None,
+                "project_name": project_name,
+                "entry_point": None,
+                "runnable": False,
+                "files_written": list(written_files.keys()),
+            }
+
+        # Never guess by running the last file: that turned passive modules
+        # into false successes.
+        entry_point = str(payload.get("entry_point") or "main.py")
+        if entry_point not in written_files:
+            return {
+                "success": False,
+                "error": f"Declared entry point is missing: {entry_point}",
+                "stdout": "",
+                "stderr": f"{entry_point} is not present in the project plan",
+                "exit_code": -5,
+                "entry_point": entry_point,
+                "project_name": project_name,
+                "files_written": list(written_files.keys()),
+            }
         
         # Detect if this is a web server project
         is_web = self._is_web_project(written_files)
@@ -1390,25 +1418,14 @@ Rules:
         run_env["PATH"] = f"{venv_bin}:{run_env.get('PATH', '')}"
 
         try:
-            process = await asyncio.create_subprocess_exec(
-                str(venv_python), str(entry_path),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            # Multi-file projects use the same line streaming path as
+            # single-file executions. -u disables Python child buffering.
+            stdout_str, stderr_str, exit_code, timed_out = await self._exec_streamed(
+                [str(venv_python), "-u", str(entry_path)],
                 cwd=str(project_dir),
                 env=run_env,
+                timeout=timeout,
             )
-            
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    process.communicate(), timeout=timeout
-                )
-                exit_code = process.returncode
-            except asyncio.TimeoutError:
-                process.kill()
-                await process.wait()
-                stdout = b""
-                stderr = f"Execution timed out after {timeout} seconds".encode()
-                exit_code = -1
                 
         except Exception as e:
             end_time = time.time()
@@ -1420,9 +1437,15 @@ Rules:
             }
         
         end_time = time.time()
-        stdout_str = stdout.decode("utf-8", errors="replace")
-        stderr_str = stderr.decode("utf-8", errors="replace")
-        success = exit_code == 0
+        success = exit_code == 0 and bool(stdout_str.strip())
+        if exit_code == 0 and not stdout_str.strip():
+            exit_code = -6
+            stderr_str = (
+                stderr_str.rstrip() + "\n" if stderr_str.strip() else ""
+            ) + (
+                "Entry point exited successfully but produced no output. "
+                "A runnable project must provide a non-interactive demo/result."
+            )
         
         # Build project summary
         file_summary = "\n".join(f"  {f['path']} ({len(written_files.get(f['path'], ''))} chars)"
@@ -1434,11 +1457,22 @@ Rules:
             "stderr": stderr_str,
             "exit_code": exit_code,
             "execution_time": end_time - start_time,
+            "timed_out": timed_out,
             "entry_point": entry_point,
             "project_name": project_name,
             "files_written": list(written_files.keys()),
             "project_summary": file_summary,
         }
+
+        if success:
+            project_manifest = {
+                "name": project_name,
+                "created": time.time(),
+                "entry_point": entry_point,
+                "run": ["python", entry_point],
+            }
+            (project_dir / ".project.json").write_text(
+                json.dumps(project_manifest, indent=2), encoding="utf-8")
 
         # Project evidence covers the complete planned file set, not only
         # the entry point. Nested tests are discovered from the project root.
@@ -1466,13 +1500,21 @@ Rules:
                                for s in manifest.stages],
                 }
                 await self._notify_verification(manifest, verdict)
+                if verdict != "passed":
+                    success = False
+                    result["success"] = False
+                    result["runnable"] = False
+                    (project_dir / ".project.json").unlink(missing_ok=True)
+                    result["error"] = (
+                        f"Project verification {verdict}; it is not deliverable"
+                    )
             except Exception as gate_error:
                 result["verification"] = {
                     "verdict": None, "error": str(gate_error)[:200]}
 
         
         if not success:
-            result["error"] = f"Entry point {entry_point} failed with exit code {exit_code}"
+            result["error"] = f"Project is not runnable via {entry_point} (exit {exit_code})"
             if stderr_str:
                 result["error"] += f": {stderr_str[:200]}"
         
@@ -2369,6 +2411,71 @@ Output ONLY the corrected file content, no explanation."""
             file_path.write_text(content, encoding='utf-8')
             self._temp_files.add(file_path)
     
+    async def _exec_streamed(self, args: list, *, cwd,
+                             env=None, timeout: int) -> tuple:
+        """Run a subprocess and stream its output line by line.
+
+        Every stdout/stderr line is broadcast as an `execution.output`
+        bus event (brain + subtask_id + stream + delta) so the UI shows
+        what the agent is doing WHILE it works — the user is no longer
+        blind during a run. Best effort: an event failure never breaks
+        the execution. `-u` keeps the child from block-buffering.
+
+        Returns (stdout_str, stderr_str, exit_code, timed_out); partial
+        output collected before a timeout is preserved.
+        """
+        from ..bus.message import Priority
+
+        # stdin = DEVNULL: an input() or sys.stdin.read() gets an
+        # immediate EOF instead of hanging the run until its timeout.
+        process = await asyncio.create_subprocess_exec(
+            *args,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(cwd),
+            env=env,
+        )
+        subtask_id = None
+        if self._current_task and self._current_task.payload:
+            subtask_id = self._current_task.payload.get("_subtask_id")
+
+        out_buf: list = []
+        err_buf: list = []
+
+        async def pump(stream, name: str, buf: list) -> None:
+            while True:
+                line = await stream.readline()
+                if not line:
+                    return
+                text = line.decode("utf-8", errors="replace")
+                buf.append(text)
+                try:
+                    await self.send_event("execution.output", {
+                        "brain": self.name,
+                        "subtask_id": subtask_id,
+                        "stream": name,
+                        "delta": text,
+                    })
+                except Exception:
+                    pass  # streaming must never break the execution
+
+        try:
+            await asyncio.wait_for(asyncio.gather(
+                pump(process.stdout, "out", out_buf),
+                pump(process.stderr, "err", err_buf),
+            ), timeout=timeout)
+            await process.wait()
+            return ("".join(out_buf), "".join(err_buf),
+                    process.returncode, False)
+        except asyncio.TimeoutError:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+            await process.wait()
+            return ("".join(out_buf), "".join(err_buf), -1, True)
+
     async def _execute_code(self, code: str, timeout: int) -> Dict[str, Any]:
         """
         Execute Python code in subprocess with isolation.
@@ -2404,32 +2511,24 @@ Output ONLY the corrected file content, no explanation."""
         })
         
         try:
-            # Execute using subprocess
-            process = await asyncio.create_subprocess_exec(
-                sys.executable, str(script_file),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=str(self.work_dir),
-                env=self._get_execution_env()
-            )
-            
-            # Wait for completion with timeout
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    process.communicate(), timeout=timeout
-                )
-                exit_code = process.returncode
-                timed_out = False
-                
-            except asyncio.TimeoutError:
-                # Kill the process on timeout
-                process.kill()
-                await process.wait()
-                stdout = b""
-                stderr = f"Execution timed out after {timeout} seconds".encode()
-                exit_code = -1
-                timed_out = True
-                
+            # Execute using subprocess — output STREAMS to the UI while
+            # the program runs (execution.output events per line).
+            stdout_str, stderr_str, exit_code, timed_out = (
+                await self._exec_streamed(
+                    [sys.executable, "-u", str(script_file)],
+                    cwd=self.work_dir,
+                    env=self._get_execution_env(),
+                    timeout=timeout))
+            stdout = stdout_str.encode("utf-8", errors="replace")
+            stderr = stderr_str.encode("utf-8", errors="replace")
+
+            if timed_out:
+                # Kill happened inside _exec_streamed; report + notify.
+                stderr_str = stderr_str.rstrip() + (
+                    f"\nExecution timed out after {timeout} seconds"
+                    if stderr_str else
+                    f"Execution timed out after {timeout} seconds")
+                stderr = stderr_str.encode("utf-8", errors="replace")
                 await self.send_event("brain.timeout", {
                     "brain": self.name,
                     "timeout": timeout,

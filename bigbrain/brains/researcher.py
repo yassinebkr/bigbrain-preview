@@ -101,25 +101,15 @@ class BraveSearch:
             await self._client.aclose()
 
 
-class MockSearch:
-    """Fallback when no Brave API key is available."""
+class UnavailableSearch:
+    """Honest no-op when no real search provider is configured."""
 
     async def search(self, query: str, count: int = 5) -> List[Dict[str, Any]]:
-        await asyncio.sleep(0.05)
-        return [{
-            "title": f"Mock result for: {query}",
-            "url": f"https://example.com/{query.replace(' ', '-')[:30]}",
-            "snippet": f"This is a mock search result for '{query}'. "
-                       "Configure BRAVE_API_KEY for real web search.",
-            "domain": "example.com",
-            "age": "",
-        }]
+        return []
 
     async def parallel_search(self, queries: List[str],
                                count_per_query: int = 5) -> Dict[str, List[Dict]]:
-        tasks = [self.search(q, count_per_query) for q in queries]
-        raw = await asyncio.gather(*tasks)
-        return dict(zip(queries, raw))
+        return {query: [] for query in queries}
 
     async def close(self):
         pass
@@ -147,14 +137,14 @@ class ResearcherBrain(BaseBrain):
         self.max_searches = max_searches
         self.max_results_per_search = max_results_per_search
 
-        # Search provider: real Brave or mock fallback
+        # Never expose synthetic sources as evidence in a live run.
         if search_provider:
             self.search = search_provider
         elif brave_api_key:
             self.search = BraveSearch(brave_api_key, max_results_per_search)
         else:
-            self.search = MockSearch()
-            logger.info("No Brave API key — using mock search")
+            self.search = UnavailableSearch()
+            logger.warning("No Brave API key — web research is unavailable")
 
     async def handle_task(self, message: BusMessage) -> Dict[str, Any]:
         """Handle research tasks using ReWOO pattern.
@@ -381,6 +371,23 @@ Instructions:
 
         # Step 3: Triangulate sources
         triangulation = self._triangulate(search_results)
+
+        if not triangulation["unique_sources"]:
+            return {
+                "success": True,
+                "summary": (
+                    "Web research was unavailable because no real search "
+                    "provider is configured; no sources were used."
+                ),
+                "research_unavailable": True,
+                "confidence": 0.0,
+                "unique_sources": 0,
+                "unique_domains": 0,
+                "domain_diversity": 0.0,
+                "queries_used": queries,
+                "top_sources": [],
+                "execution_time": round(time.time() - start, 2),
+            }
 
         await self.send_progress({
             "stage": "triangulated",

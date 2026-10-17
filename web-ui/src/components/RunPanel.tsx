@@ -11,7 +11,7 @@
 // files written (clickable: opens the code viewer), errors, and a
 // nudge when files landed in sandbox/ with no project selected.
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Loader2,
@@ -104,8 +104,30 @@ function VerificationSection({ verification }: { verification: RunVerification }
   );
 }
 
+function LiveOutput({ value }: { value: string }) {
+  const ref = useRef<HTMLPreElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [value]);
+  return (
+    <pre
+      ref={ref}
+      className="ml-[23px] mr-2 max-h-[84px] overflow-auto px-2 py-1 rounded-md text-[10.5px] leading-snug whitespace-pre-wrap"
+      style={{
+        color: 'var(--text-tertiary)',
+        backgroundColor: 'var(--bg-primary)',
+        fontFamily: 'var(--font-mono, monospace)',
+      }}
+    >
+      {value}
+    </pre>
+  );
+}
+
 export function RunPanel() {
   const run = useAppStore((s) => s.activeRun);
+  const activeSessionKey = useAppStore((s) => s.activeSessionKey);
   const expanded = useAppStore((s) => s.runPanelOpen);
   const setExpanded = useAppStore((s) => s.setRunPanelOpen);
   const dismissed = useAppStore((s) => s.runPanelDismissed);
@@ -132,13 +154,15 @@ export function RunPanel() {
     if (run) setDismissed(false);
   }, [run?.id]);
 
-  if (!run || dismissed) return null;
+  if (!run || run.sessionId !== activeSessionKey || dismissed) return null;
 
   const stepsDone = run.steps.filter((s) => s.status !== 'running').length;
   const running = run.steps.find((s) => s.status === 'running');
   const summary =
     run.status === 'running'
-      ? running
+      ? run.awaitingApproval
+        ? 'Awaiting contract approval'
+        : running
         ? `${running.brain || 'brain'} — ${running.description}`
         : run.description
       : run.status === 'done'
@@ -245,26 +269,31 @@ export function RunPanel() {
                   {run.steps.length > 0 && (
                     <div className="flex flex-col gap-1">
                       {run.steps.map((step) => (
-                        <div key={step.id} className="flex items-center gap-2 text-[11.5px]">
-                          <span style={{ color: statusColor(step.status) }}>
-                            <StatusIcon status={step.status} size={11} />
-                          </span>
-                          {step.brain && (
-                            <span
-                              className="flex-shrink-0 px-1.5 py-px rounded"
-                              style={{ color: 'var(--accent-blue)', border: '1px solid var(--border-subtle)' }}
-                            >
-                              {step.brain}
+                        <div key={step.id} className="flex flex-col gap-0.5">
+                          <div className="flex items-center gap-2 text-[11.5px]">
+                            <span style={{ color: statusColor(step.status) }}>
+                              <StatusIcon status={step.status} size={11} />
                             </span>
-                          )}
-                          <span className="truncate flex-1 min-w-0" style={{ color: 'var(--text-secondary)' }}>
-                            {step.description}
-                          </span>
-                          {step.durationMs != null && step.status !== 'running' && (
-                            <span className="flex-shrink-0" style={{ color: 'var(--text-tertiary)' }}>
-                              {(step.durationMs / 1000).toFixed(1)}s
+                            {step.brain && (
+                              <span
+                                className="flex-shrink-0 px-1.5 py-px rounded"
+                                style={{ color: 'var(--accent-blue)', border: '1px solid var(--border-subtle)' }}
+                              >
+                                {step.brain}
+                              </span>
+                            )}
+                            <span className="truncate flex-1 min-w-0" style={{ color: 'var(--text-secondary)' }}>
+                              {step.description}
                             </span>
-                          )}
+                            {step.durationMs != null && step.status !== 'running' && (
+                              <span className="flex-shrink-0" style={{ color: 'var(--text-tertiary)' }}>
+                                {(step.durationMs / 1000).toFixed(1)}s
+                              </span>
+                            )}
+                          </div>
+                          {/* Live output — what the brain's program is
+                              printing RIGHT NOW (execution.output). */}
+                          {step.liveOutput && <LiveOutput value={step.liveOutput} />}
                         </div>
                       ))}
                     </div>
