@@ -184,6 +184,18 @@ _REGISTRY: dict[str, ModelEntry] = {
         health_path="/models",
         reasoning=False,
     ),
+    "mistral-studio-large-4": ModelEntry(
+        key="mistral-studio-large-4",
+        display_name="Mistral Large 4 (Studio API)",
+        provider="openai_compat",
+        model_id="mistral-large-4",
+        api_key_env="MISTRAL_STUDIO_API_KEY",
+        base_url="https://api.mistral.ai/v1",
+        health_path="/models",
+        reasoning=False,
+        vision=True,
+        context_window=1_000_000,
+    ),
     "mistral-glm-5.3": ModelEntry(
         key="mistral-glm-5.3",
         display_name="GLM 5.3 (Mistral hosted)",

@@ -588,6 +588,27 @@ class TestOpenRouterKey:
             await ork.connect_key("sk-or-bad")
 
 
+class TestMistralStudioKey:
+    def test_env_file_upsert_keeps_studio_separate(self, tmp_path):
+        from bigbrain.web import mistral_studio_key as msk
+        env = tmp_path / ".env"
+        msk._upsert_assignment(env, "MISTRAL_STUDIO_API_KEY", "studio-1")
+        msk._upsert_assignment(env, "BIGBRAIN_PROVIDER", "mistral-studio-large-4")
+        text = env.read_text()
+        assert "MISTRAL_STUDIO_API_KEY=studio-1" in text
+        assert "BIGBRAIN_PROVIDER=mistral-studio-large-4" in text
+        assert "MISTRAL_API_KEY" not in text
+
+    @pytest.mark.asyncio
+    async def test_connect_rejects_bad_key(self, monkeypatch):
+        from bigbrain.web import mistral_studio_key as msk
+        async def fake_verify(key):
+            return "auth_failed"
+        monkeypatch.setattr(msk, "verify_key", fake_verify)
+        with pytest.raises(msk.MistralStudioKeyError):
+            await msk.connect_key("studio-bad")
+
+
 # ================================================================
 # TRUTHFUL AVAILABILITY + PROVIDER RELOAD (live-pass feedback)
 # ================================================================

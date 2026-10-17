@@ -3,11 +3,12 @@
 Priority order (first available wins, overridable with ``BIGBRAIN_PROVIDER``):
 1. ``anthropic-oauth``  — stored Claude Pro/Max OAuth token
 2. ``openrouter-*``    — OPENROUTER_API_KEY (kimi k3, sol, opus 5.5, k2.7, luna)
-3. ``mistral-vibe``    — MISTRAL_API_KEY (set by the browser sign-in wizard)
-4. ``kimi-k3``         — KIMI_API_KEY (direct)
-5. litellm keys        — OPENAI/ANTHROPIC/GOOGLE_API_KEY (legacy env keys)
-6. ``codex-chatgpt``   — codex CLI on PATH with stored credentials
-7. mock
+3. ``mistral-studio-large-4`` — MISTRAL_STUDIO_API_KEY (developer API)
+4. ``mistral-vibe``    — MISTRAL_API_KEY (set by the browser sign-in wizard)
+5. ``kimi-k3``         — KIMI_API_KEY (direct)
+6. litellm keys        — OPENAI/ANTHROPIC/GOOGLE_API_KEY (legacy env keys)
+7. ``codex-chatgpt``   — codex CLI on PATH with stored credentials
+8. mock
 
 Subscription-backed providers (codex, anthropic-oauth) are picked by the
 presence of their local credential store, never by an env API key.
@@ -22,7 +23,7 @@ from typing import Optional
 
 # Registry keys selectable through BIGBRAIN_PROVIDER.
 KNOWN_PROVIDER_KEYS = {
-    "anthropic-oauth", "codex-chatgpt", "mistral-vibe", "kimi-k3",
+    "anthropic-oauth", "codex-chatgpt", "mistral-vibe", "mistral-studio-large-4", "kimi-k3",
     "openrouter-gpt-sol", "openrouter-kimi-k3", "openrouter-opus-5.5",
     "openrouter-kimi-k2.7-code", "openrouter-luna",
 }
@@ -63,6 +64,8 @@ def select_registry_key() -> Optional[str]:
         return "anthropic-oauth"
     if os.environ.get("OPENROUTER_API_KEY"):
         return "openrouter-gpt-sol"
+    if os.environ.get("MISTRAL_STUDIO_API_KEY"):
+        return "mistral-studio-large-4"
     if os.environ.get("MISTRAL_API_KEY"):
         return "mistral-vibe"
     if os.environ.get("KIMI_API_KEY"):

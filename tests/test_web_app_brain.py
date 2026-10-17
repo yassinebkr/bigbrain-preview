@@ -40,6 +40,18 @@ def test_web_project_validation_rejects_broken_local_asset(tmp_path):
     assert "missing local asset: missing.js" in "; ".join(result["errors"])
 
 
+def test_web_project_accepts_rich_browser_test_schema(tmp_path):
+    project, files = _write_web_project(tmp_path)
+    (project / "tests" / "acceptance.json").write_text(json.dumps({
+        "tests": [{"title": "loads the course", "assertions": [{"type": "visible"}]}]
+    }))
+    assert WebAppBrain.validate_project(project, files)["passed"] is True
+
+
+def test_web_project_name_cannot_nest_inside_selected_project():
+    assert WebAppBrain._safe_project_name("blender/photoshop") == Path("photoshop")
+
+
 @pytest.mark.asyncio
 async def test_web_app_brain_creates_verified_preview_manifest(tmp_path):
     _, files = _write_web_project(tmp_path)
@@ -90,3 +102,12 @@ def test_architect_repairs_minimal_web_spec_with_required_files():
     assert spec.deliverable_type == "web_app"
     assert spec.interaction_mode == "browser"
     assert {"index.html", "styles.css", "app.js", "tests/acceptance.json"} <= paths
+
+
+def test_architect_normalizes_project_name_to_one_directory():
+    spec = ArchitectPhase(llm_provider=None)._parse_spec({
+        "project_name": "blender-learning/photoshop-learning",
+        "deliverable_type": "web_app",
+        "file_specs": [],
+    })
+    assert spec.project_name == "photoshop-learning"

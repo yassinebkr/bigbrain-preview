@@ -1260,7 +1260,18 @@ Type 'quit' or 'exit' to stop."""
                 workspace_hint = "python-dev"
         
         # Generate conversational answer via LLM
-        if success and raw_outputs:
+        preview_output = next((str(content) for kind, content in raw_outputs
+                               if kind == "preview"), None)
+        files_output = next((str(content) for kind, content in raw_outputs
+                             if kind == "files"), None)
+        if success and preview_output:
+            # Project cards own the rich result UI. Keep chat deterministic
+            # and compact instead of asking an LLM to retell the application.
+            notification = "✅ Projet web terminé. Utilise l’aperçu ou les contrôles du projet ci-dessous."
+        elif success and files_output and not any(kind in {"code", "research", "action"}
+                                                   for kind, _ in raw_outputs):
+            notification = "✅ Fichiers du projet générés. Ouvre le projet pour les consulter."
+        elif success and raw_outputs:
             notification = await self._summarize_result(raw_outputs)
         elif success:
             notification = "✅ Done, but no output was produced."

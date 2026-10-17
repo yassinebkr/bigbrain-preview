@@ -281,6 +281,7 @@ class WebServer:
         self._app.router.add_get("/api/models/roles", self._handle_model_roles)
         self._app.router.add_post("/api/models/roles", self._handle_model_role_set)
         self._app.router.add_post("/api/auth/openrouter/key", self._handle_openrouter_key)
+        self._app.router.add_post("/api/auth/mistral-studio/key", self._handle_mistral_studio_key)
         self._app.router.add_post("/api/system/reload-provider", self._handle_reload_provider)
         self._app.router.add_get("/api/fs/current-project", self._handle_current_project_get)
         self._app.router.add_post("/api/fs/current-project", self._handle_current_project_set)
@@ -395,6 +396,17 @@ class WebServer:
         try:
             result = await connect_key(body.get("key", ""))
         except OpenRouterKeyError as exc:
+            return web.json_response({"error": str(exc)}, status=401)
+        return web.json_response(result)
+
+    async def _handle_mistral_studio_key(self, request: web.Request) -> web.Response:
+        """Connect a developer API key from Mistral Studio."""
+        from .mistral_studio_key import MistralStudioKeyError, connect_key
+
+        body = await request.json()
+        try:
+            result = await connect_key(body.get("key", ""))
+        except MistralStudioKeyError as exc:
             return web.json_response({"error": str(exc)}, status=401)
         return web.json_response(result)
 

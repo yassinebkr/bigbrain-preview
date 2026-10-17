@@ -9,7 +9,7 @@ import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAppStore } from '@/store/appStore';
 import {
-  FileCode2, X, Copy, Check, FolderOpen, Play, Loader2, Pencil, Ban,
+  FileCode2, X, Copy, Check, FolderOpen, Play, Loader2, Pencil, Ban, Eye,
 } from 'lucide-react';
 import hljs from 'highlight.js/lib/core';
 import pythonLang from 'highlight.js/lib/languages/python';
@@ -58,6 +58,8 @@ interface RunResult {
   stderr: string;
   durationMs: number;
   timedOut: boolean;
+  previewUrl?: string;
+  serverRunning?: boolean;
   // Deterministic gate (same stages as the agent's runs).
   verification?: {
     run_id?: string;
@@ -79,6 +81,7 @@ export function CodeSurface({ path, onClose, onOpenInWorkspace }: CodeSurfacePro
   const [copied, setCopied] = useState(false);
   const [running, setRunning] = useState(false);
   const [runResult, setRunResult] = useState<RunResult | null>(null);
+  const [showPreview, setShowPreview] = useState(false);
 
   // Streaming run: the server answers {runId} immediately and pushes
   // the output over the WS while the program runs.
@@ -90,7 +93,9 @@ export function CodeSurface({ path, onClose, onOpenInWorkspace }: CodeSurfacePro
     // Final verdict arrived: the authoritative result replaces the
     // live buffer (full stdout/stderr + gate stages).
     if (liveRun?.done && liveRun.result) {
-      setRunResult(liveRun.result as RunResult);
+      const result = liveRun.result as RunResult;
+      setRunResult(result);
+      if (result.previewUrl) setShowPreview(true);
       setRunning(false);
       setLiveRunId(null);
     }
@@ -108,6 +113,7 @@ export function CodeSurface({ path, onClose, onOpenInWorkspace }: CodeSurfacePro
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const isPython = path.endsWith('.py');
+  const isHtml = path.endsWith('.html') || path.endsWith('.htm');
   const language = languageFor(path);
 
   useEffect(() => {
@@ -115,6 +121,7 @@ export function CodeSurface({ path, onClose, onOpenInWorkspace }: CodeSurfacePro
     setContent(null);
     setError(null);
     setRunResult(null);
+    setShowPreview(false);
     setEditing(false);
     setSaveError(null);
     fetch(`/api/fs/file?path=${encodeURIComponent(path)}`)
@@ -187,7 +194,9 @@ export function CodeSurface({ path, onClose, onOpenInWorkspace }: CodeSurfacePro
         setLiveRunId(body.runId);
       } else {
         // Legacy/short path: the full result in one response.
-        setRunResult(body as RunResult);
+        const result = body as RunResult;
+        setRunResult(result);
+        if (result.previewUrl) setShowPreview(true);
         setRunning(false);
       }
     } catch (e: any) {
@@ -247,7 +256,7 @@ export function CodeSurface({ path, onClose, onOpenInWorkspace }: CodeSurfacePro
           </>
         ) : (
           <>
-            {isPython && (
+            {(isPython || isHtml) && (
               <button
                 onClick={run}
                 disabled={running || content == null}
@@ -257,9 +266,20 @@ export function CodeSurface({ path, onClose, onOpenInWorkspace }: CodeSurfacePro
                   color: '#ffffff',
                   opacity: running || content == null ? 0.6 : 1,
                 }}
-                title="Run this file"
+                title={isHtml ? 'Preview this web project' : 'Run this file'}
               >
-                {running ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />} Run
+                {running ? <Loader2 size={12} className="animate-spin" /> : isHtml ? <Eye size={12} /> : <Play size={12} />}
+                {isHtml ? ' Preview' : ' Run'}
+              </button>
+            )}
+            {runResult?.previewUrl && (
+              <button
+                onClick={() => setShowPreview((shown) => !shown)}
+                className="flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer flex-shrink-0 text-[11.5px]"
+                style={{ color: 'var(--accent-blue)', border: '1px solid var(--border-subtle)' }}
+              >
+                {showPreview ? <FileCode2 size={12} /> : <Eye size={12} />}
+                {showPreview ? 'Code' : 'Preview'}
               </button>
             )}
             <button
@@ -311,6 +331,13 @@ export function CodeSurface({ path, onClose, onOpenInWorkspace }: CodeSurfacePro
           <p className="px-4 py-6 text-[12.5px]" style={{ color: 'var(--text-tertiary)' }}>
             Loading…
           </p>
+        ) : showPreview && runResult?.previewUrl ? (
+          <iframe
+            src={runResult.previewUrl}
+            title={`Preview of ${path}`}
+            sandbox="allow-scripts allow-same-origin"
+            className="block w-full h-full min-h-[420px] bg-white"
+          />
         ) : editing ? (
           <div className="flex flex-col h-full min-h-[300px]">
             <textarea

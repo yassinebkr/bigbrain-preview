@@ -8,7 +8,7 @@ from bigbrain.auth import registry
 @pytest.fixture(autouse=True)
 def clean_env(monkeypatch):
     for var in (
-        "BIGBRAIN_PROVIDER", "OPENROUTER_API_KEY", "MISTRAL_API_KEY",
+        "BIGBRAIN_PROVIDER", "OPENROUTER_API_KEY", "MISTRAL_API_KEY", "MISTRAL_STUDIO_API_KEY",
         "KIMI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY",
     ):
         monkeypatch.delenv(var, raising=False)
@@ -29,6 +29,9 @@ def test_priority_openrouter_before_mistral(monkeypatch):
 
 
 def test_priority_mistral_then_kimi_then_codex(monkeypatch):
+    monkeypatch.setenv("MISTRAL_STUDIO_API_KEY", "k")
+    assert registry.select_registry_key() == "mistral-studio-large-4"
+    monkeypatch.delenv("MISTRAL_STUDIO_API_KEY")
     monkeypatch.setenv("MISTRAL_API_KEY", "k")
     assert registry.select_registry_key() == "mistral-vibe"
     monkeypatch.delenv("MISTRAL_API_KEY")

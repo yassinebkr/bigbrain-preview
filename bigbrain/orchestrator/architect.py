@@ -29,6 +29,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -567,8 +568,13 @@ class ArchitectPhase:
                 edge_cases=["empty generated domain data", "placeholder-only output"],
             ))
 
+        raw_project_name = str(raw.get("project_name") or "project").strip()
+        # A project name is an identifier, never a path. Models sometimes
+        # echo the selected project as a prefix, nesting a new project in it.
+        project_name = Path(raw_project_name.replace("\\", "/")).name or "project"
+
         return ProjectSpec(
-            project_name=raw.get("project_name", "project"),
+            project_name=project_name,
             description=raw.get("description", ""),
             tech_decisions=raw.get("tech_decisions", []),
             data_models=data_models,

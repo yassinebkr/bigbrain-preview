@@ -71,6 +71,7 @@ async def test_web_result_uses_only_worker_preview_url():
         }}}},
     ))
 
-    raw_outputs = brain._summarize_result.await_args.args[0]
-    assert raw_outputs == [("preview", f"Preview ready: {preview_url}")]
-    assert "clawos" not in str(raw_outputs).lower()
+    brain._summarize_result.assert_not_awaited()
+    message = brain._emit_chat_message.await_args.args[1]
+    assert message == "✅ Projet web terminé. Utilise l’aperçu ou les contrôles du projet ci-dessous."
+    assert "clawos" not in message.lower()

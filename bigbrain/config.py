@@ -42,6 +42,7 @@ class BigBrainConfig:
     # wizard (auth/mistral_oauth.py); KIMI_API_KEY is the direct Kimi endpoint.
     openrouter_api_key: Optional[str] = field(default_factory=lambda: os.getenv("OPENROUTER_API_KEY"))
     mistral_api_key: Optional[str] = field(default_factory=lambda: os.getenv("MISTRAL_API_KEY"))
+    mistral_studio_api_key: Optional[str] = field(default_factory=lambda: os.getenv("MISTRAL_STUDIO_API_KEY"))
     kimi_api_key: Optional[str] = field(default_factory=lambda: os.getenv("KIMI_API_KEY"))
 
     # Model to use (litellm format: "gpt-4o", "claude-sonnet-4-20250514", "gemini/gemini-2.0-flash", etc.)
@@ -70,6 +71,7 @@ class BigBrainConfig:
             or self.google_api_key
             or self.openrouter_api_key
             or self.mistral_api_key
+            or self.mistral_studio_api_key
             or self.kimi_api_key
         ):
             return True
