@@ -124,6 +124,19 @@ _REGISTRY: dict[str, ModelEntry] = {
         reasoning=False,
         vision=True,
     ),
+    "openrouter-mistral-large-4": ModelEntry(
+        key="openrouter-mistral-large-4",
+        display_name="Mistral Large 4 (OpenRouter)",
+        provider="openai_compat",
+        model_id="mistralai/mistral-large-4-0",
+        api_key_env="OPENROUTER_API_KEY",
+        base_url=_OPENROUTER_DEFAULT_BASE_URL,
+        health_path="/auth/key",
+        reasoning=False,
+        # The native model is multimodal, but OpenRouter currently exposes
+        # text/JSON-state input only for this route.
+        vision=False,
+    ),
     "openrouter-kimi-k2.7-code": ModelEntry(
         key="openrouter-kimi-k2.7-code",
         display_name="Kimi K2.7 Code (OpenRouter)",

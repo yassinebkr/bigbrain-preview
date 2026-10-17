@@ -17,6 +17,7 @@ def test_registry_contains_all_phase3_models():
         "openrouter-gpt-sol",
         "openrouter-kimi-k3",
         "openrouter-opus-5.5",
+        "openrouter-mistral-large-4",
         "openrouter-kimi-k2.7-code",
         "openrouter-luna",
         "kimi-k3",
@@ -30,7 +31,8 @@ def test_registry_contains_all_phase3_models():
 def test_all_openrouter_entries_share_one_key_env():
     entries = [get_model(k) for k in (
         "openrouter-gpt-sol", "openrouter-kimi-k3", "openrouter-opus-5.5",
-        "openrouter-kimi-k2.7-code", "openrouter-luna",
+        "openrouter-mistral-large-4", "openrouter-kimi-k2.7-code",
+        "openrouter-luna",
     )]
     assert all(e.api_key_env == "OPENROUTER_API_KEY" for e in entries)
     assert all(e.base_url == "https://openrouter.ai/api/v1" for e in entries)
@@ -120,9 +122,11 @@ def test_vision_capability_is_explicit_and_exposed():
     assert get_model("kimi-k3").vision is True
     assert get_model("mistral-glm-5.3").vision is False
     assert get_model("openrouter-kimi-k2.7-code").vision is True
+    assert get_model("openrouter-mistral-large-4").vision is False
     models = {m["key"]: m for m in list_models()}
     assert models["openrouter-gpt-sol"]["vision"] is True
     assert models["openrouter-kimi-k3"]["vision"] is True
     assert models["kimi-k3"]["vision"] is True
     assert models["mistral-glm-5.3"]["vision"] is False
     assert models["openrouter-kimi-k2.7-code"]["vision"] is True
+    assert models["openrouter-mistral-large-4"]["vision"] is False
