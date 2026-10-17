@@ -1617,14 +1617,15 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
     @staticmethod
     def _project_result_metadata(plan: TaskPlan) -> dict:
         """Expose only launch/navigation metadata from completed subtasks."""
-        for result in reversed(list(plan.get_results().values())):
+        candidates = []
+        for result in plan.get_results().values():
             if not isinstance(result, dict):
                 continue
             data = result.get("data", result)
             if not isinstance(data, dict):
                 continue
             if data.get("project_name") and data.get("entry_point"):
-                return {
+                metadata = {
                     "project_name": data["project_name"],
                     **({"project_path": data["project_path"]} if data.get("project_path") else {}),
                     "entry_point": data["entry_point"],
@@ -1638,6 +1639,14 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                         or data.get("server_running") is True
                     )),
                 }
+                score = (
+                    int(metadata["runnable"]),
+                    int(bool(data.get("preview_url"))),
+                    int(bool(data.get("verification"))),
+                )
+                candidates.append((score, metadata))
+        if candidates:
+            return max(candidates, key=lambda item: item[0])[1]
         task_payload = plan.original_task.payload or {}
         project_path = task_payload.get("project_path")
         if isinstance(project_path, str) and project_path.strip():

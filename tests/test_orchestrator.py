@@ -623,6 +623,24 @@ class TestWorkspaceOrchestrator:
             "runnable": True,
         }
 
+    def test_project_metadata_prefers_verified_assembly(self, orchestrator):
+        plan = TaskPlan(id="web-plan", original_task=None)
+        assembled = SubTask(id="assemble", description="preview web app", brain_target="web_app_brain", payload={})
+        assembled.status = TaskStatus.COMPLETE
+        assembled.result = {"success": True, "data": {
+            "success": True, "project_name": "course", "project_path": "sandbox/course",
+            "entry_point": "index.html", "deliverable_type": "web_app",
+            "preview_url": "http://127.0.0.1:3200", "server_running": True,
+            "verification": {"passed": True},
+        }}
+        intermediate = SubTask(id="write", description="write file", brain_target="web_app_brain", payload={})
+        intermediate.status = TaskStatus.COMPLETE
+        intermediate.result = {"success": True, "data": {"project_name": "course", "entry_point": "index.html"}}
+        plan.subtasks = [assembled, intermediate]
+        metadata = orchestrator._project_result_metadata(plan)
+        assert metadata["runnable"] is True
+        assert metadata["preview_url"] == "http://127.0.0.1:3200"
+
     @pytest.mark.asyncio
     async def test_plan_failure(self, orchestrator, mock_bus):
         """Test handling task plan with failed subtask."""

@@ -48,8 +48,36 @@ def test_web_project_accepts_rich_browser_test_schema(tmp_path):
     assert WebAppBrain.validate_project(project, files)["passed"] is True
 
 
+def test_web_project_accepts_step_based_browser_test_schema(tmp_path):
+    project, files = _write_web_project(tmp_path)
+    (project / "tests" / "acceptance.json").write_text(json.dumps({
+        "tests": [{"title": "loads the course", "steps": [
+            {"action": "navigate", "url": "../index.html"},
+            {"action": "assertVisible", "selector": "main"},
+        ]}]
+    }))
+    assert WebAppBrain.validate_project(project, files)["passed"] is True
+
+
 def test_web_project_name_cannot_nest_inside_selected_project():
     assert WebAppBrain._safe_project_name("blender/photoshop") == Path("photoshop")
+
+
+def test_new_web_project_is_sibling_of_selected_project(tmp_path):
+    selected = tmp_path / "sandbox" / "blender"
+    selected.mkdir(parents=True)
+    (selected / ".project.json").write_text(json.dumps({"name": "blender"}))
+    brain = WebAppBrain("web_app_test", MessageBus(auth=None), "default", work_dir=selected)
+    assert brain._project_dir(Path("davinci")) == tmp_path / "sandbox" / "davinci"
+    assert brain._project_dir(Path("blender")) == selected
+
+
+def test_global_sandbox_contains_new_web_projects(tmp_path):
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    (sandbox / ".project.json").write_text(json.dumps({"name": "sandbox", "sandbox": True}))
+    brain = WebAppBrain("web_app_test", MessageBus(auth=None), "default", work_dir=sandbox)
+    assert brain._project_dir(Path("davinci")) == sandbox / "davinci"
 
 
 @pytest.mark.asyncio

@@ -60,6 +60,24 @@ class WebAppBrain(BaseBrain):
         candidate = cls._safe_relative(value)
         return Path(candidate.name)
 
+    def _project_dir(self, project_name: Path) -> Path:
+        """Resolve a planned project without nesting it in another project."""
+        manifest_path = self.work_dir / ".project.json"
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            manifest = {}
+        if manifest.get("sandbox") is True:
+            base = self.work_dir
+        elif manifest_path.is_file():
+            selected_name = str(manifest.get("name") or self.work_dir.name)
+            if project_name.name == selected_name:
+                return self.work_dir.resolve()
+            base = self.work_dir.parent
+        else:
+            base = self.work_dir
+        return (base / project_name).resolve()
+
     @staticmethod
     def _extract_code(raw: str) -> str:
         text = raw.strip()
@@ -83,8 +101,8 @@ class WebAppBrain(BaseBrain):
             raise RuntimeError("WebAppBrain requires an LLM provider")
         project_name = self._safe_project_name(str(payload.get("project_name") or "web-app"))
         file_path = self._safe_relative(str(payload.get("file_path") or ""))
-        target = (self.work_dir / project_name / file_path).resolve()
-        project_dir = (self.work_dir / project_name).resolve()
+        project_dir = self._project_dir(project_name)
+        target = (project_dir / file_path).resolve()
         if project_dir not in target.parents:
             raise ValueError("Web file escapes its project directory")
 
@@ -163,9 +181,10 @@ Rules:
                     errors.append("tests/acceptance.json must define non-empty cases or tests")
                 elif any(not isinstance(case, dict)
                          or not (case.get("name") or case.get("title"))
-                         or not case.get("assertions")
+                         or not (case.get("assertions") or case.get("steps"))
                          for case in cases):
-                    errors.append("each acceptance case needs a name/title and assertions")
+                    errors.append(
+                        "each acceptance case needs a name/title and assertions or steps")
             except (OSError, json.JSONDecodeError):
                 errors.append("tests/acceptance.json is not valid JSON")
 
@@ -194,7 +213,7 @@ Rules:
     async def _assemble_and_preview(self, payload: dict) -> Dict[str, Any]:
         started = time.time()
         project_name = self._safe_project_name(str(payload.get("project_name") or "web-app"))
-        project_dir = (self.work_dir / project_name).resolve()
+        project_dir = self._project_dir(project_name)
         validation = self.validate_project(project_dir, payload.get("all_files") or [])
         project_path = self._workspace_relative(project_dir)
         if not validation["passed"]:
