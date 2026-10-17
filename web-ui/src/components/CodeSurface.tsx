@@ -5,7 +5,7 @@
 // highlighting; .py files get a Run button (server-side execution with
 // stdout/stderr inline); any file can be edited and saved back.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAppStore } from '@/store/appStore';
 import {
@@ -83,6 +83,7 @@ export function CodeSurface({ path, onClose, onOpenInWorkspace }: CodeSurfacePro
   // Streaming run: the server answers {runId} immediately and pushes
   // the output over the WS while the program runs.
   const [liveRunId, setLiveRunId] = useState<string | null>(null);
+  const runOutputRef = useRef<HTMLDivElement>(null);
   const liveRun = useAppStore((s) => (liveRunId ? s.liveRuns[liveRunId] : undefined));
 
   useEffect(() => {
@@ -94,6 +95,11 @@ export function CodeSurface({ path, onClose, onOpenInWorkspace }: CodeSurfacePro
       setLiveRunId(null);
     }
   }, [liveRun?.done, liveRun?.result]);
+
+  useEffect(() => {
+    const el = runOutputRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [liveRun?.out, liveRun?.err]);
 
   // Edit mode: draft + save via the FS write API.
   const [editing, setEditing] = useState(false);
@@ -363,7 +369,7 @@ export function CodeSurface({ path, onClose, onOpenInWorkspace }: CodeSurfacePro
             className="flex-shrink-0 overflow-hidden border-t"
             style={{ borderColor: 'var(--border-subtle)' }}
           >
-            <div className="px-3 py-2 max-h-[220px] overflow-auto">
+            <div ref={runOutputRef} className="px-3 py-2 max-h-[220px] overflow-auto">
               {running && liveRun ? (
                 <>
                   <div

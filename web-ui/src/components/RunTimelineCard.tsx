@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   CheckCircle2, XCircle, Ban, ChevronDown, ChevronUp, FileEdit,
   FolderOpen, Play, Loader2,
@@ -13,6 +13,12 @@ export function RunTimelineCard({ run }: { run: RunState }) {
   const setCurrentProject = useAppStore((s) => s.setCurrentProject);
   const [runId, setRunId] = useState<string | null>(null);
   const liveRun = useAppStore((s) => runId ? s.liveRuns[runId] : undefined);
+  const outputRef = useRef<HTMLPreElement>(null);
+
+  useEffect(() => {
+    const el = outputRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [liveRun?.out, liveRun?.err]);
   const entryPath = run.projectPath && run.entryPoint
     ? `${run.projectPath}/${run.entryPoint}`
     : run.entryPoint
@@ -64,9 +70,12 @@ export function RunTimelineCard({ run }: { run: RunState }) {
         className="ml-9 w-full max-w-[720px] rounded-xl px-3 py-2 text-[12px]"
         style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)' }}
       >
-        <button
+        <div
           className="w-full flex items-center gap-2 cursor-pointer"
           onClick={() => setOpen(!open)}
+          onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') setOpen(!open); }}
+          role="button"
+          tabIndex={0}
           aria-expanded={open}
         >
           <Icon size={13} style={{ color }} className="flex-shrink-0" />
@@ -79,8 +88,24 @@ export function RunTimelineCard({ run }: { run: RunState }) {
               {run.files.length} file{run.files.length > 1 ? 's' : ''}
             </span>
           )}
+          {entryPath && (
+            <div className="flex items-center gap-1 flex-shrink-0">
+              <button onClick={(event) => { event.stopPropagation(); void openProject(); }}
+                className="p-1 rounded-md cursor-pointer" style={{ color: 'var(--accent-blue)' }}
+                title="Open project" aria-label="Open project">
+                <FolderOpen size={12} />
+              </button>
+              {run.runnable && (
+                <button onClick={(event) => { event.stopPropagation(); void runProject(); }}
+                  disabled={!!runId && !liveRun?.done} className="p-1 rounded-md cursor-pointer"
+                  style={{ color: 'var(--accent-blue)' }} title="Run project" aria-label="Run project">
+                  {runId && !liveRun?.done ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />}
+                </button>
+              )}
+            </div>
+          )}
           {open ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-        </button>
+        </div>
         {open && (
           <div className="mt-2 pt-2 space-y-1.5" style={{ borderTop: '1px solid var(--border-subtle)' }}>
             {run.steps.map((step) => (
@@ -135,6 +160,7 @@ export function RunTimelineCard({ run }: { run: RunState }) {
             )}
             {liveRun && (liveRun.out || liveRun.err || liveRun.done) && (
               <pre
+                ref={outputRef}
                 className="max-h-[180px] overflow-auto rounded-md px-2 py-1.5 whitespace-pre-wrap"
                 style={{ backgroundColor: 'var(--bg-primary)', color: liveRun.err
                   ? 'var(--warning, #ff9500)' : 'var(--text-primary)' }}

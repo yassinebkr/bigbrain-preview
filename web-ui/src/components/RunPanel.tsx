@@ -11,7 +11,7 @@
 // files written (clickable: opens the code viewer), errors, and a
 // nudge when files landed in sandbox/ with no project selected.
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Loader2,
@@ -104,6 +104,27 @@ function VerificationSection({ verification }: { verification: RunVerification }
   );
 }
 
+function LiveOutput({ value }: { value: string }) {
+  const ref = useRef<HTMLPreElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [value]);
+  return (
+    <pre
+      ref={ref}
+      className="ml-[23px] mr-2 max-h-[84px] overflow-auto px-2 py-1 rounded-md text-[10.5px] leading-snug whitespace-pre-wrap"
+      style={{
+        color: 'var(--text-tertiary)',
+        backgroundColor: 'var(--bg-primary)',
+        fontFamily: 'var(--font-mono, monospace)',
+      }}
+    >
+      {value}
+    </pre>
+  );
+}
+
 export function RunPanel() {
   const run = useAppStore((s) => s.activeRun);
   const activeSessionKey = useAppStore((s) => s.activeSessionKey);
@@ -139,7 +160,9 @@ export function RunPanel() {
   const running = run.steps.find((s) => s.status === 'running');
   const summary =
     run.status === 'running'
-      ? running
+      ? run.awaitingApproval
+        ? 'Awaiting contract approval'
+        : running
         ? `${running.brain || 'brain'} — ${running.description}`
         : run.description
       : run.status === 'done'
@@ -270,18 +293,7 @@ export function RunPanel() {
                           </div>
                           {/* Live output — what the brain's program is
                               printing RIGHT NOW (execution.output). */}
-                          {step.liveOutput && (
-                            <pre
-                              className="ml-[23px] mr-2 max-h-[84px] overflow-hidden px-2 py-1 rounded-md text-[10.5px] leading-snug whitespace-pre-wrap"
-                              style={{
-                                color: 'var(--text-tertiary)',
-                                backgroundColor: 'var(--bg-primary)',
-                                fontFamily: 'var(--font-mono, monospace)',
-                              }}
-                            >
-                              {step.liveOutput}
-                            </pre>
-                          )}
+                          {step.liveOutput && <LiveOutput value={step.liveOutput} />}
                         </div>
                       ))}
                     </div>

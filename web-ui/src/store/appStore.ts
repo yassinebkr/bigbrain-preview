@@ -47,6 +47,7 @@ export interface RunState {
   projectPath?: string;
   entryPoint?: string;
   runnable?: boolean;
+  awaitingApproval?: boolean;
 }
 
 interface AppState {
@@ -376,7 +377,7 @@ export const useAppStore = create<AppState>()(
             const fresh: RunState = {
               sessionId,
               id: `routing-${Date.now()}`,
-              description: String(d.description || 'Preparing task').slice(0, 140),
+              description: String(d.description || 'Preparing task'),
               status: 'running',
               startedAt: Date.now(),
               steps: [],
@@ -388,7 +389,7 @@ export const useAppStore = create<AppState>()(
             const fresh: RunState = {
               sessionId: String(d.session_id || run?.sessionId || state.activeSessionKey || ''),
               id: d.task_id || `run-${Date.now()}`,
-              description: String(d.description || 'Task').slice(0, 140),
+              description: String(d.description || 'Task'),
               status: 'running',
               startedAt: Date.now(),
               steps: [],
@@ -399,13 +400,14 @@ export const useAppStore = create<AppState>()(
           case 'contracts.proposal': {
             const sessionId = String(d.session_id || run?.sessionId || state.activeSessionKey || '');
             if (run && run.status === 'running') {
-              return { activeRun: { ...run, sessionId }, runPanelDismissed: false };
+              return { activeRun: { ...run, sessionId, awaitingApproval: true }, runPanelDismissed: false };
             }
             const fresh: RunState = {
               sessionId,
               id: String(d.plan_id || `approval-${Date.now()}`),
-              description: String(d.user_request || 'Awaiting contract approval').slice(0, 140),
+              description: String(d.user_request || 'Awaiting contract approval'),
               status: 'running',
+              awaitingApproval: true,
               startedAt: Date.now(),
               steps: [],
               files: [],
@@ -423,6 +425,7 @@ export const useAppStore = create<AppState>()(
             return {
               activeRun: {
                 ...run,
+                awaitingApproval: false,
                 steps: [...run.steps.filter((s) => s.id !== step.id), step],
               },
             };

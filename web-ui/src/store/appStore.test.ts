@@ -13,6 +13,7 @@
     const run = useAppStore.getState().activeRun;
     expect(run?.id).toBe('plan-approval');
     expect(run?.sessionId).toBe('sess-origin');
+    expect(run?.awaitingApproval).toBe(true);
     expect(useAppStore.getState().runPanelDismissed).toBe(false);
   });
 // Store edge cases — the run state machine (applyRunEvent) and the
@@ -65,6 +66,7 @@ describe('applyRunEvent — run state machine', () => {
     let run = useAppStore.getState().activeRun!;
     expect(run.steps).toHaveLength(1); // upsert, not append
     expect(run.steps[0].status).toBe('running');
+    expect(run.awaitingApproval).toBe(false);
 
     s.applyRunEvent(ev('subtask.complete', {
       task_id: 't1', subtask_id: 's1', execution_time: 1.5,
