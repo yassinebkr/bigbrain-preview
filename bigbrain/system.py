@@ -469,6 +469,7 @@ class BigBrainSystem:
             self.front_brain.focus_manager = self.focus_manager
     
     async def _create_brains(self) -> None:
+        from .config import config as app_config
         """Create and register execution brains."""
         import os
         
