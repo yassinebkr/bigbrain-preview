@@ -112,3 +112,11 @@ def test_model_entry_is_frozen():
     entry = get_model("mistral-vibe")
     with pytest.raises(Exception):
         entry.model_id = "changed"
+
+
+def test_vision_capability_is_explicit_and_exposed():
+    assert get_model("openrouter-gpt-sol").vision is True
+    assert get_model("openrouter-kimi-k2.7-code").vision is False
+    models = {m["key"]: m for m in list_models()}
+    assert models["openrouter-gpt-sol"]["vision"] is True
+    assert models["openrouter-kimi-k2.7-code"]["vision"] is False

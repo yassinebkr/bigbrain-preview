@@ -2,21 +2,21 @@
 
 BigBrain selects its provider through a registry: `bigbrain/llm/model_registry.py`.
 Each entry maps a short key to a display name, provider kind, model id, API-key
-env var, base URL, and capability flags (reasoning, streaming).
+env var, base URL, and capability flags (reasoning, vision).
 
 ## Registry keys
 
-| Key | Provider | Model id | Auth | Reasoning |
-|---|---|---|---|---|
-| `openrouter-gpt-sol` | OpenRouter | `openai/gpt-5.6-sol` | `OPENROUTER_API_KEY` | yes (low default) |
-| `openrouter-kimi-k3` | OpenRouter | `moonshotai/kimi-k3` | `OPENROUTER_API_KEY` | yes |
-| `openrouter-opus-5.5` | OpenRouter | `anthropic/claude-opus-5.5` | `OPENROUTER_API_KEY` | no |
-| `openrouter-kimi-k2.7-code` | OpenRouter | `moonshotai/kimi-k2.7-code` | `OPENROUTER_API_KEY` | no |
-| `openrouter-luna` | OpenRouter | `openai/gpt-5.6-luna` | `OPENROUTER_API_KEY` | no |
-| `kimi-k3` | Kimi direct | `k3` | `KIMI_API_KEY` | yes |
-| `mistral-vibe` | Mistral | `mistral-medium-3-5` | `MISTRAL_API_KEY` | no |
-| `codex-chatgpt` | codex app-server | `gpt-5.6-luna` | `~/.codex` (ChatGPT login) | via effort |
-| `anthropic-oauth` | Anthropic OAuth | `claude-sonnet-4-6` | stored token | no |
+| Key | Provider | Model id | Auth | Reasoning | Vision |
+|---|---|---|---|---|---|
+| `openrouter-gpt-sol` | OpenRouter | `openai/gpt-5.6-sol` | `OPENROUTER_API_KEY` | yes (low default) | yes |
+| `openrouter-kimi-k3` | OpenRouter | `moonshotai/kimi-k3` | `OPENROUTER_API_KEY` | yes | no |
+| `openrouter-opus-5.5` | OpenRouter | `anthropic/claude-opus-5.5` | `OPENROUTER_API_KEY` | no | yes |
+| `openrouter-kimi-k2.7-code` | OpenRouter | `moonshotai/kimi-k2.7-code` | `OPENROUTER_API_KEY` | no | no |
+| `openrouter-luna` | OpenRouter | `openai/gpt-5.6-luna` | `OPENROUTER_API_KEY` | no | no |
+| `kimi-k3` | Kimi direct | `k3` | `KIMI_API_KEY` | yes | no |
+| `mistral-vibe` | Mistral | `mistral-medium-3-5` | `MISTRAL_API_KEY` | no | no |
+| `codex-chatgpt` | codex app-server | `gpt-5.6-luna` | `~/.codex` (ChatGPT login) | via effort | no |
+| `anthropic-oauth` | Anthropic OAuth | `claude-sonnet-4-6` | stored token | no | no |
 
 Model ids on OpenRouter evolve quickly: every id is overridable via env
 (`<KEY_UPPER>_MODEL`, `<KEY_UPPER>_BASE_URL`, e.g. `OPENROUTER_GPT_SOL_MODEL`).

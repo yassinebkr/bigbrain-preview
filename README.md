@@ -138,8 +138,9 @@ BigBrain's memory is deliberately frugal:
   tokens; kill switch: `BIGBRAIN_RECALL=0`.
 - **Attachment memory** — files shared in the chat are uploaded
   (`POST /api/attachments`, 10 MB cap), stored under
-  `BIGBRAIN_ATTACHMENTS_DIR`, and recorded in persistent memory. The
-  LLM sees the name and type only — no vision claim.
+  `BIGBRAIN_ATTACHMENTS_DIR`, and recorded in persistent memory. Images are
+  inlined as base64 content blocks when the selected front model declares
+  vision support. Text-only models refuse clearly and never delegate the image.
 - **The soul** — a compact identity summary (3-6 lines) consolidated by
   ONE LLM call every `BIGBRAIN_SOUL_TURNS` user turns (default 50), then
   injected as a few lines per turn. openclaw's soul, at batch cost.

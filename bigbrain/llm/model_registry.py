@@ -53,6 +53,8 @@ class ModelEntry:
     reasoning: bool = False
     reasoning_efforts: list[str] = field(default_factory=list)
     reasoning_effort_default: str | None = None
+    # Accepts OpenAI-style image_url content blocks.
+    vision: bool = False
     # Optional monthly context window, for budget heuristics only.
     context_window: int | None = None
 
@@ -77,6 +79,7 @@ class ModelEntry:
             reasoning=self.reasoning,
             reasoning_efforts=list(self.reasoning_efforts),
             reasoning_effort_default=reasoning_effort_default,
+            vision=self.vision,
             context_window=self.context_window,
         )
 
@@ -95,6 +98,7 @@ _REGISTRY: dict[str, ModelEntry] = {
         reasoning=True,
         reasoning_efforts=["low", "medium", "high"],
         reasoning_effort_default="low",
+        vision=True,
     ),
     "openrouter-kimi-k3": ModelEntry(
         key="openrouter-kimi-k3",
@@ -117,6 +121,7 @@ _REGISTRY: dict[str, ModelEntry] = {
         base_url=_OPENROUTER_DEFAULT_BASE_URL,
         health_path="/auth/key",
         reasoning=False,
+        vision=True,
     ),
     "openrouter-kimi-k2.7-code": ModelEntry(
         key="openrouter-kimi-k2.7-code",
@@ -228,6 +233,7 @@ def list_models() -> list[dict]:
                 "reasoning": entry.reasoning,
                 "reasoning_efforts": list(entry.reasoning_efforts),
                 "reasoning_effort_default": entry.reasoning_effort_default,
+                "vision": entry.vision,
             }
         )
     return entries

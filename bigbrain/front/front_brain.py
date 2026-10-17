@@ -145,7 +145,8 @@ class FrontBrain:
         )
     
     async def handle_user_input(self, input_text: str, input_type: str = "text",
-                                session_id: Optional[str] = None) -> str:
+                                session_id: Optional[str] = None,
+                                llm_content: Any = None) -> str:
         """
         Process user input and return response.
 
@@ -186,7 +187,8 @@ class FrontBrain:
             response = await self._handle_focus_command(intent)
         elif self.llm_provider and not isinstance(self.llm_provider, type(None)):
             # Use LLM for everything else
-            response = await self._llm_respond(input_text, session_id=session_id)
+            response = await self._llm_respond(
+                input_text, session_id=session_id, llm_content=llm_content)
         else:
             # Fallback to pattern matching
             intent = await self._analyze_intent(input_text)
@@ -301,7 +303,8 @@ class FrontBrain:
             return None
 
     async def _llm_respond(self, input_text: str,
-                           session_id: Optional[str] = None) -> str:
+                           session_id: Optional[str] = None,
+                           llm_content: Any = None) -> str:
         """Generate response using the real LLM with full conversation context.
 
         The LLM will return either plain text (conversation) or delegation
@@ -342,6 +345,9 @@ class FrontBrain:
         # Add conversation history (keep last 20 turns for context)
         history = self._history_for(session_id)[-20:]
         messages.extend(history)
+        if llm_content is not None and messages:
+            # Persist text only; image bytes exist only in this provider call.
+            messages[-1] = {"role": "user", "content": llm_content}
         
         # Semantic recall (memory phase): a handful of PERSISTENT memories
         # relevant to this turn — the "you sent me this months ago" magic.
@@ -550,8 +556,6 @@ Type 'quit' or 'exit' to stop."""
         handles decomposition into subtasks with proper dependencies.
         """
         text = message.payload.get("text", "").strip()
-        if not text:
-            return
         session_id = message.payload.get("session_id")
 
         # Attachments (uploaded via POST /api/attachments): record each
@@ -561,18 +565,30 @@ Type 'quit' or 'exit' to stop."""
             a for a in (message.payload.get("attachments") or [])
             if isinstance(a, dict) and a.get("name")
         ]
+        if not text and not attachments:
+            return
+
+        llm_content = None
         if attachments:
-            names = ", ".join(
-                f"{a.get('name')} ({a.get('type') or 'file'})"
-                for a in attachments)
-            text = (f"{text}\n\n[attached file(s): {names} — the file is "
-                    "saved on the server; you cannot see its content]")
             self._remember_attachments(attachments, session_id)
+            text, llm_content, vision_error = self._prepare_attachments(text, attachments)
+            if vision_error:
+                history = self._history_for(session_id)
+                history.append({"role": "user", "content": text})
+                history.append({"role": "assistant", "content": vision_error})
+                self.memory.store_conversation_turn(
+                    "user", text,
+                    {"type": "web", "session_id": session_id})
+                self.memory.store_conversation_turn(
+                    "assistant", vision_error, {"session_id": session_id})
+                await self._emit_chat_message("assistant", vision_error)
+                return
 
         try:
             # Process through the normal input pipeline
-            response = await self.handle_user_input(text, input_type="web",
-                                                    session_id=session_id)
+            response = await self.handle_user_input(
+                text, input_type="web", session_id=session_id,
+                llm_content=llm_content)
             
             # Try to parse as delegation JSON
             parsed = self._try_parse_delegation(response)
@@ -670,6 +686,48 @@ Type 'quit' or 'exit' to stop."""
             traceback.print_exc()
             await self._emit_chat_message("system", f"Error: {e}")
     
+    def _prepare_attachments(self, text: str, attachments: list) -> tuple:
+        """Build persisted text and optional OpenAI multimodal content."""
+        images = [a for a in attachments
+                  if str(a.get("type") or "").lower().startswith("image/")]
+        other = [a for a in attachments if a not in images]
+        names = ", ".join(
+            f"{a.get('name')} ({a.get('type') or 'file'})"
+            for a in attachments)
+        display_text = text or "Please describe the attached image."
+
+        entry = getattr(self.llm_provider, "entry", None)
+        if images and not bool(getattr(entry, "vision", False)):
+            stored = (f"{display_text}\n\n[attached file(s): {names} — saved on "
+                      "the server; the selected model cannot see image content]")
+            return stored, None, (
+                "I can’t see this image with the currently selected front "
+                "model. Choose a vision-capable model and try again.")
+
+        blocks = [{"type": "text", "text": display_text}]
+        if images:
+            from ..llm.openai_compat_provider import image_content_block
+            from ..web.attachments import read_attachment
+            for image in images:
+                path = read_attachment(str(image.get("id") or ""))
+                if path is None:
+                    stored = (f"{display_text}\n\n[attached file(s): {names} — "
+                              "the image could not be read from the server]")
+                    return stored, None, (
+                        "I couldn’t read the attached image from storage. "
+                        "Please upload it again.")
+                blocks.append(image_content_block(
+                    path.read_bytes(), str(image.get("type")).lower()))
+
+        notes = []
+        if images:
+            notes.append("image content was sent to the vision model")
+        if other:
+            notes.append("non-image file content is not visible to the model")
+        stored = (f"{display_text}\n\n[attached file(s): {names} — "
+                  f"{'; '.join(notes)}]")
+        return stored, (blocks if images else None), None
+
     def _remember_attachments(self, attachments: list,
                               session_id: Optional[str]) -> None:
         """One persistent memory entry per attached file (global scope).
