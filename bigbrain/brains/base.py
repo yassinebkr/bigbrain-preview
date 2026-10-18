@@ -230,7 +230,12 @@ class BaseBrain(BusParticipant, ABC):
                 
                 await self.bus.send_result(
                     source=self.name,
-                    result_data={"success": True, "data": result},
+                    result_data={
+                        "success": not (isinstance(result, dict) and result.get("success") is False),
+                        "data": result,
+                        **({"error": result.get("error") or "Worker validation failed"}
+                           if isinstance(result, dict) and result.get("success") is False else {}),
+                    },
                     reply_to=reply_to,
                     workspace=self.workspace,
                     target=reply_target,

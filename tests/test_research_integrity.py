@@ -75,3 +75,17 @@ async def test_web_result_uses_only_worker_preview_url():
     message = brain._emit_chat_message.await_args.args[1]
     assert message == "✅ Projet web terminé. Utilise l’aperçu ou les contrôles du projet ci-dessous."
     assert "clawos" not in message.lower()
+
+
+@pytest.mark.asyncio
+async def test_failed_web_validation_reports_cause_without_llm_summary():
+    brain = FrontBrain(MessageBus(auth=None), llm_provider=None)
+    brain._summarize_result = AsyncMock()
+    brain._emit_chat_message = AsyncMock()
+    brain.memory.store = MagicMock()
+    await brain._handle_task_result(BusMessage(
+        type=MessageType.RESULT, source="orchestrator", target=brain.name,
+        payload={"success": False, "error": "tests/acceptance.json: invalid schema"},
+    ))
+    brain._summarize_result.assert_not_awaited()
+    assert "tests/acceptance.json: invalid schema" in brain._emit_chat_message.await_args.args[1]

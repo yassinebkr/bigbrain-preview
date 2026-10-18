@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .base import BaseBrain
+from .web_acceptance import ACCEPTANCE_CONTRACT, normalize_acceptance
 from ..bus.message import BusMessage
 
 
@@ -122,6 +123,12 @@ Purpose: {payload.get('purpose', '')}
 Architect contract:
 {payload.get('architect_spec', '')}
 
+Implementation notes:
+{payload.get('implementation_notes', '')}
+
+Acceptance protocol (mandatory when writing tests/acceptance.json):
+{ACCEPTANCE_CONTRACT}
+
 Rules:
 - Return ONLY the complete raw file contents, with no markdown fence.
 - Implement real browser interaction; never print a textual imitation of UI.
@@ -139,6 +146,12 @@ Rules:
         content = self._extract_code(raw)
         if not content.strip():
             raise ValueError(f"LLM returned an empty file for {file_path}")
+        if file_path.as_posix() == "tests/acceptance.json":
+            try:
+                content = json.dumps(normalize_acceptance(json.loads(content)),
+                                     ensure_ascii=False, indent=2) + "\n"
+            except (ValueError, TypeError) as exc:
+                raise ValueError(f"tests/acceptance.json: {exc}") from exc
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
         await self.send_event("workspace.file_written", {
@@ -176,20 +189,10 @@ Rules:
         acceptance = None
         if acceptance_path.is_file():
             try:
-                acceptance = json.loads(acceptance_path.read_text(encoding="utf-8"))
-                cases = None
-                if isinstance(acceptance, dict):
-                    cases = acceptance.get("cases") or acceptance.get("tests")
-                if not isinstance(cases, list) or not cases:
-                    errors.append("tests/acceptance.json must define non-empty cases or tests")
-                elif any(not isinstance(case, dict)
-                         or not (case.get("name") or case.get("title"))
-                         or not (case.get("assertions") or case.get("steps"))
-                         for case in cases):
-                    errors.append(
-                        "each acceptance case needs a name/title and assertions or steps")
-            except (OSError, json.JSONDecodeError):
-                errors.append("tests/acceptance.json is not valid JSON")
+                acceptance = normalize_acceptance(json.loads(
+                    acceptance_path.read_text(encoding="utf-8")))
+            except (OSError, ValueError, TypeError) as exc:
+                errors.append(f"tests/acceptance.json: {exc}")
 
         for path in project_dir.rglob("*"):
             if path.is_file() and path.suffix.lower() in {".html", ".css", ".js"}:
@@ -198,7 +201,8 @@ Rules:
                     errors.append(f"placeholder marker remains in {path.relative_to(project_dir)}")
 
         return {"passed": not errors, "errors": errors,
-                "files": [p.as_posix() for p in planned], "acceptance": acceptance}
+                "files": [p.as_posix() for p in planned], "acceptance": acceptance,
+                "scope": "static_artifacts", "browser_tests_executed": False}
 
     @classmethod
     def _free_port(cls) -> Optional[int]:
@@ -254,6 +258,8 @@ Rules:
             "deliverable_type": "web_app", "interaction_mode": "browser",
             "entry_point": "index.html", "run": {"kind": "static_preview"},
             "verified": True,
+            "verification_scope": "static_artifacts",
+            "browser_tests_executed": False,
         }
         (project_dir / ".project.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         url = f"http://127.0.0.1:{port}"

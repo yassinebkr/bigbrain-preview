@@ -109,6 +109,10 @@ export function RunTimelineCard({ run }: { run: RunState }) {
           )}
           {open ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
         </div>
+        {run.error && (
+          <div className="mt-2 whitespace-pre-wrap break-words" role="alert"
+            style={{ color: 'var(--warning, #ff9500)' }}>{run.error}</div>
+        )}
         {previewUrl && (
           <div className="mt-2 overflow-hidden rounded-lg" style={{ border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-primary)' }}>
             <div className="flex items-center gap-2 px-2.5 py-1.5" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
@@ -158,9 +162,6 @@ export function RunTimelineCard({ run }: { run: RunState }) {
                 <span>{file.path}</span>
               </button>
             ))}
-            {run.error && (
-              <div style={{ color: 'var(--warning, #ff9500)' }}>{run.error}</div>
-            )}
             {entryPath && (
               <div className="flex items-center gap-2 pt-1">
                 <button
@@ -185,9 +186,11 @@ export function RunTimelineCard({ run }: { run: RunState }) {
                 )}
               </div>
             )}
-            {run.projectName && (!entryPath || !run.runnable) && (
+            {run.projectName && (!entryPath || !run.runnable) && !run.error && (
               <div style={{ color: 'var(--warning, #ff9500)' }}>
-                No verified runnable entry point.
+                {run.status === 'failed'
+                  ? 'La validation du projet a échoué. Consulte les étapes ci-dessus.'
+                  : 'Le lancement de ce projet n’a pas été validé.'}
               </div>
             )}
             {liveRun && (liveRun.out || liveRun.err || liveRun.done) && (

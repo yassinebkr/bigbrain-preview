@@ -535,13 +535,14 @@ class ArchitectPhase:
             implementation_paths.append(entry_point)
 
         if deliverable_type == "web_app":
+            from ..brains.web_acceptance import ACCEPTANCE_CONTRACT
             web_required = {
                 "index.html": ("Semantic browser entry point", "Reference styles.css and app.js with relative URLs."),
                 "styles.css": ("Responsive visual design", "Style every user-visible state and keyboard focus state."),
                 "app.js": ("Browser interaction and state", "Implement the requested interactions without external dependencies."),
                 "tests/acceptance.json": (
                     "Machine-readable user acceptance scenarios",
-                    'Return JSON {"cases":[{"name":"...","assertions":["..."]}]} covering the requested browser behavior.'),
+                    ACCEPTANCE_CONTRACT),
             }
             existing = {spec.path for spec in file_specs}
             for path, (purpose, notes) in web_required.items():
@@ -551,6 +552,9 @@ class ArchitectPhase:
                         dependencies=[] if path != "index.html" else ["styles.css", "app.js"],
                         implementation_notes=notes,
                     ))
+            for file_spec in file_specs:
+                if file_spec.path == "tests/acceptance.json":
+                    file_spec.implementation_notes = ACCEPTANCE_CONTRACT
 
         if deliverable_type == "python" and executable and file_specs and not any(
                 spec.path.startswith("tests/") and spec.path.endswith(".py")

@@ -1557,8 +1557,8 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             
             if plan.is_failed():
                 plan.status = TaskStatus.FAILED
-                plan.error = "One or more subtasks failed"
                 failed_subtasks = [st for st in plan.subtasks if st.status == TaskStatus.FAILED]
+                plan.error = "; ".join(st.error or "Unknown error" for st in failed_subtasks)[:2000]
                 plan.result = {
                     "success": False,
                     "error": plan.error,
@@ -1617,6 +1617,9 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
     @staticmethod
     def _project_result_metadata(plan: TaskPlan) -> dict:
         """Expose only launch/navigation metadata from completed subtasks."""
+        if plan.status == TaskStatus.FAILED:
+            # A selected older project is not evidence for a failed new run.
+            return {"runnable": False}
         candidates = []
         for result in plan.get_results().values():
             if not isinstance(result, dict):
