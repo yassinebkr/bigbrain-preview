@@ -21,6 +21,7 @@ def test_terminal_task_removes_routing_marker_from_replay(tmp_path, monkeypatch)
         "payload": {
             "event": "task.complete",
             "task_id": "plan-1",
+            "session_id": "sess-1",
         },
     }
     server._maybe_buffer("event", "task.complete", completed)

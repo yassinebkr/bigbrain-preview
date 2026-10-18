@@ -223,7 +223,7 @@ class BigBrainSystem:
         print(f"📂 Working project: {label} — {retargeted} brain(s) write to {target.name}/")
         return {"ok": True, "project": project, "retargeted": retargeted}
 
-    async def cancel_current(self) -> dict:
+    async def cancel_current(self, session_id: str | None = None) -> dict:
         """Stop what is in flight: front brain LLM stream + orchestrated run.
 
         The front brain breaks its delta loop at the next chunk (the
@@ -235,13 +235,14 @@ class BigBrainSystem:
 
         stopped = []
         if self.front_brain is not None:
-            self.front_brain.request_stop()
+            self.front_brain.request_stop(session_id=session_id)
             stopped.append("front_brain")
         if self.orchestrator is not None:
             await self.orchestrator._handle_cancel_request(BusMessage(
                 type=MessageType.CANCEL, source="bigbrain_system",
-                target=self.orchestrator.name, payload={"mode": "hard"}))
-        if self.bus is not None:
+                target=self.orchestrator.name, payload={"mode": "hard", "session_id": session_id}))
+            stopped.append("orchestrator")
+        if self.bus is not None and session_id is None:
             await self.bus.send(BusMessage(
                 type=MessageType.CANCEL,
                 source="bigbrain_system",
@@ -249,7 +250,6 @@ class BigBrainSystem:
                 payload={"mode": "soft"},
                 priority=Priority.HIGH,
             ))
-            stopped.append("orchestrator")
         print(f"⏹️  Cancel requested: {', '.join(stopped) or 'nothing running'}")
         return {"ok": True, "stopped": stopped}
 

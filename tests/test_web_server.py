@@ -353,19 +353,19 @@ class TestAplotProtocol:
         mock_ws = AsyncMock()
 
         calls = []
-        async def hook():
-            calls.append("cancelled")
+        async def hook(session_id=None):
+            calls.append(session_id)
         original = server_module.CANCEL_HOOK
         server_module.CANCEL_HOOK = hook
         try:
             await server._handle_ws_message(
-                mock_ws, json.dumps({"type": "chat.cancel", "payload": {}})
+                mock_ws, json.dumps({"type": "chat.cancel", "payload": {"sessionId": "sess-stop"}})
             )
             await asyncio.sleep(0.05)
         finally:
             server_module.CANCEL_HOOK = original
 
-        assert calls == ["cancelled"]
+        assert calls == ["sess-stop"]
         assert all(msg.type != "cancel" for msg in sent_to_bus)
         assert any(msg.payload.get("event") == "task.cancelled" for msg in sent_to_bus)
 
@@ -395,9 +395,9 @@ class TestAplotProtocol:
 
         monkeypatch.setattr(server, "_handle_chat_send", pending_chat)
         ws = AsyncMock()
-        await server._handle_ws_message(ws, json.dumps({"type": "chat.send"}))
+        await server._handle_ws_message(ws, json.dumps({"type": "chat.send", "payload": {"sessionId": "sess-stop"}}))
         await asyncio.wait_for(started.wait(), timeout=1)
-        await server._handle_ws_message(ws, json.dumps({"type": "chat.cancel"}))
+        await server._handle_ws_message(ws, json.dumps({"type": "chat.cancel", "payload": {"sessionId": "sess-stop"}}))
         assert interrupted.is_set()
         assert not server._chat_tasks
 
@@ -408,7 +408,8 @@ class TestAplotProtocol:
         mock_ws = AsyncMock()
 
         await server._handle_ws_message(
-            mock_ws, json.dumps({"type": "req", "id": "r1", "method": "chat.history"})
+            mock_ws, json.dumps({"type": "req", "id": "r1", "method": "chat.history",
+                                "params": {"sessionId": server._active_session_id}})
         )
 
         frames = [c.args[0] for c in mock_ws.send_json.call_args_list]
@@ -1035,18 +1036,15 @@ class TestStreamingFrames:
 
 
 class TestCompoundFallback:
-    def test_compound_converted_to_generate_and_execute(self):
+    def test_compound_requires_planning_instead_of_silent_python_conversion(self):
         from bigbrain.orchestrator.orchestrator import WorkspaceOrchestrator
         orch = WorkspaceOrchestrator.__new__(WorkspaceOrchestrator)
-        subtasks = orch._simple_decompose("plan1", {
-            "type": "compound",
-            "request": "crée un script hello.py",
-            "user_request": "crée un script hello.py",
-        })
-        assert len(subtasks) == 1
-        assert subtasks[0].payload["type"] == "generate_and_execute"
-        assert subtasks[0].payload["user_request"] == "crée un script hello.py"
-        assert subtasks[0].brain_target == "python_brain"
+        with pytest.raises(ValueError, match="No explicit action route"):
+            orch._simple_decompose("plan1", {
+                "type": "compound",
+                "request": "crée un script hello.py",
+                "user_request": "crée un script hello.py",
+            })
 
     def test_known_types_pass_through(self):
         from bigbrain.orchestrator.orchestrator import WorkspaceOrchestrator

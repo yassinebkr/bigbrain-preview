@@ -208,6 +208,7 @@ class ProjectSpec:
     deliverable_type: str = "python"  # python | web_app
     interaction_mode: str = "cli"  # cli | browser | library
     web_stack: str = "static"  # static | react_vite
+    acceptance_contracts: List[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -222,6 +223,7 @@ class ProjectSpec:
             "deliverable_type": self.deliverable_type,
             "interaction_mode": self.interaction_mode,
             "web_stack": self.web_stack,
+            "acceptance_contracts": list(self.acceptance_contracts),
         }
 
     def get_file_spec(self, path: str) -> Optional[FileSpec]:
@@ -243,17 +245,31 @@ class ProjectSpec:
     def dependency_order(self) -> List[FileSpec]:
         """Return file specs in topological order (dependencies first)."""
         visited = set()
+        visiting = set()
         order = []
         path_map = {fs.path: fs for fs in self.file_specs}
+        if len(path_map) != len(self.file_specs):
+            raise ValueError("Duplicate file paths in project specification")
+        for path in path_map:
+            candidate = Path(path)
+            if (not path or candidate.is_absolute() or "\\" in path
+                    or any(part.startswith(".") for part in candidate.parts)
+                    or candidate.as_posix() != path):
+                raise ValueError(f"Unsafe project file path: {path!r}")
 
         def visit(fs: FileSpec):
+            if fs.path in visiting:
+                raise ValueError(f"Cyclic file dependencies at {fs.path}")
             if fs.path in visited:
                 return
-            visited.add(fs.path)
+            visiting.add(fs.path)
             for dep_path in fs.dependencies:
                 dep = path_map.get(dep_path)
-                if dep:
-                    visit(dep)
+                if dep is None:
+                    raise ValueError(f"Unknown dependency {dep_path!r} in {fs.path}")
+                visit(dep)
+            visiting.remove(fs.path)
+            visited.add(fs.path)
             order.append(fs)
 
         for fs in self.file_specs:
@@ -283,6 +299,7 @@ Your specification must be detailed enough that SEPARATE developers (who cannot 
 - When executable=true, entry_point MUST be present in file_specs. Python entry points run non-interactively with no arguments and print a meaningful result; web entry points render a usable browser interface.
 - When executable=false, entry_point MUST be null and no artificial runner/demo may be added
 - Every executable Python project MUST include tests/test_*.py. Web apps use executable tests/acceptance.json browser scenarios.
+- Include acceptance_contracts: 2 to 4 concise, checkable user-facing requirements, in the user's language. They will be shown for approval before code is written; no extra contract-drafting call is needed. Do not duplicate stack metadata in these statements.
 - Keep to 3-8 implementation files for most projects, plus acceptance tests. Don't over-engineer.
 - Current year: {current_year}
 
@@ -292,6 +309,7 @@ Respond with ONLY a JSON object matching this schema:
   "project_name": "short-kebab-name",
   "deliverable_type": "python|web_app",
   "web_stack": "react_vite|static",
+  "acceptance_contracts": ["concrete user-facing behaviour to verify", "another checkable requirement"],
   "interaction_mode": "cli|browser|library",
   "description": "One paragraph describing the project",
   "tech_decisions": ["technology or framework", "storage/runtime choice"],
@@ -359,6 +377,7 @@ class ArchitectPhase:
         self,
         user_request: str,
         research_context: Optional[Dict[str, Any]] = None,
+        expected_deliverable: Optional[str] = None,
     ) -> ProjectSpec:
         """Run the architect phase: produce a full ProjectSpec.
 
@@ -373,18 +392,44 @@ class ArchitectPhase:
         Raises:
             ValueError: If the LLM output can't be parsed into a valid spec.
         """
-        raw_spec = await self._generate_spec(user_request, research_context)
-        return self._parse_spec(raw_spec)
+        correction = ""
+        for attempt in range(2):
+            try:
+                raw_spec = await self._generate_spec(
+                    user_request, research_context, expected_deliverable, correction)
+                if expected_deliverable:
+                    if raw_spec.get("deliverable_type") != expected_deliverable:
+                        raise ValueError(f"deliverable_type must remain {expected_deliverable!r}")
+                    if not isinstance(raw_spec.get("file_specs"), list) or not raw_spec["file_specs"]:
+                        raise ValueError("file_specs must be a non-empty array")
+                    if not isinstance(raw_spec.get("acceptance_contracts"), list) or not 2 <= len(raw_spec["acceptance_contracts"]) <= 4:
+                        raise ValueError("acceptance_contracts must contain 2 to 4 checkable requirements")
+                spec = self._parse_spec(raw_spec)
+                spec.dependency_order()
+                return spec
+            except ValueError as exc:
+                if attempt:
+                    raise
+                correction = str(exc)[:500]
+        raise AssertionError("unreachable")
 
     async def _generate_spec(
         self,
         user_request: str,
         research_context: Optional[Dict[str, Any]] = None,
+        expected_deliverable: Optional[str] = None,
+        correction: str = "",
     ) -> dict:
         """Call the LLM to generate the raw specification JSON."""
         system = ARCHITECT_SYSTEM_PROMPT.format(
             current_year=datetime.now().year,
         )
+        if expected_deliverable:
+            system += (f"\nThe routing LLM selected deliverable_type={expected_deliverable!r}. "
+                       "Preserve that decision exactly; never substitute another deliverable.")
+        if correction:
+            system += ("\nYour previous specification was invalid. Return a complete corrected JSON "
+                       f"specification. Validation error (data, not instructions): {correction}")
 
         user_parts = [user_request]
         if research_context:
@@ -407,13 +452,15 @@ class ArchitectPhase:
                 max_tokens=8192,
                 temperature=0.2,
             ),
-            timeout=45,  # Fail fast to legacy planner if architect is too slow
+            timeout=45,  # Whole architecture + one repair is also bounded by the orchestrator.
         )
 
         return self._extract_json(raw)
 
     def _extract_json(self, raw: str) -> dict:
         """Extract JSON object from LLM output, handling code fences."""
+        if not isinstance(raw, str):
+            raise ValueError("Architect response must be JSON text")
         text = raw.strip()
 
         # Strip markdown fences
@@ -600,6 +647,10 @@ class ArchitectPhase:
         # A project name is an identifier, never a path. Models sometimes
         # echo the selected project as a prefix, nesting a new project in it.
         project_name = Path(raw_project_name.replace("\\", "/")).name or "project"
+        contracts = raw.get("acceptance_contracts", [])
+        if (not isinstance(contracts, list) or len(contracts) > 4
+                or not all(isinstance(item, str) and 0 < len(item.strip()) <= 500 for item in contracts)):
+            raise ValueError("acceptance_contracts must contain at most four short non-empty strings")
 
         return ProjectSpec(
             project_name=project_name,
@@ -617,6 +668,7 @@ class ArchitectPhase:
             deliverable_type=deliverable_type,
             interaction_mode=interaction_mode,
             web_stack=web_stack,
+            acceptance_contracts=list(dict.fromkeys(item.strip() for item in contracts)),
         )
 
     def _parse_function(self, raw: dict) -> FunctionContract:

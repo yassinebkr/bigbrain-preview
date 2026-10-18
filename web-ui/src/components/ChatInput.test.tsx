@@ -7,7 +7,8 @@ import { useAppStore } from '@/store/appStore';
 // explicit test snapshot so these tests exercise the actual button states.
 vi.mock('@/store/appStore', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/store/appStore')>();
-  const hook = Object.assign(() => actual.useAppStore.getState(), actual.useAppStore);
+  const hook = Object.assign((selector?: (state: ReturnType<typeof actual.useAppStore.getState>) => unknown) =>
+    selector ? selector(actual.useAppStore.getState()) : actual.useAppStore.getState(), actual.useAppStore);
   return { ...actual, useAppStore: hook };
 });
 

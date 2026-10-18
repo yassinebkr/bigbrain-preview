@@ -11,6 +11,7 @@ only parses and validates them. No keyword matching anywhere.
 from __future__ import annotations
 
 import json
+import asyncio
 import os
 from typing import Any, List, Optional
 
@@ -75,12 +76,15 @@ async def draft_contracts(llm_provider: Any, user_request: str,
                           project_spec: Any = None) -> List[str]:
     """Ask the LLM for checkable contracts; empty list if unavailable."""
     architecture = stack_contract(project_spec)
+    proposed = list(getattr(project_spec, "acceptance_contracts", []) or [])
+    if proposed:
+        return ([architecture] if architecture else []) + proposed
     if not user_request.strip():
         return [architecture] if architecture else []
     if not llm_provider:
         return [architecture] if architecture else []
     try:
-        response = await llm_provider.chat_complete(
+        response = await asyncio.wait_for(llm_provider.chat_complete(
             messages=[
                 {"role": "system", "content": CONTRACTS_PROMPT},
                 {"role": "user", "content": (
@@ -89,7 +93,9 @@ async def draft_contracts(llm_provider: Any, user_request: str,
                 )},
             ],
             stream=False,
-        )
+            max_tokens=768,
+            temperature=0.1,
+        ), timeout=20)
     except Exception:
         return [architecture] if architecture else []
     contracts = parse_contracts(str(response))

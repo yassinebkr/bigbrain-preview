@@ -1,6 +1,7 @@
 """Front Brain - User-facing intelligence layer for BigBrain."""
 
 import asyncio
+from contextvars import ContextVar
 import time
 from typing import Any, Dict, List, Optional
 
@@ -67,6 +68,10 @@ class FrontBrain:
         # Set by the stop button (chat.cancel): the current LLM stream
         # breaks at the next delta and returns what it already has.
         self._stop_requested = False
+        self._stopped_sessions: set[str] = set()
+        self._session_context = ContextVar('front_brain_session', default=None)
+        self._stream_context = ContextVar('front_brain_streamed', default=False)
+        self._turn_context = ContextVar('front_brain_turn', default=None)
 
         # The soul: batch-consolidated identity memory (memory/soul.py).
         # Injected as a few lines per turn; consolidated by ONE LLM call
@@ -93,13 +98,22 @@ class FrontBrain:
             return self._conversation_history
         return self._session_histories.setdefault(session_id, [])
 
-    def request_stop(self) -> None:
+    def request_stop(self, session_id: Optional[str] = None) -> None:
         """Ask the current LLM stream to stop at the next delta.
 
         The partial reply is kept: the stream loop breaks and the caller
         broadcasts chat.done with whatever was already emitted.
         """
-        self._stop_requested = True
+        if session_id:
+            self._stopped_sessions.add(session_id)
+        else:
+            self._stop_requested = True
+
+    def _is_stopped(self, session_id: Optional[str]) -> bool:
+        return self._stop_requested or bool(session_id and session_id in self._stopped_sessions)
+
+    def _chat_session(self) -> Optional[str]:
+        return self._session_context.get() or self._last_session_id
     
     async def start(self) -> None:
         """Start the Front Brain and register with message bus."""
@@ -178,6 +192,7 @@ class FrontBrain:
         self.focus_manager.mark_user_activity()
         self._stop_requested = False
         self._last_session_id = session_id
+        self._stopped_sessions.discard(session_id)
         history = self._history_for(session_id)
 
         # Store conversation turn
@@ -396,7 +411,7 @@ class FrontBrain:
                 parts: list[str] = []
                 emitting = False
                 async for delta in result:
-                    if self._stop_requested:
+                    if self._is_stopped(session_id):
                         break
                     if not delta:
                         continue
@@ -413,12 +428,15 @@ class FrontBrain:
                         await self._emit_chat_delta(delta, session_id=session_id)
                 response = "".join(parts)
                 self._last_response_streamed = emitting
+                self._stream_context.set(emitting)
             else:
                 response = str(result)
                 self._last_response_streamed = False
+                self._stream_context.set(False)
             return response
         except Exception as e:
             self._last_response_streamed = False
+            self._stream_context.set(False)
             return f"I encountered an error processing your request: {e}"
     
     # _execute_code_direct REMOVED — Front Brain must never execute code.
@@ -566,6 +584,17 @@ Type 'quit' or 'exit' to stop."""
                 await self._handle_ui_message(message)
     
     async def _handle_ui_message(self, message: BusMessage) -> None:
+        token = self._session_context.set(message.payload.get('session_id'))
+        stream_token = self._stream_context.set(False)
+        turn_token = self._turn_context.set(message.payload.get('turn_id'))
+        try:
+            await self._process_ui_message(message)
+        finally:
+            self._session_context.reset(token)
+            self._stream_context.reset(stream_token)
+            self._turn_context.reset(turn_token)
+
+    async def _process_ui_message(self, message: BusMessage) -> None:
         """
         Handle a user message from the Morphable UI.
         
@@ -612,7 +641,7 @@ Type 'quit' or 'exit' to stop."""
             response = await self.handle_user_input(
                 text, input_type="web", session_id=session_id,
                 llm_content=llm_content)
-            if self._stop_requested:
+            if self._is_stopped(session_id):
                 await self._emit_chat_done("")
                 return
             
@@ -711,7 +740,7 @@ Type 'quit' or 'exit' to stop."""
                 # Plain text response — send to chat. If the reply was
                 # already streamed (chat.delta), signal completion only:
                 # re-sending the full text would duplicate the bubble.
-                if getattr(self, "_last_response_streamed", False):
+                if self._stream_context.get():
                     await self._emit_chat_done(response)
                 else:
                     await self._emit_chat_message("assistant", response)
@@ -935,7 +964,7 @@ Type 'quit' or 'exit' to stop."""
         await self.bus.broadcast_event(
             source=self.name,
             event_type="chat.delta",
-            payload={"delta": delta, "session_id": session_id or self._last_session_id},
+            payload={"delta": delta, "session_id": session_id or self._chat_session()},
             priority=Priority.NORMAL,
         )
 
@@ -945,7 +974,7 @@ Type 'quit' or 'exit' to stop."""
         await self.bus.broadcast_event(
             source=self.name,
             event_type="chat.done",
-            payload={"text": text, "session_id": self._last_session_id},
+            payload={"text": text, "session_id": self._chat_session(), "turn_id": self._turn_context.get()},
             priority=Priority.NORMAL,
         )
 
@@ -957,7 +986,8 @@ Type 'quit' or 'exit' to stop."""
             payload={
                 "role": role,
                 "text": text,
-                "session_id": session_id or self._last_session_id,
+                "session_id": session_id or self._chat_session(),
+                "turn_id": self._turn_context.get(),
             },
             priority=Priority.NORMAL,
         )
@@ -969,7 +999,7 @@ Type 'quit' or 'exit' to stop."""
             event_type="task.routing",
             payload={
                 "description": description[:140],
-                "session_id": self._last_session_id,
+                "session_id": self._chat_session(),
             },
             priority=Priority.NORMAL,
         )

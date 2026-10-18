@@ -319,7 +319,7 @@ class TestWorkspaceOrchestrator:
         # Call 2: simple planner (returns 2-step plan)
         mock_llm = AsyncMock()
         mock_llm.chat_complete = AsyncMock(side_effect=[
-            '{"mode": "script", "needs_research": true, "research_queries": ["quantum computing basics"], "reason": "research then code"}',
+            '{"mode": "script", "deliverable_type": "python", "needs_research": true, "research_queries": ["quantum computing basics"], "reason": "research then code"}',
             '[{"id": "s1", "description": "Research quantum computing", "brain_target": "researcher", "payload": {"type": "research", "query": "quantum computing"}, "dependencies": []}, {"id": "s2", "description": "Write summary code", "brain_target": "python_brain", "payload": {"type": "generate_and_execute", "user_request": "summarize findings"}, "dependencies": ["s1"]}]',
         ])
         

@@ -333,6 +333,12 @@ class BaseBrain(BusParticipant, ABC):
             target=target,
         )
     
+    def _event_context(self) -> Dict[str, Any]:
+        task = self._current_task.payload if self._current_task else {}
+        return {key: task[source] for key, source in (
+            ('session_id', 'session_id'), ('task_id', '_plan_id'), ('subtask_id', '_subtask_id'))
+            if task.get(source) is not None}
+
     async def send_event(self, event_type: str, payload: Dict[str, Any] = None,
                         priority: Priority = Priority.NORMAL) -> None:
         """
@@ -346,7 +352,7 @@ class BaseBrain(BusParticipant, ABC):
         await self.bus.broadcast_event(
             source=self.name,
             event_type=event_type,
-            payload=payload or {},
+            payload={**(payload or {}), **self._event_context()},
             workspace=self.workspace,
             priority=priority
         )
@@ -358,6 +364,7 @@ class BaseBrain(BusParticipant, ABC):
         Args:
             progress_data: Progress information (e.g. percentage, current step)
         """
+        progress_data = {**progress_data, **self._event_context()}
         # Include subtask_id from task payload so UI can correlate
         if self._current_task and self._current_task.payload:
             subtask_id = self._current_task.payload.get("_subtask_id")

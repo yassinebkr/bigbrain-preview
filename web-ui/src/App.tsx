@@ -108,7 +108,14 @@ export default function App() {
           });
         }
       } else if (activity.type === 'contracts.approved' || activity.type === 'contracts.rejected') {
-        useAppStore.getState().setContractProposal(null);
+        if (useAppStore.getState().contractProposal?.planId === activity.detail?.plan_id) {
+          useAppStore.getState().setContractProposal(null);
+        }
+      } else if (activity.type === 'contracts.approval_failed') {
+        if (useAppStore.getState().contractProposal?.planId === activity.detail?.plan_id) {
+          useAppStore.setState({ contractSending: false,
+            contractError: String(activity.detail?.error || 'Approbation non enregistrée') });
+        }
       }
       // Typing belongs to assistant text generation, never task progress.
       // The session-scoped RunPanel is the sole execution indicator.

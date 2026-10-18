@@ -103,6 +103,7 @@ class PythonBrain(BaseBrain):
                     "event": "workspace.file_written",
                     "path": rel.as_posix(),
                     "brain": self.name,
+                    **self._event_context(),
                 },
             ))
         except Exception:

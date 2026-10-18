@@ -40,6 +40,7 @@ function StackSummary({ value }: { value: string }) {
 export function ContractCard() {
   const proposal = useAppStore((s) => s.contractProposal);
   const sending = useAppStore((s) => s.contractSending);
+  const error = useAppStore((s) => s.contractError);
   const sendContractDecision = useAppStore((s) => s.sendContractDecision);
 
   return (
@@ -122,6 +123,7 @@ export function ContractCard() {
                   Reject
                 </button>
               </div>
+              {error && <p role="alert" className="text-[12px] mt-2" style={{ color: 'var(--warning, #ff9500)' }}>{error}</p>}
             </div>
           </div>
         </motion.div>

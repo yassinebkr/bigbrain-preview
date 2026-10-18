@@ -25,7 +25,7 @@ import {
   Ban,
   X,
 } from 'lucide-react';
-import { useAppStore } from '@/store/appStore';
+import { useAppStore, selectSessionRun } from '@/store/appStore';
 import type { RunVerification } from '@/store/appStore';
 
 function StatusIcon({ status, size = 13 }: { status: string; size?: number }) {
@@ -126,7 +126,7 @@ function LiveOutput({ value }: { value: string }) {
 }
 
 export function RunPanel() {
-  const run = useAppStore((s) => s.activeRun);
+  const run = useAppStore(selectSessionRun);
   const activeSessionKey = useAppStore((s) => s.activeSessionKey);
   const expanded = useAppStore((s) => s.runPanelOpen);
   const setExpanded = useAppStore((s) => s.setRunPanelOpen);

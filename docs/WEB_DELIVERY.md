@@ -1,5 +1,17 @@
 # Web delivery: React/Vite and Chromium
 
+Pre-merge hardening is tracked in [WEB_APP_HARDENING.md](WEB_APP_HARDENING.md).
+Web assessment is now preserved through architecture and worker assignment;
+invalid planning fails explicitly instead of degrading to Python. The
+architect proposes acceptance contracts in its response, avoiding a separate
+contract-drafting round trip for projects. Preparation stages carry timings.
+Recorded approval is required before execution; an HTTP acknowledgement alone
+does not resolve the approval card. Runs/proposals are persisted per conversation;
+Stop targets that session and worker events carry plan/session identifiers.
+Concurrent front replies retain their own coroutine context. Same-conversation
+chat turns are serialized per server, and history defaults to socket scope, not
+another tab's last session. Live multi-tab/product campaign work remains open.
+
 ## Conversation isolation
 
 Home/New Chat (including keyboard and command-palette navigation) creates a

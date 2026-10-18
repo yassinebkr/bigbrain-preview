@@ -525,7 +525,8 @@ class TestArchitectPhase:
 class TestArtifactFlow:
     """Tests that upstream code is properly passed to downstream workers."""
 
-    def test_upstream_context_keyed_by_filepath(self):
+    @pytest.mark.asyncio
+    async def test_upstream_context_keyed_by_filepath(self):
         """Orchestrator should key upstream_context by file_path when available."""
         from bigbrain.orchestrator.orchestrator import (
             WorkspaceOrchestrator, TaskPlan, SubTask, TaskStatus
@@ -565,10 +566,7 @@ class TestArtifactFlow:
             ],
         )
 
-        import asyncio
-        resolved = asyncio.get_event_loop().run_until_complete(
-            orch._resolve_payload_references(plan.subtasks[1].payload, plan)
-        )
+        resolved = await orch._resolve_payload_references(plan.subtasks[1].payload, plan)
 
         # upstream_context should be keyed by file_path, not brain:description
         assert "upstream_context" in resolved

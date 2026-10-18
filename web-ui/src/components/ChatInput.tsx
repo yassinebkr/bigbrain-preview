@@ -1,7 +1,7 @@
 import { useRef, useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { Paperclip, Mic, Send, Square } from 'lucide-react';
-import { useAppStore } from '@/store/appStore';
+import { useAppStore, selectSessionRun } from '@/store/appStore';
 import { ActionPill } from './ActionPill';
 import { AttachmentChip } from './AttachmentChip';
 
@@ -27,10 +27,10 @@ export function ChatInput({ onSend }: ChatInputProps) {
     setRecording,
     isStreaming,
     stopGeneration,
-    activeRun,
     activeSessionKey,
     view,
   } = useAppStore();
+  const activeRun = useAppStore(selectSessionRun);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);

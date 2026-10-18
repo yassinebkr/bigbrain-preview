@@ -124,11 +124,12 @@ export class BigBrainConnection implements ConnectionLike {
 
   cancel(): void {
     try {
-      this.ws?.send(JSON.stringify({ type: 'chat.cancel', payload: {} }));
+      this.ws?.send(JSON.stringify({ type: 'chat.cancel', payload: { sessionId: this.sessionKey } }));
     } catch (e) { /* best effort */ }
   }
 
   loadHistory(callback?: (frame: any) => void, sessionId?: string): void {
+    sessionId ||= this.sessionKey.startsWith('sess-') ? this.sessionKey : undefined;
     const id = this._request('chat.history', (frame) => {
       // Server entries: {id, role, text, timestamp}. Normalize to the
       // gateway shape the panels expect ({content} strings).

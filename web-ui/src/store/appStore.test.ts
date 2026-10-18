@@ -21,6 +21,9 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useAppStore } from '@/store/appStore';
+import { selectSessionRun } from '@/store/appStore';
+
+beforeEach(() => useAppStore.setState({ sessionRuns: {}, sessionProposals: {} }));
 
 function reset() {
   useAppStore.setState({
@@ -369,7 +372,7 @@ describe('contract approval (Phase B)', () => {
     expect(useAppStore.getState().contractProposal).toBeNull();
   });
 
-  it('sendContractDecision posts the verdict and clears on success', async () => {
+  it('HTTP acknowledgement does not resolve the contract before a recorded verdict', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true });
     vi.stubGlobal('fetch', fetchMock);
     useAppStore.getState().setContractProposal({
@@ -380,8 +383,9 @@ describe('contract approval (Phase B)', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ design_id: 'task-abc', plan_id: 'p1', approve: true }),
+      signal: expect.any(AbortSignal),
     });
-    expect(useAppStore.getState().contractProposal).toBeNull();
+    expect(useAppStore.getState().contractProposal?.planId).toBe('p1');
     vi.unstubAllGlobals();
   });
 
@@ -394,6 +398,19 @@ describe('contract approval (Phase B)', () => {
     await useAppStore.getState().sendContractDecision(false);
     expect(useAppStore.getState().contractProposal).not.toBeNull();
     expect(useAppStore.getState().contractSending).toBe(false);
+    vi.unstubAllGlobals();
+  });
+
+  it('an old HTTP decision cannot modify a newer proposal', async () => {
+    let finish!: (value: any) => void;
+    vi.stubGlobal('fetch', vi.fn(() => new Promise((resolve) => { finish = resolve; })));
+    useAppStore.getState().setContractProposal({ designId: 'old', planId: 'old', request: 'old', contracts: ['c'] });
+    const decision = useAppStore.getState().sendContractDecision(true);
+    useAppStore.getState().setContractProposal({ designId: 'new', planId: 'new', request: 'new', contracts: ['c'] });
+    finish({ ok: false });
+    await decision;
+    expect(useAppStore.getState().contractProposal?.planId).toBe('new');
+    expect(useAppStore.getState().contractError).toBeNull();
     vi.unstubAllGlobals();
   });
 });
@@ -450,6 +467,22 @@ describe('applyFsRunEvent — streaming manual runs', () => {
 });
 
 describe('run record is scoped to its conversation', () => {
+  it('preparation progress is timed, kept through task.received and scoped to its session', () => {
+    useAppStore.setState({ activeSessionKey: 'sess-progress', activeRun: null });
+    useAppStore.getState().applyRunEvent(ev('task.routing', { session_id: 'sess-progress' }));
+    useAppStore.getState().applyRunEvent(ev('planning.stage', {
+      session_id: 'sess-progress', stage: 'assessment', status: 'done',
+      description: 'Analyse de la demande', elapsed_ms: 1240,
+    }));
+    useAppStore.getState().applyRunEvent(ev('planning.stage', {
+      session_id: 'sess-other', stage: 'architect', status: 'running', description: 'Foreign',
+    }));
+    expect(useAppStore.getState().activeRun?.steps).toHaveLength(1);
+    useAppStore.getState().applyRunEvent(ev('task.received', { task_id: 'p', session_id: 'sess-progress' }));
+    expect(useAppStore.getState().activeRun?.steps[0]).toMatchObject({
+      id: 'planning-assessment', status: 'done', durationMs: 1240,
+    });
+  });
   it('a late terminal event from another run cannot dock the current run', () => {
     useAppStore.setState({ activeRun: {
       id: 'new-plan', sessionId: 'sess-new', status: 'running',
@@ -526,7 +559,7 @@ it('keeps project launch metadata for a single-file modification', () => {
 });
 
 it('Stop docks the active run as cancelled and removes its approval controls', () => {
-  useAppStore.setState({ activeRun: null, completedRuns: [], connection: null });
+  useAppStore.setState({ activeRun: null, completedRuns: [], connection: null, activeSessionKey: 'stop-session' });
   useAppStore.getState().applyRunEvent(ev('task.received', {
     task_id: 'stopped-run', session_id: 'stop-session',
   }));
@@ -536,4 +569,43 @@ it('Stop docks the active run as cancelled and removes its approval controls', (
     id: 'stopped-run', status: 'cancelled', sessionId: 'stop-session',
   });
   expect(useAppStore.getState().contractProposal).toBeNull();
+});
+
+describe('concurrent runs and approvals', () => {
+  it('finishing A preserves the live run and pending approval of B', () => {
+    useAppStore.setState({ activeRun: null, completedRuns: [], connection: null, activeSessionKey: 'A' });
+    const s = useAppStore.getState();
+    s.applyRunEvent(ev('task.received', { task_id: 'pA', session_id: 'A' }));
+    s.applyRunEvent(ev('contracts.proposal', { plan_id: 'pA', design_id: 'dA', session_id: 'A', contracts: ['A'] }));
+    s.openSession('B');
+    s.applyRunEvent(ev('task.received', { task_id: 'pB', session_id: 'B' }));
+    s.applyRunEvent(ev('contracts.proposal', { plan_id: 'pB', design_id: 'dB', session_id: 'B', contracts: ['B'] }));
+    s.applyRunEvent(ev('subtask.started', { task_id: 'pA', subtask_id: 'sA' }));
+    expect(useAppStore.getState().sessionRuns.A.steps[0].id).toBe('sA');
+    expect(useAppStore.getState().sessionRuns.B.steps).toEqual([]);
+    s.applyRunEvent(ev('task.complete', { task_id: 'pA', session_id: 'A' }));
+    expect(selectSessionRun(useAppStore.getState())?.id).toBe('pB');
+    expect(useAppStore.getState().contractProposal?.planId).toBe('pB');
+    expect(useAppStore.getState().sessionProposals.A).toBeUndefined();
+    expect(useAppStore.getState().completedRuns.at(-1)?.sessionId).toBe('A');
+    s.openSession('A');
+    expect(selectSessionRun(useAppStore.getState())).toBeNull();
+    s.openSession('B');
+    expect(selectSessionRun(useAppStore.getState())?.id).toBe('pB');
+    expect(useAppStore.getState().contractProposal?.planId).toBe('pB');
+  });
+
+  it('Stop while a session is being created prevents the delayed send', async () => {
+    let created!: (session: any) => void;
+    const conn = mockConnection({ createSession: vi.fn((cb) => { created = cb; }) });
+    useAppStore.setState({ connection: conn as any });
+    useAppStore.getState().startNewSession();
+    useAppStore.getState().setInputText('Do not send after Stop');
+    useAppStore.getState().sendMessage();
+    useAppStore.getState().stopGeneration();
+    created({ id: 'sess-created-late' });
+    await Promise.resolve();
+    expect(conn.send).not.toHaveBeenCalled();
+    expect(useAppStore.getState().isStreaming).toBe(false);
+  });
 });
