@@ -790,6 +790,8 @@ export const useAppStore = create<AppState>()(
       stopGeneration: () => {
         get().connection?.cancel?.();
         get().finalizeStreaming();
+        get().applyRunEvent({ type: 'task.cancelled', detail: {} });
+        set({ contractProposal: null, contractSending: false });
       },
     }),
     {

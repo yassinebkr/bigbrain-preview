@@ -176,6 +176,7 @@ class FrontBrain:
             Response text for the user
         """
         self.focus_manager.mark_user_activity()
+        self._stop_requested = False
         self._last_session_id = session_id
         history = self._history_for(session_id)
 
@@ -385,7 +386,6 @@ class FrontBrain:
                 messages=messages,
                 stream=True,
             )
-            self._stop_requested = False
             if hasattr(result, "__aiter__"):
                 parts: list[str] = []
                 emitting = False
@@ -606,6 +606,9 @@ Type 'quit' or 'exit' to stop."""
             response = await self.handle_user_input(
                 text, input_type="web", session_id=session_id,
                 llm_content=llm_content)
+            if self._stop_requested:
+                await self._emit_chat_done("")
+                return
             
             # Try to parse as delegation JSON
             parsed = self._try_parse_delegation(response)

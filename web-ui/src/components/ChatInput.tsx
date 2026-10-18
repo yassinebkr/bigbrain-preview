@@ -27,6 +27,8 @@ export function ChatInput({ onSend }: ChatInputProps) {
     setRecording,
     isStreaming,
     stopGeneration,
+    activeRun,
+    activeSessionKey,
   } = useAppStore();
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -206,7 +208,7 @@ export function ChatInput({ onSend }: ChatInputProps) {
             />
           </motion.button>
 
-          {isStreaming ? (
+          {(isStreaming || (activeRun?.status === 'running' && activeRun.sessionId === activeSessionKey)) ? (
             <motion.button
               whileTap={{ scale: 0.9 }}
               onClick={stopGeneration}

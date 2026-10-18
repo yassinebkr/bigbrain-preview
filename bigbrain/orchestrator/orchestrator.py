@@ -1682,7 +1682,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             # Cancel all active tasks
             for plan_id in list(self.task_plans.keys()):
                 plan = self.task_plans[plan_id]
-                if plan.status == TaskStatus.RUNNING:
+                if plan.status not in (TaskStatus.COMPLETE, TaskStatus.FAILED, TaskStatus.CANCELLED):
                     await self._cancel_task(plan_id, cancel_mode)
     
     async def _cancel_task(self, task_id: str, mode: str) -> None:
@@ -1708,9 +1708,16 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                         type=MessageType.CANCEL,
                         source=self.name,
                         target=subtask.assigned_brain,
-                        payload={"task_id": subtask.id, "mode": mode}
+                        payload={"task_id": dispatch_id, "mode": mode}
                     )
                     await self.bus.send(cancel_msg)
+                    brain = subtask.assigned_brain
+                    self.brain_load[brain] = max(0, self.brain_load.get(brain, 0) - 1)
+                self.active_subtasks.pop(dispatch_id, None)
+        for subtask in plan.subtasks:
+            if subtask.status in (TaskStatus.PENDING, TaskStatus.RUNNING):
+                subtask.status = TaskStatus.CANCELLED
+        plan.awaiting_approval = False
         
         await self.bus.broadcast_event(
             source=self.name,
@@ -1718,6 +1725,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             payload={
                 "task_id": task_id,
                 "mode": mode,
+                "session_id": (plan.original_task.payload or {}).get("session_id"),
                 "workspace": self.workspace
             },
             workspace=self.workspace,

@@ -366,7 +366,8 @@ class TestAplotProtocol:
             server_module.CANCEL_HOOK = original
 
         assert calls == ["cancelled"]
-        assert sent_to_bus == []  # control frame: never forwarded
+        assert all(msg.type != "cancel" for msg in sent_to_bus)
+        assert any(msg.payload.get("event") == "task.cancelled" for msg in sent_to_bus)
 
     @pytest.mark.asyncio
     async def test_chat_cancel_without_hook_is_a_noop(self, server, bus):
@@ -378,7 +379,27 @@ class TestAplotProtocol:
             mock_ws, json.dumps({"type": "chat.cancel", "payload": {}})
         )
         await asyncio.sleep(0.05)
-        assert sent_to_bus == []
+        assert all(msg.type != "cancel" for msg in sent_to_bus)
+
+    @pytest.mark.asyncio
+    async def test_stop_interrupts_pending_chat_before_late_delegation(self, server, monkeypatch):
+        started = asyncio.Event()
+        interrupted = asyncio.Event()
+
+        async def pending_chat(ws, data):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                interrupted.set()
+
+        monkeypatch.setattr(server, "_handle_chat_send", pending_chat)
+        ws = AsyncMock()
+        await server._handle_ws_message(ws, json.dumps({"type": "chat.send"}))
+        await asyncio.wait_for(started.wait(), timeout=1)
+        await server._handle_ws_message(ws, json.dumps({"type": "chat.cancel"}))
+        assert interrupted.is_set()
+        assert not server._chat_tasks
 
     @pytest.mark.asyncio
     async def test_chat_history_request_response(self, server):

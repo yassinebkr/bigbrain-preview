@@ -237,6 +237,10 @@ class BigBrainSystem:
         if self.front_brain is not None:
             self.front_brain.request_stop()
             stopped.append("front_brain")
+        if self.orchestrator is not None:
+            await self.orchestrator._handle_cancel_request(BusMessage(
+                type=MessageType.CANCEL, source="bigbrain_system",
+                target=self.orchestrator.name, payload={"mode": "hard"}))
         if self.bus is not None:
             await self.bus.send(BusMessage(
                 type=MessageType.CANCEL,

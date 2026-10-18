@@ -725,6 +725,10 @@ class TestWorkspaceOrchestrator:
         cancel_msg = cancel_calls[0][0][0]
         assert cancel_msg.target == "python_brain"
         assert cancel_msg.payload["mode"] == "soft"
+        assert cancel_msg.payload["task_id"] == "dispatch_msg_id"
+        assert subtask.status == TaskStatus.CANCELLED
+        assert "dispatch_msg_id" not in orchestrator.active_subtasks
+        assert orchestrator.brain_load.get("python_brain", 0) == 0
     
     @pytest.mark.asyncio
     async def test_status_query(self, orchestrator, mock_bus):

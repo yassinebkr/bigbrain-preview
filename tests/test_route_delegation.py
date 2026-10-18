@@ -88,6 +88,19 @@ def _make_front(provider):
 
 
 class TestFrontBrainRouteDispatch:
+    async def test_stop_during_provider_wait_prevents_delegation(self):
+        class StoppingProvider:
+            async def chat_complete(self, **kwargs):
+                front.request_stop()
+                return ROUTE_JSON
+
+        front, bus = _make_front(StoppingProvider())
+        await front._handle_ui_message(BusMessage(
+            type=MessageType.TASK, source="morphable_ui", target="front_brain",
+            payload={"text": "do something", "session_id": "s1"}))
+        assert bus.tasks == []
+        assert not any(event == "task.routing" for event, _ in bus.events)
+
     async def test_route_sends_brain_task_to_orchestrator(self):
         provider = RecordingProvider(ROUTE_JSON)
         front, bus = _make_front(provider)

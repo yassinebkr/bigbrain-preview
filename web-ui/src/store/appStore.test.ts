@@ -457,3 +457,16 @@ it('keeps project launch metadata for a single-file modification', () => {
     previewUrl: 'http://127.0.0.1:3200', runnable: true,
   });
 });
+
+it('Stop docks the active run as cancelled and removes its approval controls', () => {
+  useAppStore.setState({ activeRun: null, completedRuns: [], connection: null });
+  useAppStore.getState().applyRunEvent(ev('task.received', {
+    task_id: 'stopped-run', session_id: 'stop-session',
+  }));
+  useAppStore.getState().stopGeneration();
+  expect(useAppStore.getState().activeRun).toBeNull();
+  expect(useAppStore.getState().completedRuns.at(-1)).toMatchObject({
+    id: 'stopped-run', status: 'cancelled', sessionId: 'stop-session',
+  });
+  expect(useAppStore.getState().contractProposal).toBeNull();
+});

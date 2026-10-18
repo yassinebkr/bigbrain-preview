@@ -277,29 +277,21 @@ class BaseBrain(BusParticipant, ABC):
         # Check if we have a matching task to cancel
         if not self._current_task or (task_id and self._current_task.id != task_id):
             return  # Not our task to cancel
-        
-        if cancel_mode == "hard":
-            # Hard cancel - immediate stop
-            self._cancelled = True
-            await self.send_result({
-                "success": False,
-                "cancelled": True,
-                "mode": "hard"
-            }, self._current_task.id)
-            self._current_task = None
-            
-            await self.send_event("brain.cancelled", {
-                "brain": self.name,
-                "mode": "hard"
-            })
-        
-        else:
-            # Soft cancel - set flag for graceful exit
-            self._cancelled = True
-            await self.send_event("brain.cancelling", {
-                "brain": self.name,
-                "mode": "soft"
-            })
+
+        self._cancelled = True
+        background = self._background_task
+        if background is not None and background is not asyncio.current_task():
+            background.cancel()
+            await asyncio.gather(background, return_exceptions=True)
+        self._current_task = None
+        self._background_task = None
+        await self.send_event("brain.cancelling", {
+            "brain": self.name, "mode": cancel_mode,
+        })
+        await self.send_event("brain.cancelled", {
+            "brain": self.name, "mode": cancel_mode,
+        })
+        await self.send_event("brain.status", {"brain": self.name, "state": "idle"})
     
     async def _cancel_current_task(self) -> None:
         """Cancel the currently running task gracefully."""

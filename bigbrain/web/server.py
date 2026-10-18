@@ -89,6 +89,7 @@ class WebServer:
         self._runner: Optional[web.AppRunner] = None
         self._site: Optional[web.TCPSite] = None
         self._ws_clients: Set[web.WebSocketResponse] = set()
+        self._chat_tasks: set[asyncio.Task] = set()
         self._running = False
 
         # Replay buffer: stores recent important messages so reconnecting
@@ -98,7 +99,7 @@ class WebServer:
         self._replay_max_size = 100
         self._REPLAY_TYPES = {"result", "progress"}
         self._REPLAY_EVENTS = {
-            "task.received", "task.complete", "task.failed",
+            "task.received", "task.complete", "task.failed", "task.cancelled",
             "subtask.started", "subtask.complete", "subtask.failed",
             "brain.started", "brain.complete",
             "chat.message",  # Front brain summary / chat responses
@@ -153,6 +154,11 @@ class WebServer:
         self._running = False
 
         # Unsubscribe from bus
+        tasks = list(self._chat_tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
         self.bus.unsubscribe("*", self._on_bus_message)
 
         # Close all WebSocket connections
@@ -772,10 +778,17 @@ class WebServer:
             return
 
         if data.get("type") == "chat.send":
-            await self._handle_chat_send(ws, data)
+            task = asyncio.create_task(self._handle_chat_send(ws, data))
+            self._chat_tasks.add(task)
+            task.add_done_callback(self._chat_finished)
             return
 
         if data.get("type") == "chat.cancel":
+            tasks = list(self._chat_tasks)
+            for task in tasks:
+                task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
             if CANCEL_HOOK is not None:
                 try:
                     result = CANCEL_HOOK()
@@ -783,6 +796,9 @@ class WebServer:
                         await result
                 except Exception as e:
                     logger.warning("chat.cancel hook failed: %s", e)
+            await self.bus.broadcast_event(
+                source="morphable_ui", event_type="task.cancelled",
+                payload={"session_id": self._active_session_id, "mode": "user"})
             return
 
         if data.get("type") == "req":
@@ -817,6 +833,11 @@ class WebServer:
         )
 
         await self.bus.send(message)
+
+    def _chat_finished(self, task: asyncio.Task) -> None:
+        self._chat_tasks.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            logger.error("Chat delivery failed: %s", task.exception())
 
     async def _handle_chat_send(
         self, ws: web.WebSocketResponse, data: dict
@@ -1045,7 +1066,8 @@ class WebServer:
         if event in ("task.complete", "task.failed", "task.cancelled"):
             self._replay_buffer = [
                 (ts, buffered) for ts, buffered in self._replay_buffer
-                if (buffered.get("payload") or {}).get("event") != "task.routing"
+                if (buffered.get("payload") or {}).get("event") not in (
+                    "task.routing", "contracts.proposal")
             ]
 
         """Store important messages for replay on reconnect.
