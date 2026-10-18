@@ -13,7 +13,7 @@ import { RunTimelineCard } from './RunTimelineCard';
 import { ArrowDown } from 'lucide-react';
 
 export function ChatView() {
-  const { messages, isStreaming } = useAppStore();
+  const { messages, isStreaming, historyError } = useAppStore();
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [followLatest, setFollowLatest] = useState(true);
@@ -26,7 +26,7 @@ export function ChatView() {
       kind: 'message' as const, ts: message.timestamp, message,
     })),
     ...completedRuns
-      .filter((run) => run.sessionId === activeSessionKey && run.finishedAt)
+      .filter((run) => !!activeSessionKey && run.sessionId === activeSessionKey && run.finishedAt)
       .map((run) => ({
         kind: 'run' as const, ts: run.finishedAt!, run,
       })),
@@ -63,6 +63,8 @@ export function ChatView() {
         className="flex-1 overflow-y-auto px-2 sm:px-3 md:px-6 lg:px-10 py-3 sm:py-4 md:py-6 flex flex-col gap-3 sm:gap-4 md:gap-5"
       >
         <div className="w-full max-w-[1200px] mx-auto flex flex-col gap-3 sm:gap-4 md:gap-5">
+        {historyError && <div role="alert" className="rounded-lg p-3 text-[12px]"
+          style={{ border: '1px solid var(--warning)', color: 'var(--warning)' }}>{historyError}</div>}
         {timeline.map((item, index) => (
           item.kind === 'message'
             ? <MessageBubble key={item.message.id} message={item.message} index={index} />

@@ -18,6 +18,8 @@ import logging
 import os
 import tempfile
 import time
+from weakref import WeakKeyDictionary, WeakValueDictionary
+from uuid import uuid4
 from pathlib import Path
 from typing import Any, Dict, Optional, Set, TYPE_CHECKING
 
@@ -39,7 +41,7 @@ WEBUI_DIST = Path(__file__).resolve().parents[2] / "web-ui" / "dist"
 # class for convenient access in tests.
 PROVIDER_RELOAD_HOOK = None
 
-# Set when a working project is selected — re-targets agent writes.
+# Navigation selection hook — must never retarget active workers.
 PROJECT_CHANGE_HOOK = None
 
 # Set when a plugin is toggled — applies the change at runtime where feasible.
@@ -89,7 +91,13 @@ class WebServer:
         self._runner: Optional[web.AppRunner] = None
         self._site: Optional[web.TCPSite] = None
         self._ws_clients: Set[web.WebSocketResponse] = set()
+        self._chat_tasks: set[asyncio.Task] = set()
+        self._chat_task_sessions: dict[asyncio.Task, str | None] = {}
+        self._ws_session_ids = WeakKeyDictionary()
+        self._session_locks = WeakValueDictionary()
+        self._reply_events: dict[str, asyncio.Event] = {}
         self._running = False
+        self._started_at = time.time()
 
         # Replay buffer: stores recent important messages so reconnecting
         # clients don't miss results (fixes WS disconnect data loss)
@@ -98,7 +106,7 @@ class WebServer:
         self._replay_max_size = 100
         self._REPLAY_TYPES = {"result", "progress"}
         self._REPLAY_EVENTS = {
-            "task.received", "task.complete", "task.failed",
+            "task.received", "task.complete", "task.failed", "task.cancelled",
             "subtask.started", "subtask.complete", "subtask.failed",
             "brain.started", "brain.complete",
             "chat.message",  # Front brain summary / chat responses
@@ -153,6 +161,11 @@ class WebServer:
         self._running = False
 
         # Unsubscribe from bus
+        tasks = list(self._chat_tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
         self.bus.unsubscribe("*", self._on_bus_message)
 
         # Close all WebSocket connections
@@ -281,6 +294,7 @@ class WebServer:
         self._app.router.add_get("/api/models/roles", self._handle_model_roles)
         self._app.router.add_post("/api/models/roles", self._handle_model_role_set)
         self._app.router.add_post("/api/auth/openrouter/key", self._handle_openrouter_key)
+        self._app.router.add_post("/api/auth/mistral-studio/key", self._handle_mistral_studio_key)
         self._app.router.add_post("/api/system/reload-provider", self._handle_reload_provider)
         self._app.router.add_get("/api/fs/current-project", self._handle_current_project_get)
         self._app.router.add_post("/api/fs/current-project", self._handle_current_project_set)
@@ -395,6 +409,17 @@ class WebServer:
         try:
             result = await connect_key(body.get("key", ""))
         except OpenRouterKeyError as exc:
+            return web.json_response({"error": str(exc)}, status=401)
+        return web.json_response(result)
+
+    async def _handle_mistral_studio_key(self, request: web.Request) -> web.Response:
+        """Connect a developer API key from Mistral Studio."""
+        from .mistral_studio_key import MistralStudioKeyError, connect_key
+
+        body = await request.json()
+        try:
+            result = await connect_key(body.get("key", ""))
+        except MistralStudioKeyError as exc:
             return web.json_response({"error": str(exc)}, status=401)
         return web.json_response(result)
 
@@ -529,12 +554,20 @@ class WebServer:
     async def _handle_preview_logs(self, request: web.Request) -> web.Response:
         """Preview server diagnostics — shows active previews, project files, and errors."""
         from ..brains.python_brain import PythonBrain
+        from ..brains.web_app_brain import WebAppBrain
         import glob
 
         previews = []
         for port, proc in PythonBrain._active_previews.items():
             previews.append({
                 "port": port,
+                "pid": proc.pid if proc else None,
+                "alive": proc.returncode is None if proc else False,
+                "exit_code": proc.returncode if proc and proc.returncode is not None else None,
+            })
+        for port, proc in WebAppBrain._active_previews.items():
+            previews.append({
+                "kind": "web_app", "port": port,
                 "pid": proc.pid if proc else None,
                 "alive": proc.returncode is None if proc else False,
                 "exit_code": proc.returncode if proc and proc.returncode is not None else None,
@@ -613,11 +646,15 @@ class WebServer:
         except json.JSONDecodeError:
             return web.json_response({"error": "Invalid JSON"}, status=400)
 
+        if not isinstance(data, dict):
+            return web.json_response({"error": "Expected an object"}, status=400)
         design_id = data.get("design_id")
         plan_id = data.get("plan_id")
-        if not design_id or not plan_id:
+        if (not isinstance(design_id, str) or not design_id.strip()
+                or not isinstance(plan_id, str) or not plan_id.strip()
+                or not isinstance(data.get("approve"), bool)):
             return web.json_response(
-                {"error": "design_id and plan_id are required"}, status=400)
+                {"error": "design_id, plan_id and a boolean approve are required"}, status=400)
 
         await self.bus.send_task(
             # Source MUST be a bus-authenticated component ("morphable_ui"
@@ -630,7 +667,7 @@ class WebServer:
                 "type": "contracts.approval",
                 "design_id": design_id,
                 "plan_id": plan_id,
-                "approve": bool(data.get("approve")),
+                "approve": data["approve"],
             },
         )
         return web.json_response({"ok": True})
@@ -746,23 +783,42 @@ class WebServer:
             logger.warning("Invalid JSON from WebSocket client")
             return
 
+        if not isinstance(data, dict) or (data.get('payload') is not None and not isinstance(data['payload'], dict)):
+            await ws.send_json({'type': 'protocol.error', 'payload': {'error': 'Expected an object frame and payload'}})
+            return
+
         # -- Control frames (never reach the bus) --------------------------
         if data.get("type") == "ping":
             await ws.send_json({"type": "pong", "payload": {}})
             return
 
         if data.get("type") == "chat.send":
-            await self._handle_chat_send(ws, data)
+            task = asyncio.create_task(self._handle_chat_send(ws, data))
+            self._chat_tasks.add(task)
+            self._chat_task_sessions[task] = (data.get('payload') or {}).get('sessionId')
+            task.add_done_callback(self._chat_finished)
             return
 
         if data.get("type") == "chat.cancel":
+            session_id = (data.get('payload') or {}).get('sessionId')
+            if not isinstance(session_id, str) or not session_id:
+                await ws.send_json({'type': 'chat.cancel.error', 'payload': {'error': 'sessionId is required'}})
+                return
+            tasks = [task for task in self._chat_tasks if self._chat_task_sessions.get(task) == session_id]
+            for task in tasks:
+                task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
             if CANCEL_HOOK is not None:
                 try:
-                    result = CANCEL_HOOK()
+                    result = CANCEL_HOOK(session_id=session_id)
                     if asyncio.iscoroutine(result):
                         await result
                 except Exception as e:
                     logger.warning("chat.cancel hook failed: %s", e)
+            await self.bus.broadcast_event(
+                source="morphable_ui", event_type="task.cancelled",
+                payload={"session_id": session_id, "mode": "user"})
             return
 
         if data.get("type") == "req":
@@ -798,7 +854,44 @@ class WebServer:
 
         await self.bus.send(message)
 
+    def _chat_finished(self, task: asyncio.Task) -> None:
+        self._chat_tasks.discard(task)
+        self._chat_task_sessions.pop(task, None)
+        if not task.cancelled() and task.exception() is not None:
+            logger.error("Chat delivery failed: %s", task.exception())
+
     async def _handle_chat_send(
+        self, ws: web.WebSocketResponse, data: dict
+    ) -> None:
+        payload = data.get('payload') or {}
+        session = self._sessions.ensure(payload.get('sessionId') or self._ws_session_ids.get(ws))
+        session_id = session['id']
+        self._ws_session_ids[ws] = session_id
+        current = asyncio.current_task()
+        if current in self._chat_tasks:
+            self._chat_task_sessions[current] = session_id
+        lock = self._session_locks.setdefault(session_id, asyncio.Lock())
+        turn_id = uuid4().hex
+        reply = self._reply_events[turn_id] = asyncio.Event()
+        delivery = reply_wait = None
+        try:
+            async with lock:
+                delivery = asyncio.create_task(self._deliver_chat_send(ws, {
+                    **data, 'payload': {**payload, 'sessionId': session_id, 'turn_id': turn_id}}))
+                reply_wait = asyncio.create_task(reply.wait())
+                # Serialize the conversation turn, not downstream planning.
+                # The server captures the reply before releasing this event.
+                await asyncio.wait({delivery, reply_wait}, return_when=asyncio.FIRST_COMPLETED)
+            await delivery
+        finally:
+            self._reply_events.pop(turn_id, None)
+            tasks = [task for task in (delivery, reply_wait) if task is not None]
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _deliver_chat_send(
         self, ws: web.WebSocketResponse, data: dict
     ) -> None:
         """Aplot chat.send: one user message → front brain via the bus.
@@ -824,9 +917,9 @@ class WebServer:
         await ack("queued")
 
         # Sessions: the message belongs to the client's session (created
-        # lazily if unknown); without a sessionId the active session is
-        # used, or a fresh one starts.
-        session_id = payload.get("sessionId") or self._active_session_id
+        # lazily if unknown). The wrapper resolves scope per socket, never
+        # from another tab's global active session, and serializes its turns.
+        session_id = payload.get("sessionId")
         session = self._sessions.ensure(session_id)
         self._active_session_id = session["id"]
         # Exact persisted context before this new turn. The front brain keeps
@@ -855,6 +948,8 @@ class WebServer:
             payload={"type": "user_message", "text": text,
                      "attachments": attachments,
                      "session_id": session["id"],
+                     "turn_id": payload.get('turn_id'),
+                     "navigation_project": payload.get("navigationProject") if isinstance(payload.get("navigationProject"), str) else None,
                      "conversation_history": conversation_history},
             priority=Priority.NORMAL,
         ))
@@ -869,14 +964,30 @@ class WebServer:
         method = data.get("method")
         params = data.get("params") or {}
         if method == "chat.history":
-            session_id = params.get("sessionId") or self._active_session_id
+            session_id = params.get("sessionId") or self._ws_session_ids.get(ws)
+            if session_id:
+                self._ws_session_ids[ws] = session_id
             session = self._sessions.get(session_id) if session_id else None
+            as_of = time.time()
+            activities = []
+            activity_error = None
+            if session:
+                from .run_history import conversation_activity
+                try:
+                    activities = await asyncio.to_thread(
+                        conversation_activity, self.bus.logger.log_dir, session_id, self._started_at)
+                except OSError:
+                    logger.exception("Unable to restore conversation activity")
+                    activity_error = "Le suivi des activités n’a pas pu être restauré."
             await ws.send_json({
                 "type": "resp",
                 "id": request_id,
                 "payload": {
                     "messages": (session or {}).get("messages", []),
                     "sessionId": (session or {}).get("id"),
+                    "activities": activities,
+                    "as_of": as_of,
+                    "activity_error": activity_error,
                 },
             })
             return
@@ -888,6 +999,7 @@ class WebServer:
             return
         if method == "sessions.create":
             session = self._sessions.create(params.get("title"))
+            self._ws_session_ids[ws] = session['id']
             await ws.send_json({
                 "type": "resp", "id": request_id,
                 "payload": {"session": {
@@ -981,6 +1093,11 @@ class WebServer:
             if isinstance(text, str) and text.strip() and role in ("assistant", "system", "user"):
                 self._capture_to_session(payload.get("session_id"), role, text)
 
+        if event in {'chat.message', 'chat.done'}:
+            turn_id = (message.payload or {}).get('turn_id')
+            if turn_id in self._reply_events:
+                self._reply_events[turn_id].set()
+
         if not self._ws_clients:
             return
         
@@ -1017,15 +1134,25 @@ class WebServer:
         "subtask.failed": "subtask.started",
         "task.complete": "task.received",
         "task.failed": "task.received",
+        "task.cancelled": "task.received",
     }
 
     def _maybe_buffer(self, msg_type: str, event: str, data: dict) -> None:
-        # A terminal task also resolves the pre-orchestrator routing marker.
-        # There is only one foreground routed run in the current UI.
+        # A terminal task resolves only its own pending replay state.
         if event in ("task.complete", "task.failed", "task.cancelled"):
+            current = data.get('payload') or {}
+            session_id, task_id = current.get('session_id'), current.get('task_id')
+            def pending_for_current(buffered):
+                item = buffered.get('payload') or {}
+                if item.get('event') not in {'task.routing', 'contracts.proposal', 'task.received', 'subtask.started'}:
+                    return False
+                matches_task = task_id and (item.get('task_id') or item.get('plan_id')) == task_id
+                matches_session = session_id and item.get('session_id') == session_id
+                return bool(matches_task or (matches_session and (
+                    not task_id or (item.get('event') == 'task.routing' and not item.get('task_id')))))
             self._replay_buffer = [
                 (ts, buffered) for ts, buffered in self._replay_buffer
-                if (buffered.get("payload") or {}).get("event") != "task.routing"
+                if not pending_for_current(buffered)
             ]
 
         """Store important messages for replay on reconnect.
@@ -1067,11 +1194,14 @@ class WebServer:
         supersedes = self._SUPERSEDE_PAIRS.get(event)
         if supersedes:
             source = data.get("source", "")
+            identity = 'subtask_id' if event.startswith('subtask.') else 'task_id' if event.startswith('task.') else None
+            current = data.get('payload') or {}
             self._replay_buffer = [
                 (ts, d) for ts, d in self._replay_buffer
                 if not (
                     (d.get("payload") or {}).get("event") == supersedes
                     and d.get("source") == source
+                    and (identity is None or (d.get('payload') or {}).get(identity) == current.get(identity))
                 )
             ]
 

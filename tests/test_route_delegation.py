@@ -88,6 +88,19 @@ def _make_front(provider):
 
 
 class TestFrontBrainRouteDispatch:
+    async def test_stop_during_provider_wait_prevents_delegation(self):
+        class StoppingProvider:
+            async def chat_complete(self, **kwargs):
+                front.request_stop()
+                return ROUTE_JSON
+
+        front, bus = _make_front(StoppingProvider())
+        await front._handle_ui_message(BusMessage(
+            type=MessageType.TASK, source="morphable_ui", target="front_brain",
+            payload={"text": "do something", "session_id": "s1"}))
+        assert bus.tasks == []
+        assert not any(event == "task.routing" for event, _ in bus.events)
+
     async def test_route_sends_brain_task_to_orchestrator(self):
         provider = RecordingProvider(ROUTE_JSON)
         front, bus = _make_front(provider)
@@ -109,7 +122,8 @@ class TestFrontBrainRouteDispatch:
         assert task_data["title"] == "Mettre à jour le README"
         assert task_data["status"] == "todo"
         assert task_data["reply_to_ui"] is True
-        assert task_data["project_path"] == "sandbox/existing-project"
+        assert "project_path" not in task_data
+        assert task_data.get("project_target") is None
         assert "taskboard" in task_data["user_request"]
 
         # The acknowledgment reached the chat first
@@ -175,6 +189,10 @@ class TestOrchestratorHonorsRoute:
     async def test_route_to_pool_brain(self):
         orch = self._orchestrator()
         orch.llm_provider = RecordingProvider("")
+        from bigbrain.web.fs_api import workspace_root
+        directory = workspace_root() / "sandbox" / "hello"
+        directory.mkdir(parents=True)
+        (directory / ".project.json").write_text('{}')
 
         plan = await orch._create_task_plan(BusMessage(
             type=MessageType.TASK, source="front_brain",
@@ -184,6 +202,7 @@ class TestOrchestratorHonorsRoute:
                 "brain": "python_brain",
                 "file": "hello.py",
                 "user_request": "run hello.py",
+                "project_target": {"mode": "existing", "path": "sandbox/hello"},
             },
         ))
 

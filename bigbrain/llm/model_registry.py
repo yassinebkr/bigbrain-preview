@@ -28,11 +28,11 @@ import httpx
 
 # -- defaults -----------------------------------------------------------------
 
-# Roles used by BigBrainConfig (front / code / planner / subagent).
-DEFAULT_FRONT_MODEL_KEY = os.getenv("BIGBRAIN_FRONT_MODEL_KEY", "openrouter-gpt-sol")
-DEFAULT_CODE_MODEL_KEY = os.getenv("BIGBRAIN_CODE_MODEL_KEY", "openrouter-kimi-k2.7-code")
-DEFAULT_PLANNER_MODEL_KEY = os.getenv("BIGBRAIN_PLANNER_MODEL_KEY", "openrouter-gpt-sol")
-DEFAULT_SUBAGENT_MODEL_KEY = os.getenv("BIGBRAIN_SUBAGENT_MODEL_KEY", "openrouter-luna")
+# Roles used by BigBrainConfig (front / code / web / planner / subagent).
+DEFAULT_FRONT_MODEL_KEY = os.getenv("BIGBRAIN_FRONT_MODEL_KEY", "openrouter-gpt-6.1-sol")
+DEFAULT_CODE_MODEL_KEY = os.getenv("BIGBRAIN_CODE_MODEL_KEY", "openrouter-gpt-6.1-sol")
+DEFAULT_PLANNER_MODEL_KEY = os.getenv("BIGBRAIN_PLANNER_MODEL_KEY", "openrouter-gpt-6.1-sol")
+DEFAULT_SUBAGENT_MODEL_KEY = os.getenv("BIGBRAIN_SUBAGENT_MODEL_KEY", "openrouter-gpt-6.1-sol")
 
 _OPENROUTER_DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 
@@ -86,6 +86,20 @@ class ModelEntry:
 
 _REGISTRY: dict[str, ModelEntry] = {
     # -- OpenRouter (one key covers all models below) -------------------------
+    "openrouter-gpt-6.1-sol": ModelEntry(
+        key="openrouter-gpt-6.1-sol",
+        display_name="GPT-6.1 Sol (OpenRouter)",
+        provider="openai_compat",
+        model_id="openai/gpt-6.1-sol",
+        api_key_env="OPENROUTER_API_KEY",
+        base_url=_OPENROUTER_DEFAULT_BASE_URL,
+        health_path="/auth/key",
+        reasoning=True,
+        reasoning_efforts=["low", "medium", "high", "xhigh", "max"],
+        reasoning_effort_default="medium",
+        vision=True,
+        context_window=1_050_000,
+    ),
     "openrouter-gpt-sol": ModelEntry(
         key="openrouter-gpt-sol",
         display_name="ChatGPT Sol (OpenRouter)",
@@ -137,17 +151,6 @@ _REGISTRY: dict[str, ModelEntry] = {
         # text/JSON-state input only for this route.
         vision=False,
     ),
-    "openrouter-kimi-k2.7-code": ModelEntry(
-        key="openrouter-kimi-k2.7-code",
-        display_name="Kimi K2.7 Code (OpenRouter)",
-        provider="openai_compat",
-        model_id="moonshotai/kimi-k2.7-code",
-        api_key_env="OPENROUTER_API_KEY",
-        base_url=_OPENROUTER_DEFAULT_BASE_URL,
-        health_path="/auth/key",
-        reasoning=False,
-        vision=True,
-    ),
     "openrouter-luna": ModelEntry(
         key="openrouter-luna",
         display_name="GPT Luna (OpenRouter)",
@@ -183,6 +186,18 @@ _REGISTRY: dict[str, ModelEntry] = {
         base_url="https://api.mistral.ai/v1",
         health_path="/models",
         reasoning=False,
+    ),
+    "mistral-studio-large-4": ModelEntry(
+        key="mistral-studio-large-4",
+        display_name="Mistral Large 4 (Studio API)",
+        provider="openai_compat",
+        model_id="mistral-large-4",
+        api_key_env="MISTRAL_STUDIO_API_KEY",
+        base_url="https://api.mistral.ai/v1",
+        health_path="/models",
+        reasoning=False,
+        vision=True,
+        context_window=1_000_000,
     ),
     "mistral-glm-5.3": ModelEntry(
         key="mistral-glm-5.3",

@@ -61,6 +61,7 @@ export default function App() {
     });
 
     connection.on('onMessage', (msg) => {
+      if (useAppStore.getState().view === 'welcome') return;
       // Skip empty payloads (e.g. system status frames): they used to
       // render as a blank assistant bubble.
       if (!msg.text || !msg.text.trim()) return;
@@ -72,9 +73,22 @@ export default function App() {
         content: msg.text,
         timestamp: Date.now(),
       });
+      useAppStore.getState().refreshSessions();
+    });
+
+    connection.on('onResumeCatchUp', (messages, sessionId, asOf) => {
+      const current = useAppStore.getState();
+      if (sessionId !== current.activeSessionKey) return;
+      current.restoreSessionHistory(sessionId, messages, asOf);
+    });
+    connection.on('onHistoryError', (error, sessionId) => {
+      if (sessionId === useAppStore.getState().activeSessionKey) {
+        useAppStore.setState({ historyError: error });
+      }
     });
 
     connection.on('onStreamDelta', (delta) => {
+      if (useAppStore.getState().view === 'welcome') return;
       appendStreamingText(delta.text);
     });
 
@@ -89,6 +103,10 @@ export default function App() {
       if (activity.type === 'taskboard.task_created') {
         useAppStore.getState().fetchBoardTasks();
       }
+      const sessionId = activity.detail?.session_id;
+      const current = useAppStore.getState();
+      if (sessionId && sessionId !== current.activeSessionKey) return;
+      if (current.view === 'welcome') return;
       // Contract approval flow (Phase B): a proposal arrives → show the
       // card; a verdict arrives → the card is resolved.
       if (activity.type === 'contracts.proposal') {
@@ -99,32 +117,29 @@ export default function App() {
             planId: d.plan_id,
             request: d.user_request || '',
             contracts: Array.isArray(d.contracts) ? d.contracts : [],
+            ...(d.project_target ? { target: d.project_target } : {}),
           });
         }
       } else if (activity.type === 'contracts.approved' || activity.type === 'contracts.rejected') {
-        useAppStore.getState().setContractProposal(null);
+        if (useAppStore.getState().contractProposal?.planId === activity.detail?.plan_id) {
+          useAppStore.getState().setContractProposal(null);
+        }
+      } else if (activity.type === 'contracts.approval_failed') {
+        if (useAppStore.getState().contractProposal?.planId === activity.detail?.plan_id) {
+          useAppStore.setState({ contractSending: false,
+            contractError: String(activity.detail?.error || 'Approbation non enregistrée') });
+        }
       }
       // Typing belongs to assistant text generation, never task progress.
       // The session-scoped RunPanel is the sole execution indicator.
-      if (activity.type === 'task.failed') {
-        finalizeStreaming();
-        const detail = activity.detail || {};
-        const subErrors = (detail.failed_subtasks || [])
-          .map((st: any) => st.error)
-          .filter(Boolean)
-          .slice(0, 2);
-        const reason = [detail.error, ...subErrors].filter(Boolean).join(' · ');
-        useAppStore.getState().addMessage({
-          id: `err-${Date.now()}`,
-          role: 'assistant',
-          content: `Task failed: ${reason || 'unknown error'}`,
-          timestamp: Date.now(),
-        });
-      }
+      // The front brain owns the final chat reply (including failures).
+      // task.failed already docks an error card; do not add a second reply.
     });
 
     connection.on('onRunEnd', () => {
+      if (useAppStore.getState().view === 'welcome') return;
       finalizeStreaming();
+      useAppStore.getState().refreshSessions();
     });
 
     connection.on('onCanvasUpdate', (payload) => {

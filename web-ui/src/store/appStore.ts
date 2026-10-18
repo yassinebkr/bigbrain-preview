@@ -3,6 +3,12 @@ import { persist } from 'zustand/middleware';
 import type { Message, Attachment, Session, Settings, Theme, View, ConnectionStatus, SidebarPanel, User, CanvasOp, Task } from '@/types';
 import type { ConnectionLike } from '@/lib/connection';
 
+// A first message can arrive before sessions.create answers. Never send it
+// with the previous conversation's id (or the server's implicit fallback).
+let pendingSession: Promise<string> | null = null;
+let sessionGeneration = 0;
+let cancelledSends = 0;
+
 export interface AgentActivity {
   type: string;
   phase?: string;
@@ -46,8 +52,11 @@ export interface RunState {
   projectName?: string;
   projectPath?: string;
   entryPoint?: string;
+  deliverableType?: string;
+  previewUrl?: string;
   runnable?: boolean;
   awaitingApproval?: boolean;
+  resultKind?: string;
 }
 
 interface AppState {
@@ -72,10 +81,12 @@ interface AppState {
 
   // Messages
   messages: Message[];
+  historyError: string | null;
   addMessage: (message: Message) => void;
   updateMessage: (id: string, updates: Partial<Message>) => void;
   clearMessages: () => void;
   setMessages: (messages: Message[]) => void;
+  restoreSessionHistory: (sessionId: string, messages: Message[], asOf?: number) => void;
 
   // Input
   inputText: string;
@@ -112,9 +123,12 @@ interface AppState {
 
   // Orchestrated run state (task/subtask/file events) — RunPanel v2.
   activeRun: RunState | null;
+  sessionRuns: Record<string, RunState>;
+  runsById: Record<string, RunState>;
+  selectRun: (id: string) => void;
   // Finished runs are timeline records, grouped by their chat session.
   completedRuns: RunState[];
-  applyRunEvent: (activity: Omit<AgentActivity, 'ts'>) => void;
+  applyRunEvent: (activity: Omit<AgentActivity, 'ts'> & { ts?: number }) => void;
   runPanelOpen: boolean;
   setRunPanelOpen: (open: boolean) => void;
   // The user closed the run panel (X). The NudgeBar reads this to surface
@@ -137,10 +151,12 @@ interface AppState {
   // Contract approval (Phase B): before the agent writes code, it proposes
   // checkable contracts; the user approves → execution resumes, the
   // approval is traced in the evidence DesignSpec.
-  contractProposal: { designId: string; planId: string; request: string; contracts: string[] } | null;
+  contractProposal: { designId: string; planId: string; request: string; contracts: string[]; target?: { mode: string; path: string } } | null;
+  sessionProposals: Record<string, NonNullable<AppState['contractProposal']>>;
   contractSending: boolean;
+  contractError: string | null;
   setContractProposal: (
-    proposal: { designId: string; planId: string; request: string; contracts: string[] } | null
+    proposal: NonNullable<AppState['contractProposal']> | null
   ) => void;
   sendContractDecision: (approve: boolean) => Promise<void>;
 
@@ -255,10 +271,16 @@ export const useAppStore = create<AppState>()(
 
       // View
       view: 'welcome',
-      setView: (view) => set({ view }),
+      setView: (view) => {
+        if (view === 'welcome') get().startNewSession();
+        else set({ view });
+      },
 
       // Messages
-      messages: JSON.parse(localStorage.getItem('aplot_messages') || '[]'),
+      // Chat history is owned by the selected server session, not a global
+      // localStorage transcript left over from another conversation.
+      messages: [],
+      historyError: null,
       addMessage: (message) => set((state) => {
         const newMessages = [...state.messages, message];
         localStorage.setItem('aplot_messages', JSON.stringify(newMessages));
@@ -277,6 +299,12 @@ export const useAppStore = create<AppState>()(
         localStorage.setItem('aplot_messages', JSON.stringify(messages));
         set({ messages });
       },
+      restoreSessionHistory: (sessionId, messages, asOf) => set((state) => {
+        if (sessionId !== state.activeSessionKey) return {};
+        const later = state.messages.filter((message) => (!asOf || message.timestamp > asOf) &&
+          !messages.some((old) => old.role === message.role && old.content === message.content));
+        return { messages: [...messages, ...later], historyError: null };
+      }),
 
       // Input
       inputText: '',
@@ -302,7 +330,10 @@ export const useAppStore = create<AppState>()(
       connectionStatus: 'connecting',
       setConnectionStatus: (connectionStatus) => set({ connectionStatus }),
       connection: null,
-      setConnection: (connection) => set({ connection }),
+      setConnection: (connection) => {
+        connection?.switchSession(get().activeSessionKey);
+        set({ connection });
+      },
 
       // Voice
       isRecording: false,
@@ -320,6 +351,14 @@ export const useAppStore = create<AppState>()(
       })),
 
       activeRun: null,
+      sessionRuns: {},
+      runsById: {},
+      selectRun: (id) => set((state) => {
+        const run = state.runsById[id];
+        if (!run) return {};
+        return { sessionRuns: { ...state.sessionRuns, [run.sessionId]: run },
+          ...(run.sessionId === state.activeSessionKey ? { activeRun: run } : {}) };
+      }),
       completedRuns: [],
       runPanelOpen: false,
       setRunPanelOpen: (runPanelOpen) => set({ runPanelOpen }),
@@ -334,13 +373,19 @@ export const useAppStore = create<AppState>()(
       closeFileViewer: () => set({ viewerFilePath: null }),
 
       contractProposal: null,
+      sessionProposals: {},
       contractSending: false,
-      setContractProposal: (proposal) =>
-        set({ contractProposal: proposal, contractSending: false }),
+      contractError: null,
+      setContractProposal: (proposal) => set((state) => {
+        const sessionProposals = { ...state.sessionProposals };
+        if (proposal) sessionProposals[state.activeSessionKey] = proposal;
+        else delete sessionProposals[state.activeSessionKey];
+        return { sessionProposals, contractProposal: proposal, contractSending: false, contractError: null };
+      }),
       sendContractDecision: async (approve) => {
         const proposal = get().contractProposal;
         if (!proposal || get().contractSending) return;
-        set({ contractSending: true });
+        set({ contractSending: true, contractError: null });
         try {
           const r = await fetch('/api/contracts/approve', {
             method: 'POST',
@@ -350,17 +395,20 @@ export const useAppStore = create<AppState>()(
               plan_id: proposal.planId,
               approve,
             }),
+            signal: AbortSignal.timeout(15000),
           });
+          if (get().contractProposal?.planId !== proposal.planId) return;
           if (r.ok) {
-            // The orchestrator also broadcasts contracts.approved /
-            // contracts.rejected which clear the card — clearing here
-            // makes the UI immediate; both are idempotent.
-            set({ contractProposal: null, contractSending: false });
-          } else {
+            // HTTP only acknowledges delivery; only the recorded bus
+            // verdict resolves the card. Failed persistence must stay visible.
             set({ contractSending: false });
+          } else {
+            set({ contractSending: false, contractError: 'Décision non enregistrée. Tu peux réessayer.' });
           }
         } catch {
-          set({ contractSending: false });
+          if (get().contractProposal?.planId === proposal.planId) {
+            set({ contractSending: false, contractError: 'Confirmation impossible. Le contrat reste en attente.' });
+          }
         }
       },
 
@@ -370,36 +418,86 @@ export const useAppStore = create<AppState>()(
       // docks the finished record into its conversation timeline.
       applyRunEvent: (activity) => set((state) => {
         const d = activity.detail || {};
-        const run = state.activeRun;
+        const sessionRuns = { ...state.sessionRuns };
+        if (state.activeRun && !sessionRuns[state.activeRun.sessionId]) {
+          sessionRuns[state.activeRun.sessionId] = state.activeRun;
+        }
+        const runsById = { ...state.runsById };
+        for (const legacy of Object.values(sessionRuns)) runsById[legacy.id] ||= legacy;
+        const taskId = d.task_id || d.plan_id;
+        const byTask = taskId ? runsById[taskId] : null;
+        const finished = taskId ? state.completedRuns.find((r) => r.id === taskId) : null;
+        const terminal = ['task.complete', 'task.failed', 'task.cancelled'].includes(activity.type);
+        const sessionId = String(d.session_id || byTask?.sessionId || finished?.sessionId || state.activeRun?.sessionId || state.activeSessionKey);
+        if (activity.type === 'task.routing' && taskId) {
+          // Migrate pre-correlation cached placeholders during journal catch-up.
+          // Real runs now use a stable UUID, never this legacy prefix.
+          for (const legacy of Object.values(runsById)) {
+            if (legacy.sessionId === sessionId && legacy.id.startsWith('routing-')) {
+              delete runsById[legacy.id];
+              if (sessionRuns[sessionId]?.id === legacy.id) delete sessionRuns[sessionId];
+            }
+          }
+        }
+        const pendingRouting = Object.values(runsById).find((r) => r.sessionId === sessionId && r.id.startsWith('routing-'));
+        const run = byTask || (terminal ? finished : null) || (activity.type === 'task.received' ? pendingRouting :
+          !taskId ? sessionRuns[sessionId] : null) || null;
+        // Replays/snapshots are idempotent. A finished run never becomes live again.
+        if (finished && !terminal) {
+          delete runsById[finished.id];
+          if (sessionRuns[sessionId] && !runsById[sessionRuns[sessionId].id]) delete sessionRuns[sessionId];
+          const sessionProposals = { ...state.sessionProposals };
+          if (sessionProposals[sessionId]?.planId === taskId) delete sessionProposals[sessionId];
+          return { runsById, sessionRuns, sessionProposals,
+            activeRun: sessionRuns[state.activeSessionKey] || null,
+            contractProposal: sessionProposals[state.activeSessionKey] || null };
+        }
+        const reduce = (): Partial<AppState> => {
+        const opensRun = ['task.routing', 'task.received', 'contracts.proposal'].includes(activity.type);
+        if (run && !opensRun) {
+          if (d.session_id && d.session_id !== run.sessionId) return {};
+          if (d.task_id && d.task_id !== run.id && !run.id.startsWith('routing-')) return {};
+        }
         switch (activity.type) {
+          case 'planning.stage': {
+            if (!run || run.status !== 'running') return {};
+            const id = `planning-${d.stage}`;
+            const step: RunStep = { id, brain: 'planner', description: String(d.description || d.stage),
+              status: d.status === 'done' ? 'done' : 'running',
+              durationMs: typeof d.elapsed_ms === 'number' ? d.elapsed_ms : undefined };
+            return { activeRun: { ...run, steps: [...run.steps.filter((s) => s.id !== id), step] } };
+          }
           case 'task.routing': {
+            if (byTask) return {};
             const sessionId = String(d.session_id || state.activeSessionKey || '');
             const fresh: RunState = {
               sessionId,
-              id: `routing-${Date.now()}`,
+              id: d.task_id || `routing-${Date.now()}`,
               description: String(d.description || 'Preparing task'),
               status: 'running',
-              startedAt: Date.now(),
+              startedAt: activity.ts || Date.now(),
               steps: [],
               files: [],
             };
             return { activeRun: fresh, runPanelDismissed: false };
           }
           case 'task.received': {
+            if (run && run.id === d.task_id) return {};
+            const previous = run?.sessionId === d.session_id ? run : null;
             const fresh: RunState = {
               sessionId: String(d.session_id || run?.sessionId || state.activeSessionKey || ''),
               id: d.task_id || `run-${Date.now()}`,
               description: String(d.description || 'Task'),
               status: 'running',
-              startedAt: Date.now(),
-              steps: [],
+              startedAt: previous?.startedAt || activity.ts || Date.now(),
+              steps: previous?.steps.filter((s) => s.id.startsWith('planning-')) || [],
               files: [],
             };
             return { activeRun: fresh, runPanelDismissed: false };
           }
           case 'contracts.proposal': {
             const sessionId = String(d.session_id || run?.sessionId || state.activeSessionKey || '');
-            if (run && run.status === 'running') {
+            if (run && run.status === 'running' && run.sessionId === sessionId) {
               return { activeRun: { ...run, sessionId, awaitingApproval: true }, runPanelDismissed: false };
             }
             const fresh: RunState = {
@@ -408,14 +506,18 @@ export const useAppStore = create<AppState>()(
               description: String(d.user_request || 'Awaiting contract approval'),
               status: 'running',
               awaitingApproval: true,
-              startedAt: Date.now(),
+              startedAt: activity.ts || Date.now(),
               steps: [],
               files: [],
             };
             return { activeRun: fresh, runPanelDismissed: false };
           }
+          case 'contracts.approved':
+          case 'contracts.rejected': {
+            return run ? { activeRun: { ...run, awaitingApproval: false } } : {};
+          }
           case 'subtask.started': {
-            if (!run || run.status !== 'running') return state;
+            if (!run || run.status !== 'running') return {};
             const step: RunStep = {
               id: String(d.subtask_id || `step-${run.steps.length}`),
               brain: d.brain,
@@ -433,13 +535,13 @@ export const useAppStore = create<AppState>()(
           case 'execution.output': {
             // The brain streams its program output while it runs —
             // attach it to the matching step so the user sees the work.
-            if (!run || run.status !== 'running') return state;
+            if (!run || run.status !== 'running') return {};
             const delta = String(d.delta || '');
-            if (!delta) return state;
+            if (!delta) return {};
             const targetId = d.subtask_id
               ? String(d.subtask_id)
               : (run.steps.find((s) => s.status === 'running')?.id || null);
-            if (!targetId) return state;
+            if (!targetId) return {};
             return {
               activeRun: {
                 ...run,
@@ -451,9 +553,21 @@ export const useAppStore = create<AppState>()(
               },
             };
           }
+          case 'task.progress': {
+            if (!run) return {};
+            const labels: Record<string, string> = {
+              writing_web_file: 'Génération', web_build: 'Build', web_build_repair: 'Correction du build',
+              browser_testing: 'Tests navigateur', browser_repair: 'Correction après test', preview_ready: 'Aperçu prêt',
+            };
+            const label = labels[d.stage] || d.stage;
+            if (!label) return {};
+            return { activeRun: { ...run, steps: run.steps.map((step) => step.id === d.subtask_id
+              ? { ...step, description: `${label}${d.path ? ` · ${d.path}` : ''}${d.attempt ? ` · essai ${d.attempt}` : ''}` }
+              : step) } };
+          }
           case 'subtask.complete':
           case 'subtask.failed': {
-            if (!run || run.status !== 'running') return state;
+            if (!run || run.status !== 'running') return {};
             const id = String(d.subtask_id || `step-${run.steps.length}`);
             const failed = activity.type === 'subtask.failed';
             const durationMs = typeof d.execution_time === 'number' ? d.execution_time * 1000 : undefined;
@@ -462,19 +576,20 @@ export const useAppStore = create<AppState>()(
               ? run.steps.map((s) =>
                   s.id === id ? { ...s, status: failed ? ('failed' as const) : ('done' as const), durationMs } : s
                 )
-              : [...run.steps, { id, description: 'subtask', status: failed ? ('failed' as const) : ('done' as const), durationMs }];
+              : [...run.steps, { id, brain: d.brain, description: String(d.description || 'subtask'),
+                  status: failed ? ('failed' as const) : ('done' as const), durationMs }];
             return { activeRun: { ...run, steps } };
           }
           case 'workspace.file_written': {
-            if (!run || run.status !== 'running' || !d.path) return state;
+            if (!run || run.status !== 'running' || !d.path) return {};
             const path = String(d.path);
-            if (run.files.some((f) => f.path === path)) return state;
+            if (run.files.some((f) => f.path === path)) return {};
             return { activeRun: { ...run, files: [...run.files, { path, ts: Date.now() }] } };
           }
           case 'verification.run_recorded': {
             // Harness P4: the gate's verdict per attempt, attached to the
             // live run. An orphan event (no active run) is dropped.
-            if (!run) return state;
+            if (!run) return {};
             const verdict = d.verdict === 'passed' || d.verdict === 'failed'
               ? d.verdict : 'inconclusive';
             return {
@@ -497,28 +612,60 @@ export const useAppStore = create<AppState>()(
           case 'task.complete':
           case 'task.failed':
           case 'task.cancelled': {
-            if (!run) return state;
+            if (!run) return {};
             const status: RunState['status'] =
               activity.type === 'task.complete' ? 'done'
               : activity.type === 'task.cancelled' ? 'cancelled'
               : 'failed';
             return {
               activeRun: null,
-              completedRuns: [...state.completedRuns, {
+              completedRuns: [...state.completedRuns.filter((item) => item.id !== run.id), {
                 ...run,
                 status,
-                finishedAt: Date.now(),
+                finishedAt: activity.ts || run.finishedAt || Date.now(),
                 error: d.error ? String(d.error).slice(0, 200) : run.error,
                 projectName: d.project_name ? String(d.project_name) : run.projectName,
                 projectPath: d.project_path ? String(d.project_path) : run.projectPath,
                 entryPoint: d.entry_point ? String(d.entry_point) : run.entryPoint,
+                deliverableType: d.deliverable_type ? String(d.deliverable_type) : run.deliverableType,
+                previewUrl: d.preview_url ? String(d.preview_url) : run.previewUrl,
                 runnable: typeof d.runnable === 'boolean' ? d.runnable : run.runnable,
+                resultKind: d.result_kind || run.resultKind,
               }].slice(-100),
             };
           }
           default:
-            return state;
+            return {};
         }
+        };
+        const update = reduce();
+        if ('activeRun' in update) {
+          if (run && run.id !== update.activeRun?.id) delete runsById[run.id];
+          if (update.activeRun) runsById[update.activeRun.id] = update.activeRun;
+          else if (taskId) delete runsById[taskId];
+          const remaining = Object.values(runsById).filter((r) => r.sessionId === sessionId);
+          // Keep the user's visible project stable while a quick side-task runs.
+          const selected = sessionRuns[sessionId];
+          const preferred = selected && runsById[selected.id] || remaining[0];
+          if (preferred) sessionRuns[sessionId] = preferred;
+          else delete sessionRuns[sessionId];
+          update.activeRun = sessionRuns[state.activeSessionKey]
+            || (state.activeRun?.sessionId !== sessionId ? state.activeRun : null)
+            || update.activeRun;
+        }
+        const sessionProposals = { ...state.sessionProposals };
+        if (activity.type === 'contracts.proposal' && d.design_id && d.plan_id) {
+          sessionProposals[sessionId] = { designId: d.design_id, planId: d.plan_id,
+            request: d.user_request || '', contracts: Array.isArray(d.contracts) ? d.contracts : [],
+            ...(d.project_target ? { target: d.project_target } : {}) };
+        } else if (['contracts.approved', 'contracts.rejected', 'task.cancelled', 'task.failed', 'task.complete'].includes(activity.type)) {
+          const proposal = sessionProposals[sessionId];
+          const target = d.plan_id || d.task_id;
+          if (!target || proposal?.planId === target) delete sessionProposals[sessionId];
+        }
+        return { ...update, runsById, sessionRuns, sessionProposals,
+          contractProposal: sessionProposals[state.activeSessionKey] || null,
+          ...(!sessionProposals[state.activeSessionKey] ? { contractSending: false, contractError: null } : {}) };
       }),
 
       // Sidebar
@@ -545,12 +692,19 @@ export const useAppStore = create<AppState>()(
       sessions: [],
       activeSessionKey: '',
       setSessions: (sessions) => set({ sessions }),
-      setActiveSessionKey: (activeSessionKey) => set({ activeSessionKey }),
+      setActiveSessionKey: (activeSessionKey) => {
+        get().connection?.switchSession(activeSessionKey);
+        set({ activeSessionKey });
+      },
       switchSession: (key) => {
+        sessionGeneration += 1;
+        pendingSession = null;
         get().connection?.switchSession(key);
         // A run belongs to its conversation — the record of the previous
         // one must not follow the user into the next.
         set({ activeSessionKey: key, messages: [], view: 'welcome',
+              streamingText: '', isStreaming: false, contractProposal: null,
+              contractSending: false, contractError: null,
               runPanelDismissed: false });
       },
       // Pull the session list from the server into the store.
@@ -569,20 +723,26 @@ export const useAppStore = create<AppState>()(
       // New conversation: a REAL session on the server.
       startNewSession: () => {
         const conn = get().connection;
+        conn?.switchSession('');
+        const generation = ++sessionGeneration;
+        set({ activeSessionKey: '', messages: [], view: 'welcome',
+              streamingText: '', isStreaming: false, contractProposal: null,
+              contractSending: false, inputText: '', attachments: [],
+              contractError: null,
+              runPanelDismissed: false });
         if (conn?.createSession) {
+          let resolveSession!: (id: string) => void;
+          pendingSession = new Promise((resolve) => { resolveSession = resolve; });
           conn.createSession((session) => {
-            if (!session?.id) return;
-            set({
-              activeSessionKey: session.id,
-              messages: [],
-              view: 'welcome',
-              streamingText: '',
-              isStreaming: false,
-              runPanelDismissed: false,
-            });
+            resolveSession(session?.id || '');
+            if (!session?.id || generation !== sessionGeneration) return;
+            pendingSession = null;
+            conn.switchSession(session.id);
+            set({ activeSessionKey: session.id });
             get().refreshSessions();
           });
         } else {
+          pendingSession = null;
           // Offline: a local blank conversation (kept honest — no fake id).
           set({
             activeSessionKey: '',
@@ -596,27 +756,32 @@ export const useAppStore = create<AppState>()(
       },
       // Open an existing conversation: load its history from the server.
       openSession: (key) => {
+        sessionGeneration += 1;
+        pendingSession = null;
+        get().connection?.switchSession(key);
         set({
           activeSessionKey: key,
+          historyError: null,
           sidebarPanel: null,
           messages: [],
           streamingText: '',
           isStreaming: false,
+          contractProposal: get().sessionProposals[key] || null,
+          contractSending: false, contractError: null,
           runPanelDismissed: false,
         });
         get().connection?.loadHistory((frame: any) => {
+          if (get().activeSessionKey !== key) return;
           if (frame?.ok && frame.payload?.messages) {
-            set({
-              messages: frame.payload.messages.map((m: any) => ({
+            get().restoreSessionHistory(key, frame.payload.messages.map((m: any) => ({
                 id: m.id || `hist-${Date.now()}-${Math.random()}`,
                 role: m.role === 'user' ? 'user' : 'assistant',
                 content: m.content,
                 timestamp: m.timestamp
                   ? (m.timestamp < 1e12 ? m.timestamp * 1000 : m.timestamp)
                   : Date.now(),
-              })),
-              view: 'chat',
-            });
+              })), frame.payload.asOf);
+            set({ view: 'chat' });
           }
         }, key);
       },
@@ -749,6 +914,16 @@ export const useAppStore = create<AppState>()(
         // Sending from the home page ALWAYS starts a new conversation —
         // the previous transcript must not bleed into it.
         const isNewConversation = state.view === 'welcome';
+        // Also migrate a persisted/home view from older versions, which
+        // could still point at a conversation containing messages/runs.
+        if (isNewConversation && (state.messages.length > 0
+            || !!selectSessionRun(state)
+            || state.completedRuns.some((r) => r.sessionId === state.activeSessionKey))) {
+          get().startNewSession();
+        }
+        const sessionReady = pendingSession;
+        const sessionKey = get().activeSessionKey;
+        const cancellation = cancelledSends;
         set((s) => ({
           messages: isNewConversation ? [userMessage] : [...s.messages, userMessage],
           inputText: '',
@@ -762,6 +937,12 @@ export const useAppStore = create<AppState>()(
         // records them in persistent memory. Offline: the message goes
         // out without the files (upload failure never blocks the text).
         (async () => {
+          const targetSession = sessionReady ? await sessionReady : sessionKey;
+          if (cancellation !== cancelledSends) return;
+          if (sessionReady && !targetSession) {
+            set({ isStreaming: false });
+            return;
+          }
           const refs: { id: string; name: string; type: string }[] = [];
           for (const att of state.attachments) {
             if (!att.file) continue;
@@ -775,8 +956,9 @@ export const useAppStore = create<AppState>()(
               }
             } catch { /* offline: text still sends */ }
           }
+          if (cancellation !== cancelledSends) return;
           state.connection?.send(text, refs,
-                                  state.activeSessionKey || undefined);
+                                  targetSession || undefined, state.currentProject);
         })();
       },
 
@@ -784,8 +966,17 @@ export const useAppStore = create<AppState>()(
       // run), then close the streaming bubble locally with whatever text
       // already arrived (finalizeStreaming keeps it as a message).
       stopGeneration: () => {
+        cancelledSends += 1;
         get().connection?.cancel?.();
         get().finalizeStreaming();
+        const sessionId = get().activeSessionKey;
+        const runs = Object.values(get().runsById).filter((r) => r.sessionId === sessionId);
+        const legacy = selectSessionRun(get());
+        if (legacy && !runs.some((r) => r.id === legacy.id)) runs.push(legacy);
+        for (const run of runs) get().applyRunEvent({ type: 'task.cancelled', detail: {
+          session_id: sessionId, task_id: run.id,
+        } });
+        set({ contractProposal: null, contractSending: false });
       },
     }),
     {
@@ -797,6 +988,9 @@ export const useAppStore = create<AppState>()(
         // The last run is the RECORD of what the agent did (steps, files
         // written) — it must survive a page reload, not just tab switches.
         activeRun: state.activeRun,
+        sessionRuns: state.sessionRuns,
+        runsById: state.runsById,
+        sessionProposals: state.sessionProposals,
         completedRuns: state.completedRuns,
         // Layout persistence: where the user was working (view + workspace
         // tab + the open code file) survives a reload.
@@ -808,3 +1002,8 @@ export const useAppStore = create<AppState>()(
     }
   )
 );
+
+export function selectSessionRun(state: Pick<AppState, 'activeSessionKey' | 'sessionRuns' | 'activeRun'>) {
+  return state.sessionRuns[state.activeSessionKey]
+    || (state.activeRun?.sessionId === state.activeSessionKey ? state.activeRun : null);
+}

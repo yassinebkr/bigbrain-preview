@@ -6,7 +6,7 @@ export interface ConnectionCallbacks {
   onMessage?: (message: { text: string; role: string; timestamp: string; source: string }) => void;
   onStreamDelta?: (message: { text: string; role: string; source: string }) => void;
   onStatusChange?: (status: string) => void;
-  onAgentActivity?: (activity: { type: string; phase?: string; name?: string; detail?: any }) => void;
+  onAgentActivity?: (activity: { type: string; phase?: string; name?: string; detail?: any; ts?: number }) => void;
   onQueueDrained?: () => void;
   onQueueReplay?: (msg: { text: string; id: string; ts: number }) => void;
   onSendError?: (error: { message: string }, messageId?: string) => void;
@@ -15,7 +15,8 @@ export interface ConnectionCallbacks {
   onUserInfo?: (user: any) => void;
   onReconnected?: () => void;
   onRemoteUserMessage?: (message: any) => void;
-  onResumeCatchUp?: (messages: any[]) => void;
+  onResumeCatchUp?: (messages: any[], sessionId?: string, asOf?: number) => void;
+  onHistoryError?: (error: string, sessionId?: string) => void;
   onRunEnd?: () => void;
 }
 
@@ -35,7 +36,7 @@ export interface ConnectionLike {
   on<K extends keyof ConnectionCallbacks>(event: K, callback: ConnectionCallbacks[K]): void;
   connect(): void;
   disconnect(): void;
-  send(text: string, attachments?: any[], sessionId?: string): string;
+  send(text: string, attachments?: any[], sessionId?: string, navigationProject?: string | null): string;
   cancel?(): void;
   loadHistory(callback?: (frame: any) => void, sessionId?: string): void;
   listSessions?(callback: (sessions: SessionSummary[]) => void): void;

@@ -94,7 +94,7 @@ def list_dir(rel: str = "") -> Dict[str, Any]:
         _entry_info(child, root) for child in sorted(target.iterdir())
         # Dot-entries are internal: .project.json manifests, the brain's
         # .exec/ temp scripts. They stay on disk but never clutter the UI.
-        if not child.name.startswith(".")
+        if not child.name.startswith(".") and child.name not in {"node_modules", "__pycache__"}
     ]
     return {"path": rel or "", "entries": entries}
 
@@ -269,7 +269,7 @@ def search_files(query: str, limit: int = 20) -> Dict[str, Any]:
     root = workspace_root()
     results: List[Dict[str, Any]] = []
     for dirpath, _dirnames, filenames in os.walk(root):
-        _dirnames[:] = [d for d in _dirnames if not d.startswith(".")]
+        _dirnames[:] = [d for d in _dirnames if not d.startswith(".") and d not in {"node_modules", "__pycache__"}]
         for name in filenames:
             if name.startswith(".") or q not in name.lower():
                 continue
@@ -481,6 +481,37 @@ async def run_file_streaming(rel: str, timeout: float = 30.0,
     return result
 
 
+_manual_web_previews: Dict[str, asyncio.subprocess.Process] = {}
+
+
+async def run_static_preview(rel: str) -> Dict[str, Any]:
+    """Compatibility run readiness check; visible surfaces own preview leases."""
+    target = _resolve(workspace_root(), rel)
+    if target.name != "index.html" or not target.is_file():
+        raise web.HTTPBadRequest(text=json_error("web preview entry point must be index.html"))
+    project_dir = target.parent
+    manifest_path = project_dir / PROJECT_MANIFEST
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise web.HTTPBadRequest(text=json_error("verified web project manifest missing"))
+    if (manifest.get("deliverable_type") != "web_app"
+            or manifest.get("entry_point") != "index.html"
+            or not manifest.get("verified")):
+        raise web.HTTPBadRequest(text=json_error("web project is not verified runnable"))
+
+    preview_dir = project_dir
+    if manifest.get("web_stack") == "react_vite":
+        preview_dir = project_dir / "dist"
+        if not (preview_dir / "index.html").is_file():
+            raise web.HTTPBadRequest(text=json_error("verified production build missing; rebuild the project"))
+    # Compatibility run action validates readiness, but never owns a server.
+    # Only a visible surface acquiring /api/fs/preview may allocate a port.
+    return {"ok": True, "exitCode": 0, "stdout": "Projet vérifié : ouvrir Preview pour l’afficher.\n",
+            "stderr": "", "durationMs": 0, "timedOut": False,
+            "previewAvailable": True, "serverRunning": False}
+
+
 async def _run_with_events(rel: str, timeout: float, run_id: str) -> None:
     """Background task behind POST /api/fs/run: stream then finalise."""
     async def sink(stream: str, delta: str) -> None:
@@ -490,14 +521,19 @@ async def _run_with_events(rel: str, timeout: float, run_id: str) -> None:
                                "delta": delta})
 
     try:
-        result = await run_file_streaming(rel, timeout, on_delta=sink)
+        if Path(rel).suffix.lower() == ".html":
+            result = await run_static_preview(rel)
+            if result.get("stdout"):
+                await sink("out", result["stdout"])
+        else:
+            result = await run_file_streaming(rel, timeout, on_delta=sink)
     except web.HTTPNotFound:
         result = {"ok": False, "exitCode": -1, "stdout": "",
                   "stderr": "file not found", "durationMs": 0,
                   "timedOut": False}
     except web.HTTPBadRequest:
         result = {"ok": False, "exitCode": -1, "stdout": "",
-                  "stderr": "only .py files can be run", "durationMs": 0,
+                  "stderr": "only Python files or verified web projects can be run", "durationMs": 0,
                   "timedOut": False}
     except Exception as exc:  # never leave a client without a verdict
         logger.exception("streaming run failed")
@@ -505,7 +541,8 @@ async def _run_with_events(rel: str, timeout: float, run_id: str) -> None:
                   "stderr": f"internal error: {exc}"[:200],
                   "durationMs": 0, "timedOut": False}
 
-    result = await _record_run_evidence(rel, result)
+    if Path(rel).suffix.lower() == ".py":
+        result = await _record_run_evidence(rel, result)
     if _event_sink is not None:
         await _event_sink("fs.run_result", {"runId": run_id, **result})
 
@@ -623,6 +660,34 @@ def set_current_project(project: Optional[str]) -> Dict[str, Any]:
 
 
 def setup_fs_routes(app: web.Application) -> None:
+    from .preview_leases import PreviewLeases
+    previews = PreviewLeases(workspace_root() / '.preview-ports.json')
+    app.cleanup_ctx.append(previews.lifecycle)
+
+    async def preview(request):
+        body = await request.json()
+        token = body.get('leaseId')
+        if token:
+            if body.get('action') == 'release':
+                await previews.release(token)
+            else:
+                await previews.touch(token)
+            return web.json_response({'ok': True})
+        entry = _resolve(workspace_root(), body.get('path', ''))
+        try:
+            manifest = json.loads((entry.parent / PROJECT_MANIFEST).read_text())
+        except (OSError, ValueError):
+            raise web.HTTPBadRequest(text='Verified project manifest missing')
+        if (entry.name != 'index.html' or not entry.is_file()
+                or manifest.get('deliverable_type') != 'web_app'
+                or manifest.get('entry_point') != 'index.html' or not manifest.get('verified')):
+            raise web.HTTPBadRequest(text='Web project is not verified runnable')
+        directory = entry.parent / 'dist' if manifest.get('web_stack') == 'react_vite' else entry.parent
+        if not (directory / 'index.html').is_file() or not directory.resolve().is_relative_to(entry.parent):
+            raise web.HTTPBadRequest(text='Verified build missing or outside project')
+        return web.json_response(await previews.acquire(directory))
+
+    app.router.add_post('/api/fs/preview', preview)
     app.router.add_get("/api/fs/list", _handle_list)
     app.router.add_get("/api/fs/projects", _handle_projects)
     app.router.add_post("/api/fs/project", _handle_project_create)
@@ -634,6 +699,23 @@ def setup_fs_routes(app: web.Application) -> None:
     app.router.add_post("/api/fs/move", _handle_move)
     app.router.add_post("/api/fs/run", _handle_run)
     app.router.add_get("/api/fs/search", _handle_search)
+    app.on_cleanup.append(_cleanup_manual_web_previews)
+
+
+async def _cleanup_manual_web_previews(_app: web.Application) -> None:
+    """Never leave UI-started preview servers behind on shutdown."""
+    processes = list(_manual_web_previews.values())
+    _manual_web_previews.clear()
+    for process in processes:
+        if process.returncode is None:
+            process.terminate()
+    for process in processes:
+        if process.returncode is None:
+            try:
+                await asyncio.wait_for(process.wait(), timeout=2)
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.wait()
 
 
 async def _handle_list(request: web.Request) -> web.Response:

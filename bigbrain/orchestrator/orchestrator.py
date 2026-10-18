@@ -5,6 +5,7 @@ import json
 import logging
 import time
 import uuid
+from pathlib import Path
 from datetime import datetime
 from dataclasses import dataclass, field
 from enum import Enum
@@ -14,6 +15,7 @@ from ..bus.bus import MessageBus
 from ..bus.message import BusMessage, MessageType, Priority
 from ..bus.participant import BusParticipant
 from .architect import ArchitectPhase, ProjectSpec
+from ..execution_target import ExecutionTarget, FILE_TASKS, resolve_target
 from .execution_modes import BrainExecutionConfig, ExecutionMode
 from .task_tracker import TaskTracker
 from .checkpoint import FileCheckpoint
@@ -24,6 +26,16 @@ from ..verification.contracts import (
 )
 
 logger = logging.getLogger(__name__)
+PLANNING_HEARTBEAT_SECONDS = 5.0
+
+
+class PlanningError(ValueError):
+    """A failed planning stage, never permission to switch worker families."""
+
+    def __init__(self, stage: str, detail: str, plan_id: str = ""):
+        self.stage = stage
+        self.plan_id = plan_id
+        super().__init__(f"Planning failed ({stage}): {detail[:500]}")
 
 
 class TaskStatus(str, Enum):
@@ -73,6 +85,8 @@ class TaskPlan:
     # the user to approve its contracts before any subtask is dispatched.
     awaiting_approval: bool = False
     approval_design_id: Optional[str] = None
+    project_spec: Optional[ProjectSpec] = None
+    execution_target: Optional[ExecutionTarget] = None
     
     def get_ready_subtasks(self) -> List[SubTask]:
         """Get subtasks that are ready to execute (dependencies satisfied)."""
@@ -140,18 +154,22 @@ class WorkspaceOrchestrator(BusParticipant):
     COMPLEXITY_SYSTEM_PROMPT = """The current year is {current_year}. Always use {current_year} in research queries.
 
 You are a project complexity assessor. Given a user request, determine if it needs:
-1. "script" — a single Python file can handle it (utility, algorithm, simple tool)
-2. "project" — multiple files needed (backend+frontend, library+tests, multi-concern app)
+1. "script" — a single source file can handle it
+2. "project" — multiple files needed
+
+Also select the deliverable from the requested user experience:
+- "python" for Python scripts, CLI, libraries, services or automation
+- "web_app" for an interactive browser application
 
 Also determine if research is needed before coding (new APIs, best practices, state of the art).
 
 Respond with ONLY a JSON object, no explanation:
-{{"mode": "script"|"project", "needs_research": true|false, "research_queries": ["query1"], "reason": "brief reason"}}
+{{"mode": "script"|"project", "deliverable_type": "python"|"web_app", "needs_research": true|false, "research_queries": ["query1"], "reason": "brief reason"}}
 
 Examples:
-- "write a fibonacci function" → {{"mode": "script", "needs_research": false, "research_queries": [], "reason": "single algorithm"}}
-- "build a chat app with auth and websockets" → {{"mode": "project", "needs_research": true, "research_queries": ["python websocket server best practices 2026", "lightweight python auth JWT"], "reason": "multiple concerns: backend, auth, websockets, frontend"}}
-- "create a REST API with database" → {{"mode": "project", "needs_research": false, "research_queries": [], "reason": "multiple files: models, routes, app setup"}}"""
+- "write a fibonacci function" → {{"mode": "script", "deliverable_type": "python", "needs_research": false, "research_queries": [], "reason": "single algorithm"}}
+- "build a browser task tracker" → {{"mode": "project", "deliverable_type": "web_app", "needs_research": false, "research_queries": [], "reason": "interactive browser UI with persistent state"}}
+- "create a REST API with database" → {{"mode": "project", "deliverable_type": "python", "needs_research": false, "research_queries": [], "reason": "backend service with models, routes and app setup"}}"""
 
     # System prompt for project file planning (only used in project mode)
     PROJECT_PLANNER_PROMPT = """You are a software architect. Given a user request, plan the file structure for the project.
@@ -344,11 +362,16 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             return
 
         # Create task plan
-        plan = await self._create_task_plan(message)
+        try:
+            plan = await self._create_task_plan(message)
+        except PlanningError as exc:
+            await self._report_planning_failure(message, exc)
+            return
         self.task_plans[plan.id] = plan
+        plan.status = TaskStatus.RUNNING
         
         # Announce task received — include description for UI
-        task_desc = message.payload.get("description", "") if message.payload else ""
+        task_desc = (message.payload.get("user_request") or message.payload.get("description", "")) if message.payload else ""
         await self.bus.broadcast_event(
             source=self.name,
             event_type="task.received",
@@ -379,11 +402,18 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                 or task_data.get("description")
                 or str(task_data)
             )
-            spec = await self._propose_contracts(plan, user_request)
-            if spec is not None:
-                plan.awaiting_approval = True
-                plan.status = TaskStatus.RUNNING
-                return  # subtasks dispatch only after approval
+            started = time.monotonic()
+            await self._planning_progress("contracts", "running", task_data.get("session_id"), task_id=plan.id)
+            try:
+                spec = await asyncio.wait_for(self._propose_contracts(plan, user_request), timeout=20)
+                if spec is None:
+                    raise ValueError("Proposal was not recorded")
+            except Exception as exc:
+                await self._report_planning_failure(message, PlanningError(
+                    "contracts", str(exc) or type(exc).__name__, plan.id))
+                return
+            await self._planning_progress("contracts", "done", task_data.get("session_id"), started, task_id=plan.id)
+            return  # subtasks dispatch only after approval
         
         # Start executing ready subtasks
         plan.status = TaskStatus.RUNNING
@@ -399,16 +429,31 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         )
         from ..verification.evidence import ImmutableRunError, default_repository
 
-        contracts = await draft_contracts(self.llm_provider, user_request)
+        contracts = await draft_contracts(
+            self.llm_provider, user_request, project_spec=plan.project_spec)
+        if plan.status == TaskStatus.CANCELLED:
+            raise asyncio.CancelledError
+        if not any(not item.startswith("[Stack]") for item in contracts):
+            raise ValueError("No verifiable acceptance contracts were produced; execution remains blocked")
         spec = build_proposal_spec(user_request, contracts)
+        if plan.execution_target is not None:
+            spec.metadata["execution_target"] = plan.execution_target.public()
         try:
             default_repository().save_spec(spec)
         except ImmutableRunError:
-            # Same request already proposed before — reuse the stored spec.
+            # Repeated wording must not resurrect a different old contract.
             stored = default_repository().load_latest_spec(spec.design_id)
-            if stored is not None:
+            if stored is None:
+                raise ValueError("Existing proposal could not be loaded")
+            if (stored.contracts == spec.contracts and "approval" not in stored.metadata
+                    and stored.metadata.get("execution_target") == spec.metadata.get("execution_target")):
                 spec = stored
+            else:
+                spec = spec.model_copy(update={"revision": stored.revision + 1})
+                default_repository().save_spec(spec)
         plan.approval_design_id = spec.design_id
+        plan.awaiting_approval = True
+        plan.status = TaskStatus.RUNNING
         await self.bus.broadcast_event(
             source=self.name,
             event_type="contracts.proposal",
@@ -417,6 +462,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                 "plan_id": plan.id,
                 "user_request": user_request,
                 "contracts": list(spec.contracts),
+                "project_target": plan.execution_target.public() if plan.execution_target else None,
                 "session_id": (plan.original_task.payload or {}).get("session_id"),
             },
             workspace=self.workspace,
@@ -432,18 +478,47 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         design_id = task_data.get("design_id")
         approved = bool(task_data.get("approve"))
         plan = self.task_plans.get(plan_id)
-        if plan is None or not plan.awaiting_approval:
-            return  # unknown or already-resolved proposal
+        if plan is None:
+            await self.bus.broadcast_event(
+                source=self.name, event_type='contracts.approval_failed',
+                payload={'plan_id': plan_id, 'error': 'Proposition expirée ou serveur redémarré. Relance la demande.'},
+                workspace=self.workspace, priority=Priority.NORMAL)
+            return
+        if not plan.awaiting_approval:
+            return  # already-resolved proposal: idempotent
 
-        plan.awaiting_approval = False
+        if (task_data.get("design_id") != plan.approval_design_id
+                or not isinstance(task_data.get("approve"), bool)
+                or plan.status != TaskStatus.RUNNING):
+            await self.bus.broadcast_event(
+                source=self.name, event_type="contracts.approval_failed",
+                payload={"plan_id": plan.id, "error": "Invalid or stale contract decision",
+                         "session_id": (plan.original_task.payload or {}).get("session_id")},
+                workspace=self.workspace, priority=Priority.NORMAL)
+            return
         try:
-            default_repository().approve_spec(
+            if plan.execution_target is not None:
+                plan.execution_target.validate()
+                proposal = default_repository().load_latest_spec(design_id)
+                if proposal is None or proposal.metadata.get("execution_target") != plan.execution_target.public():
+                    raise ValueError("La destination du plan ne correspond plus au contrat")
+            stamped = default_repository().approve_spec(
                 design_id or plan.approval_design_id or "",
                 plan_id=plan.id,
                 decision="approved" if approved else "rejected",
             )
+            if stamped is None:
+                raise ValueError("Contract evidence was not found")
         except Exception as e:
             logger.warning("Contract approval persistence failed: %s", e)
+            await self.bus.broadcast_event(
+                source=self.name, event_type="contracts.approval_failed",
+                payload={"plan_id": plan.id, "error": "Approval could not be recorded; execution remains paused",
+                         "session_id": (plan.original_task.payload or {}).get("session_id")},
+                workspace=self.workspace, priority=Priority.NORMAL)
+            return
+
+        plan.awaiting_approval = False
 
         if approved:
             await self.bus.broadcast_event(
@@ -471,6 +546,15 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             await self._cancel_task(plan.id, "soft")
     
     async def _create_task_plan(self, message: BusMessage) -> TaskPlan:
+        plan = await self._create_unbound_task_plan(message)
+        try:
+            plan.execution_target = resolve_target(
+                plan.id, message.payload or {}, plan.subtasks, plan.project_spec)
+        except ValueError as exc:
+            raise PlanningError("destination", str(exc), plan.id) from exc
+        return plan
+
+    async def _create_unbound_task_plan(self, message: BusMessage) -> TaskPlan:
         """
         Decompose a task into executable subtasks using LLM planning.
         
@@ -480,7 +564,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         3. If script mode → simple single-task routing
         4. Falls back to deterministic routing if no LLM available
         """
-        plan_id = str(uuid.uuid4())
+        plan_id = str(message.payload.get("_ui_run_id") or uuid.uuid4())
         plan = TaskPlan(id=plan_id, original_task=message)
         
         task_data = message.payload
@@ -514,11 +598,15 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             plan.tracker = TaskTracker.create_from_plan(subtasks)
             return plan
         
-        # Try LLM-powered planning with complexity assessment
+        # LLM decisions are authoritative: a malformed plan is not Python.
+        stage = "assessment"
         if self.llm_provider:
             try:
                 # Step 1: Assess complexity
-                assessment = await self._assess_complexity(user_request)
+                started = time.monotonic()
+                await self._planning_progress(stage, "running", task_data.get("session_id"), task_id=plan_id)
+                assessment = await asyncio.wait_for(self._assess_complexity(user_request), timeout=20)
+                await self._planning_progress(stage, "done", task_data.get("session_id"), started, task_id=plan_id)
                 logger.info("Complexity assessment: mode=%s, research=%s, reason=%s",
                            assessment.get("mode"), assessment.get("needs_research"),
                            assessment.get("reason", ""))
@@ -526,7 +614,9 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                 await self.bus.broadcast_event(
                     source=self.name,
                     event_type="planning.assessment",
-                    payload={"assessment": assessment, "request": user_request[:100]},
+                    payload={"assessment": assessment, "request": user_request[:100],
+                             "session_id": task_data.get("session_id"),
+                             "elapsed_ms": round((time.monotonic() - started) * 1000)},
                     workspace=self.workspace,
                     priority=Priority.LOW
                 )
@@ -535,17 +625,27 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                 needs_research = assessment.get("needs_research", False)
                 research_queries = assessment.get("research_queries", [])
                 
-                if mode == "project":
+                if mode == "project" or assessment["deliverable_type"] == "web_app":
+                    stage = "architect"
+                    started = time.monotonic()
+                    await self._planning_progress(stage, "running", task_data.get("session_id"), task_id=plan_id)
                     # Step 2a: Project mode — plan file structure, build DAG
                     subtasks = await self._plan_project(plan_id, user_request, 
-                                                         needs_research, research_queries)
+                                                         needs_research, research_queries,
+                                                         deliverable_type=assessment["deliverable_type"],
+                                                         session_id=task_data.get("session_id"),
+                                                         plan=plan)
                 else:
+                    stage = "decomposition"
+                    started = time.monotonic()
+                    await self._planning_progress(stage, "running", task_data.get("session_id"), task_id=plan_id)
                     # Step 2b: Script mode — simple decomposition
-                    subtasks = await self._llm_decompose(plan_id, user_request, 
-                                                          task_data, needs_research,
-                                                          research_queries)
+                    subtasks = await asyncio.wait_for(
+                        self._llm_decompose(plan_id, user_request, task_data,
+                                            needs_research, research_queries), timeout=20)
                 
                 if subtasks:
+                    await self._planning_progress(stage, "done", task_data.get("session_id"), started, task_id=plan_id)
                     plan.subtasks = subtasks
                     # Analyze complexity and choose execution mode
                     plan.execution_mode = self._analyze_execution_mode(subtasks, user_request)
@@ -554,15 +654,64 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                     return plan
                     
             except Exception as e:
-                logger.warning("LLM planning failed, falling back to simple routing: %s", e)
+                # Preserve an explicitly typed direct action if the planner
+                # is unavailable. Generic/compound work must fail closed.
+                if stage == "assessment" and task_data.get("type") not in {"compound", "unknown", None}:
+                    try:
+                        plan.subtasks = self._simple_decompose(plan_id, task_data)
+                    except ValueError:
+                        pass
+                    else:
+                        plan.tracker = TaskTracker.create_from_plan(plan.subtasks)
+                        return plan
+                raise PlanningError(stage, str(e) or type(e).__name__, plan_id) from e
         
         # Fallback: simple deterministic routing
-        plan.subtasks = self._simple_decompose(plan_id, task_data)
+        try:
+            plan.subtasks = self._simple_decompose(plan_id, task_data)
+        except ValueError as exc:
+            raise PlanningError("assessment", "No planning provider available for this request", plan_id) from exc
         # Analyze complexity and choose execution mode
         plan.execution_mode = self._analyze_execution_mode(plan.subtasks, user_request)
         # Create TaskTracker from subtasks
         plan.tracker = TaskTracker.create_from_plan(plan.subtasks)
         return plan
+
+    async def _planning_progress(self, stage: str, status: str,
+                                 session_id: Optional[str], started: Optional[float] = None,
+                                 task_id: Optional[str] = None) -> None:
+        labels = {"assessment": "Analyse de la demande", "architect": "Architecture et critères d’acceptation",
+                  "decomposition": "Préparation des étapes", "contracts": "Enregistrement de la proposition"}
+        await self.bus.broadcast_event(
+            source=self.name, event_type="planning.stage",
+            payload={"stage": stage, "status": status, "session_id": session_id, "task_id": task_id,
+                     "description": labels[stage],
+                     "elapsed_ms": round((time.monotonic() - started) * 1000) if started else None},
+            workspace=self.workspace, priority=Priority.NORMAL)
+
+    async def _report_planning_failure(self, message: BusMessage, error: PlanningError) -> None:
+        """Close preparation visibly without a contract or worker dispatch."""
+        plan_id = error.plan_id or str(uuid.uuid4())
+        if plan_id in self.task_plans and self.task_plans[plan_id].status == TaskStatus.CANCELLED:
+            return
+        self.task_plans[plan_id] = TaskPlan(
+            id=plan_id, original_task=message, status=TaskStatus.FAILED,
+            error=str(error), result={"success": False, "error": str(error)})
+        payload = {"task_id": plan_id, "session_id": message.payload.get("session_id"),
+                   "error": str(error), "stage": error.stage, "runnable": False}
+        await self.bus.broadcast_event(
+            source=self.name, event_type="task.received",
+            payload={**payload, "description": message.payload.get("user_request", "Preparation"),
+                     "subtasks_count": 0}, workspace=self.workspace, priority=Priority.NORMAL)
+        await self.bus.broadcast_event(
+            source=self.name, event_type="planning.failed", payload=payload,
+            workspace=self.workspace, priority=Priority.NORMAL)
+        await self.bus.send_result(
+            source=self.name, target=message.source, reply_to=message.id,
+            result_data={**payload, "success": False}, workspace=self.workspace)
+        await self.bus.broadcast_event(
+            source=self.name, event_type="task.failed", payload=payload,
+            workspace=self.workspace, priority=Priority.NORMAL)
     
     async def _assess_complexity(self, user_request: str) -> dict:
         """Assess task complexity: script vs project, research needed."""
@@ -589,22 +738,23 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                 text = text[:text.rindex("```")]
             text = text.strip()
         
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            # Try to find JSON object in text
-            start = text.find("{")
-            end = text.rfind("}")
-            if start >= 0 and end > start:
-                try:
-                    return json.loads(text[start:end + 1])
-                except json.JSONDecodeError:
-                    pass
-            # Default: simple script, no research
-            return {"mode": "script", "needs_research": False, "research_queries": [], "reason": "parse error"}
+        result = self._parse_plan_json_object(text)
+        if result.get("mode") not in {"script", "project"}:
+            raise ValueError("assessment requires mode=script|project")
+        if result.get("deliverable_type") not in {"python", "web_app"}:
+            raise ValueError("assessment requires deliverable_type=python|web_app")
+        if not isinstance(result.get("needs_research"), bool):
+            raise ValueError("assessment requires boolean needs_research")
+        queries = result.get("research_queries", [])
+        if not isinstance(queries, list) or not all(isinstance(q, str) and q.strip() for q in queries):
+            raise ValueError("assessment requires an array of research queries")
+        return {**result, "research_queries": queries[:3]}
     
     async def _plan_project(self, plan_id: str, user_request: str,
-                            needs_research: bool, research_queries: list) -> List[SubTask]:
+                            needs_research: bool, research_queries: list,
+                            deliverable_type: Optional[str] = None,
+                            session_id: Optional[str] = None,
+                            plan: Optional[TaskPlan] = None) -> List[SubTask]:
         """Plan a multi-file project using the Architect Phase and build a task DAG.
         
         Pipeline:
@@ -650,21 +800,30 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         await self.bus.broadcast_event(
             source=self.name,
             event_type="planning.architect_started",
-            payload={"request": user_request[:200]},
+            payload={"request": user_request[:200], "session_id": session_id},
             workspace=self.workspace,
             priority=Priority.NORMAL,
         )
 
+        started = time.monotonic()
+        # The architect owns ONE total deadline, including its optional repair.
+        # Report real elapsed waiting time, never fictional percentage progress.
+        design_task = asyncio.create_task(
+            architect.design(user_request, expected_deliverable=deliverable_type))
         try:
-            spec: ProjectSpec = await architect.design(user_request)
-        except (ValueError, Exception) as exc:
-            logger.warning("Architect phase failed, falling back to legacy planner: %s", exc)
-            return await self._plan_project_legacy(plan_id, user_request,
-                                                    needs_research, research_queries,
-                                                    task_idx, research_dep_ids,
-                                                    existing_subtasks=subtasks)
+            while True:
+                done, _ = await asyncio.wait({design_task}, timeout=PLANNING_HEARTBEAT_SECONDS)
+                if done:
+                    spec: ProjectSpec = design_task.result()
+                    break
+                await self._planning_progress("architect", "running", session_id, started, task_id=plan_id)
+        finally:
+            if not design_task.done():
+                design_task.cancel()
+            await asyncio.gather(design_task, return_exceptions=True)
 
         project_name = spec.project_name
+        worker_brain = "web_app_brain" if spec.deliverable_type == "web_app" else "python_brain"
         
         logger.info("Architect spec: %s — %d files, %d data models",
                      project_name, len(spec.file_specs), len(spec.data_models))
@@ -680,6 +839,9 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                 "tech_decisions": spec.tech_decisions,
                 "executable": spec.executable,
                 "entry_point": spec.entry_point,
+                "deliverable_type": spec.deliverable_type,
+                "interaction_mode": spec.interaction_mode,
+                "elapsed_ms": round((time.monotonic() - started) * 1000),
             },
             workspace=self.workspace,
             priority=Priority.NORMAL,
@@ -725,9 +887,10 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             subtasks.append(SubTask(
                 id=sid,
                 description=f"Write {fs.path}: {fs.purpose}",
-                brain_target="python_brain",
+                brain_target=worker_brain,
                 payload={
-                    "type": "write_project_file",
+                    "type": "write_web_file" if spec.deliverable_type == "web_app" else "write_project_file",
+                    "web_stack": spec.web_stack,
                     "user_request": user_request,
                     "project_name": project_name,
                     "file_path": fs.path,
@@ -755,22 +918,26 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         subtasks.append(SubTask(
             id=assembler_sid,
             description=f"Assemble and {'run' if spec.executable else 'validate'} {project_name}",
-            brain_target="python_brain",
+            brain_target=worker_brain,
             payload={
-                "type": "assemble_and_run",
+                "type": "assemble_and_preview" if spec.deliverable_type == "web_app" else "assemble_and_run",
+                "web_stack": spec.web_stack,
                 "user_request": user_request,
                 "project_name": project_name,
                 "all_files": all_files_summary,
                 "executable": spec.executable,
                 "entry_point": spec.entry_point,
                 "execution_strategy": spec.execution_strategy,
+                "deliverable_type": spec.deliverable_type,
+                "interaction_mode": spec.interaction_mode,
             },
             dependencies=all_file_sids,
         ))
         
         # Store spec on the plan for later reference (integration/review phases)
         # Attached as instance attribute on the plan after creation in caller
-        self._last_project_spec = spec
+        if plan is not None:
+            plan.project_spec = spec
         
         return subtasks
 
@@ -970,6 +1137,10 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         # Convert to SubTask objects
         subtasks = []
         for sd in subtask_defs:
+            if (not isinstance(sd, dict) or not isinstance(sd.get("brain_target"), str)
+                    or not sd["brain_target"] or not isinstance(sd.get("payload"), dict)
+                    or not sd["payload"].get("type")):
+                raise ValueError("Every planned action requires an explicit brain and typed payload")
             sid = sd.get("id", f"{plan_id}_{len(subtasks)}")
             # Prefix subtask IDs with plan_id for global uniqueness
             full_id = f"{plan_id}_{sid}"
@@ -981,7 +1152,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             subtask = SubTask(
                 id=full_id,
                 description=sd.get("description", ""),
-                brain_target=sd.get("brain_target", "python_brain"),
+                brain_target=sd["brain_target"],
                 payload=sd.get("payload", task_data),
                 dependencies=deps,
             )
@@ -1042,9 +1213,8 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
     def _simple_decompose(self, plan_id: str, task_data: dict) -> List[SubTask]:
         """Fallback: simple deterministic task routing (no LLM needed).
 
-        Compound or unknown types must NOT be forwarded raw — brains reject
-        what they don't know ('Unknown task type: compound'). Convert them
-        to a generate_and_execute request the python brain handles.
+        Only explicit action types are safe without planning. Never infer
+        Python from an unknown or compound request.
         """
         task_type = task_data.get("type", "unknown")
         
@@ -1052,6 +1222,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             "execute_code": "python_brain",
             "generate_and_execute": "python_brain",
             "run_file": "python_brain",
+            "run_web_project": "web_app_brain",
             "research": "researcher",
             "web_search": "researcher",
             "board_task": "taskboard",
@@ -1062,22 +1233,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             target = brain_map[task_type]
             payload = task_data
         else:
-            # Compound / unknown: let the python brain generate + run code
-            # from the natural-language request instead of crashing.
-            request = (
-                task_data.get("user_request")
-                or task_data.get("request")
-                or task_data.get("query")
-                or task_data.get("description")
-                or str(task_data)
-            )
-            target = "python_brain"
-            payload = {
-                "type": "generate_and_execute",
-                "user_request": request,
-                "description": request[:120],
-                "reply_to_ui": task_data.get("reply_to_ui", False),
-            }
+            raise ValueError(f"No explicit action route for {task_type!r}")
         
         return [SubTask(
             id=f"{plan_id}_s0",
@@ -1110,6 +1266,17 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         if plan.awaiting_approval:
             print(f"[ORCH] Plan {plan.id[-8:]} awaits contract approval — not dispatching")
             return
+
+        if plan.execution_target is not None:
+            try:
+                plan.execution_target = plan.execution_target.prepare()
+            except (ValueError, OSError) as exc:
+                pending = next((st for st in plan.subtasks if st.status in {TaskStatus.PENDING, TaskStatus.RUNNING}), None)
+                if pending is not None:
+                    pending.status = TaskStatus.FAILED
+                    pending.error = f"Destination invalide : {exc}"
+                    await self._check_plan_completion(plan)
+                return
         
         # Prevent re-entrant execution (bus delivers synchronously, so a dispatched
         # task can complete and trigger another _execute_ready_subtasks before we return)
@@ -1251,6 +1418,11 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         
         # Resolve any variable references in payload
         resolved_payload = await self._resolve_payload_references(subtask.payload, plan)
+        if subtask.payload.get("type") in FILE_TASKS and plan.execution_target is not None:
+            resolved_payload["_execution_target"] = plan.execution_target.to_payload()
+        if plan.status in (TaskStatus.COMPLETE, TaskStatus.FAILED, TaskStatus.CANCELLED):
+            self.brain_load[subtask.brain_target] = max(0, self.brain_load.get(subtask.brain_target, 0) - 1)
+            return
         
         # Inject current task tracker state so brain knows full context
         if plan.tracker:
@@ -1271,7 +1443,8 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             target=subtask.brain_target,
             workspace=self.workspace,
             project=plan.original_task.project,
-            payload={**resolved_payload, "_subtask_id": subtask.id},
+            payload={**resolved_payload, "_subtask_id": subtask.id, "_plan_id": plan.id,
+                     "session_id": (plan.original_task.payload or {}).get('session_id')},
             reply_to=subtask.id  # Informational — not used for result matching
         )
         
@@ -1291,6 +1464,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                 payload={
                     "task_id": plan.id,
                     "subtask_id": subtask.id,
+                    "session_id": (plan.original_task.payload or {}).get('session_id'),
                     "brain": subtask.brain_target,
                     "description": subtask.description,
                     "risk_level": risk_level.value,
@@ -1300,6 +1474,10 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                 priority=Priority.NORMAL
             )
         
+        if plan.status in (TaskStatus.COMPLETE, TaskStatus.FAILED, TaskStatus.CANCELLED):
+            if self.active_subtasks.pop(task_message.id, None) is not None:
+                self.brain_load[subtask.brain_target] = max(0, self.brain_load.get(subtask.brain_target, 0) - 1)
+            return
         await self.bus.send(task_message)
     
     async def _resolve_payload_references(self, payload: Dict[str, Any], 
@@ -1507,6 +1685,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             payload={
                 "task_id": plan.id,
                 "subtask_id": subtask.id,
+                "session_id": (plan.original_task.payload or {}).get('session_id'),
                 "status": subtask.status.value,
                 "execution_time": subtask.end_time - subtask.start_time if subtask.start_time else 0
             },
@@ -1538,13 +1717,17 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
     
     async def _check_plan_completion(self, plan: TaskPlan) -> None:
         """Check if a task plan is complete and send final result."""
+        # Other in-flight workers can finish after the first fatal failure.
+        # A terminal plan must emit exactly one result/terminal event.
+        if plan.status in (TaskStatus.COMPLETE, TaskStatus.FAILED, TaskStatus.CANCELLED):
+            return
         if plan.is_complete() or plan.is_failed():
             import time
             
             if plan.is_failed():
                 plan.status = TaskStatus.FAILED
-                plan.error = "One or more subtasks failed"
                 failed_subtasks = [st for st in plan.subtasks if st.status == TaskStatus.FAILED]
+                plan.error = "; ".join(dict.fromkeys(st.error or "Unknown error" for st in failed_subtasks))[:2000]
                 plan.result = {
                     "success": False,
                     "error": plan.error,
@@ -1562,7 +1745,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             await self.bus.send_result(
                 source=self.name,
                 target=plan.original_task.source,
-                result_data=plan.result,
+                result_data={**plan.result, "session_id": (plan.original_task.payload or {}).get("session_id")},
                 reply_to=plan.original_task.id,
                 workspace=self.workspace,
                 project=plan.original_task.project
@@ -1603,34 +1786,74 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
     @staticmethod
     def _project_result_metadata(plan: TaskPlan) -> dict:
         """Expose only launch/navigation metadata from completed subtasks."""
-        for result in reversed(list(plan.get_results().values())):
+        if plan.status == TaskStatus.FAILED:
+            # A selected older project is not evidence for a failed new run.
+            return {"runnable": False}
+        if any(st.brain_target == "taskboard" or st.payload.get("type") == "board_task"
+               for st in plan.subtasks):
+            return {"result_kind": "taskboard", "runnable": False}
+        if plan.execution_target is None:
+            return {"runnable": False}
+        candidates = []
+        has_file_output = False
+        for result in plan.get_results().values():
             if not isinstance(result, dict):
                 continue
             data = result.get("data", result)
             if not isinstance(data, dict):
                 continue
+            has_file_output |= isinstance(data.get("file_path"), str) and bool(data["file_path"])
             if data.get("project_name") and data.get("entry_point"):
-                return {
+                metadata = {
                     "project_name": data["project_name"],
+                    **({"project_path": data["project_path"]} if data.get("project_path") else {}),
                     "entry_point": data["entry_point"],
-                    "runnable": bool(data.get("success") and data.get("stdout", "").strip()),
+                    **({"deliverable_type": data["deliverable_type"]}
+                       if data.get("deliverable_type") else {}),
+                    **({"preview_url": data["preview_url"]}
+                       if data.get("preview_url") else {}),
+                    "runnable": bool(data.get("success") and (
+                        data.get("runnable") is True
+                        or data.get("stdout", "").strip()
+                        or data.get("server_running") is True
+                    )),
                 }
-        task_payload = plan.original_task.payload or {}
-        project_path = task_payload.get("project_path")
+                score = (
+                    int(metadata["runnable"]),
+                    int(bool(data.get("preview_url"))),
+                    int(bool(data.get("verification"))),
+                )
+                candidates.append((score, metadata))
+        if candidates:
+            metadata = max(candidates, key=lambda item: item[0])[1]
+            if plan.execution_target is not None:
+                try:
+                    plan.execution_target.file(metadata["entry_point"])
+                except ValueError:
+                    return {"runnable": False}
+                metadata.update(project_path=plan.execution_target.path,
+                                project_name=plan.execution_target.directory.name)
+            return metadata
+        if not has_file_output and not any(st.payload.get("type") in {
+            "edit_file", "run_file", "write_project_file", "assemble_and_run",
+            "batch_write_files", "generate_and_execute",
+        } for st in plan.subtasks):
+            return {"runnable": False}
+        project_path = plan.execution_target.path if plan.execution_target else None
         if isinstance(project_path, str) and project_path.strip():
             try:
-                from ..web.fs_api import workspace_root
-
-                root = workspace_root().resolve()
-                project_dir = (root / project_path).resolve()
+                plan.execution_target.validate()
+                root = Path(plan.execution_target.root)
+                project_dir = plan.execution_target.directory
                 if root not in project_dir.parents:
                     return {}
                 manifest = json.loads(
-                    (project_dir / ".project.json").read_text(encoding="utf-8"))
+                    plan.execution_target.file(".project.json").read_text(encoding="utf-8"))
                 entry_point = manifest.get("entry_point")
                 if entry_point:
+                    plan.execution_target.file(entry_point)
                     return {
-                        "project_name": manifest.get("name") or project_dir.name,
+                        "project_name": project_dir.name,
                         "project_path": project_dir.relative_to(root).as_posix(),
                         "entry_point": entry_point,
                         "runnable": bool(manifest.get("run")),
@@ -1643,14 +1866,20 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         """Handle task cancellation requests."""
         task_id = message.payload.get("task_id")
         cancel_mode = message.payload.get("mode", "soft")
+        session_id = message.payload.get("session_id")
         
         if task_id:
+            plan = self.task_plans.get(task_id)
+            if session_id and plan and (plan.original_task.payload or {}).get('session_id') != session_id:
+                return
             await self._cancel_task(task_id, cancel_mode)
         else:
             # Cancel all active tasks
             for plan_id in list(self.task_plans.keys()):
                 plan = self.task_plans[plan_id]
-                if plan.status == TaskStatus.RUNNING:
+                if session_id and (plan.original_task.payload or {}).get('session_id') != session_id:
+                    continue
+                if plan.status not in (TaskStatus.COMPLETE, TaskStatus.FAILED, TaskStatus.CANCELLED):
                     await self._cancel_task(plan_id, cancel_mode)
     
     async def _cancel_task(self, task_id: str, mode: str) -> None:
@@ -1676,9 +1905,16 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                         type=MessageType.CANCEL,
                         source=self.name,
                         target=subtask.assigned_brain,
-                        payload={"task_id": subtask.id, "mode": mode}
+                        payload={"task_id": dispatch_id, "mode": mode}
                     )
                     await self.bus.send(cancel_msg)
+                    brain = subtask.assigned_brain
+                    self.brain_load[brain] = max(0, self.brain_load.get(brain, 0) - 1)
+                self.active_subtasks.pop(dispatch_id, None)
+        for subtask in plan.subtasks:
+            if subtask.status in (TaskStatus.PENDING, TaskStatus.RUNNING):
+                subtask.status = TaskStatus.CANCELLED
+        plan.awaiting_approval = False
         
         await self.bus.broadcast_event(
             source=self.name,
@@ -1686,6 +1922,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             payload={
                 "task_id": task_id,
                 "mode": mode,
+                "session_id": (plan.original_task.payload or {}).get("session_id"),
                 "workspace": self.workspace
             },
             workspace=self.workspace,
@@ -1863,32 +2100,20 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         """
         # Only checkpoint for projects that will write files
         has_file_tasks = any(
-            subtask.payload.get("type") in ("write_project_file", "assemble_and_run")
+            subtask.payload.get("type") in (
+                "write_project_file", "assemble_and_run",
+                "write_web_file", "assemble_and_preview",
+            )
             for subtask in plan.subtasks
         )
         
         if not has_file_tasks:
             return  # Skip checkpoint for code-only tasks
         
-        # Determine project directory from subtasks
-        project_name = None
-        for subtask in plan.subtasks:
-            payload = subtask.payload
-            if payload.get("project_name"):
-                project_name = payload["project_name"]
-                break
-        
-        if not project_name:
-            return  # No project name found
-        
-        # Assume project directory is in a standard location
-        # (This would need to be configured based on brain setup)
-        import tempfile
-        from pathlib import Path
-        
-        # For this implementation, assume projects are in temp dir
-        # In production, this would use the actual PythonBrain work_dir
-        project_dir = Path(tempfile.gettempdir()) / f"bigbrain_python_python_brain" / project_name
+        if plan.execution_target is None:
+            return
+        project_dir = plan.execution_target.directory
+        project_name = project_dir.name
         
         if not project_dir.exists():
             return  # Project directory doesn't exist yet
@@ -1977,7 +2202,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         
         # Emit planning event with mode selection (best-effort)
         try:
-            asyncio.create_task(self.bus.broadcast_event(
+            asyncio.get_running_loop().create_task(self.bus.broadcast_event(
                 source=self.name,
                 event_type="planning.mode_selected",
                 payload={
@@ -2029,7 +2254,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         
         # Broadcast event (best-effort)
         try:
-            asyncio.create_task(self.bus.broadcast_event(
+            asyncio.get_running_loop().create_task(self.bus.broadcast_event(
                 source=self.name,
                 event_type="task.user_interjection",
                 payload={
@@ -2186,10 +2411,10 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         """Save learnings to persistent storage."""
         try:
             import json
-            from pathlib import Path
             
             # Create memory directory structure
-            memory_dir = Path("memory") / "long_term"
+            from ..memory.paths import legacy_storage_dir
+            memory_dir = legacy_storage_dir('long_term')
             memory_dir.mkdir(parents=True, exist_ok=True)
             
             learnings_file = memory_dir / "learnings.json"
@@ -2223,9 +2448,9 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         """Load learnings for brain startup."""
         try:
             import json
-            from pathlib import Path
             
-            learnings_file = Path("memory") / "long_term" / "learnings.json"
+            from ..memory.paths import legacy_storage_dir
+            learnings_file = legacy_storage_dir('long_term') / 'learnings.json'
             if learnings_file.exists():
                 with open(learnings_file, "r", encoding="utf-8") as f:
                     return json.load(f)

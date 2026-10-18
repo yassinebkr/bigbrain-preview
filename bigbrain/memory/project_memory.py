@@ -6,6 +6,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
+from .paths import legacy_storage_dir
 
 
 class MockEmbedding:
@@ -136,7 +137,7 @@ class ProjectMemory:
         self.workspace = workspace or "default"
         
         # Setup storage
-        self.storage_dir = storage_dir or Path("memory") / "projects"
+        self.storage_dir = legacy_storage_dir('projects', storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         
         self.storage_file = self.storage_dir / f"{self.workspace}_{project_name}.json"

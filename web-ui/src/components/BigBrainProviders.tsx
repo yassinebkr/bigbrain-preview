@@ -30,6 +30,8 @@ export function BigBrainProviders() {
   const [mistralStatus, setMistralStatus] = useState<string>('');
   const [orKey, setOrKey] = useState('');
   const [orStatus, setOrStatus] = useState<string>('');
+  const [mistralStudioKey, setMistralStudioKey] = useState('');
+  const [mistralStudioStatus, setMistralStudioStatus] = useState<string>('');
   const [busy, setBusy] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -128,9 +130,12 @@ export function BigBrainProviders() {
         </button>
       </div>
 
-      {/* Compact: one row per CONNECTED provider group, then a muted
-          summary line for the rest of the registry. */}
-      <ul className="flex flex-col gap-1">
+      <details className="rounded-lg" style={{ border: '1px solid var(--border-subtle)' }}>
+        <summary className="px-3 py-2 text-[12.5px] cursor-pointer select-none" style={{ color: 'var(--text-secondary)' }}>
+          {models.filter((model) => model.available).length} modèles disponibles
+          <span className="ml-1 text-[11px]" style={{ color: 'var(--text-tertiary)' }}>sur {models.length}</span>
+        </summary>
+      <ul className="flex flex-col gap-1 px-2 pb-2">
         {models.length === 0 && (
           <li className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
             Registry unavailable (server not connected?)
@@ -142,8 +147,12 @@ export function BigBrainProviders() {
           // Group available models by provider label.
           const groups = new Map<string, number>();
           for (const m of available) {
-            const group = m.provider.includes('openrouter')
+            const group = m.key.startsWith('openrouter-')
               ? 'OpenRouter'
+              : m.key.startsWith('mistral-studio-')
+                ? 'Mistral Studio'
+              : m.key.startsWith('mistral-')
+                ? 'Mistral Vibe'
               : m.provider === 'codex'
                 ? 'Codex (ChatGPT)'
                 : m.provider === 'anthropic_oauth'
@@ -194,6 +203,7 @@ export function BigBrainProviders() {
           );
         })()}
       </ul>
+      </details>
 
       <div className="flex flex-col gap-2">
         {/* OpenRouter (API): paste-key flow. Validated server-side with the
@@ -246,6 +256,42 @@ export function BigBrainProviders() {
             {orStatus}
           </span>
         )}
+
+        <input
+          type="password"
+          value={mistralStudioKey}
+          onChange={(e) => setMistralStudioKey(e.target.value)}
+          placeholder="Mistral Studio API key"
+          className="px-3 py-2 rounded-lg text-[12.5px] outline-none"
+          style={{ backgroundColor: 'var(--bg-input)', border: '1px solid var(--border-input)', color: 'var(--text-primary)' }}
+        />
+        <button
+          onClick={async () => {
+            if (!mistralStudioKey.trim()) { setMistralStudioStatus('Paste a key first'); return; }
+            setBusy(true);
+            try {
+              await api('/api/auth/mistral-studio/key', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ key: mistralStudioKey.trim() }),
+              });
+              setMistralStudioKey('');
+              setMistralStudioStatus('Mistral Studio connected — provider reloaded');
+              await api('/api/system/reload-provider', { method: 'POST' }).catch(() => {});
+              refresh();
+            } catch (e: any) {
+              setMistralStudioStatus(e.message);
+            } finally {
+              setBusy(false);
+            }
+          }}
+          disabled={busy}
+          className="px-3 py-2 rounded-lg text-[13px] font-medium cursor-pointer"
+          style={{ backgroundColor: 'var(--bg-button, #1a1a1a)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
+        >
+          Connect Mistral Studio API
+        </button>
+        {mistralStudioStatus && <span className="text-[11px]" style={{ color: 'var(--text-tertiary)' }}>{mistralStudioStatus}</span>}
 
         <button
           onClick={connectCodex}

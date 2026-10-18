@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   CheckCircle2, XCircle, Ban, ChevronDown, ChevronUp, FileEdit,
-  FolderOpen, Play, Loader2,
+  FolderOpen, Play, Loader2, Maximize2, Minimize2, ExternalLink, ListTodo,
 } from 'lucide-react';
 import { useAppStore, type RunState } from '@/store/appStore';
+import { usePreview } from '@/lib/usePreview';
 
 export function RunTimelineCard({ run }: { run: RunState }) {
   const [open, setOpen] = useState(false);
+  const [previewExpanded, setPreviewExpanded] = useState(false);
   const openFileViewer = useAppStore((s) => s.openFileViewer);
   const setView = useAppStore((s) => s.setView);
   const setPendingOpenFile = useAppStore((s) => s.setPendingOpenFile);
@@ -14,12 +16,13 @@ export function RunTimelineCard({ run }: { run: RunState }) {
   const [runId, setRunId] = useState<string | null>(null);
   const liveRun = useAppStore((s) => runId ? s.liveRuns[runId] : undefined);
   const outputRef = useRef<HTMLPreElement>(null);
+  const isTaskboard = run.resultKind === 'taskboard' || run.steps.some((step) => step.brain === 'taskboard');
 
   useEffect(() => {
     const el = outputRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [liveRun?.out, liveRun?.err]);
-  const entryPath = run.projectPath && run.entryPoint
+  const entryPath = isTaskboard ? undefined : run.projectPath && run.entryPoint
     ? `${run.projectPath}/${run.entryPoint}`
     : run.entryPoint
       ? run.files.find((file) =>
@@ -27,6 +30,8 @@ export function RunTimelineCard({ run }: { run: RunState }) {
       : undefined;
   const projectPath = run.projectPath || (entryPath?.includes('/')
     ? entryPath.slice(0, entryPath.lastIndexOf('/')) : undefined);
+  const hasPreview = !isTaskboard && !!run.runnable && run.deliverableType === 'web_app';
+  const { url: previewUrl, error: previewError } = usePreview(entryPath, hasPreview);
   const Icon = run.status === 'done'
     ? CheckCircle2 : run.status === 'cancelled' ? Ban : XCircle;
   const color = run.status === 'done'
@@ -49,6 +54,7 @@ export function RunTimelineCard({ run }: { run: RunState }) {
   };
 
   const runProject = async () => {
+    if (hasPreview) { setPreviewExpanded(true); return; }
     if (!entryPath || (runId && !liveRun?.done)) return;
     setOpen(true);
     try {
@@ -105,8 +111,49 @@ export function RunTimelineCard({ run }: { run: RunState }) {
               )}
             </div>
           )}
+          {isTaskboard && run.status === 'done' && (
+            <button onClick={(event) => { event.stopPropagation(); setView('tasks'); }}
+              className="flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer"
+              style={{ color: 'var(--accent-blue)' }} aria-label="Open taskboard">
+              <ListTodo size={12} /> Taskboard
+            </button>
+          )}
           {open ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
         </div>
+        {run.error && (
+          <div className="mt-2 whitespace-pre-wrap break-words" role="alert"
+            style={{ color: 'var(--warning, #ff9500)' }}>{run.error}</div>
+        )}
+        {hasPreview && !previewUrl && <div className="mt-2" role="status">{previewError || 'Ouverture de l’aperçu…'}</div>}
+        {previewUrl && (
+          <div className="mt-2 overflow-hidden rounded-lg" style={{ border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-primary)' }}>
+            <div className="flex items-center gap-2 px-2.5 py-1.5" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+              <span className="font-medium flex-1" style={{ color: 'var(--text-secondary)' }}>Aperçu</span>
+              <button
+                onClick={() => setPreviewExpanded((expanded) => !expanded)}
+                className="inline-flex items-center gap-1 rounded px-1.5 py-1 cursor-pointer"
+                style={{ color: 'var(--text-secondary)' }}
+                aria-label={previewExpanded ? 'Réduire l’aperçu' : 'Agrandir l’aperçu'}
+                title={previewExpanded ? 'Réduire' : 'Agrandir'}
+              >
+                {previewExpanded ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
+                {previewExpanded ? 'Réduire' : 'Agrandir'}
+              </button>
+              <a href={previewUrl} target="_blank" rel="noreferrer"
+                className="inline-flex items-center gap-1 rounded px-1.5 py-1"
+                style={{ color: 'var(--accent-blue)' }} title="Ouvrir dans un nouvel onglet">
+                <ExternalLink size={12} /> Ouvrir
+              </a>
+            </div>
+            <iframe
+              src={previewUrl}
+              title={`Aperçu de ${run.projectName || run.description}`}
+              sandbox="allow-scripts allow-same-origin"
+              className="block w-full bg-white transition-[height] duration-300"
+              style={{ height: previewExpanded ? 'min(65vh, 620px)' : '220px' }}
+            />
+          </div>
+        )}
         {open && (
           <div className="mt-2 pt-2 space-y-1.5" style={{ borderTop: '1px solid var(--border-subtle)' }}>
             {run.steps.map((step) => (
@@ -127,9 +174,6 @@ export function RunTimelineCard({ run }: { run: RunState }) {
                 <span>{file.path}</span>
               </button>
             ))}
-            {run.error && (
-              <div style={{ color: 'var(--warning, #ff9500)' }}>{run.error}</div>
-            )}
             {entryPath && (
               <div className="flex items-center gap-2 pt-1">
                 <button
@@ -154,9 +198,11 @@ export function RunTimelineCard({ run }: { run: RunState }) {
                 )}
               </div>
             )}
-            {run.projectName && (!entryPath || !run.runnable) && (
+            {run.projectName && (!entryPath || !run.runnable) && !run.error && (
               <div style={{ color: 'var(--warning, #ff9500)' }}>
-                No verified runnable entry point.
+                {run.status === 'failed'
+                  ? 'La validation du projet a échoué. Consulte les étapes ci-dessus.'
+                  : 'Le lancement de ce projet n’a pas été validé.'}
               </div>
             )}
             {liveRun && (liveRun.out || liveRun.err || liveRun.done) && (

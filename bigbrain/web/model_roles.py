@@ -19,12 +19,13 @@ from ..llm.model_registry import get_model, role_default_key
 
 logger = logging.getLogger(__name__)
 
-ROLES = ("front", "planner", "code", "subagent")
+ROLES = ("front", "planner", "code", "web", "subagent")
 
 _ENV_VAR_BY_ROLE = {
     "front": "BIGBRAIN_FRONT_MODEL",
     "planner": "BIGBRAIN_PLANNER_MODEL",
     "code": "BIGBRAIN_CODE_MODEL",
+    "web": "BIGBRAIN_WEB_MODEL",
     "subagent": "BIGBRAIN_SUBAGENT_MODEL",
 }
 

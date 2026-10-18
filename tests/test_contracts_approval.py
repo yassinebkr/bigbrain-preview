@@ -47,6 +47,42 @@ class TestContractParsing:
         assert await draft_contracts(Provider(), "fais un script") == ["c1", "c2"]
         assert await draft_contracts(None, "x") == []
 
+    async def test_draft_contracts_prepends_architect_stack(self):
+        from bigbrain.orchestrator.architect import ProjectSpec
+        from bigbrain.verification.contracts import draft_contracts
+
+        class Provider:
+            def __init__(self):
+                self.user_prompt = ""
+
+            async def chat_complete(self, messages=None, **kwargs):
+                self.user_prompt = messages[-1]["content"]
+                return '["le bouton permet de changer de séance"]'
+
+        provider = Provider()
+        project_spec = ProjectSpec(
+            project_name="fitness",
+            description="programme interactif",
+            deliverable_type="web_app",
+            interaction_mode="browser",
+            entry_point="index.html",
+            tech_decisions=["HTML/CSS/JavaScript sans dépendance", "localStorage pour la progression"],
+            execution_strategy="preview statique puis tests navigateur",
+        )
+        contracts = await draft_contracts(
+            provider, "crée un programme fitness", project_spec=project_spec)
+
+        assert contracts[0].startswith("[Stack]")
+        assert "livrable web_app" in contracts[0]
+        assert "HTML/CSS/JavaScript sans dépendance" in contracts[0]
+        assert "point d’entrée index.html" in contracts[0]
+        assert "Architecture context:" in provider.user_prompt
+        assert contracts[1] == "le bouton permet de changer de séance"
+
+        fallback = await draft_contracts(
+            None, "crée un programme fitness", project_spec=project_spec)
+        assert fallback == [contracts[0]]
+
 
 class TestPlanNeedsApproval:
     def test_codegen_types_need_approval(self):

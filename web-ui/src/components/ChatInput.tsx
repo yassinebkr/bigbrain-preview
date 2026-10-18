@@ -1,7 +1,7 @@
 import { useRef, useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { Paperclip, Mic, Send, Square } from 'lucide-react';
-import { useAppStore } from '@/store/appStore';
+import { useAppStore, selectSessionRun } from '@/store/appStore';
 import { ActionPill } from './ActionPill';
 import { AttachmentChip } from './AttachmentChip';
 
@@ -27,7 +27,10 @@ export function ChatInput({ onSend }: ChatInputProps) {
     setRecording,
     isStreaming,
     stopGeneration,
+    activeSessionKey,
+    view,
   } = useAppStore();
+  const activeRun = useAppStore(selectSessionRun);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -206,14 +209,14 @@ export function ChatInput({ onSend }: ChatInputProps) {
             />
           </motion.button>
 
-          {isStreaming ? (
+          {(view !== 'welcome' && (isStreaming || (!!activeSessionKey && activeRun?.status === 'running' && activeRun.sessionId === activeSessionKey))) ? (
             <motion.button
               whileTap={{ scale: 0.9 }}
               onClick={stopGeneration}
               className="flex items-center justify-center w-10 h-10 sm:w-9 sm:h-9 rounded-full transition-all duration-200 cursor-pointer"
               style={{ backgroundColor: 'var(--accent-blue)' }}
               aria-label="Stop generation"
-              title="Stop"
+              title="Arrêter les activités de cette conversation"
             >
               <Square size={13} className="fill-current" style={{ color: '#ffffff' }} />
             </motion.button>

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .brains.python_brain import PythonBrain
+from .brains.web_app_brain import WebAppBrain
 from .brains.researcher import ResearcherBrain
 from .bus.auth import BusAuth
 from .bus.bus import MessageBus
@@ -194,35 +195,14 @@ class BigBrainSystem:
         }
 
     def apply_current_project(self) -> dict:
-        """Re-target agent writes to the selected project.
-
-        No project (global) → pool writes to the ``sandbox`` project
-        (auto-created scratch project), so global-mode files stay
-        organized instead of piling up in a loose folder. A selected
-        project → pool writes to <workspace>/<project>.
-        """
-        from .web.fs_api import ensure_sandbox, get_current_project, workspace_root
+        """Report navigation selection. Never mutate a worker's execution root."""
+        from .web.fs_api import ensure_sandbox, get_current_project
 
         project = get_current_project()
-        root = workspace_root()
-        if project:
-            target = root / project
-        else:
-            ensure_sandbox()
-            target = root / "sandbox"
-        target.mkdir(parents=True, exist_ok=True)
+        ensure_sandbox()
+        return {"ok": True, "project": project, "retargeted": 0}
 
-        retargeted = 0
-        for brain in self.brains.values():
-            if hasattr(brain, "work_dir"):
-                brain.work_dir = target
-                retargeted += 1
-
-        label = project or "global (sandbox/)"
-        print(f"📂 Working project: {label} — {retargeted} brain(s) write to {target.name}/")
-        return {"ok": True, "project": project, "retargeted": retargeted}
-
-    async def cancel_current(self) -> dict:
+    async def cancel_current(self, session_id: str | None = None) -> dict:
         """Stop what is in flight: front brain LLM stream + orchestrated run.
 
         The front brain breaks its delta loop at the next chunk (the
@@ -234,9 +214,14 @@ class BigBrainSystem:
 
         stopped = []
         if self.front_brain is not None:
-            self.front_brain.request_stop()
+            self.front_brain.request_stop(session_id=session_id)
             stopped.append("front_brain")
-        if self.bus is not None:
+        if self.orchestrator is not None:
+            await self.orchestrator._handle_cancel_request(BusMessage(
+                type=MessageType.CANCEL, source="bigbrain_system",
+                target=self.orchestrator.name, payload={"mode": "hard", "session_id": session_id}))
+            stopped.append("orchestrator")
+        if self.bus is not None and session_id is None:
             await self.bus.send(BusMessage(
                 type=MessageType.CANCEL,
                 source="bigbrain_system",
@@ -244,7 +229,6 @@ class BigBrainSystem:
                 payload={"mode": "soft"},
                 priority=Priority.HIGH,
             ))
-            stopped.append("orchestrator")
         print(f"⏹️  Cancel requested: {', '.join(stopped) or 'nothing running'}")
         return {"ok": True, "stopped": stopped}
 
@@ -356,11 +340,14 @@ class BigBrainSystem:
         brain_descriptions = {
             "researcher": "Web search via Brave API, parallel queries, source triangulation, LLM-powered summarization. Use for fact-finding, research, data gathering, current events",
             "taskboard": "Adds tasks to the user's persistent task board. Use when the user asks to add/create a task or todo (\"ajoute une tâche\", \"add a task to my board\"). The task lands on the board as a to-do by default and survives restarts",
+            "web_app_brain": "Builds and previews interactive browser applications with web-specific validation",
         }
         # Register pool workers with same description
         for name in self.brains:
             if name.startswith("python_brain"):
                 brain_descriptions[name] = "Generates and executes Python code, scripts, simulations, calculations"
+            elif name.startswith("web_app_brain"):
+                brain_descriptions[name] = "Builds and previews interactive browser applications with web-specific validation"
         for brain_name in self.brains:
             desc = brain_descriptions.get(brain_name, brain_name)
             self.front_brain.register_brain(brain_name, desc)
@@ -435,6 +422,11 @@ class BigBrainSystem:
                     requires_approval=False,
                     max_retries=3,
                 )
+            elif brain_name.startswith("web_app_brain"):
+                self.orchestrator.set_execution_mode(
+                    brain_name, ExecutionMode.LIGHTNING,
+                    requires_approval=False, max_retries=3,
+                )
         
         # NOTE: Brain pool registration moved to end of _create_brains()
         # (self.brains is empty at this point — brains are created later)
@@ -460,6 +452,7 @@ class BigBrainSystem:
             self.front_brain.focus_manager = self.focus_manager
     
     async def _create_brains(self) -> None:
+        from .config import config as app_config
         """Create and register execution brains."""
         import os
         
@@ -467,14 +460,14 @@ class BigBrainSystem:
         # Create a pool of PythonBrain workers for parallel file writes.
         # The orchestrator resolves logical "python_brain" → least-loaded worker.
         #
-        # IMPORTANT: All pool workers share the SAME work_dir so files written
-        # by worker 1 are visible to worker 0 during assemble_and_run.
+        # Pool workers use the same run-owned destination from the envelope,
+        # so files written by worker 1 are visible to worker 0 on assembly.
         # Each worker still has isolated temp scripts (script_*.py uses unique names).
         python_pool_size = int(os.environ.get("BIGBRAIN_PYTHON_POOL", "3"))
         # Agent writes live in the shared workspace root (served by the FS
         # API) so the web UI's file explorer sees them and auto-refreshes
-        # on workspace.file_written events. Global mode targets the
-        # sandbox project; apply_current_project() retargets at startup.
+        # on workspace.file_written events. sandbox is only the stable legacy
+        # default; actual orchestrated file tasks carry a pinned destination.
         from .web.fs_api import workspace_root
         shared_work_dir = workspace_root() / "sandbox"
         shared_work_dir.mkdir(exist_ok=True, parents=True)
@@ -498,6 +491,20 @@ class BigBrainSystem:
         # "python_brain" → least-loaded worker from the pool
         if python_pool_names:
             self.orchestrator.register_brain_pool("python_brain", python_pool_names)
+
+        # Browser-first pool with its own contracts, validation and preview.
+        web_pool_size = int(os.environ.get("BIGBRAIN_WEB_POOL", "3"))
+        web_pool_names = []
+        for i in range(web_pool_size):
+            worker_name = f"web_app_brain_{i}"
+            self.brains[worker_name] = WebAppBrain(
+                name=worker_name, bus=self.bus, workspace=self.workspace,
+                work_dir=shared_work_dir, llm_provider=self.llm_provider,
+                model=app_config.effective_web_model,
+            )
+            web_pool_names.append(worker_name)
+        self.orchestrator.register_brain_pool("web_app_brain", web_pool_names)
+        print(f"🌐 WebAppBrain pool: {web_pool_size} workers ({', '.join(web_pool_names)})")
         
         # Research brain — real Brave search + shared LLM
         try:
@@ -653,6 +660,7 @@ class BigBrainSystem:
             # Register brains with orchestrator (descriptions help the planner LLM)
             brain_descriptions = {
                 "python_brain": "Generates and executes Python code, scripts, calculations, data processing",
+                "web_app_brain": "Builds browser-first HTML/CSS/JavaScript applications, validates artifacts, and starts previews",
                 "researcher": "Researches topics, gathers information, analyzes data, web searches",
                 "taskboard": "Adds tasks to the user's persistent task board. Use when the user asks to add/create a task or todo. Payload: {\"type\": \"board_task\", \"title\": \"...\", \"description\": \"...\", \"status\": \"todo|in-progress|review|done\"} — status defaults to todo",
             }

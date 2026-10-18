@@ -12,9 +12,35 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Check, X, Loader2 } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 
+function StackSummary({ value }: { value: string }) {
+  const fields = value.replace(/^\[Stack\]\s*/, '').split(' · ');
+  const read = (prefix: string) => fields.find((field) => field.startsWith(prefix))?.slice(prefix.length).trim() || '';
+  const deliverable = read('livrable ');
+  const interaction = read('interaction ');
+  const entryPoint = read('point d’entrée ');
+  const technologies = read('technologies ');
+  const validation = read('validation ');
+  const deliverableLabel = deliverable === 'web_app' ? 'Application web' : deliverable.replaceAll('_', ' ');
+  const interactionLabel = interaction === 'browser' ? 'Navigateur' : interaction;
+
+  return (
+    <div className="rounded-xl px-3.5 py-3 my-3" style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)' }}>
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>Plan technique</span>
+        {deliverableLabel && <span className="rounded-full px-2 py-0.5 text-[11px]" style={{ color: 'var(--accent-blue-light)', backgroundColor: 'rgba(0, 113, 227, 0.12)' }}>{deliverableLabel}</span>}
+        {interactionLabel && <span className="rounded-full px-2 py-0.5 text-[11px]" style={{ color: 'var(--text-secondary)', border: '1px solid var(--border-subtle)' }}>{interactionLabel}</span>}
+      </div>
+      {entryPoint && <div className="flex items-baseline gap-2 mb-3 text-[12px]"><span className="shrink-0" style={{ color: 'var(--text-tertiary)' }}>Point d’entrée</span><code className="rounded px-1.5 py-0.5" style={{ color: 'var(--text-primary)', backgroundColor: 'var(--bg-primary)' }}>{entryPoint}</code></div>}
+      {technologies && <div className="mb-3"><div className="text-[10px] uppercase tracking-[0.1em] mb-1" style={{ color: 'var(--text-tertiary)' }}>Choix techniques</div><p className="m-0 text-[12.5px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{technologies}</p></div>}
+      {validation && <div><div className="text-[10px] uppercase tracking-[0.1em] mb-1" style={{ color: 'var(--text-tertiary)' }}>Vérification</div><p className="m-0 text-[12.5px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{validation}</p></div>}
+    </div>
+  );
+}
+
 export function ContractCard() {
   const proposal = useAppStore((s) => s.contractProposal);
   const sending = useAppStore((s) => s.contractSending);
+  const error = useAppStore((s) => s.contractError);
   const sendContractDecision = useAppStore((s) => s.sendContractDecision);
 
   return (
@@ -50,8 +76,21 @@ export function ContractCard() {
                 Before I write code — approve these contracts:
               </p>
 
+              {proposal.target && (
+                <div className="flex flex-wrap items-center gap-2 my-3 text-[12px]">
+                  <span style={{ color: 'var(--text-tertiary)' }}>
+                    {proposal.target.mode === 'new' ? 'Nouveau projet' : 'Projet à modifier / exécuter'}
+                  </span>
+                  <code className="rounded px-2 py-1 break-all" style={{ backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)' }}>
+                    {proposal.target.path}
+                  </code>
+                </div>
+              )}
+              {proposal.contracts.some((contract) => contract.startsWith('[Stack]')) && (
+                <StackSummary value={proposal.contracts.find((contract) => contract.startsWith('[Stack]'))!} />
+              )}
               <ul className="list-disc pl-5 my-1.5 space-y-1">
-                {proposal.contracts.map((contract, i) => (
+                {proposal.contracts.filter((contract) => !contract.startsWith('[Stack]')).map((contract, i) => (
                   <li
                     key={i}
                     className="text-[13.5px] leading-relaxed"
@@ -94,6 +133,7 @@ export function ContractCard() {
                   Reject
                 </button>
               </div>
+              {error && <p role="alert" className="text-[12px] mt-2" style={{ color: 'var(--warning, #ff9500)' }}>{error}</p>}
             </div>
           </div>
         </motion.div>

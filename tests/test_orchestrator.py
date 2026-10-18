@@ -319,7 +319,7 @@ class TestWorkspaceOrchestrator:
         # Call 2: simple planner (returns 2-step plan)
         mock_llm = AsyncMock()
         mock_llm.chat_complete = AsyncMock(side_effect=[
-            '{"mode": "script", "needs_research": true, "research_queries": ["quantum computing basics"], "reason": "research then code"}',
+            '{"mode": "script", "deliverable_type": "python", "needs_research": true, "research_queries": ["quantum computing basics"], "reason": "research then code"}',
             '[{"id": "s1", "description": "Research quantum computing", "brain_target": "researcher", "payload": {"type": "research", "query": "quantum computing"}, "dependencies": []}, {"id": "s2", "description": "Write summary code", "brain_target": "python_brain", "payload": {"type": "generate_and_execute", "user_request": "summarize findings"}, "dependencies": ["s1"]}]',
         ])
         
@@ -568,7 +568,7 @@ class TestWorkspaceOrchestrator:
         assert result_data["success"] is True
         assert "results" in result_data
     
-    def test_project_metadata_falls_back_to_selected_project_manifest(
+    def test_project_metadata_uses_bound_project_manifest(
             self, orchestrator, tmp_path, monkeypatch):
         import json
 
@@ -585,6 +585,8 @@ class TestWorkspaceOrchestrator:
             payload={"project_path": "sandbox/existing-project"},
         )
         plan = TaskPlan(id="plan", original_task=original_task)
+        from bigbrain.execution_target import ExecutionTarget
+        plan.execution_target = ExecutionTarget("existing", "sandbox/existing-project", str(tmp_path)).prepare()
         subtask = SubTask(id="edit", description="edit one file",
                           brain_target="python_brain", payload={})
         subtask.status = TaskStatus.COMPLETE
@@ -597,6 +599,55 @@ class TestWorkspaceOrchestrator:
             "entry_point": "main.py",
             "runnable": True,
         }
+
+    def test_project_metadata_preserves_web_preview(self, orchestrator):
+        plan = TaskPlan(id="web-plan", original_task=None)
+        from bigbrain.execution_target import ExecutionTarget
+        from bigbrain.web.fs_api import workspace_root
+        plan.execution_target = ExecutionTarget("new", "sandbox/zbrush-course", str(workspace_root())).prepare()
+        subtask = SubTask(id="preview", description="preview web app",
+                          brain_target="web_app_brain", payload={})
+        subtask.status = TaskStatus.COMPLETE
+        subtask.result = {"success": True, "data": {
+            "success": True,
+            "project_name": "zbrush-course",
+            "project_path": "sandbox/zbrush-course",
+            "entry_point": "index.html",
+            "deliverable_type": "web_app",
+            "preview_url": "http://127.0.0.1:3200",
+            "server_running": True,
+        }}
+        plan.subtasks = [subtask]
+
+        assert orchestrator._project_result_metadata(plan) == {
+            "project_name": "zbrush-course",
+            "project_path": "sandbox/zbrush-course",
+            "entry_point": "index.html",
+            "deliverable_type": "web_app",
+            "preview_url": "http://127.0.0.1:3200",
+            "runnable": True,
+        }
+
+    def test_project_metadata_prefers_verified_assembly(self, orchestrator):
+        plan = TaskPlan(id="web-plan", original_task=None)
+        from bigbrain.execution_target import ExecutionTarget
+        from bigbrain.web.fs_api import workspace_root
+        plan.execution_target = ExecutionTarget("new", "sandbox/course", str(workspace_root())).prepare()
+        assembled = SubTask(id="assemble", description="preview web app", brain_target="web_app_brain", payload={})
+        assembled.status = TaskStatus.COMPLETE
+        assembled.result = {"success": True, "data": {
+            "success": True, "project_name": "course", "project_path": "sandbox/course",
+            "entry_point": "index.html", "deliverable_type": "web_app",
+            "preview_url": "http://127.0.0.1:3200", "server_running": True,
+            "verification": {"passed": True},
+        }}
+        intermediate = SubTask(id="write", description="write file", brain_target="web_app_brain", payload={})
+        intermediate.status = TaskStatus.COMPLETE
+        intermediate.result = {"success": True, "data": {"project_name": "course", "entry_point": "index.html"}}
+        plan.subtasks = [assembled, intermediate]
+        metadata = orchestrator._project_result_metadata(plan)
+        assert metadata["runnable"] is True
+        assert metadata["preview_url"] == "http://127.0.0.1:3200"
 
     @pytest.mark.asyncio
     async def test_plan_failure(self, orchestrator, mock_bus):
@@ -682,6 +733,10 @@ class TestWorkspaceOrchestrator:
         cancel_msg = cancel_calls[0][0][0]
         assert cancel_msg.target == "python_brain"
         assert cancel_msg.payload["mode"] == "soft"
+        assert cancel_msg.payload["task_id"] == "dispatch_msg_id"
+        assert subtask.status == TaskStatus.CANCELLED
+        assert "dispatch_msg_id" not in orchestrator.active_subtasks
+        assert orchestrator.brain_load.get("python_brain", 0) == 0
     
     @pytest.mark.asyncio
     async def test_status_query(self, orchestrator, mock_bus):

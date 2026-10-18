@@ -1,11 +1,12 @@
 """Regressions for honest research and cross-brain result summaries."""
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from bigbrain.brains.researcher import ResearcherBrain, UnavailableSearch
 from bigbrain.bus.bus import MessageBus
+from bigbrain.bus.message import BusMessage, MessageType
 from bigbrain.front.front_brain import FrontBrain
 
 
@@ -48,3 +49,43 @@ async def test_result_summary_prioritizes_execution_over_verbose_research():
     assert "PYTHON_RESULT_PRESENT" in prompt
     assert prompt.index("Code execution output") < prompt.index("Research findings")
     assert len(prompt) < 7000
+
+
+@pytest.mark.asyncio
+async def test_web_result_uses_only_worker_preview_url():
+    brain = FrontBrain(MessageBus(auth=None), llm_provider=None)
+    brain._summarize_result = AsyncMock(return_value="Aperçu prêt.")
+    brain._emit_chat_message = AsyncMock()
+    brain.memory.store = MagicMock()
+    preview_url = "http://127.0.0.1:3241"
+
+    await brain._handle_task_result(BusMessage(
+        type=MessageType.RESULT,
+        source="orchestrator",
+        target=brain.name,
+        payload={"success": True, "results": {"preview": {"data": {
+            "success": True,
+            "server_running": True,
+            "preview_url": preview_url,
+            "preview_port": 3241,
+        }}}},
+    ))
+
+    brain._summarize_result.assert_not_awaited()
+    message = brain._emit_chat_message.await_args.args[1]
+    assert message == "✅ Projet web terminé. Utilise l’aperçu ou les contrôles du projet ci-dessous."
+    assert "clawos" not in message.lower()
+
+
+@pytest.mark.asyncio
+async def test_failed_web_validation_reports_cause_without_llm_summary():
+    brain = FrontBrain(MessageBus(auth=None), llm_provider=None)
+    brain._summarize_result = AsyncMock()
+    brain._emit_chat_message = AsyncMock()
+    brain.memory.store = MagicMock()
+    await brain._handle_task_result(BusMessage(
+        type=MessageType.RESULT, source="orchestrator", target=brain.name,
+        payload={"success": False, "error": "tests/acceptance.json: invalid schema"},
+    ))
+    brain._summarize_result.assert_not_awaited()
+    assert "tests/acceptance.json: invalid schema" in brain._emit_chat_message.await_args.args[1]

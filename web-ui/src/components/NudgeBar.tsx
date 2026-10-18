@@ -5,11 +5,11 @@
 
 import { AnimatePresence, motion } from 'framer-motion';
 import { X, Zap } from 'lucide-react';
-import { useAppStore } from '@/store/appStore';
+import { useAppStore, selectSessionRun } from '@/store/appStore';
 import { deriveNudge } from '@/lib/nudges';
 
 export function NudgeBar() {
-  const run = useAppStore((s) => s.activeRun);
+  const run = useAppStore(selectSessionRun);
   const viewerFilePath = useAppStore((s) => s.viewerFilePath);
   const dismissed = useAppStore((s) => s.dismissedNudges);
   const dismissNudge = useAppStore((s) => s.dismissNudge);

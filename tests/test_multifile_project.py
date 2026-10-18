@@ -220,3 +220,23 @@ async def test_assemble_cleans_stale_files_without_crashing(tmp_path, monkeypatc
     # The stale file was cleaned, the planned file kept
     assert (project / "main.py").is_file()
     assert not (project / "old_module.py").exists()
+@pytest.mark.asyncio
+@pytest.mark.parametrize('architect_spec', ['', 'A module exporting VALUE = 1'])
+@pytest.mark.parametrize('extra', [{}, {'_user_interjection': 'keep it simple', '_task_state': 'one file left'}])
+async def test_write_file_prompt_initializes_shared_sections(tmp_path, architect_spec, extra):
+    from unittest.mock import AsyncMock
+
+    provider = AsyncMock()
+    provider.complete.return_value = 'VALUE = 1\n'
+    brain = PythonBrain('python_prompt_test', MessageBus(auth=None), 'default',
+                        work_dir=tmp_path, llm_provider=provider)
+    result = await brain._write_project_file({
+        'project_name': 'sample', 'file_path': 'main.py',
+        'user_request': 'Create a module', 'architect_spec': architect_spec, **extra,
+    })
+    assert result['success'] is True
+    assert (tmp_path / 'sample' / 'main.py').read_text().strip() == 'VALUE = 1'
+    prompt = provider.complete.call_args.args[0]
+    if extra:
+        assert 'keep it simple' in prompt
+        assert 'one file left' in prompt

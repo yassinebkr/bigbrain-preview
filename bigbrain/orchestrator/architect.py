@@ -27,11 +27,35 @@ Reference: MetaGPT's structured artifact passing, ChatDev's waterfall phases.
 import asyncio
 import json
 import logging
+import math
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import httpx
+
 logger = logging.getLogger(__name__)
+
+DEFAULT_ARCHITECT_TIMEOUT_SECONDS = 120.0
+
+
+class ArchitectureTimeout(TimeoutError):
+    """A bounded preparation failed; never execute an incomplete spec."""
+
+
+def architecture_timeout_seconds() -> float:
+    """Operator-configurable total budget, including structural repair."""
+    raw = os.getenv("BIGBRAIN_ARCHITECT_TIMEOUT_SECONDS", "120")
+    try:
+        value = float(raw)
+        if not math.isfinite(value) or not 5 <= value <= 300:
+            raise ValueError
+        return value
+    except ValueError:
+        logger.warning("Invalid BIGBRAIN_ARCHITECT_TIMEOUT_SECONDS; using 120s")
+        return DEFAULT_ARCHITECT_TIMEOUT_SECONDS
 
 
 # ---------------------------------------------------------------------------
@@ -204,6 +228,10 @@ class ProjectSpec:
     executable: bool = True
     entry_point: Optional[str] = "main.py"
     execution_strategy: str = ""  # how to run/test
+    deliverable_type: str = "python"  # python | web_app
+    interaction_mode: str = "cli"  # cli | browser | library
+    web_stack: str = "static"  # static | react_vite
+    acceptance_contracts: List[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -215,6 +243,10 @@ class ProjectSpec:
             "executable": self.executable,
             "entry_point": self.entry_point,
             "execution_strategy": self.execution_strategy,
+            "deliverable_type": self.deliverable_type,
+            "interaction_mode": self.interaction_mode,
+            "web_stack": self.web_stack,
+            "acceptance_contracts": list(self.acceptance_contracts),
         }
 
     def get_file_spec(self, path: str) -> Optional[FileSpec]:
@@ -236,17 +268,31 @@ class ProjectSpec:
     def dependency_order(self) -> List[FileSpec]:
         """Return file specs in topological order (dependencies first)."""
         visited = set()
+        visiting = set()
         order = []
         path_map = {fs.path: fs for fs in self.file_specs}
+        if len(path_map) != len(self.file_specs):
+            raise ValueError("Duplicate file paths in project specification")
+        for path in path_map:
+            candidate = Path(path)
+            if (not path or candidate.is_absolute() or "\\" in path
+                    or any(part.startswith(".") for part in candidate.parts)
+                    or candidate.as_posix() != path):
+                raise ValueError(f"Unsafe project file path: {path!r}")
 
         def visit(fs: FileSpec):
+            if fs.path in visiting:
+                raise ValueError(f"Cyclic file dependencies at {fs.path}")
             if fs.path in visited:
                 return
-            visited.add(fs.path)
+            visiting.add(fs.path)
             for dep_path in fs.dependencies:
                 dep = path_map.get(dep_path)
-                if dep:
-                    visit(dep)
+                if dep is None:
+                    raise ValueError(f"Unknown dependency {dep_path!r} in {fs.path}")
+                visit(dep)
+            visiting.remove(fs.path)
+            visited.add(fs.path)
             order.append(fs)
 
         for fs in self.file_specs:
@@ -263,16 +309,20 @@ ARCHITECT_SYSTEM_PROMPT = """You are a senior software architect. Given a user r
 Your specification must be detailed enough that SEPARATE developers (who cannot talk to each other) can each implement one file and have everything integrate correctly.
 
 ## Rules
-- Python standard library only (no numpy, pandas, Flask, FastAPI, etc.) unless research suggests otherwise
-- For web apps: use `http.server` or `aiohttp` (stdlib-adjacent), templates as raw HTML strings or separate .html files
+- Choose `deliverable_type` from `python` or `web_app` from the requested user experience, never from a keyword rule.
+- Python deliverables use Python and are operated through CLI/library/service semantics.
+- Web app deliverables are browser-first. Default web_stack is react_vite: React 19 + TypeScript + Vite, responsive authored CSS, lucide-react icons, localStorage when persistence is needed. Use web_stack=static only if explicitly requesting plain HTML/CSS/JS or editing an existing static app.
+- `tech_decisions` is UI metadata: list only concise technology choices (for example `HTML/CSS/JavaScript`, `localStorage`). Put explanations and product behaviour in description, file specs, or acceptance contracts — never in `tech_decisions`.
+- A react_vite app MUST include index.html, src/main.tsx, src/App.tsx, src/styles.css, package.json, tsconfig.json, vite.config.ts and tests/acceptance.json. Toolchain files package.json/tsconfig.json/vite.config.ts are server-owned; do not invent dependencies. Static apps use index.html, styles.css, app.js, tests/acceptance.json. Use coherent visual hierarchy, responsive layouts, reusable components and clear empty/error states.
 - Every function signature must include parameter types and return type
 - Every data model must list all fields with types
 - Dependencies between files must be explicit (what imports what)
 - Set executable=false ONLY when the user explicitly requests a library, passive module, source-only deliverable, or otherwise explicitly asks for no runnable entry point
 - Otherwise executable defaults to true and the entry point must be clear (which file to run, what command)
-- When executable=true, entry_point MUST be present in file_specs, run non-interactively with no arguments, and print a meaningful demo/result (never silent exit 0)
+- When executable=true, entry_point MUST be present in file_specs. Python entry points run non-interactively with no arguments and print a meaningful result; web entry points render a usable browser interface.
 - When executable=false, entry_point MUST be null and no artificial runner/demo may be added
-- Every executable project MUST include at least one tests/test_*.py acceptance test that asserts the user-visible requested behavior, not merely imports or exit code
+- Every executable Python project MUST include tests/test_*.py. Web apps use executable tests/acceptance.json browser scenarios.
+- Include acceptance_contracts: 2 to 4 concise, checkable user-facing requirements, in the user's language. They will be shown for approval before code is written; no extra contract-drafting call is needed. Do not duplicate stack metadata in these statements.
 - Keep to 3-8 implementation files for most projects, plus acceptance tests. Don't over-engineer.
 - Current year: {current_year}
 
@@ -280,8 +330,12 @@ Your specification must be detailed enough that SEPARATE developers (who cannot 
 Respond with ONLY a JSON object matching this schema:
 {{
   "project_name": "short-kebab-name",
+  "deliverable_type": "python|web_app",
+  "web_stack": "react_vite|static",
+  "acceptance_contracts": ["concrete user-facing behaviour to verify", "another checkable requirement"],
+  "interaction_mode": "cli|browser|library",
   "description": "One paragraph describing the project",
-  "tech_decisions": ["decision 1: reason", "decision 2: reason"],
+  "tech_decisions": ["technology or framework", "storage/runtime choice"],
   "data_models": [
     {{
       "name": "ClassName",
@@ -317,11 +371,34 @@ Respond with ONLY a JSON object matching this schema:
     }}
   ],
   "executable": true,
-  "entry_point": "main.py",
+  "entry_point": "main.py or index.html",
   "execution_strategy": "python main.py — starts HTTP server on port 8080"
 }}
 
 CRITICAL: The `data_models` field in file_specs is a list of model NAME STRINGS that reference the top-level data_models array. The top-level `data_models` defines the full schema; file_specs reference them by name."""
+
+
+WEB_ARCHITECT_SYSTEM_PROMPT = """You are a browser application architect. Return ONLY one compact JSON object, no code or prose outside JSON.
+Plan the requested product, not its implementation line by line. Preserve all requested behaviours, persistence, validation, empty/error states and platform limitations. Never claim a browser feature works when the browser cannot guarantee it (e.g. daily notifications with the page closed).
+Default stack: React 19 + TypeScript + Vite, authored responsive CSS, lucide-react, localStorage when needed. Use static HTML/CSS/JavaScript only when explicitly requested or editing an existing static app. Technology metadata must be concise, not explanatory paragraphs.
+Choose a descriptive project_name for THIS request, independent of an unrelated selected project. Do not invent external services, URLs, assets or dependencies.
+Return this schema (omit empty optional fields):
+{
+ "project_name":"descriptive-kebab-name", "deliverable_type":"web_app",
+ "web_stack":"react_vite", "interaction_mode":"browser",
+ "description":"Concise product scope in the user's language",
+ "tech_decisions":["React 19","TypeScript","Vite","localStorage"],
+ "acceptance_contracts":["Concrete primary behaviour requested by the user","Another independently checkable requested behaviour"],
+ "executable":true, "entry_point":"index.html",
+ "execution_strategy":"Production build then executable browser acceptance tests",
+ "file_specs":[{"path":"src/App.tsx", "purpose":"Application UI",
+   "dependencies":[], "implementation_notes":"Concise behaviours and exact TypeScript import/export interfaces shared with other modules",
+   "edge_cases":["Relevant domain edge cases"]}]
+}
+Include 2–4 concrete, checkable acceptance_contracts in the user's language, never the example placeholders. Specify only product implementation files (usually 3–6), their actual local dependency paths, and tests/acceptance.json. Shared interfaces must be exact and consistent in implementation_notes; do not generate Python function schemas or duplicate data models across files. No circular dependencies.
+The server adds and owns package.json, tsconfig.json and vite.config.ts; do not describe or generate these. Required React files: index.html, src/main.tsx, src/App.tsx, src/styles.css; static: index.html, app.js, styles.css. The server adds missing required files and the executable browser-test protocol to tests/acceptance.json. Describe the domain scenarios to verify, not the full test protocol.
+Every executable app needs a usable index.html entry point. Set executable=false and entry_point=null only if the user explicitly requests a source-only/library deliverable.
+Keep the whole specification concise (target under 2500 output tokens), without sacrificing requested features or cross-file interfaces. Do not write application source code in the specification."""
 
 
 class ArchitectPhase:
@@ -346,6 +423,7 @@ class ArchitectPhase:
         self,
         user_request: str,
         research_context: Optional[Dict[str, Any]] = None,
+        expected_deliverable: Optional[str] = None,
     ) -> ProjectSpec:
         """Run the architect phase: produce a full ProjectSpec.
 
@@ -360,18 +438,61 @@ class ArchitectPhase:
         Raises:
             ValueError: If the LLM output can't be parsed into a valid spec.
         """
-        raw_spec = await self._generate_spec(user_request, research_context)
-        return self._parse_spec(raw_spec)
+        budget = architecture_timeout_seconds()
+        deadline = asyncio.timeout(budget)
+        try:
+            async with deadline:
+                return await self._design_with_repair(
+                    user_request, research_context, expected_deliverable)
+        except (TimeoutError, httpx.TimeoutException) as exc:
+            if deadline.expired():
+                raise ArchitectureTimeout(
+                    f"L’architecte n’a pas terminé dans le budget de {budget:g} s. "
+                    "Aucun contrat ni code n’a été exécuté. Réessayez ou choisissez "
+                    "un modèle de planification plus rapide.") from exc
+            raise ArchitectureTimeout(
+                "Le fournisseur du modèle de planification a dépassé son délai de réponse. "
+                "Aucun contrat ni code n’a été exécuté. Réessayez ou changez de modèle.") from exc
+
+    async def _design_with_repair(self, user_request, research_context, expected_deliverable):
+        correction = ""
+        for attempt in range(2):
+            try:
+                raw_spec = await self._generate_spec(
+                    user_request, research_context, expected_deliverable, correction)
+                if expected_deliverable:
+                    if raw_spec.get("deliverable_type") != expected_deliverable:
+                        raise ValueError(f"deliverable_type must remain {expected_deliverable!r}")
+                    if not isinstance(raw_spec.get("file_specs"), list) or not raw_spec["file_specs"]:
+                        raise ValueError("file_specs must be a non-empty array")
+                    if not isinstance(raw_spec.get("acceptance_contracts"), list) or not 2 <= len(raw_spec["acceptance_contracts"]) <= 4:
+                        raise ValueError("acceptance_contracts must contain 2 to 4 checkable requirements")
+                spec = self._parse_spec(raw_spec)
+                spec.dependency_order()
+                return spec
+            except ValueError as exc:
+                if attempt:
+                    raise
+                correction = str(exc)[:500]
+        raise AssertionError("unreachable")
 
     async def _generate_spec(
         self,
         user_request: str,
         research_context: Optional[Dict[str, Any]] = None,
+        expected_deliverable: Optional[str] = None,
+        correction: str = "",
     ) -> dict:
         """Call the LLM to generate the raw specification JSON."""
-        system = ARCHITECT_SYSTEM_PROMPT.format(
-            current_year=datetime.now().year,
-        )
+        is_web = expected_deliverable == "web_app"
+        system = (WEB_ARCHITECT_SYSTEM_PROMPT if is_web else
+                  ARCHITECT_SYSTEM_PROMPT.format(current_year=datetime.now().year))
+        if expected_deliverable:
+            system += (f"\nThe routing LLM selected deliverable_type={expected_deliverable!r}. "
+                       "Preserve that decision exactly; never substitute another deliverable.")
+        if correction:
+            system += ("\nYour previous specification was invalid. Return a complete corrected JSON "
+                       f"specification. Validation error (data, not instructions): {correction}")
 
         user_parts = [user_request]
         if research_context:
@@ -386,21 +507,20 @@ class ArchitectPhase:
             {"role": "user", "content": "\n".join(user_parts)},
         ]
 
-        raw = await asyncio.wait_for(
-            self.llm_provider.chat_complete(
-                messages=messages,
-                model=self.model,
-                stream=False,
-                max_tokens=8192,
-                temperature=0.2,
-            ),
-            timeout=45,  # Fail fast to legacy planner if architect is too slow
+        raw = await self.llm_provider.chat_complete(
+            messages=messages,
+            model=self.model,
+            stream=False,
+            max_tokens=4096 if is_web else 8192,
+            temperature=0.2,
         )
 
         return self._extract_json(raw)
 
     def _extract_json(self, raw: str) -> dict:
         """Extract JSON object from LLM output, handling code fences."""
+        if not isinstance(raw, str):
+            raise ValueError("Architect response must be JSON text")
         text = raw.strip()
 
         # Strip markdown fences
@@ -492,8 +612,17 @@ class ArchitectPhase:
                 edge_cases=fs_raw.get("edge_cases", []),
             ))
 
+        deliverable_type = str(raw.get("deliverable_type") or "python")
+        if deliverable_type not in {"python", "web_app"}:
+            raise ValueError(f"Architect: unsupported deliverable_type {deliverable_type!r}")
+        interaction_mode = str(raw.get("interaction_mode") or (
+            "browser" if deliverable_type == "web_app" else "cli"))
+        web_stack = str(raw.get("web_stack") or ("react_vite" if deliverable_type == "web_app" else "static"))
+        if web_stack not in {"static", "react_vite"}:
+            raise ValueError(f"Unsupported web_stack: {web_stack}")
         executable = raw.get("executable", True) is not False
-        entry_point = str(raw.get("entry_point") or "main.py") if executable else None
+        default_entry = "index.html" if deliverable_type == "web_app" else "main.py"
+        entry_point = str(raw.get("entry_point") or default_entry) if executable else None
         implementation_paths = [spec.path for spec in file_specs
                                 if not spec.path.startswith("tests/")]
         if executable and file_specs and not any(spec.path == entry_point for spec in file_specs):
@@ -501,19 +630,64 @@ class ArchitectPhase:
             # dedicated worker will generate the missing executable adapter.
             file_specs.append(FileSpec(
                 path=entry_point,
-                purpose="Executable, non-interactive project entry point",
+                purpose=("Browser application entry point" if deliverable_type == "web_app"
+                         else "Executable, non-interactive project entry point"),
                 dependencies=[spec.path for spec in file_specs],
                 imports_from={},
                 implementation_notes=(
+                    "Wire the local CSS and JavaScript into an accessible, usable page."
+                    if deliverable_type == "web_app" else
                     "Wire the project modules into a runnable demonstration. "
                     "Running with no arguments must print meaningful output "
                     "and must not call input()."
                 ),
-                edge_cases=["no command-line arguments", "stdin unavailable"],
+                edge_cases=(["keyboard navigation", "small viewport"]
+                            if deliverable_type == "web_app" else
+                            ["no command-line arguments", "stdin unavailable"]),
             ))
             implementation_paths.append(entry_point)
 
-        if executable and file_specs and not any(
+        if deliverable_type == "web_app":
+            from ..brains.web_acceptance import ACCEPTANCE_CONTRACT
+            web_required = {
+                "index.html": ("Semantic browser entry point", "Reference styles.css and app.js with relative URLs."),
+                "styles.css": ("Responsive visual design", "Style every user-visible state and keyboard focus state."),
+                "app.js": ("Browser interaction and state", "Implement the requested interactions without external dependencies."),
+                "tests/acceptance.json": (
+                    "Machine-readable user acceptance scenarios",
+                    ACCEPTANCE_CONTRACT),
+            }
+            if web_stack == "react_vite":
+                web_required = {
+                    "index.html": ("Vite HTML entry", 'Root div id="root" and module script /src/main.tsx.'),
+                    "src/main.tsx": ("React entry", "createRoot renders App; import ./styles.css."),
+                    "src/App.tsx": ("Application components", "Default export App with semantic main, responsive polished UI, real requested interactions."),
+                    "src/styles.css": ("Responsive application styles", "Deliberate typography, spacing, contrast, keyboard focus, mobile layouts. No external assets."),
+                    "package.json": ("Pinned dependencies", "Server-owned React/Vite toolchain."),
+                    "tsconfig.json": ("Strict TypeScript configuration", "Server-owned compiler configuration."),
+                    "vite.config.ts": ("Production build configuration", "Server-owned relative-base Vite configuration."),
+                    "tests/acceptance.json": ("Executable browser scenarios", ACCEPTANCE_CONTRACT),
+                }
+            existing = {spec.path for spec in file_specs}
+            for path, (purpose, notes) in web_required.items():
+                if path not in existing:
+                    file_specs.append(FileSpec(
+                        path=path, purpose=purpose,
+                        dependencies=([] if path != "index.html" else
+                                      (["src/main.tsx", "src/App.tsx", "src/styles.css"]
+                                       if web_stack == "react_vite" else ["styles.css", "app.js"])),
+                        implementation_notes=notes,
+                    ))
+            for file_spec in file_specs:
+                if file_spec.path == "tests/acceptance.json":
+                    file_spec.implementation_notes = ACCEPTANCE_CONTRACT
+                    file_spec.dependencies = [file.path for file in file_specs if not file.path.startswith("tests/")]
+                else:
+                    file_spec.dependencies = [dep for dep in file_spec.dependencies if dep != "tests/acceptance.json"]
+                if web_stack == "react_vite" and file_spec.path == "src/main.tsx":
+                    file_spec.dependencies = list(dict.fromkeys([*file_spec.dependencies, "src/App.tsx", "src/styles.css"]))
+
+        if deliverable_type == "python" and executable and file_specs and not any(
                 spec.path.startswith("tests/") and spec.path.endswith(".py")
                 for spec in file_specs):
             file_specs.append(FileSpec(
@@ -529,15 +703,32 @@ class ArchitectPhase:
                 edge_cases=["empty generated domain data", "placeholder-only output"],
             ))
 
+        raw_project_name = str(raw.get("project_name") or "project").strip()
+        # A project name is an identifier, never a path. Models sometimes
+        # echo the selected project as a prefix, nesting a new project in it.
+        project_name = Path(raw_project_name.replace("\\", "/")).name or "project"
+        contracts = raw.get("acceptance_contracts", [])
+        if (not isinstance(contracts, list) or len(contracts) > 4
+                or not all(isinstance(item, str) and 0 < len(item.strip()) <= 500 for item in contracts)):
+            raise ValueError("acceptance_contracts must contain at most four short non-empty strings")
+
         return ProjectSpec(
-            project_name=raw.get("project_name", "project"),
+            project_name=project_name,
             description=raw.get("description", ""),
-            tech_decisions=raw.get("tech_decisions", []),
+            tech_decisions=(["React 19", "TypeScript", "Vite", "CSS", "lucide-react"]
+                            if deliverable_type == "web_app" and web_stack == "react_vite"
+                            else raw.get("tech_decisions", [])),
             data_models=data_models,
             file_specs=file_specs,
             executable=executable,
             entry_point=entry_point,
-            execution_strategy=raw.get("execution_strategy", ""),
+            execution_strategy=("Typecheck TypeScript, build Vite, tests Chromium, preview production"
+                                if deliverable_type == "web_app" and web_stack == "react_vite"
+                                else raw.get("execution_strategy", "")),
+            deliverable_type=deliverable_type,
+            interaction_mode=interaction_mode,
+            web_stack=web_stack,
+            acceptance_contracts=list(dict.fromkeys(item.strip() for item in contracts)),
         )
 
     def _parse_function(self, raw: dict) -> FunctionContract:

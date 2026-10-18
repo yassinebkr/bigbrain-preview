@@ -248,6 +248,8 @@ class TestBaseBrain:
             await task_future
         
         await run_and_cancel()
+        assert test_brain._current_task is None
+        assert test_brain._background_task is None
         
         # Check cancellation event was sent
         cancel_calls = [call for call in mock_bus.broadcast_event.call_args_list
@@ -779,4 +781,3 @@ class TestRequestedFilename:
         assert saved is None
         assert not (tmp_path / "ws" / "python").exists() or \
             not any((tmp_path / "ws" / "python").iterdir())
-

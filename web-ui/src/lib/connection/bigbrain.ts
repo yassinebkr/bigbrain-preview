@@ -79,7 +79,7 @@ export class BigBrainConnection implements ConnectionLike {
     this.connect();
   }
 
-  send(text: string, attachments?: any[], sessionId?: string): string {
+  send(text: string, attachments?: any[], sessionId?: string, navigationProject?: string | null): string {
     this.messageIdCounter += 1;
     const messageId = `msg-${Date.now()}-${this.messageIdCounter}`;
     this._emitStatus(messageId, 'sending');
@@ -90,6 +90,7 @@ export class BigBrainConnection implements ConnectionLike {
           text,
           messageId,
           sessionId,
+          navigationProject,
           // Uploaded attachment refs ({id, name, type}) — recorded in
           // persistent memory by the front brain.
           attachments: (attachments || []).filter((a) => a && a.id),
@@ -124,12 +125,15 @@ export class BigBrainConnection implements ConnectionLike {
 
   cancel(): void {
     try {
-      this.ws?.send(JSON.stringify({ type: 'chat.cancel', payload: {} }));
+      this.ws?.send(JSON.stringify({ type: 'chat.cancel', payload: { sessionId: this.sessionKey } }));
     } catch (e) { /* best effort */ }
   }
 
   loadHistory(callback?: (frame: any) => void, sessionId?: string): void {
+    sessionId ||= this.sessionKey.startsWith('sess-') ? this.sessionKey : undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const id = this._request('chat.history', (frame) => {
+      clearTimeout(timer);
       // Server entries: {id, role, text, timestamp}. Normalize to the
       // gateway shape the panels expect ({content} strings).
       const messages = (frame.payload?.messages || [])
@@ -142,12 +146,31 @@ export class BigBrainConnection implements ConnectionLike {
             ? m.timestamp * 1000
             : Date.parse(m.timestamp) || Date.now(),
         }));
-      callback?.({ ok: true, payload: { messages } });
+      const responseSession = frame.payload?.sessionId || sessionId;
+      const asOf = typeof frame.payload?.as_of === 'number' ? frame.payload.as_of * 1000 : undefined;
+      if (frame.error && responseSession === this.sessionKey) {
+        this.callbacks.onHistoryError?.('Impossible de restaurer cette conversation. Réessaie la connexion.', responseSession);
+      }
+      callback?.({ ok: !frame.error && !!frame.payload, payload: { messages, asOf } });
       // Also surface as catch-up so App can wire it later.
-      this.callbacks.onResumeCatchUp?.(messages);
+      if (responseSession === this.sessionKey && !frame.error) {
+        this.callbacks.onResumeCatchUp?.(messages, responseSession, asOf);
+        for (const activity of frame.payload?.activities || []) {
+          if (activity.payload?.session_id !== responseSession) continue;
+          this.callbacks.onAgentActivity?.({ type: activity.payload.event,
+            detail: activity.payload, ts: activity.timestamp * 1000 });
+        }
+      }
     }, { sessionId });
     if (!id) {
       callback?.({ ok: false, payload: { messages: [] } });
+    } else {
+      timer = setTimeout(() => {
+        const pending = this.pendingRequests[id];
+        if (!pending) return;
+        delete this.pendingRequests[id];
+        pending({ error: 'History timeout' });
+      }, 20000);
     }
   }
 
@@ -253,6 +276,16 @@ export class BigBrainConnection implements ConnectionLike {
     ]);
     if (isReplay && !replayableLiveState.has(event)) return;
 
+    // Text callbacks mutate the visible transcript, unlike scoped runs.
+    const isCurrentSession = !payload.session_id || payload.session_id === this.sessionKey;
+    if (event?.startsWith('chat.') && !isCurrentSession) return;
+
+    if (frame.type === 'progress' && !isReplay) {
+      this.callbacks.onAgentActivity?.({ type: 'task.progress',
+        detail: { ...payload, brain: frame.source } });
+      return;
+    }
+
     if (event === 'chat.delta') {
       this.callbacks.onStreamDelta?.({
         text: payload.delta || '',
@@ -297,9 +330,7 @@ export class BigBrainConnection implements ConnectionLike {
     ];
     if (event && taskEvents.includes(event)) {
       this.callbacks.onAgentActivity?.({ type: event, detail: payload });
-      if (event === 'task.complete' || event === 'task.failed' || event === 'task.cancelled') {
-        this.callbacks.onRunEnd?.();
-      }
+      // Worker completion does not end an unrelated front-brain reply.
       return;
     }
 

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .project_memory import MockEmbedding, ProjectMemoryEntry
+from .paths import legacy_storage_dir
 
 
 class LongTermMemory:
@@ -34,7 +35,7 @@ class LongTermMemory:
         Args:
             storage_dir: Directory for persistent storage
         """
-        self.storage_dir = storage_dir or Path("memory") / "long_term"
+        self.storage_dir = legacy_storage_dir('long_term', storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         
         # Storage files

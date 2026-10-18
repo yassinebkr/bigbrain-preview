@@ -353,20 +353,21 @@ class TestAplotProtocol:
         mock_ws = AsyncMock()
 
         calls = []
-        async def hook():
-            calls.append("cancelled")
+        async def hook(session_id=None):
+            calls.append(session_id)
         original = server_module.CANCEL_HOOK
         server_module.CANCEL_HOOK = hook
         try:
             await server._handle_ws_message(
-                mock_ws, json.dumps({"type": "chat.cancel", "payload": {}})
+                mock_ws, json.dumps({"type": "chat.cancel", "payload": {"sessionId": "sess-stop"}})
             )
             await asyncio.sleep(0.05)
         finally:
             server_module.CANCEL_HOOK = original
 
-        assert calls == ["cancelled"]
-        assert sent_to_bus == []  # control frame: never forwarded
+        assert calls == ["sess-stop"]
+        assert all(msg.type != "cancel" for msg in sent_to_bus)
+        assert any(msg.payload.get("event") == "task.cancelled" for msg in sent_to_bus)
 
     @pytest.mark.asyncio
     async def test_chat_cancel_without_hook_is_a_noop(self, server, bus):
@@ -378,7 +379,27 @@ class TestAplotProtocol:
             mock_ws, json.dumps({"type": "chat.cancel", "payload": {}})
         )
         await asyncio.sleep(0.05)
-        assert sent_to_bus == []
+        assert all(msg.type != "cancel" for msg in sent_to_bus)
+
+    @pytest.mark.asyncio
+    async def test_stop_interrupts_pending_chat_before_late_delegation(self, server, monkeypatch):
+        started = asyncio.Event()
+        interrupted = asyncio.Event()
+
+        async def pending_chat(ws, data):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                interrupted.set()
+
+        monkeypatch.setattr(server, "_handle_chat_send", pending_chat)
+        ws = AsyncMock()
+        await server._handle_ws_message(ws, json.dumps({"type": "chat.send", "payload": {"sessionId": "sess-stop"}}))
+        await asyncio.wait_for(started.wait(), timeout=1)
+        await server._handle_ws_message(ws, json.dumps({"type": "chat.cancel", "payload": {"sessionId": "sess-stop"}}))
+        assert interrupted.is_set()
+        assert not server._chat_tasks
 
     @pytest.mark.asyncio
     async def test_chat_history_request_response(self, server):
@@ -387,7 +408,8 @@ class TestAplotProtocol:
         mock_ws = AsyncMock()
 
         await server._handle_ws_message(
-            mock_ws, json.dumps({"type": "req", "id": "r1", "method": "chat.history"})
+            mock_ws, json.dumps({"type": "req", "id": "r1", "method": "chat.history",
+                                "params": {"sessionId": server._active_session_id}})
         )
 
         frames = [c.args[0] for c in mock_ws.send_json.call_args_list]
@@ -544,18 +566,18 @@ class TestModelRoles:
     def test_default_lineup_covers_all_roles(self):
         from bigbrain.web import model_roles
         lineup = model_roles.current_lineup()
-        assert set(lineup) == {"front", "planner", "code", "subagent"}
+        assert set(lineup) == {"front", "planner", "code", "web", "subagent"}
         assert lineup["front"]["key"]
         assert lineup["subagent"]["key"]
 
     def test_set_role_persists_and_mirrors_env(self, monkeypatch):
         from bigbrain.web import model_roles
-        result = model_roles.set_role("front", "openrouter-kimi-k3")
+        result = model_roles.set_role("web", "openrouter-kimi-k3")
         assert result["model_id"] == "moonshotai/kimi-k3"
-        assert "moonshotai/kimi-k3" == __import__("os").environ["BIGBRAIN_FRONT_MODEL"]
+        assert "moonshotai/kimi-k3" == __import__("os").environ["BIGBRAIN_WEB_MODEL"]
         # Persisted: a fresh read reflects the change.
         lineup = model_roles.current_lineup()
-        assert lineup["front"]["key"] == "openrouter-kimi-k3"
+        assert lineup["web"]["key"] == "openrouter-kimi-k3"
 
     def test_set_role_rejects_unknown(self):
         import pytest as _pytest
@@ -586,6 +608,27 @@ class TestOpenRouterKey:
         monkeypatch.setattr(ork, "verify_key", fake_verify)
         with pytest.raises(ork.OpenRouterKeyError):
             await ork.connect_key("sk-or-bad")
+
+
+class TestMistralStudioKey:
+    def test_env_file_upsert_keeps_studio_separate(self, tmp_path):
+        from bigbrain.web import mistral_studio_key as msk
+        env = tmp_path / ".env"
+        msk._upsert_assignment(env, "MISTRAL_STUDIO_API_KEY", "studio-1")
+        msk._upsert_assignment(env, "BIGBRAIN_PROVIDER", "mistral-studio-large-4")
+        text = env.read_text()
+        assert "MISTRAL_STUDIO_API_KEY=studio-1" in text
+        assert "BIGBRAIN_PROVIDER=mistral-studio-large-4" in text
+        assert "MISTRAL_API_KEY" not in text
+
+    @pytest.mark.asyncio
+    async def test_connect_rejects_bad_key(self, monkeypatch):
+        from bigbrain.web import mistral_studio_key as msk
+        async def fake_verify(key):
+            return "auth_failed"
+        monkeypatch.setattr(msk, "verify_key", fake_verify)
+        with pytest.raises(msk.MistralStudioKeyError):
+            await msk.connect_key("studio-bad")
 
 
 # ================================================================
@@ -993,18 +1036,15 @@ class TestStreamingFrames:
 
 
 class TestCompoundFallback:
-    def test_compound_converted_to_generate_and_execute(self):
+    def test_compound_requires_planning_instead_of_silent_python_conversion(self):
         from bigbrain.orchestrator.orchestrator import WorkspaceOrchestrator
         orch = WorkspaceOrchestrator.__new__(WorkspaceOrchestrator)
-        subtasks = orch._simple_decompose("plan1", {
-            "type": "compound",
-            "request": "crée un script hello.py",
-            "user_request": "crée un script hello.py",
-        })
-        assert len(subtasks) == 1
-        assert subtasks[0].payload["type"] == "generate_and_execute"
-        assert subtasks[0].payload["user_request"] == "crée un script hello.py"
-        assert subtasks[0].brain_target == "python_brain"
+        with pytest.raises(ValueError, match="No explicit action route"):
+            orch._simple_decompose("plan1", {
+                "type": "compound",
+                "request": "crée un script hello.py",
+                "user_request": "crée un script hello.py",
+            })
 
     def test_known_types_pass_through(self):
         from bigbrain.orchestrator.orchestrator import WorkspaceOrchestrator

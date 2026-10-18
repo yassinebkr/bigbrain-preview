@@ -1,7 +1,9 @@
 """Front Brain - User-facing intelligence layer for BigBrain."""
 
 import asyncio
+from contextvars import ContextVar
 import time
+import uuid
 from typing import Any, Dict, List, Optional
 
 from ..bus.bus import MessageBus
@@ -67,6 +69,11 @@ class FrontBrain:
         # Set by the stop button (chat.cancel): the current LLM stream
         # breaks at the next delta and returns what it already has.
         self._stop_requested = False
+        self._stopped_sessions: set[str] = set()
+        self._session_context = ContextVar('front_brain_session', default=None)
+        self._stream_context = ContextVar('front_brain_streamed', default=False)
+        self._turn_context = ContextVar('front_brain_turn', default=None)
+        self._navigation_context = ContextVar('front_brain_navigation', default=None)
 
         # The soul: batch-consolidated identity memory (memory/soul.py).
         # Injected as a few lines per turn; consolidated by ONE LLM call
@@ -93,13 +100,22 @@ class FrontBrain:
             return self._conversation_history
         return self._session_histories.setdefault(session_id, [])
 
-    def request_stop(self) -> None:
+    def request_stop(self, session_id: Optional[str] = None) -> None:
         """Ask the current LLM stream to stop at the next delta.
 
         The partial reply is kept: the stream loop breaks and the caller
         broadcasts chat.done with whatever was already emitted.
         """
-        self._stop_requested = True
+        if session_id:
+            self._stopped_sessions.add(session_id)
+        else:
+            self._stop_requested = True
+
+    def _is_stopped(self, session_id: Optional[str]) -> bool:
+        return self._stop_requested or bool(session_id and session_id in self._stopped_sessions)
+
+    def _chat_session(self) -> Optional[str]:
+        return self._session_context.get() or self._last_session_id
     
     async def start(self) -> None:
         """Start the Front Brain and register with message bus."""
@@ -176,7 +192,9 @@ class FrontBrain:
             Response text for the user
         """
         self.focus_manager.mark_user_activity()
+        self._stop_requested = False
         self._last_session_id = session_id
+        self._stopped_sessions.discard(session_id)
         history = self._history_for(session_id)
 
         # Store conversation turn
@@ -216,6 +234,7 @@ class FrontBrain:
         # Store response
         history.append({"role": "assistant", "content": response})
         self.memory.store_conversation_turn("assistant", response, {
+            "session_id": session_id,
             "conversation_id": self._current_conversation_id
         })
         
@@ -281,7 +300,9 @@ class FrontBrain:
             # Direct persistent query (both scopes): MemoryManager.recall
             # forces a workspace filter that would exclude global
             # (cross-project) memories — the personal ones matter most.
-            results = self.memory.persistent.query(text, limit=4)
+            # Fetch candidates BEFORE deduplication: repeated recall questions
+            # otherwise occupy all four slots and hide the original user fact.
+            results = self.memory.persistent.query(text, limit=24)
         except Exception:
             return []
 
@@ -292,7 +313,7 @@ class FrontBrain:
             if content:
                 window_heads.add(content[:80].lower())
 
-        recalled: List[str] = []
+        candidates = []
         seen: set = set()
         for r in results:
             content = (r.get("content") or "").strip()
@@ -304,17 +325,12 @@ class FrontBrain:
             if not content or head in window_heads or head in seen:
                 continue
             seen.add(head)
-            recalled.append(content[:200])
-        return recalled
-
-    def _current_project(self) -> str | None:
-        """The selected working project, if any (and if web is loaded)."""
-        try:
-            from ..web.fs_api import get_current_project
-
-            return get_current_project()
-        except Exception:
-            return None
+            candidates.append((role, content[:200]))
+        # Reserve room for original user statements rather than letting
+        # previous assistant answers (including "I don't know") crowd them out.
+        chosen = [item for item in candidates if item[0] == "user"][:2]
+        chosen.extend(item for item in candidates if item not in chosen)
+        return [f"{role or 'memory'}: {content}" for role, content in chosen[:4]]
 
     async def _llm_respond(self, input_text: str,
                            session_id: Optional[str] = None,
@@ -340,14 +356,20 @@ class FrontBrain:
                 "memory — use silently, never mention this block):\n"
                 + self._soul_store.summary)})
 
-        # Project context: the chat knows which project the user works in;
-        # generated files land there (the pool's work_dir follows it too).
-        project = self._current_project()
+        # Navigation context supplied by this turn's client. It never owns
+        # the execution destination and never falls back to a global selection.
+        project = self._navigation_context.get()
         if project:
             messages.append({"role": "system", "content": (
-                f"Current project: '{project}'. The user is working inside "
-                f"the project directory '{project}/' of the workspace. "
-                f"File operations and generated code belong in this project."
+                f"Workspace selection: '{project}' (directory '{project}/'). "
+                "This is navigation context, NOT an instruction to reuse this "
+                "project for every request. Decide from the user's current "
+                "request and this conversation whether they want to modify "
+                "the existing project or create a different one. For a NEW "
+                "project, preserve the requested subject, choose a distinct "
+                "descriptive project name and use its own sibling directory; "
+                "never inherit the selected project's name or requirements. "
+                "Only edits to the existing project belong in this directory."
             )})
         else:
             messages.append({"role": "system", "content": (
@@ -373,7 +395,9 @@ class FrontBrain:
                 "Older memories that may be relevant to this conversation:\n"
                 + "\n".join(f"- {line}" for line in recalled)
                 + "\nUse them silently if useful; do not mention them "
-                  "unless the user brings them up."
+                  "unless the user brings them up. User statements are the "
+                  "primary evidence; older assistant answers may be mistaken "
+                  "or incomplete and must not override explicit user facts."
             )})
         
         try:
@@ -385,12 +409,11 @@ class FrontBrain:
                 messages=messages,
                 stream=True,
             )
-            self._stop_requested = False
             if hasattr(result, "__aiter__"):
                 parts: list[str] = []
                 emitting = False
                 async for delta in result:
-                    if self._stop_requested:
+                    if self._is_stopped(session_id):
                         break
                     if not delta:
                         continue
@@ -404,15 +427,18 @@ class FrontBrain:
                             continue
                         emitting = True
                     if emitting:
-                        await self._emit_chat_delta(delta)
+                        await self._emit_chat_delta(delta, session_id=session_id)
                 response = "".join(parts)
                 self._last_response_streamed = emitting
+                self._stream_context.set(emitting)
             else:
                 response = str(result)
                 self._last_response_streamed = False
+                self._stream_context.set(False)
             return response
         except Exception as e:
             self._last_response_streamed = False
+            self._stream_context.set(False)
             return f"I encountered an error processing your request: {e}"
     
     # _execute_code_direct REMOVED — Front Brain must never execute code.
@@ -457,10 +483,18 @@ DELEGATION: When the user asks for work, respond with EXACTLY this JSON format:
 ROUTED DELEGATION (preferred when the request matches ONE known brain capability): use "route" instead of "task". The orchestrator executes it EXACTLY as given, without re-planning:
 {{"reply": "brief natural acknowledgment", "route": {{"brain": "<brain>", "payload": {{...}}}}}}
 
+PROJECT DESTINATION (for file/code work): include a top-level "project_target" object.
+- A NEW project: {{"mode":"new"}}; optionally specify "path":"sandbox/descriptive-name" if explicitly requested. Never inherit the explorer selection for a new request.
+- Editing/running an EXISTING project: {{"mode":"existing","path":"sandbox/exact-project"}}. Resolve this from the user's request and conversation; explorer selection is only a hint, never implicit authorization. If the intended project is ambiguous, ask before delegating.
+- Board/research-only work has no project_target.
+Example: {{"reply":"Je prépare une nouvelle application.","task":"Build the requested app","project_target":{{"mode":"new"}}}}
+Example: {{"reply":"Je modifie ce projet.","task":"Apply the requested changes","project_target":{{"mode":"existing","path":"sandbox/exact-project"}}}}
+
 Routable brains and payloads:
 - taskboard — add/create a task or todo on the user's persistent board. Payload: {{"type": "board_task", "title": "<short task title>", "description": "<optional details>", "status": "todo"}}. Use status "todo" unless the user explicitly asks for another status.
 - researcher — research / web search. Payload: {{"type": "research", "query": "<self-contained search query>"}}
 - python_brain — run an existing workspace file. Payload: {{"type": "run_file", "file": "<file path>"}}
+- web_app_brain — run an existing verified web project. Payload: {{"type": "run_web_project", "project_name": "<project path>"}}
 
 Use "route" ONLY for these direct single actions. For code generation, multi-step work, or anything combining several actions, use the generic "task" format.
 
@@ -472,7 +506,7 @@ will figure out that research must complete before benchmarking can start.
 CONVERSATION: For greetings, questions, status, opinions — just respond naturally as plain text (no JSON).
 
 RULES:
-- NEVER write code yourself. NEVER. That's PythonBrain's job.
+- NEVER write code yourself. NEVER. PythonBrain handles Python and WebAppBrain handles browser applications.
 - NEVER do research yourself. That's Researcher's job.
 - NEVER decompose tasks into multiple items — that's the Orchestrator's job.
 - Keep task acknowledgments brief and natural: "On it.", "Working on that.", "Let me look into that."
@@ -559,6 +593,19 @@ Type 'quit' or 'exit' to stop."""
                 await self._handle_ui_message(message)
     
     async def _handle_ui_message(self, message: BusMessage) -> None:
+        token = self._session_context.set(message.payload.get('session_id'))
+        stream_token = self._stream_context.set(False)
+        turn_token = self._turn_context.set(message.payload.get('turn_id'))
+        navigation_token = self._navigation_context.set(message.payload.get('navigation_project'))
+        try:
+            await self._process_ui_message(message)
+        finally:
+            self._session_context.reset(token)
+            self._stream_context.reset(stream_token)
+            self._turn_context.reset(turn_token)
+            self._navigation_context.reset(navigation_token)
+
+    async def _process_ui_message(self, message: BusMessage) -> None:
         """
         Handle a user message from the Morphable UI.
         
@@ -605,6 +652,9 @@ Type 'quit' or 'exit' to stop."""
             response = await self.handle_user_input(
                 text, input_type="web", session_id=session_id,
                 llm_content=llm_content)
+            if self._is_stopped(session_id):
+                await self._emit_chat_done("")
+                return
             
             # Try to parse as delegation JSON
             parsed = self._try_parse_delegation(response)
@@ -626,7 +676,7 @@ Type 'quit' or 'exit' to stop."""
             if parsed and route_valid:
                 reply_text = parsed.get("reply", "Working on it...")
                 await self._emit_chat_message("assistant", reply_text)
-                await self._emit_task_routing(text)
+                run_id = await self._emit_task_routing(text)
                 
                 ws = "default"  # Always route to the single orchestrator
                 task_data = {
@@ -635,7 +685,8 @@ Type 'quit' or 'exit' to stop."""
                     "reply_to_ui": True,
                     "user_request": text,
                     "session_id": session_id,
-                    "project_path": self._current_project(),
+                    "project_target": parsed.get("project_target", route_payload.get("project_target")),
+                    "_ui_run_id": run_id,
                 }
                 await self.bus.send_task(
                     source=self.name,
@@ -647,7 +698,7 @@ Type 'quit' or 'exit' to stop."""
                 # Front Brain wants to delegate — send the reply part to chat
                 reply_text = parsed.get("reply", "Working on it...")
                 await self._emit_chat_message("assistant", reply_text)
-                await self._emit_task_routing(str(parsed["task"]))
+                run_id = await self._emit_task_routing(str(parsed["task"]))
                 
                 # Send ONE compound task to the orchestrator.
                 # Always route to "default" workspace — the system only creates
@@ -667,7 +718,8 @@ Type 'quit' or 'exit' to stop."""
                         "user_request": task_request,
                         "reply_to_ui": True,
                         "session_id": session_id,
-                        "project_path": self._current_project(),
+                        "project_target": parsed.get("project_target"),
+                        "_ui_run_id": run_id,
                     },
                     priority=Priority.NORMAL,
                 )
@@ -675,7 +727,7 @@ Type 'quit' or 'exit' to stop."""
                 # Legacy multi-task format — merge into single compound request
                 reply_text = parsed.get("reply", "Working on it...")
                 await self._emit_chat_message("assistant", reply_text)
-                await self._emit_task_routing(text)
+                run_id = await self._emit_task_routing(text)
                 
                 tasks = parsed.get("tasks", [])
                 combined_request = "; then ".join(
@@ -693,7 +745,8 @@ Type 'quit' or 'exit' to stop."""
                         "user_request": combined_request,
                         "reply_to_ui": True,
                         "session_id": session_id,
-                        "project_path": self._current_project(),
+                        "project_target": parsed.get("project_target"),
+                        "_ui_run_id": run_id,
                     },
                     priority=Priority.NORMAL,
                 )
@@ -701,7 +754,7 @@ Type 'quit' or 'exit' to stop."""
                 # Plain text response — send to chat. If the reply was
                 # already streamed (chat.delta), signal completion only:
                 # re-sending the full text would duplicate the bubble.
-                if getattr(self, "_last_response_streamed", False):
+                if self._stream_context.get():
                     await self._emit_chat_done(response)
                 else:
                     await self._emit_chat_message("assistant", response)
@@ -827,7 +880,7 @@ Type 'quit' or 'exit' to stop."""
         
         return None
     
-    async def _summarize_result(self, raw_outputs: list) -> str:
+    async def _summarize_result(self, raw_outputs: list, session_id: Optional[str] = None) -> str:
         """Use the LLM to turn raw task output into a conversational answer.
         
         Takes the user's last question + raw stdout/summary and produces
@@ -867,7 +920,7 @@ Type 'quit' or 'exit' to stop."""
         
         # Find the user's original question from conversation history
         user_question = ""
-        for msg in reversed(self._history_for(self._last_session_id)):
+        for msg in reversed(self._history_for(session_id or self._last_session_id)):
             if msg.get("role") == "user":
                 user_question = msg.get("content", "")
                 break
@@ -886,6 +939,7 @@ Type 'quit' or 'exit' to stop."""
                             "- Research provides context and analysis; code provides measurements — present both\n"
                             "- Be concise (3-5 sentences)\n"
                             "- Don't show raw code or describe the process\n"
+                            "- For a generated project with a preview, do not enumerate or reproduce its content; confirm completion in at most 2 sentences and tell the user to use the preview/project controls\n"
                             "- Start with the main answer, then add supporting details\n"
                             "- If output was truncated or incomplete, say so — don't fabricate results\n"
                             "- NEVER invent URLs, domains, or deployment links. Only mention a URL if one appears in the task output\n"
@@ -919,12 +973,12 @@ Type 'quit' or 'exit' to stop."""
                 return "✅ Done — check the workspace tab for details."
         return "✅ Done."
 
-    async def _emit_chat_delta(self, delta: str) -> None:
+    async def _emit_chat_delta(self, delta: str, session_id: Optional[str] = None) -> None:
         """Stream one text chunk to the UI (chat.delta events)."""
         await self.bus.broadcast_event(
             source=self.name,
             event_type="chat.delta",
-            payload={"delta": delta},
+            payload={"delta": delta, "session_id": session_id or self._chat_session()},
             priority=Priority.NORMAL,
         )
 
@@ -934,11 +988,11 @@ Type 'quit' or 'exit' to stop."""
         await self.bus.broadcast_event(
             source=self.name,
             event_type="chat.done",
-            payload={"text": text, "session_id": self._last_session_id},
+            payload={"text": text, "session_id": self._chat_session(), "turn_id": self._turn_context.get()},
             priority=Priority.NORMAL,
         )
 
-    async def _emit_chat_message(self, role: str, text: str) -> None:
+    async def _emit_chat_message(self, role: str, text: str, session_id: Optional[str] = None) -> None:
         """Emit a chat message event on the bus for the Morphable UI."""
         await self.bus.broadcast_event(
             source=self.name,
@@ -946,22 +1000,26 @@ Type 'quit' or 'exit' to stop."""
             payload={
                 "role": role,
                 "text": text,
-                "session_id": self._last_session_id,
+                "session_id": session_id or self._chat_session(),
+                "turn_id": self._turn_context.get(),
             },
             priority=Priority.NORMAL,
         )
 
-    async def _emit_task_routing(self, description: str) -> None:
+    async def _emit_task_routing(self, description: str) -> str:
         """Keep the initiating conversation visibly busy during planning."""
+        run_id = str(uuid.uuid4())
         await self.bus.broadcast_event(
             source=self.name,
             event_type="task.routing",
             payload={
                 "description": description[:140],
-                "session_id": self._last_session_id,
+                "session_id": self._chat_session(),
+                "task_id": run_id,
             },
             priority=Priority.NORMAL,
         )
+        return run_id
 
     async def _process_filtered_event(self, event: BusMessage) -> None:
         """
@@ -1245,8 +1303,8 @@ Type 'quit' or 'exit' to stop."""
                         # output the summarizer must relay.
                         raw_outputs.append(("action", data["message"]))
                     # Capture preview URL if server started
-                    if data.get("preview_port") and data.get("server_running"):
-                        raw_outputs.append(("preview", f"Preview server running at https://preview.clawos.fr (port {data['preview_port']})"))
+                    if data.get("preview_url") and data.get("server_running"):
+                        raw_outputs.append(("preview", f"Preview ready: {data['preview_url']}"))
                     elif data.get("files_written"):
                         files = data.get("files_written", [])
                         raw_outputs.append(("files", f"Project files written: {', '.join(files)}"))
@@ -1258,8 +1316,19 @@ Type 'quit' or 'exit' to stop."""
                 workspace_hint = "python-dev"
         
         # Generate conversational answer via LLM
-        if success and raw_outputs:
-            notification = await self._summarize_result(raw_outputs)
+        preview_output = next((str(content) for kind, content in raw_outputs
+                               if kind == "preview"), None)
+        files_output = next((str(content) for kind, content in raw_outputs
+                             if kind == "files"), None)
+        if success and preview_output:
+            # Project cards own the rich result UI. Keep chat deterministic
+            # and compact instead of asking an LLM to retell the application.
+            notification = "✅ Projet web terminé. Utilise l’aperçu ou les contrôles du projet ci-dessous."
+        elif success and files_output and not any(kind in {"code", "research", "action"}
+                                                   for kind, _ in raw_outputs):
+            notification = "✅ Fichiers du projet générés. Ouvre le projet pour les consulter."
+        elif success and raw_outputs:
+            notification = await self._summarize_result(raw_outputs, session_id=result.get("session_id"))
         elif success:
             notification = "✅ Done, but no output was produced."
         else:
@@ -1277,7 +1346,7 @@ Type 'quit' or 'exit' to stop."""
             )
         
         # Send result to Morphable UI chat
-        await self._emit_chat_message("assistant", notification)
+        await self._emit_chat_message("assistant", notification, session_id=result.get("session_id"))
         
         # Check if we should interrupt based on focus mode
         if self.focus_manager.focus_rules.current_mode != FocusMode.DEEP_FOCUS:

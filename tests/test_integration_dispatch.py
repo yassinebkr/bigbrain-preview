@@ -226,10 +226,23 @@ class TestParallelExecution:
     @pytest.mark.asyncio
     async def test_pool_dispatches_to_multiple_workers(self):
         """3 independent tasks should run on 3 different workers simultaneously."""
+        started = set()
+        all_started = asyncio.Event()
+
+        class BarrierBrain(SlowBrain):
+            async def handle_task(self, message):
+                started.add(self.name)
+                if len(started) == 3:
+                    all_started.set()
+                # A sequential dispatcher or a single reused worker cannot
+                # cross this barrier. Disk logging speed is irrelevant.
+                await asyncio.wait_for(all_started.wait(), timeout=2)
+                return await super().handle_task(message)
+
         system = await setup_system([
-            {"name": "w0", "delay": 0.1},
-            {"name": "w1", "delay": 0.1},
-            {"name": "w2", "delay": 0.1},
+            {"name": "w0", "cls": BarrierBrain},
+            {"name": "w1", "cls": BarrierBrain},
+            {"name": "w2", "cls": BarrierBrain},
         ], pool_name="python_brain")
         try:
             orch = system["orchestrator"]
@@ -242,7 +255,6 @@ class TestParallelExecution:
             ]
             plan = make_plan(orch, subtasks)
 
-            start = time.time()
             await orch._execute_ready_subtasks(plan)
 
             # Wait for completion
@@ -251,13 +263,8 @@ class TestParallelExecution:
                     break
                 await asyncio.sleep(0.05)
 
-            elapsed = time.time() - start
             assert plan.status == TaskStatus.COMPLETE
-
-            # If parallel: ~0.1s. If sequential: ~0.3s.
-            # Use 0.25s as threshold (allows for overhead).
-            assert elapsed < 0.25, \
-                f"Tasks took {elapsed:.2f}s — likely sequential, not parallel"
+            assert all_started.is_set()
 
             # All 3 workers should have been used
             workers_used = set()
