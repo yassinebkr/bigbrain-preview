@@ -346,9 +346,15 @@ class FrontBrain:
         project = self._current_project()
         if project:
             messages.append({"role": "system", "content": (
-                f"Current project: '{project}'. The user is working inside "
-                f"the project directory '{project}/' of the workspace. "
-                f"File operations and generated code belong in this project."
+                f"Workspace selection: '{project}' (directory '{project}/'). "
+                "This is navigation context, NOT an instruction to reuse this "
+                "project for every request. Decide from the user's current "
+                "request and this conversation whether they want to modify "
+                "the existing project or create a different one. For a NEW "
+                "project, preserve the requested subject, choose a distinct "
+                "descriptive project name and use its own sibling directory; "
+                "never inherit the selected project's name or requirements. "
+                "Only edits to the existing project belong in this directory."
             )})
         else:
             messages.append({"role": "system", "content": (
@@ -404,7 +410,7 @@ class FrontBrain:
                             continue
                         emitting = True
                     if emitting:
-                        await self._emit_chat_delta(delta)
+                        await self._emit_chat_delta(delta, session_id=session_id)
                 response = "".join(parts)
                 self._last_response_streamed = emitting
             else:
@@ -831,7 +837,7 @@ Type 'quit' or 'exit' to stop."""
         
         return None
     
-    async def _summarize_result(self, raw_outputs: list) -> str:
+    async def _summarize_result(self, raw_outputs: list, session_id: Optional[str] = None) -> str:
         """Use the LLM to turn raw task output into a conversational answer.
         
         Takes the user's last question + raw stdout/summary and produces
@@ -871,7 +877,7 @@ Type 'quit' or 'exit' to stop."""
         
         # Find the user's original question from conversation history
         user_question = ""
-        for msg in reversed(self._history_for(self._last_session_id)):
+        for msg in reversed(self._history_for(session_id or self._last_session_id)):
             if msg.get("role") == "user":
                 user_question = msg.get("content", "")
                 break
@@ -924,12 +930,12 @@ Type 'quit' or 'exit' to stop."""
                 return "✅ Done — check the workspace tab for details."
         return "✅ Done."
 
-    async def _emit_chat_delta(self, delta: str) -> None:
+    async def _emit_chat_delta(self, delta: str, session_id: Optional[str] = None) -> None:
         """Stream one text chunk to the UI (chat.delta events)."""
         await self.bus.broadcast_event(
             source=self.name,
             event_type="chat.delta",
-            payload={"delta": delta},
+            payload={"delta": delta, "session_id": session_id or self._last_session_id},
             priority=Priority.NORMAL,
         )
 
@@ -943,7 +949,7 @@ Type 'quit' or 'exit' to stop."""
             priority=Priority.NORMAL,
         )
 
-    async def _emit_chat_message(self, role: str, text: str) -> None:
+    async def _emit_chat_message(self, role: str, text: str, session_id: Optional[str] = None) -> None:
         """Emit a chat message event on the bus for the Morphable UI."""
         await self.bus.broadcast_event(
             source=self.name,
@@ -951,7 +957,7 @@ Type 'quit' or 'exit' to stop."""
             payload={
                 "role": role,
                 "text": text,
-                "session_id": self._last_session_id,
+                "session_id": session_id or self._last_session_id,
             },
             priority=Priority.NORMAL,
         )
@@ -1275,7 +1281,7 @@ Type 'quit' or 'exit' to stop."""
                                                    for kind, _ in raw_outputs):
             notification = "✅ Fichiers du projet générés. Ouvre le projet pour les consulter."
         elif success and raw_outputs:
-            notification = await self._summarize_result(raw_outputs)
+            notification = await self._summarize_result(raw_outputs, session_id=result.get("session_id"))
         elif success:
             notification = "✅ Done, but no output was produced."
         else:
@@ -1293,7 +1299,7 @@ Type 'quit' or 'exit' to stop."""
             )
         
         # Send result to Morphable UI chat
-        await self._emit_chat_message("assistant", notification)
+        await self._emit_chat_message("assistant", notification, session_id=result.get("session_id"))
         
         # Check if we should interrupt based on focus mode
         if self.focus_manager.focus_rules.current_mode != FocusMode.DEEP_FOCUS:

@@ -1554,13 +1554,17 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
     
     async def _check_plan_completion(self, plan: TaskPlan) -> None:
         """Check if a task plan is complete and send final result."""
+        # Other in-flight workers can finish after the first fatal failure.
+        # A terminal plan must emit exactly one result/terminal event.
+        if plan.status in (TaskStatus.COMPLETE, TaskStatus.FAILED, TaskStatus.CANCELLED):
+            return
         if plan.is_complete() or plan.is_failed():
             import time
             
             if plan.is_failed():
                 plan.status = TaskStatus.FAILED
                 failed_subtasks = [st for st in plan.subtasks if st.status == TaskStatus.FAILED]
-                plan.error = "; ".join(st.error or "Unknown error" for st in failed_subtasks)[:2000]
+                plan.error = "; ".join(dict.fromkeys(st.error or "Unknown error" for st in failed_subtasks))[:2000]
                 plan.result = {
                     "success": False,
                     "error": plan.error,
@@ -1578,7 +1582,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             await self.bus.send_result(
                 source=self.name,
                 target=plan.original_task.source,
-                result_data=plan.result,
+                result_data={**plan.result, "session_id": (plan.original_task.payload or {}).get("session_id")},
                 reply_to=plan.original_task.id,
                 workspace=self.workspace,
                 project=plan.original_task.project

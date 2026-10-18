@@ -110,3 +110,76 @@ def test_contract_verdict_removes_pending_proposal_from_replay(tmp_path, monkeyp
     }
     server._maybe_buffer("event", "contracts.approved", approved)
     assert server._replay_buffer == []
+
+
+def test_cancelled_task_does_not_replay_as_running():
+    server = WebServer(bus=MessageBus(auth=None))
+    for event in ("task.received", "task.cancelled"):
+        server._maybe_buffer("event", event, {
+            "source": "orchestrator_default",
+            "payload": {"event": event, "task_id": "plan-1"},
+        })
+    assert [data["payload"]["event"] for _, data in server._replay_buffer] == ["task.cancelled"]
+
+
+@pytest.mark.asyncio
+async def test_selected_project_is_not_a_mandatory_destination_for_new_requests():
+    provider = AsyncMock()
+    provider.chat_complete.return_value = "D'accord"
+    front = FrontBrain(MessageBus(auth=None), llm_provider=provider)
+    front._current_project = lambda: "sandbox/blender"
+    front._history_for("sess-new").append({
+        "role": "user", "content": "Crée un programme React sur quatre semaines",
+    })
+    await front._llm_respond("Crée un programme React sur quatre semaines", session_id="sess-new")
+    messages = provider.chat_complete.call_args.kwargs["messages"]
+    context = next(m["content"] for m in messages if "Workspace selection:" in m["content"])
+    assert "sandbox/blender" in context
+    assert "NOT an instruction to reuse" in context
+    assert "own sibling directory" in context
+    assert "File operations and generated code belong in this project" not in context
+
+
+@pytest.mark.asyncio
+async def test_failed_plan_emits_one_terminal_result_despite_late_worker_completions(monkeypatch):
+    from bigbrain.orchestrator.orchestrator import WorkspaceOrchestrator, TaskPlan, SubTask, TaskStatus
+
+    bus = MessageBus(auth=None)
+    bus.send_result = AsyncMock()
+    bus.broadcast_event = AsyncMock()
+    orch = WorkspaceOrchestrator("default", bus)
+    monkeypatch.setattr(orch, "_extract_learnings", AsyncMock())
+    plan = TaskPlan(
+        id="plan-once", status=TaskStatus.RUNNING,
+        original_task=BusMessage(type=MessageType.TASK, source="front_brain", target=orch.name),
+        subtasks=[SubTask(id="s1", description="file one", brain_target="python_brain", payload={},
+                          status=TaskStatus.FAILED, error="same failure"),
+                  SubTask(id="s2", description="file two", brain_target="python_brain", payload={},
+                          status=TaskStatus.RUNNING)],
+    )
+    await orch._check_plan_completion(plan)
+    plan.subtasks[1].status = TaskStatus.FAILED
+    plan.subtasks[1].error = "same failure"
+    await orch._check_plan_completion(plan)
+    await orch._check_plan_completion(plan)
+    assert bus.send_result.await_count == 1
+    assert bus.broadcast_event.await_count == 1
+    assert plan.error == "same failure"
+
+
+@pytest.mark.asyncio
+async def test_late_result_and_stream_keep_their_originating_session():
+    bus = MessageBus(auth=None)
+    bus.broadcast_event = AsyncMock()
+    front = FrontBrain(bus)
+    front._last_session_id = "sess-new"
+    await front._handle_task_result(BusMessage(
+        type=MessageType.RESULT, source="orchestrator_default", target="front_brain",
+        payload={"success": False, "error": "old failure", "session_id": "sess-old"},
+    ))
+    reply = next(call.kwargs for call in bus.broadcast_event.await_args_list
+                 if call.kwargs.get("event_type") == "chat.message")
+    assert reply["payload"]["session_id"] == "sess-old"
+    await front._emit_chat_delta("old text", session_id="sess-old")
+    assert bus.broadcast_event.await_args.kwargs["payload"]["session_id"] == "sess-old"
+    assert front._last_session_id == "sess-new"

@@ -3,6 +3,11 @@ import { persist } from 'zustand/middleware';
 import type { Message, Attachment, Session, Settings, Theme, View, ConnectionStatus, SidebarPanel, User, CanvasOp, Task } from '@/types';
 import type { ConnectionLike } from '@/lib/connection';
 
+// A first message can arrive before sessions.create answers. Never send it
+// with the previous conversation's id (or the server's implicit fallback).
+let pendingSession: Promise<string> | null = null;
+let sessionGeneration = 0;
+
 export interface AgentActivity {
   type: string;
   phase?: string;
@@ -257,7 +262,10 @@ export const useAppStore = create<AppState>()(
 
       // View
       view: 'welcome',
-      setView: (view) => set({ view }),
+      setView: (view) => {
+        if (view === 'welcome') get().startNewSession();
+        else set({ view });
+      },
 
       // Messages
       messages: JSON.parse(localStorage.getItem('aplot_messages') || '[]'),
@@ -304,7 +312,10 @@ export const useAppStore = create<AppState>()(
       connectionStatus: 'connecting',
       setConnectionStatus: (connectionStatus) => set({ connectionStatus }),
       connection: null,
-      setConnection: (connection) => set({ connection }),
+      setConnection: (connection) => {
+        connection?.switchSession(get().activeSessionKey);
+        set({ connection });
+      },
 
       // Voice
       isRecording: false,
@@ -373,6 +384,11 @@ export const useAppStore = create<AppState>()(
       applyRunEvent: (activity) => set((state) => {
         const d = activity.detail || {};
         const run = state.activeRun;
+        const opensRun = ['task.routing', 'task.received', 'contracts.proposal'].includes(activity.type);
+        if (run && !opensRun) {
+          if (d.session_id && d.session_id !== run.sessionId) return state;
+          if (d.task_id && d.task_id !== run.id && !run.id.startsWith('routing-')) return state;
+        }
         switch (activity.type) {
           case 'task.routing': {
             const sessionId = String(d.session_id || state.activeSessionKey || '');
@@ -401,7 +417,7 @@ export const useAppStore = create<AppState>()(
           }
           case 'contracts.proposal': {
             const sessionId = String(d.session_id || run?.sessionId || state.activeSessionKey || '');
-            if (run && run.status === 'running') {
+            if (run && run.status === 'running' && run.sessionId === sessionId) {
               return { activeRun: { ...run, sessionId, awaitingApproval: true }, runPanelDismissed: false };
             }
             const fresh: RunState = {
@@ -549,12 +565,18 @@ export const useAppStore = create<AppState>()(
       sessions: [],
       activeSessionKey: '',
       setSessions: (sessions) => set({ sessions }),
-      setActiveSessionKey: (activeSessionKey) => set({ activeSessionKey }),
+      setActiveSessionKey: (activeSessionKey) => {
+        get().connection?.switchSession(activeSessionKey);
+        set({ activeSessionKey });
+      },
       switchSession: (key) => {
+        sessionGeneration += 1;
+        pendingSession = null;
         get().connection?.switchSession(key);
         // A run belongs to its conversation — the record of the previous
         // one must not follow the user into the next.
         set({ activeSessionKey: key, messages: [], view: 'welcome',
+              streamingText: '', isStreaming: false, contractProposal: null,
               runPanelDismissed: false });
       },
       // Pull the session list from the server into the store.
@@ -573,20 +595,24 @@ export const useAppStore = create<AppState>()(
       // New conversation: a REAL session on the server.
       startNewSession: () => {
         const conn = get().connection;
+        const generation = ++sessionGeneration;
+        set({ activeSessionKey: '', messages: [], view: 'welcome',
+              streamingText: '', isStreaming: false, contractProposal: null,
+              contractSending: false, inputText: '', attachments: [],
+              runPanelDismissed: false });
         if (conn?.createSession) {
+          let resolveSession!: (id: string) => void;
+          pendingSession = new Promise((resolve) => { resolveSession = resolve; });
           conn.createSession((session) => {
-            if (!session?.id) return;
-            set({
-              activeSessionKey: session.id,
-              messages: [],
-              view: 'welcome',
-              streamingText: '',
-              isStreaming: false,
-              runPanelDismissed: false,
-            });
+            resolveSession(session?.id || '');
+            if (!session?.id || generation !== sessionGeneration) return;
+            pendingSession = null;
+            conn.switchSession(session.id);
+            set({ activeSessionKey: session.id });
             get().refreshSessions();
           });
         } else {
+          pendingSession = null;
           // Offline: a local blank conversation (kept honest — no fake id).
           set({
             activeSessionKey: '',
@@ -600,15 +626,20 @@ export const useAppStore = create<AppState>()(
       },
       // Open an existing conversation: load its history from the server.
       openSession: (key) => {
+        sessionGeneration += 1;
+        pendingSession = null;
+        get().connection?.switchSession(key);
         set({
           activeSessionKey: key,
           sidebarPanel: null,
           messages: [],
           streamingText: '',
           isStreaming: false,
+          contractProposal: null,
           runPanelDismissed: false,
         });
         get().connection?.loadHistory((frame: any) => {
+          if (get().activeSessionKey !== key) return;
           if (frame?.ok && frame.payload?.messages) {
             set({
               messages: frame.payload.messages.map((m: any) => ({
@@ -753,6 +784,15 @@ export const useAppStore = create<AppState>()(
         // Sending from the home page ALWAYS starts a new conversation —
         // the previous transcript must not bleed into it.
         const isNewConversation = state.view === 'welcome';
+        // Also migrate a persisted/home view from older versions, which
+        // could still point at a conversation containing messages/runs.
+        if (isNewConversation && (state.messages.length > 0
+            || state.activeRun?.sessionId === state.activeSessionKey
+            || state.completedRuns.some((r) => r.sessionId === state.activeSessionKey))) {
+          get().startNewSession();
+        }
+        const sessionReady = pendingSession;
+        const sessionKey = get().activeSessionKey;
         set((s) => ({
           messages: isNewConversation ? [userMessage] : [...s.messages, userMessage],
           inputText: '',
@@ -766,6 +806,11 @@ export const useAppStore = create<AppState>()(
         // records them in persistent memory. Offline: the message goes
         // out without the files (upload failure never blocks the text).
         (async () => {
+          const targetSession = sessionReady ? await sessionReady : sessionKey;
+          if (sessionReady && !targetSession) {
+            set({ isStreaming: false });
+            return;
+          }
           const refs: { id: string; name: string; type: string }[] = [];
           for (const att of state.attachments) {
             if (!att.file) continue;
@@ -780,7 +825,7 @@ export const useAppStore = create<AppState>()(
             } catch { /* offline: text still sends */ }
           }
           state.connection?.send(text, refs,
-                                  state.activeSessionKey || undefined);
+                                  targetSession || undefined);
         })();
       },
 

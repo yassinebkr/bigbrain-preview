@@ -61,6 +61,7 @@ export default function App() {
     });
 
     connection.on('onMessage', (msg) => {
+      if (useAppStore.getState().view === 'welcome') return;
       // Skip empty payloads (e.g. system status frames): they used to
       // render as a blank assistant bubble.
       if (!msg.text || !msg.text.trim()) return;
@@ -75,6 +76,7 @@ export default function App() {
     });
 
     connection.on('onStreamDelta', (delta) => {
+      if (useAppStore.getState().view === 'welcome') return;
       appendStreamingText(delta.text);
     });
 
@@ -89,6 +91,10 @@ export default function App() {
       if (activity.type === 'taskboard.task_created') {
         useAppStore.getState().fetchBoardTasks();
       }
+      const sessionId = activity.detail?.session_id;
+      const current = useAppStore.getState();
+      if (sessionId && sessionId !== current.activeSessionKey) return;
+      if (current.view === 'welcome') return;
       // Contract approval flow (Phase B): a proposal arrives → show the
       // card; a verdict arrives → the card is resolved.
       if (activity.type === 'contracts.proposal') {
@@ -106,24 +112,12 @@ export default function App() {
       }
       // Typing belongs to assistant text generation, never task progress.
       // The session-scoped RunPanel is the sole execution indicator.
-      if (activity.type === 'task.failed') {
-        finalizeStreaming();
-        const detail = activity.detail || {};
-        const subErrors = (detail.failed_subtasks || [])
-          .map((st: any) => st.error)
-          .filter(Boolean)
-          .slice(0, 2);
-        const reason = [detail.error, ...subErrors].filter(Boolean).join(' · ');
-        useAppStore.getState().addMessage({
-          id: `err-${Date.now()}`,
-          role: 'assistant',
-          content: `Task failed: ${reason || 'unknown error'}`,
-          timestamp: Date.now(),
-        });
-      }
+      // The front brain owns the final chat reply (including failures).
+      // task.failed already docks an error card; do not add a second reply.
     });
 
     connection.on('onRunEnd', () => {
+      if (useAppStore.getState().view === 'welcome') return;
       finalizeStreaming();
     });
 

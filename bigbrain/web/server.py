@@ -1058,6 +1058,7 @@ class WebServer:
         "subtask.failed": "subtask.started",
         "task.complete": "task.received",
         "task.failed": "task.received",
+        "task.cancelled": "task.received",
     }
 
     def _maybe_buffer(self, msg_type: str, event: str, data: dict) -> None:

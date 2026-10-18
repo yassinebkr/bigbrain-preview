@@ -373,6 +373,15 @@ class PythonBrain(BaseBrain):
         implementation_notes = payload.get("implementation_notes", "")
         edge_cases = payload.get("edge_cases", [])
 
+        # Both architect and legacy prompts use these sections.
+        task_state_section = ""
+        if "_task_state" in payload:
+            task_state_section = f"\n\n## Current Project Progress\n{payload['_task_state']}\n"
+        user_interjection_section = ""
+        if "_user_interjection" in payload:
+            user_message = payload["_user_interjection"]
+            user_interjection_section = f'\n\n## User Message (Mid-Task)\nThe user just said: "{user_message}"\nTake this into account when writing this file.\n'
+
         if architect_spec:
             # Architect-powered prompt: rich context with exact interfaces
             edge_cases_text = ""
@@ -389,18 +398,6 @@ IMPORTANT: The "Actual code" section below shows the REAL implementation
 of your dependencies (written by other workers). Use these exact class names,
 function signatures, and import paths. If the actual code differs from the
 architect spec above, follow the ACTUAL CODE — it's what will be on disk."""
-
-            # Check for task state from orchestrator's TaskTracker
-            task_state_section = ""
-            if "_task_state" in payload:
-                task_state = payload["_task_state"]
-                task_state_section = f"\n\n## Current Project Progress\n{task_state}\n"
-            
-            # Check for user interjection
-            user_interjection_section = ""
-            if "_user_interjection" in payload:
-                user_message = payload["_user_interjection"]
-                user_interjection_section = f"\n\n## User Message (Mid-Task)\nThe user just said: \"{user_message}\"\nTake this into account when writing this file.\n"
 
             prompt = f"""Write the file `{file_path}` for the project "{project_name}".
 

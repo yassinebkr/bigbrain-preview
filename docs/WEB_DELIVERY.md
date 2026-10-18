@@ -1,5 +1,25 @@
 # Web delivery: React/Vite and Chromium
 
+## Conversation isolation
+
+Home/New Chat (including keyboard and command-palette navigation) creates a
+real session, clears transient text/approval state immediately and waits for
+the session id before sending its first message. Late history/session-create
+responses cannot replace a conversation opened meanwhile. Finished run cards
+keep their original session; foreign chat frames and terminal run events do
+not modify the visible conversation/current run. Stop is hidden on Home.
+
+The selected workspace directory is navigation context, not an instruction
+to reuse a previous project's name or requirements for a new request. The
+front brain is instructed to distinguish edits from a separate new project.
+
+Legacy Python file-generation prompts initialize shared progress/interjection
+sections with or without an architect spec. Plans emit a terminal result
+only once, even if other workers finish after a fatal error. The front brain
+owns the final chat reply; the UI no longer adds a duplicate failure message.
+Stream deltas and orchestrator results carry their originating session id,
+so a late result is not attributed to the front brain's most recent session.
+
 `WebAppBrain` uses `ProjectSpec.web_stack`: `react_vite` (default for new
 browser apps) or `static` (plain HTML/CSS/JS when explicitly selected).
 React projects have src/main.tsx, src/App.tsx, src/styles.css and index.html.

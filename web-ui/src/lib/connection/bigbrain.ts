@@ -253,6 +253,10 @@ export class BigBrainConnection implements ConnectionLike {
     ]);
     if (isReplay && !replayableLiveState.has(event)) return;
 
+    // Text callbacks mutate the visible transcript, unlike scoped runs.
+    const isCurrentSession = !payload.session_id || payload.session_id === this.sessionKey;
+    if (event?.startsWith('chat.') && !isCurrentSession) return;
+
     if (event === 'chat.delta') {
       this.callbacks.onStreamDelta?.({
         text: payload.delta || '',
@@ -297,7 +301,7 @@ export class BigBrainConnection implements ConnectionLike {
     ];
     if (event && taskEvents.includes(event)) {
       this.callbacks.onAgentActivity?.({ type: event, detail: payload });
-      if (event === 'task.complete' || event === 'task.failed' || event === 'task.cancelled') {
+      if (isCurrentSession && (event === 'task.complete' || event === 'task.failed' || event === 'task.cancelled')) {
         this.callbacks.onRunEnd?.();
       }
       return;

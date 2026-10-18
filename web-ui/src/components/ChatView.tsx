@@ -26,7 +26,7 @@ export function ChatView() {
       kind: 'message' as const, ts: message.timestamp, message,
     })),
     ...completedRuns
-      .filter((run) => run.sessionId === activeSessionKey && run.finishedAt)
+      .filter((run) => !!activeSessionKey && run.sessionId === activeSessionKey && run.finishedAt)
       .map((run) => ({
         kind: 'run' as const, ts: run.finishedAt!, run,
       })),

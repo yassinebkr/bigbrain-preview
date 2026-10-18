@@ -215,6 +215,62 @@ function mockConnection(overrides: Record<string, any> = {}) {
 }
 
 describe('sessions', () => {
+  it('home navigation creates a new session without inheriting the failed run', () => {
+    const conn = mockConnection({
+      createSession: vi.fn((cb) => cb({ id: 'sess-fresh' })),
+    });
+    useAppStore.setState({ connection: conn as any, activeSessionKey: 'sess-touch',
+      view: 'chat', isStreaming: true, streamingText: 'old',
+      messages: [{ id: 'old', role: 'user', content: 'TouchDesigner', timestamp: 1 }],
+      completedRuns: [{ id: 'touch', sessionId: 'sess-touch', status: 'failed',
+        description: 'TouchDesigner', startedAt: 1, finishedAt: 2, files: [], steps: [] }],
+    });
+    useAppStore.getState().setView('welcome');
+    const s = useAppStore.getState();
+    expect(s.activeSessionKey).toBe('sess-fresh');
+    expect(s.isStreaming).toBe(false);
+    expect(s.streamingText).toBe('');
+    expect(s.messages).toEqual([]);
+    expect(s.completedRuns.filter((r) => r.sessionId === s.activeSessionKey)).toEqual([]);
+    expect(s.completedRuns[0].sessionId).toBe('sess-touch');
+  });
+
+  it('first send waits for session creation and keeps the first message visible', async () => {
+    let created!: (session: any) => void;
+    const conn = mockConnection({ createSession: vi.fn((cb) => { created = cb; }) });
+    useAppStore.setState({ connection: conn as any });
+    useAppStore.getState().startNewSession();
+    useAppStore.getState().setInputText('new React project');
+    useAppStore.getState().sendMessage();
+    expect(conn.send).not.toHaveBeenCalled();
+    created({ id: 'sess-delayed' });
+    await Promise.resolve();
+    expect(conn.send).toHaveBeenCalledWith('new React project', [], 'sess-delayed');
+    expect(useAppStore.getState().messages[0].content).toBe('new React project');
+    expect(useAppStore.getState().view).toBe('chat');
+  });
+
+  it('late session creation cannot replace a conversation opened meanwhile', () => {
+    let created!: (session: any) => void;
+    const conn = mockConnection({ createSession: vi.fn((cb) => { created = cb; }) });
+    useAppStore.setState({ connection: conn as any });
+    useAppStore.getState().startNewSession();
+    useAppStore.getState().openSession('sess-opened');
+    created({ id: 'sess-late' });
+    expect(useAppStore.getState().activeSessionKey).toBe('sess-opened');
+  });
+
+  it('late history cannot replace the visible conversation', () => {
+    let loaded!: (frame: any) => void;
+    const conn = mockConnection({ loadHistory: vi.fn((cb) => { loaded = cb; }) });
+    useAppStore.setState({ connection: conn as any });
+    useAppStore.getState().openSession('sess-old');
+    useAppStore.getState().startNewSession();
+    loaded({ ok: true, payload: { messages: [{ content: 'old history' }] } });
+    expect(useAppStore.getState().messages).toEqual([]);
+    expect(useAppStore.getState().view).toBe('welcome');
+  });
+
   beforeEach(() => {
     reset();
     useAppStore.setState({ sessions: [], activeSessionKey: '' });
@@ -394,6 +450,17 @@ describe('applyFsRunEvent — streaming manual runs', () => {
 });
 
 describe('run record is scoped to its conversation', () => {
+  it('a late terminal event from another run cannot dock the current run', () => {
+    useAppStore.setState({ activeRun: {
+      id: 'new-plan', sessionId: 'sess-new', status: 'running',
+      description: 'new project', startedAt: 1, files: [], steps: [],
+    }, completedRuns: [] });
+    useAppStore.getState().applyRunEvent(ev('task.failed', {
+      task_id: 'old-plan', session_id: 'sess-old', error: 'old failure',
+    }));
+    expect(useAppStore.getState().activeRun?.id).toBe('new-plan');
+    expect(useAppStore.getState().completedRuns).toEqual([]);
+  });
   it('opening another session preserves the originating run', () => {
     useAppStore.setState({
       activeSessionKey: 'sess-origin',
