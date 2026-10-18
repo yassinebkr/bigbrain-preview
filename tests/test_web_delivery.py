@@ -46,7 +46,7 @@ def test_architect_enforces_contract_on_already_declared_acceptance_file():
                         "implementation_notes": "invent a schema"}],
     })
     acceptance = next(file for file in spec.file_specs if file.path == "tests/acceptance.json")
-    assert '"schema_version":1' in acceptance.implementation_notes
+    assert '"schema_version":2' in acceptance.implementation_notes
     assert "invent a schema" not in acceptance.implementation_notes
 
 
@@ -64,7 +64,7 @@ async def test_generated_acceptance_is_canonical_before_file_written(tmp_path):
     assert written["schema_version"] == 1
     assert written["cases"][0]["assertions"] == ["main visible"]
     prompt = provider.chat_complete.call_args.kwargs["messages"][1]["content"]
-    assert '"schema_version":1' in prompt
+    assert '"schema_version":2' in prompt
 
 
 @pytest.mark.asyncio
@@ -76,8 +76,8 @@ async def test_real_assembly_delivers_truthful_terminal_event(tmp_path, monkeypa
     (project / "index.html").write_text('<main>Excel</main><script src="app.js"></script>')
     (project / "styles.css").write_text("main {color: black}")
     (project / "app.js").write_text("document.title = 'Excel';")
-    (project / "tests/acceptance.json").write_text(json.dumps({"acceptanceCriteria": [{
-        "title": "load", "steps": ["open"], "expectedResults": ["main visible"],
+    (project / "tests/acceptance.json").write_text(json.dumps({"schema_version": 2, "cases": [{
+        "name": "load", "steps": [], "assertions": [{"op": "visible", "selector": "main"}],
     }]} if failure != "invalid_contract" else {"cases": []}))
     if failure == "missing_asset":
         (project / "index.html").write_text('<main>Excel</main><script src="missing.js"></script>')
@@ -126,7 +126,7 @@ async def test_real_assembly_delivers_truthful_terminal_event(tmp_path, monkeypa
                 assert response.status_code == 200
                 assert "Excel" in response.text
             manifest = json.loads((project / ".project.json").read_text())
-            assert manifest["browser_tests_executed"] is False
+            assert manifest["browser_tests_executed"] is True
     finally:
         await brain.cleanup()
         await brain.stop()

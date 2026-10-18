@@ -739,6 +739,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                 brain_target=worker_brain,
                 payload={
                     "type": "write_web_file" if spec.deliverable_type == "web_app" else "write_project_file",
+                    "web_stack": spec.web_stack,
                     "user_request": user_request,
                     "project_name": project_name,
                     "file_path": fs.path,
@@ -769,6 +770,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             brain_target=worker_brain,
             payload={
                 "type": "assemble_and_preview" if spec.deliverable_type == "web_app" else "assemble_and_run",
+                "web_stack": spec.web_stack,
                 "user_request": user_request,
                 "project_name": project_name,
                 "all_files": all_files_summary,

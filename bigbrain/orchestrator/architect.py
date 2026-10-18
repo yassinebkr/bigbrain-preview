@@ -207,6 +207,7 @@ class ProjectSpec:
     execution_strategy: str = ""  # how to run/test
     deliverable_type: str = "python"  # python | web_app
     interaction_mode: str = "cli"  # cli | browser | library
+    web_stack: str = "static"  # static | react_vite
 
     def to_dict(self) -> dict:
         return {
@@ -220,6 +221,7 @@ class ProjectSpec:
             "execution_strategy": self.execution_strategy,
             "deliverable_type": self.deliverable_type,
             "interaction_mode": self.interaction_mode,
+            "web_stack": self.web_stack,
         }
 
     def get_file_spec(self, path: str) -> Optional[FileSpec]:
@@ -270,17 +272,17 @@ Your specification must be detailed enough that SEPARATE developers (who cannot 
 ## Rules
 - Choose `deliverable_type` from `python` or `web_app` from the requested user experience, never from a keyword rule.
 - Python deliverables use Python and are operated through CLI/library/service semantics.
-- Web app deliverables are browser-first and MUST use separate HTML/CSS/JavaScript files. For this initial capability, prefer dependency-free static web apps with localStorage when persistence is needed.
+- Web app deliverables are browser-first. Default web_stack is react_vite: React 19 + TypeScript + Vite, responsive authored CSS, lucide-react icons, localStorage when persistence is needed. Use web_stack=static only if explicitly requesting plain HTML/CSS/JS or editing an existing static app.
 - `tech_decisions` is UI metadata: list only concise technology choices (for example `HTML/CSS/JavaScript`, `localStorage`). Put explanations and product behaviour in description, file specs, or acceptance contracts — never in `tech_decisions`.
-- A web app MUST include index.html, styles.css, app.js, and tests/acceptance.json. It must be usable by opening the preview, not by printing a textual imitation to a console.
+- A react_vite app MUST include index.html, src/main.tsx, src/App.tsx, src/styles.css, package.json, tsconfig.json, vite.config.ts and tests/acceptance.json. Toolchain files package.json/tsconfig.json/vite.config.ts are server-owned; do not invent dependencies. Static apps use index.html, styles.css, app.js, tests/acceptance.json. Use coherent visual hierarchy, responsive layouts, reusable components and clear empty/error states.
 - Every function signature must include parameter types and return type
 - Every data model must list all fields with types
 - Dependencies between files must be explicit (what imports what)
 - Set executable=false ONLY when the user explicitly requests a library, passive module, source-only deliverable, or otherwise explicitly asks for no runnable entry point
 - Otherwise executable defaults to true and the entry point must be clear (which file to run, what command)
-- When executable=true, entry_point MUST be present in file_specs, run non-interactively with no arguments, and print a meaningful demo/result (never silent exit 0)
+- When executable=true, entry_point MUST be present in file_specs. Python entry points run non-interactively with no arguments and print a meaningful result; web entry points render a usable browser interface.
 - When executable=false, entry_point MUST be null and no artificial runner/demo may be added
-- Every executable project MUST include at least one tests/test_*.py acceptance test that asserts the user-visible requested behavior, not merely imports or exit code
+- Every executable Python project MUST include tests/test_*.py. Web apps use executable tests/acceptance.json browser scenarios.
 - Keep to 3-8 implementation files for most projects, plus acceptance tests. Don't over-engineer.
 - Current year: {current_year}
 
@@ -289,6 +291,7 @@ Respond with ONLY a JSON object matching this schema:
 {{
   "project_name": "short-kebab-name",
   "deliverable_type": "python|web_app",
+  "web_stack": "react_vite|static",
   "interaction_mode": "cli|browser|library",
   "description": "One paragraph describing the project",
   "tech_decisions": ["technology or framework", "storage/runtime choice"],
@@ -507,6 +510,9 @@ class ArchitectPhase:
             raise ValueError(f"Architect: unsupported deliverable_type {deliverable_type!r}")
         interaction_mode = str(raw.get("interaction_mode") or (
             "browser" if deliverable_type == "web_app" else "cli"))
+        web_stack = str(raw.get("web_stack") or ("react_vite" if deliverable_type == "web_app" else "static"))
+        if web_stack not in {"static", "react_vite"}:
+            raise ValueError(f"Unsupported web_stack: {web_stack}")
         executable = raw.get("executable", True) is not False
         default_entry = "index.html" if deliverable_type == "web_app" else "main.py"
         entry_point = str(raw.get("entry_point") or default_entry) if executable else None
@@ -544,17 +550,35 @@ class ArchitectPhase:
                     "Machine-readable user acceptance scenarios",
                     ACCEPTANCE_CONTRACT),
             }
+            if web_stack == "react_vite":
+                web_required = {
+                    "index.html": ("Vite HTML entry", 'Root div id="root" and module script /src/main.tsx.'),
+                    "src/main.tsx": ("React entry", "createRoot renders App; import ./styles.css."),
+                    "src/App.tsx": ("Application components", "Default export App with semantic main, responsive polished UI, real requested interactions."),
+                    "src/styles.css": ("Responsive application styles", "Deliberate typography, spacing, contrast, keyboard focus, mobile layouts. No external assets."),
+                    "package.json": ("Pinned dependencies", "Server-owned React/Vite toolchain."),
+                    "tsconfig.json": ("Strict TypeScript configuration", "Server-owned compiler configuration."),
+                    "vite.config.ts": ("Production build configuration", "Server-owned relative-base Vite configuration."),
+                    "tests/acceptance.json": ("Executable browser scenarios", ACCEPTANCE_CONTRACT),
+                }
             existing = {spec.path for spec in file_specs}
             for path, (purpose, notes) in web_required.items():
                 if path not in existing:
                     file_specs.append(FileSpec(
                         path=path, purpose=purpose,
-                        dependencies=[] if path != "index.html" else ["styles.css", "app.js"],
+                        dependencies=([] if path != "index.html" else
+                                      (["src/main.tsx", "src/App.tsx", "src/styles.css"]
+                                       if web_stack == "react_vite" else ["styles.css", "app.js"])),
                         implementation_notes=notes,
                     ))
             for file_spec in file_specs:
                 if file_spec.path == "tests/acceptance.json":
                     file_spec.implementation_notes = ACCEPTANCE_CONTRACT
+                    file_spec.dependencies = [file.path for file in file_specs if not file.path.startswith("tests/")]
+                else:
+                    file_spec.dependencies = [dep for dep in file_spec.dependencies if dep != "tests/acceptance.json"]
+                if web_stack == "react_vite" and file_spec.path == "src/main.tsx":
+                    file_spec.dependencies = list(dict.fromkeys([*file_spec.dependencies, "src/App.tsx", "src/styles.css"]))
 
         if deliverable_type == "python" and executable and file_specs and not any(
                 spec.path.startswith("tests/") and spec.path.endswith(".py")
@@ -580,14 +604,19 @@ class ArchitectPhase:
         return ProjectSpec(
             project_name=project_name,
             description=raw.get("description", ""),
-            tech_decisions=raw.get("tech_decisions", []),
+            tech_decisions=(["React 19", "TypeScript", "Vite", "CSS", "lucide-react"]
+                            if deliverable_type == "web_app" and web_stack == "react_vite"
+                            else raw.get("tech_decisions", [])),
             data_models=data_models,
             file_specs=file_specs,
             executable=executable,
             entry_point=entry_point,
-            execution_strategy=raw.get("execution_strategy", ""),
+            execution_strategy=("Typecheck TypeScript, build Vite, tests Chromium, preview production"
+                                if deliverable_type == "web_app" and web_stack == "react_vite"
+                                else raw.get("execution_strategy", "")),
             deliverable_type=deliverable_type,
             interaction_mode=interaction_mode,
+            web_stack=web_stack,
         )
 
     def _parse_function(self, raw: dict) -> FunctionContract:

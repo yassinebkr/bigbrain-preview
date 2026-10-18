@@ -18,6 +18,7 @@ cd bigbrain-preview
 
 # Backend
 pip install -e ".[test,web]"
+python -m playwright install chromium
 
 # Web UI (built once, served by the backend at /)
 cd web-ui && npm install && npm run build && cd ..
@@ -29,10 +30,17 @@ python -m bigbrain --web --web-port 3007
 Open http://localhost:3007. There is no default LLM: open the Providers
 panel and either paste an OpenRouter key, click "Connect with Mistral"
 (browser PKCE), or connect a ChatGPT subscription (Codex). The model
-lineup (per role: front, planner, code, subagent) is selected in the UI
+lineup (per role: front, planner, code, web, subagent) is selected in the UI
 and persisted server-side.
 
 Set `BIGBRAIN_WEB_PASSWORD` to enable HTTP Basic Auth.
+
+New web applications use React 19, TypeScript and Vite by default. They need
+Node >=20.19 and npm. BigBrain installs a bounded dependency set, type-checks
+and builds the project, then runs its executable browser scenarios in Chromium
+before publishing a verified preview. Errors and screenshots are recorded in
+Evidence; up to two code repairs retain the original tests. See
+[WEB_DELIVERY.md](docs/WEB_DELIVERY.md). Existing static previews remain supported.
 
 ### Other modes
 

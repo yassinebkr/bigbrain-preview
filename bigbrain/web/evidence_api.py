@@ -46,6 +46,11 @@ def list_runs(limit: int = 100) -> Dict[str, Any]:
             "brain": manifest.toolchain.get("brain"),
             "stages": [{"name": s.name, "status": s.status}
                        for s in manifest.stages],
+            "browser_evidence": next(({
+                "details": stage.details,
+                "screenshots": [artifact.sha256 for artifact in manifest.artifacts if artifact.media_type == "image/png"],
+                "report": next((artifact.sha256 for artifact in manifest.artifacts if artifact.name == "browser-report.json"), None),
+            } for stage in manifest.stages if stage.name == "browser"), None),
         }
         group = groups.get(manifest.design_id)
         if group is None:
@@ -117,6 +122,14 @@ def setup_evidence_routes(app: web.Application) -> None:
     app.router.add_get("/api/evidence/runs", _handle_runs)
     app.router.add_get("/api/evidence/run/{run_id}", _handle_run)
     app.router.add_get("/api/evidence/artifact", _handle_artifact)
+    app.router.add_get("/api/evidence/image/{sha}", _handle_image)
+
+
+async def _handle_image(request: web.Request) -> web.Response:
+    content = default_repository().get_artifact(request.match_info["sha"])
+    if content is None or not content.startswith(b"\x89PNG\r\n\x1a\n") or len(content) > 2_000_000:
+        raise web.HTTPNotFound()
+    return web.Response(body=content, content_type="image/png", headers={"X-Content-Type-Options": "nosniff"})
 
 
 async def _handle_runs(request: web.Request) -> web.Response:

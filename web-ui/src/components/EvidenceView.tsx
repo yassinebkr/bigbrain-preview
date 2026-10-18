@@ -19,6 +19,11 @@ interface EvidenceRun {
   replay_of?: string | null;
   brain?: string | null;
   stages: { name: string; status: string }[];
+  browser_evidence?: {
+    details: { error?: string; cases?: { name: string; status: string; error?: string }[] };
+    screenshots: string[];
+    report?: string;
+  } | null;
 }
 
 interface EvidenceTask {
@@ -291,7 +296,8 @@ export function EvidenceView() {
                           {task.runs.map((run, i) => {
                             const runColor = VERDICT_COLORS[run.verdict] || 'var(--text-tertiary)';
                             return (
-                              <div key={run.run_id}
+                              <div key={run.run_id}>
+                              <div
                                    className="flex items-center gap-2 text-[11px] px-1 py-0.5 rounded"
                                    style={{ opacity: i === 0 ? 1 : 0.75 }}>
                                 <span className="flex-shrink-0" style={{ color: runColor }}>
@@ -308,6 +314,23 @@ export function EvidenceView() {
                                 <span className="flex-shrink-0" style={{ color: runColor }}>
                                   {run.verdict}
                                 </span>
+                              </div>
+                              {run.browser_evidence && (
+                                <details className="ml-4 my-2 text-[11px]">
+                                  <summary className="cursor-pointer" style={{ color: 'var(--accent-blue)' }}>Preuves navigateur</summary>
+                                  {run.browser_evidence.details.error && <p className="whitespace-pre-wrap">{run.browser_evidence.details.error}</p>}
+                                  {run.browser_evidence.details.cases?.map((scenario, index) => (
+                                    <p key={index} className="my-1 whitespace-pre-wrap">{scenario.status === 'passed' ? '✓' : '×'} {scenario.name}{scenario.error ? ` — ${scenario.error}` : ''}</p>
+                                  ))}
+                                  <div className="flex flex-wrap gap-2 my-2">
+                                    {run.browser_evidence.screenshots.map((sha) => (
+                                      <a key={sha} href={`/api/evidence/image/${sha}`} target="_blank" rel="noreferrer">
+                                        <img src={`/api/evidence/image/${sha}`} alt="Capture réelle de la vérification navigateur" className="w-48 rounded border" loading="lazy" />
+                                      </a>
+                                    ))}
+                                  </div>
+                                </details>
+                              )}
                               </div>
                             );
                           })}

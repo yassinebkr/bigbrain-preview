@@ -94,7 +94,7 @@ def list_dir(rel: str = "") -> Dict[str, Any]:
         _entry_info(child, root) for child in sorted(target.iterdir())
         # Dot-entries are internal: .project.json manifests, the brain's
         # .exec/ temp scripts. They stay on disk but never clutter the UI.
-        if not child.name.startswith(".")
+        if not child.name.startswith(".") and child.name not in {"node_modules", "__pycache__"}
     ]
     return {"path": rel or "", "entries": entries}
 
@@ -269,7 +269,7 @@ def search_files(query: str, limit: int = 20) -> Dict[str, Any]:
     root = workspace_root()
     results: List[Dict[str, Any]] = []
     for dirpath, _dirnames, filenames in os.walk(root):
-        _dirnames[:] = [d for d in _dirnames if not d.startswith(".")]
+        _dirnames[:] = [d for d in _dirnames if not d.startswith(".") and d not in {"node_modules", "__pycache__"}]
         for name in filenames:
             if name.startswith(".") or q not in name.lower():
                 continue
@@ -501,6 +501,11 @@ async def run_static_preview(rel: str) -> Dict[str, Any]:
         raise web.HTTPBadRequest(text=json_error("web project is not verified runnable"))
 
     key = project_dir.as_posix()
+    preview_dir = project_dir
+    if manifest.get("web_stack") == "react_vite":
+        preview_dir = project_dir / "dist"
+        if not (preview_dir / "index.html").is_file():
+            raise web.HTTPBadRequest(text=json_error("verified production build missing; rebuild the project"))
     previous = _manual_web_previews.pop(key, None)
     if previous and previous.returncode is None:
         previous.terminate()
@@ -526,7 +531,7 @@ async def run_static_preview(rel: str) -> Dict[str, Any]:
     started = time.time()
     process = await asyncio.create_subprocess_exec(
         "python3", "-m", "http.server", str(port), "--bind", "127.0.0.1",
-        cwd=str(project_dir), stdout=asyncio.subprocess.DEVNULL,
+        cwd=str(preview_dir), stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.PIPE,
     )
     await asyncio.sleep(0.15)

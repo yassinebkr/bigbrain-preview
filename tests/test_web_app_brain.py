@@ -16,7 +16,7 @@ def _write_web_project(root: Path, name: str = "fitness") -> tuple[Path, list[di
         "index.html": '<!doctype html><main><h1>Plan</h1><button id="next">Next</button></main><link rel="stylesheet" href="styles.css"><script src="app.js"></script>',
         "styles.css": "button:focus-visible { outline: 2px solid blue; }\n",
         "app.js": "document.querySelector('#next').addEventListener('click', () => {});\n",
-        "tests/acceptance.json": json.dumps({"cases": [{"name": "advance workout", "assertions": ["button advances the workout"]}]}),
+        "tests/acceptance.json": json.dumps({"schema_version": 2, "cases": [{"name": "advance workout", "steps": [{"op": "click", "selector": "#next"}], "assertions": [{"op": "visible", "selector": "main"}]}]}),
     }
     for rel, content in files.items():
         target = project / rel
@@ -141,6 +141,7 @@ def test_architect_repairs_minimal_web_spec_with_required_files():
         "project_name": "fitness",
         "description": "interactive plan",
         "deliverable_type": "web_app",
+        "web_stack": "static",
         "interaction_mode": "browser",
         "file_specs": [{"path": "app.js", "purpose": "interaction"}],
         "entry_point": "index.html",

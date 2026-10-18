@@ -1,8 +1,16 @@
-# Static web delivery
+# Web delivery: React/Vite and Chromium
 
-`WebAppBrain` generates HTML/CSS/JavaScript and validates local artifacts
-before returning an executable project and preview URL. `index.html` must
-exist, contain a semantic `main` region and reference existing local files.
+`WebAppBrain` uses `ProjectSpec.web_stack`: `react_vite` (default for new
+browser apps) or `static` (plain HTML/CSS/JS when explicitly selected).
+React projects have src/main.tsx, src/App.tsx, src/styles.css and index.html.
+The server owns package.json, tsconfig.json and vite.config.ts, with pinned
+React 19, TypeScript, Vite and lucide-react dependencies. npm installation
+disables lifecycle scripts; TypeScript and Vite run as explicit argv, without
+a shell. The preview serves the built dist directory, including on UI rerun.
+
+Install with `pip install -e '.[web]'` then
+`python -m playwright install chromium`. Node >=20.19 and npm are required
+for React builds. CI installs Chromium and its OS dependencies explicitly.
 
 The architect and worker share the acceptance protocol in
 `bigbrain/brains/web_acceptance.py`. New `tests/acceptance.json` files are
@@ -10,26 +18,35 @@ validated and saved in this canonical form before `workspace.file_written`:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "cases": [{
     "name": "Open the application",
-    "steps": ["Open index.html"],
-    "assertions": ["The requested application is visible"]
+    "steps": [{"op": "click", "selector": "#complete"}, {"op": "reload"}],
+    "assertions": [{"op": "checked", "selector": "#done", "value": true}]
   }]
 }
 ```
 
 `cases` and `assertions` must be non-empty arrays; `steps` is optional.
-Items may be non-empty strings or objects. Unsupported versions and malformed
-documents fail explicitly. Pre-v1 `cases`, `tests` and `acceptanceCriteria`
-documents are adapted at the boundary, including `title`, `expectedResults`
-and step-based scenarios. The original user project is not rewritten by the
-read-only validator.
+Operations are strictly validated data: click/fill/check/uncheck/select/press,
+reload, viewport, visible/text/count/checked/value, storage_equals, no_overflow.
+Arbitrary code and URLs are not accepted. Each case runs in a fresh ephemeral
+profile. Old v1/descriptive formats remain readable, but browser verification
+is inconclusive until executable v2 scenarios exist; prose is never a test pass.
 
-These documents describe acceptance scenarios. The static gate does **not**
-execute browser assertions. Its evidence explicitly records
-`scope=static_artifacts` and `browser_tests_executed=false`. A runnable preview
-does not mean all interactions have passed browser tests.
+The mandatory browser gate opens the production preview, verifies main
+visibility, executes cases and captures JS/console errors, missing assets and
+screenshots. External requests and service workers are blocked. Execution
+is in a child process group with a 60s bound; Stop kills the driver and browser.
+Missing Chromium produces an inconclusive verdict, never a pass.
+
+At most two code repairs are allowed across build/browser errors. Existing
+source files may be replaced; tests/toolchain/dependencies cannot be edited
+by the repair response. Every attempt has immutable Evidence, source snapshots,
+logs and up to three PNG screenshots. Attempts hash-link to the approved
+DesignSpec and to previous attempts. The UI exposes results and screenshots
+under Evidence. This verifies declared scenarios, not arbitrary completeness
+or visual quality. The broader real-project campaign remains separate.
 
 A worker returning `success=false` must retain that status in the bus result
 envelope. The orchestrator then emits `task.failed` with the actual cause and
@@ -41,4 +58,7 @@ Successful assembly emits `task.complete` with `project_path`, `entry_point`,
 `deliverable_type`, `runnable` and the real `preview_url`. The docked React
 card keeps its iframe and Open/Run controls visible. Regression coverage:
 `tests/test_web_delivery.py` exercises the real bus and preview HTTP server;
-`RunTimelineCard.test.tsx` checks the collapsed render.
+`tests/test_web_browser.py` exercises Chromium, persistence, repair and Stop;
+`tests/test_web_react.py` builds and type-checks real TSX, checks persistence in
+Chromium and reruns production preview. `RunTimelineCard.test.tsx` checks the
+collapsed render.
