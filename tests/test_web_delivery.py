@@ -71,7 +71,9 @@ async def test_generated_acceptance_is_canonical_before_file_written(tmp_path):
 @pytest.mark.parametrize("failure", [None, "missing_asset", "invalid_contract"])
 async def test_real_assembly_delivers_truthful_terminal_event(tmp_path, monkeypatch, failure):
     monkeypatch.setenv("BIGBRAIN_WORKSPACE_DIR", str(tmp_path))
-    project = tmp_path / "sandbox" / "excel"
+    from bigbrain.execution_target import ExecutionTarget
+    target = ExecutionTarget("new", "sandbox/excel", str(tmp_path)).prepare()
+    project = target.directory
     (project / "tests").mkdir(parents=True)
     (project / "index.html").write_text('<main>Excel</main><script src="app.js"></script>')
     (project / "styles.css").write_text("main {color: black}")
@@ -91,6 +93,7 @@ async def test_real_assembly_delivers_truthful_terminal_event(tmp_path, monkeypa
     step = SubTask(id="assembly", description="assemble Excel", brain_target=brain.name,
                    payload={"type": "assemble_and_preview", "project_name": "excel"})
     plan = TaskPlan(id="excel-plan", original_task=original, subtasks=[step], status=TaskStatus.RUNNING)
+    plan.execution_target = target
     orch.task_plans[plan.id] = plan
     events = []
     finished = asyncio.Event()
@@ -121,10 +124,14 @@ async def test_real_assembly_delivers_truthful_terminal_event(tmp_path, monkeypa
             assert terminal["project_path"] == "sandbox/excel"
             assert terminal["entry_point"] == "index.html"
             assert terminal["deliverable_type"] == "web_app"
+            from bigbrain.web.preview_leases import PreviewLeases
+            previews = PreviewLeases()
+            lease = await previews.acquire(project)
             async with httpx.AsyncClient() as client:
-                response = await client.get(terminal["preview_url"])
+                response = await client.get(lease["previewUrl"])
                 assert response.status_code == 200
                 assert "Excel" in response.text
+            await previews.release(lease["leaseId"])
             manifest = json.loads((project / ".project.json").read_text())
             assert manifest["browser_tests_executed"] is True
     finally:

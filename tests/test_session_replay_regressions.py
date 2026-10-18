@@ -132,7 +132,10 @@ async def test_selected_project_is_not_a_mandatory_destination_for_new_requests(
     front._history_for("sess-new").append({
         "role": "user", "content": "Crée un programme React sur quatre semaines",
     })
-    await front._llm_respond("Crée un programme React sur quatre semaines", session_id="sess-new")
+    await front._handle_ui_message(BusMessage(
+        type=MessageType.TASK, source="morphable_ui", target="front_brain",
+        payload={"text": "Crée un programme React sur quatre semaines", "session_id": "sess-new",
+                 "navigation_project": "sandbox/blender"}))
     messages = provider.chat_complete.call_args.kwargs["messages"]
     context = next(m["content"] for m in messages if "Workspace selection:" in m["content"])
     assert "sandbox/blender" in context

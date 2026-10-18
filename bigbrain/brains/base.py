@@ -1,6 +1,9 @@
 """BaseBrain - Abstract base class for BigBrain execution workers."""
 
 import asyncio
+from contextlib import contextmanager
+from contextvars import ContextVar
+from pathlib import Path
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
 
@@ -43,9 +46,70 @@ class BaseBrain(BusParticipant, ABC):
         self._current_task: Optional[BusMessage] = None
         self._cancelled = False
         self._background_task: Optional[asyncio.Task] = None
+        self._directory_context = ContextVar(f"{name}_execution_target", default=None)
+        self._task_context = ContextVar(f"{name}_logical_task", default=None)
         
         # Bind message handler to this instance
         self._message_handler = self._handle_message_wrapper
+
+    @property
+    def work_dir(self) -> Path:
+        target = self._directory_context.get()
+        if target is not None:
+            target.validate()
+            return target.directory
+        return self._default_work_dir
+
+    @work_dir.setter
+    def work_dir(self, value) -> None:
+        self._default_work_dir = Path(value)
+
+    @contextmanager
+    def execution_scope(self, payload):
+        from ..execution_target import ExecutionTarget
+        data = payload.get("_execution_target")
+        target = ExecutionTarget(**data) if isinstance(data, dict) else None
+        local = dict(payload)
+        if target is not None:
+            if target.inode is None:
+                raise ValueError("La destination du run n’a pas été préparée")
+            target.validate()
+            if local.get("project_name"):
+                local["project_name"] = target.directory.name
+            for key in ("file", "file_path", "filename", "entry_point"):
+                if local.get(key):
+                    path = local[key]
+                    prefix = target.path + "/"
+                    if path.startswith(prefix):
+                        path = path[len(prefix):]
+                    target.file(path)
+                    local[key] = path
+            if local.get("project_dir"):
+                path = local["project_dir"]
+                if Path(path) != target.directory:
+                    prefix = target.path + "/"
+                    path = path[len(prefix):] if path.startswith(prefix) else path
+                    local["project_dir"] = str(target.file(path))
+            files = local.get("files") or []
+            for entry in files:
+                path = entry if isinstance(files, dict) else entry.get("path") if isinstance(entry, dict) else None
+                if path:
+                    target.file(path)
+            for entry in local.get("all_files") or []:
+                if isinstance(entry, dict) and entry.get("path"):
+                    target.file(entry["path"])
+        token = self._directory_context.set(target)
+        try:
+            yield local
+        finally:
+            self._directory_context.reset(token)
+
+    def project_directory(self, project_name: str) -> Path:
+        target = self._directory_context.get()
+        if target is not None:
+            target.validate()
+            return target.directory
+        return self.work_dir / project_name
     
     async def start(self) -> None:
         """
@@ -206,6 +270,7 @@ class BaseBrain(BusParticipant, ABC):
         call. If _current_task is still set at that point, the brain rejects
         the new task as "busy" — creating an infinite re-dispatch loop.
         """
+        task_token = self._task_context.set(message)
         try:
             # Announce task start
             await self.send_event("brain.started", {
@@ -273,6 +338,8 @@ class BaseBrain(BusParticipant, ABC):
                 "error": str(e),
                 "message_id": message.id
             }, priority=Priority.HIGH)
+        finally:
+            self._task_context.reset(task_token)
     
     async def _handle_cancel_message(self, message: BusMessage) -> None:
         """Handle task cancellation requests."""
@@ -334,7 +401,8 @@ class BaseBrain(BusParticipant, ABC):
         )
     
     def _event_context(self) -> Dict[str, Any]:
-        task = self._current_task.payload if self._current_task else {}
+        current = self._task_context.get() or self._current_task
+        task = current.payload if current else {}
         return {key: task[source] for key, source in (
             ('session_id', 'session_id'), ('task_id', '_plan_id'), ('subtask_id', '_subtask_id'))
             if task.get(source) is not None}

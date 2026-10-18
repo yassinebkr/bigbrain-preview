@@ -2,6 +2,49 @@ import { describe, expect, it, vi } from 'vitest';
 import { BigBrainConnection } from './bigbrain';
 
 describe('session-scoped websocket replies', () => {
+  it('does not finalize front-brain streaming when a worker finishes', () => {
+    const conn = new BigBrainConnection({ wsUrl: 'ws://localhost/ws' });
+    conn.switchSession('sess-live');
+    const end = vi.fn();
+    conn.on('onRunEnd', end);
+    (conn as any)._handleFrame({ type: 'event', payload: {
+      event: 'task.complete', task_id: 'board', session_id: 'sess-live',
+    } });
+    expect(end).not.toHaveBeenCalled();
+  });
+  it('restores transcript and durable run state for the exact requested session', () => {
+    const conn = new BigBrainConnection({ wsUrl: 'ws://localhost/ws' });
+    conn.switchSession('sess-running');
+    let answer!: (frame: any) => void;
+    (conn as any)._request = (_method: string, callback: (frame: any) => void) => { answer = callback; return 'req-history'; };
+    const catchUp = vi.fn();
+    const activity = vi.fn();
+    conn.on('onResumeCatchUp', catchUp);
+    conn.on('onAgentActivity', activity);
+    conn.loadHistory();
+    answer({ payload: { sessionId: 'sess-running', as_of: 20,
+      messages: [{ id: 'm1', role: 'assistant', text: 'Projet terminé', timestamp: 10 }],
+      activities: [{ timestamp: 11, payload: { event: 'task.complete', task_id: 'web', session_id: 'sess-running' } }],
+    } });
+    expect(catchUp).toHaveBeenCalledWith([
+      expect.objectContaining({ content: 'Projet terminé', timestamp: 10000 }),
+    ], 'sess-running', 20000);
+    expect(activity).toHaveBeenCalledWith(expect.objectContaining({ type: 'task.complete', ts: 11000 }));
+  });
+
+  it('ignores late catch-up when the user changed conversations', () => {
+    const conn = new BigBrainConnection({ wsUrl: 'ws://localhost/ws' });
+    conn.switchSession('sess-old');
+    let answer!: (frame: any) => void;
+    (conn as any)._request = (_method: string, callback: (frame: any) => void) => { answer = callback; return 'req-history'; };
+    const catchUp = vi.fn();
+    conn.on('onResumeCatchUp', catchUp);
+    conn.loadHistory();
+    conn.switchSession('sess-new');
+    answer({ payload: { sessionId: 'sess-old', messages: [] } });
+    expect(catchUp).not.toHaveBeenCalled();
+  });
+
   it('does not render text or finish streaming for another conversation', () => {
     const conn = new BigBrainConnection({ wsUrl: 'ws://localhost/ws' });
     conn.switchSession('sess-new');

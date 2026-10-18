@@ -195,33 +195,12 @@ class BigBrainSystem:
         }
 
     def apply_current_project(self) -> dict:
-        """Re-target agent writes to the selected project.
-
-        No project (global) → pool writes to the ``sandbox`` project
-        (auto-created scratch project), so global-mode files stay
-        organized instead of piling up in a loose folder. A selected
-        project → pool writes to <workspace>/<project>.
-        """
-        from .web.fs_api import ensure_sandbox, get_current_project, workspace_root
+        """Report navigation selection. Never mutate a worker's execution root."""
+        from .web.fs_api import ensure_sandbox, get_current_project
 
         project = get_current_project()
-        root = workspace_root()
-        if project:
-            target = root / project
-        else:
-            ensure_sandbox()
-            target = root / "sandbox"
-        target.mkdir(parents=True, exist_ok=True)
-
-        retargeted = 0
-        for brain in self.brains.values():
-            if hasattr(brain, "work_dir"):
-                brain.work_dir = target
-                retargeted += 1
-
-        label = project or "global (sandbox/)"
-        print(f"📂 Working project: {label} — {retargeted} brain(s) write to {target.name}/")
-        return {"ok": True, "project": project, "retargeted": retargeted}
+        ensure_sandbox()
+        return {"ok": True, "project": project, "retargeted": 0}
 
     async def cancel_current(self, session_id: str | None = None) -> dict:
         """Stop what is in flight: front brain LLM stream + orchestrated run.
@@ -481,14 +460,14 @@ class BigBrainSystem:
         # Create a pool of PythonBrain workers for parallel file writes.
         # The orchestrator resolves logical "python_brain" → least-loaded worker.
         #
-        # IMPORTANT: All pool workers share the SAME work_dir so files written
-        # by worker 1 are visible to worker 0 during assemble_and_run.
+        # Pool workers use the same run-owned destination from the envelope,
+        # so files written by worker 1 are visible to worker 0 on assembly.
         # Each worker still has isolated temp scripts (script_*.py uses unique names).
         python_pool_size = int(os.environ.get("BIGBRAIN_PYTHON_POOL", "3"))
         # Agent writes live in the shared workspace root (served by the FS
         # API) so the web UI's file explorer sees them and auto-refreshes
-        # on workspace.file_written events. Global mode targets the
-        # sandbox project; apply_current_project() retargets at startup.
+        # on workspace.file_written events. sandbox is only the stable legacy
+        # default; actual orchestrated file tasks carry a pinned destination.
         from .web.fs_api import workspace_root
         shared_work_dir = workspace_root() / "sandbox"
         shared_work_dir.mkdir(exist_ok=True, parents=True)

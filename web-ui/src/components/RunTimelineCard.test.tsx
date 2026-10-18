@@ -13,8 +13,8 @@ describe('verified web delivery card', () => {
 
   it('shows preview and project controls even when docked/collapsed', () => {
     const html = renderToStaticMarkup(<RunTimelineCard run={run} />);
-    expect(html).toContain('<iframe');
-    expect(html).toContain('src="http://127.0.0.1:3200"');
+    expect(html).toContain('Ouverture de l’aperçu');
+    expect(html).not.toContain('src="http://127.0.0.1:3200"');
     expect(html).toContain('aria-label="Open project"');
     expect(html).toContain('aria-label="Run project"');
     expect(html).not.toContain('No verified runnable entry point');
@@ -29,5 +29,15 @@ describe('verified web delivery card', () => {
     expect(html).not.toContain('aria-label="Run project"');
     expect(html).toContain('Run failed');
     expect(html).toContain('tests/acceptance.json: invalid schema');
+  });
+
+  it('opens the taskboard, never a stale selected project, for board results', () => {
+    const html = renderToStaticMarkup(<RunTimelineCard run={{ ...run,
+      resultKind: 'taskboard', steps: [{ id: 'board', brain: 'taskboard', description: 'Add task', status: 'done' }],
+    }} />);
+    expect(html).toContain('aria-label="Open taskboard"');
+    expect(html).not.toContain('aria-label="Open project"');
+    expect(html).not.toContain('aria-label="Run project"');
+    expect(html).not.toContain('<iframe');
   });
 });

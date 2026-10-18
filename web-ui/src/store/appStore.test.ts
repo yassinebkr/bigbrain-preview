@@ -23,7 +23,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useAppStore } from '@/store/appStore';
 import { selectSessionRun } from '@/store/appStore';
 
-beforeEach(() => useAppStore.setState({ sessionRuns: {}, sessionProposals: {} }));
+beforeEach(() => useAppStore.setState({ sessionRuns: {}, sessionProposals: {}, runsById: {} }));
 
 function reset() {
   useAppStore.setState({
@@ -38,6 +38,63 @@ function reset() {
 }
 
 const ev = (type: string, detail: any) => ({ type, detail });
+
+describe('multiple independent runs in the same conversation', () => {
+  beforeEach(reset);
+  it('replaces only obsolete uncorrelated cache entries during restoration', () => {
+    const s = useAppStore.getState();
+    s.applyRunEvent(ev('task.routing', { session_id: 'sess-live' }));
+    expect(useAppStore.getState().activeRun?.id).toMatch(/^routing-/);
+    s.applyRunEvent(ev('task.routing', { task_id: 'restored-web', session_id: 'sess-live' }));
+    expect(Object.keys(useAppStore.getState().runsById)).toEqual(['restored-web']);
+  });
+
+  it('does not lose a user message sent while history was loading', () => {
+    useAppStore.setState({ messages: [{ id: 'local', role: 'user', content: 'New message', timestamp: 3000 }] });
+    useAppStore.getState().restoreSessionHistory('sess-live', [
+      { id: 'old', role: 'assistant', content: 'Previous response', timestamp: 1000 },
+    ], 2000);
+    expect(useAppStore.getState().messages.map((m) => m.content)).toEqual(['Previous response', 'New message']);
+    useAppStore.getState().restoreSessionHistory('sess-other', [], 4000);
+    expect(useAppStore.getState().messages).toHaveLength(2);
+  });
+
+  it('a quick taskboard action cannot replace or finish an ongoing web project', () => {
+    const s = useAppStore.getState();
+    s.applyRunEvent(ev('task.routing', { task_id: 'web', session_id: 'sess-live', description: 'Running app' }));
+    s.applyRunEvent(ev('task.received', { task_id: 'web', session_id: 'sess-live' }));
+    s.applyRunEvent(ev('subtask.started', { task_id: 'web', subtask_id: 'web-file', brain: 'web_app_brain_0' }));
+    s.applyRunEvent(ev('task.routing', { task_id: 'board', session_id: 'sess-live', description: 'Laundry' }));
+    s.applyRunEvent(ev('task.received', { task_id: 'board', session_id: 'sess-live' }));
+    expect(useAppStore.getState().activeRun?.id).toBe('web');
+    expect(Object.keys(useAppStore.getState().runsById)).toEqual(['web', 'board']);
+    s.applyRunEvent(ev('task.complete', { task_id: 'board', session_id: 'sess-live', result_kind: 'taskboard' }));
+    expect(useAppStore.getState().activeRun?.id).toBe('web');
+    expect(useAppStore.getState().completedRuns[0].resultKind).toBe('taskboard');
+    s.applyRunEvent(ev('task.progress', { task_id: 'web', subtask_id: 'web-file', stage: 'browser_testing' }));
+    expect(useAppStore.getState().activeRun?.steps[0].description).toBe('Tests navigateur');
+    s.applyRunEvent(ev('task.complete', { task_id: 'web', session_id: 'sess-live', project_path: 'sandbox/running', entry_point: 'index.html' }));
+    expect(useAppStore.getState().completedRuns).toHaveLength(2);
+    expect(useAppStore.getState().activeRun).toBeNull();
+    expect(useAppStore.getState().runsById).toEqual({});
+    // Snapshot/reconnect cannot resurrect either completed run.
+    s.applyRunEvent(ev('task.routing', { task_id: 'web', session_id: 'sess-live' }));
+    s.applyRunEvent(ev('task.complete', { task_id: 'web', session_id: 'sess-live' }));
+    expect(useAppStore.getState().runsById).toEqual({});
+    expect(useAppStore.getState().completedRuns).toHaveLength(2);
+  });
+
+  it('switches visible activities without losing either and cancels only this conversation', () => {
+    const s = useAppStore.getState();
+    for (const task_id of ['web', 'board']) s.applyRunEvent(ev('task.received', { task_id, session_id: 'sess-live' }));
+    s.applyRunEvent(ev('task.received', { task_id: 'other', session_id: 'sess-other' }));
+    s.selectRun('board');
+    expect(useAppStore.getState().activeRun?.id).toBe('board');
+    s.stopGeneration();
+    expect(Object.keys(useAppStore.getState().runsById)).toEqual(['other']);
+    expect(useAppStore.getState().completedRuns).toHaveLength(2);
+  });
+});
 
 describe('applyRunEvent — run state machine', () => {
   beforeEach(reset);
@@ -129,11 +186,12 @@ describe('applyRunEvent — run state machine', () => {
     expect(useAppStore.getState().completedRuns.at(-1)?.status).toBe('cancelled');
   });
 
-  it('a second task.received replaces the previous run', () => {
+  it('a second task.received preserves both runs and the selected one', () => {
     const s = useAppStore.getState();
     s.applyRunEvent(ev('task.received', { task_id: 't1' }));
     s.applyRunEvent(ev('task.received', { task_id: 't2' }));
-    expect(useAppStore.getState().activeRun!.id).toBe('t2');
+    expect(useAppStore.getState().activeRun!.id).toBe('t1');
+    expect(Object.keys(useAppStore.getState().runsById)).toEqual(['t1', 't2']);
   });
 
   it('verification.run_recorded attaches the gate verdict to the run', () => {
@@ -248,7 +306,7 @@ describe('sessions', () => {
     expect(conn.send).not.toHaveBeenCalled();
     created({ id: 'sess-delayed' });
     await Promise.resolve();
-    expect(conn.send).toHaveBeenCalledWith('new React project', [], 'sess-delayed');
+    expect(conn.send).toHaveBeenCalledWith('new React project', [], 'sess-delayed', null);
     expect(useAppStore.getState().messages[0].content).toBe('new React project');
     expect(useAppStore.getState().view).toBe('chat');
   });
@@ -351,7 +409,7 @@ describe('sessions', () => {
       inputText: 'bonjour',
     });
     useAppStore.getState().sendMessage();
-    expect(conn.send).toHaveBeenCalledWith('bonjour', [], 'sess-live');
+    expect(conn.send).toHaveBeenCalledWith('bonjour', [], 'sess-live', null);
   });
 });
 

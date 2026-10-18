@@ -216,7 +216,7 @@ export function ChatInput({ onSend }: ChatInputProps) {
               className="flex items-center justify-center w-10 h-10 sm:w-9 sm:h-9 rounded-full transition-all duration-200 cursor-pointer"
               style={{ backgroundColor: 'var(--accent-blue)' }}
               aria-label="Stop generation"
-              title="Stop"
+              title="Arrêter les activités de cette conversation"
             >
               <Square size={13} className="fill-current" style={{ color: '#ffffff' }} />
             </motion.button>

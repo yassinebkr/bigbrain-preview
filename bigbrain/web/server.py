@@ -41,7 +41,7 @@ WEBUI_DIST = Path(__file__).resolve().parents[2] / "web-ui" / "dist"
 # class for convenient access in tests.
 PROVIDER_RELOAD_HOOK = None
 
-# Set when a working project is selected — re-targets agent writes.
+# Navigation selection hook — must never retarget active workers.
 PROJECT_CHANGE_HOOK = None
 
 # Set when a plugin is toggled — applies the change at runtime where feasible.
@@ -97,6 +97,7 @@ class WebServer:
         self._session_locks = WeakValueDictionary()
         self._reply_events: dict[str, asyncio.Event] = {}
         self._running = False
+        self._started_at = time.time()
 
         # Replay buffer: stores recent important messages so reconnecting
         # clients don't miss results (fixes WS disconnect data loss)
@@ -948,6 +949,7 @@ class WebServer:
                      "attachments": attachments,
                      "session_id": session["id"],
                      "turn_id": payload.get('turn_id'),
+                     "navigation_project": payload.get("navigationProject") if isinstance(payload.get("navigationProject"), str) else None,
                      "conversation_history": conversation_history},
             priority=Priority.NORMAL,
         ))
@@ -966,12 +968,26 @@ class WebServer:
             if session_id:
                 self._ws_session_ids[ws] = session_id
             session = self._sessions.get(session_id) if session_id else None
+            as_of = time.time()
+            activities = []
+            activity_error = None
+            if session:
+                from .run_history import conversation_activity
+                try:
+                    activities = await asyncio.to_thread(
+                        conversation_activity, self.bus.logger.log_dir, session_id, self._started_at)
+                except OSError:
+                    logger.exception("Unable to restore conversation activity")
+                    activity_error = "Le suivi des activités n’a pas pu être restauré."
             await ws.send_json({
                 "type": "resp",
                 "id": request_id,
                 "payload": {
                     "messages": (session or {}).get("messages", []),
                     "sessionId": (session or {}).get("id"),
+                    "activities": activities,
+                    "as_of": as_of,
+                    "activity_error": activity_error,
                 },
             })
             return
@@ -1133,7 +1149,7 @@ class WebServer:
                 matches_task = task_id and (item.get('task_id') or item.get('plan_id')) == task_id
                 matches_session = session_id and item.get('session_id') == session_id
                 return bool(matches_task or (matches_session and (
-                    not task_id or item.get('event') == 'task.routing')))
+                    not task_id or (item.get('event') == 'task.routing' and not item.get('task_id')))))
             self._replay_buffer = [
                 (ts, buffered) for ts, buffered in self._replay_buffer
                 if not pending_for_current(buffered)

@@ -76,6 +76,16 @@ export function ContractCard() {
                 Before I write code — approve these contracts:
               </p>
 
+              {proposal.target && (
+                <div className="flex flex-wrap items-center gap-2 my-3 text-[12px]">
+                  <span style={{ color: 'var(--text-tertiary)' }}>
+                    {proposal.target.mode === 'new' ? 'Nouveau projet' : 'Projet à modifier / exécuter'}
+                  </span>
+                  <code className="rounded px-2 py-1 break-all" style={{ backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)' }}>
+                    {proposal.target.path}
+                  </code>
+                </div>
+              )}
               {proposal.contracts.some((contract) => contract.startsWith('[Stack]')) && (
                 <StackSummary value={proposal.contracts.find((contract) => contract.startsWith('[Stack]'))!} />
               )}

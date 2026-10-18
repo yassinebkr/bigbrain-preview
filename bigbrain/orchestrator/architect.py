@@ -27,12 +27,35 @@ Reference: MetaGPT's structured artifact passing, ChatDev's waterfall phases.
 import asyncio
 import json
 import logging
+import math
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import httpx
+
 logger = logging.getLogger(__name__)
+
+DEFAULT_ARCHITECT_TIMEOUT_SECONDS = 120.0
+
+
+class ArchitectureTimeout(TimeoutError):
+    """A bounded preparation failed; never execute an incomplete spec."""
+
+
+def architecture_timeout_seconds() -> float:
+    """Operator-configurable total budget, including structural repair."""
+    raw = os.getenv("BIGBRAIN_ARCHITECT_TIMEOUT_SECONDS", "120")
+    try:
+        value = float(raw)
+        if not math.isfinite(value) or not 5 <= value <= 300:
+            raise ValueError
+        return value
+    except ValueError:
+        logger.warning("Invalid BIGBRAIN_ARCHITECT_TIMEOUT_SECONDS; using 120s")
+        return DEFAULT_ARCHITECT_TIMEOUT_SECONDS
 
 
 # ---------------------------------------------------------------------------
@@ -355,6 +378,29 @@ Respond with ONLY a JSON object matching this schema:
 CRITICAL: The `data_models` field in file_specs is a list of model NAME STRINGS that reference the top-level data_models array. The top-level `data_models` defines the full schema; file_specs reference them by name."""
 
 
+WEB_ARCHITECT_SYSTEM_PROMPT = """You are a browser application architect. Return ONLY one compact JSON object, no code or prose outside JSON.
+Plan the requested product, not its implementation line by line. Preserve all requested behaviours, persistence, validation, empty/error states and platform limitations. Never claim a browser feature works when the browser cannot guarantee it (e.g. daily notifications with the page closed).
+Default stack: React 19 + TypeScript + Vite, authored responsive CSS, lucide-react, localStorage when needed. Use static HTML/CSS/JavaScript only when explicitly requested or editing an existing static app. Technology metadata must be concise, not explanatory paragraphs.
+Choose a descriptive project_name for THIS request, independent of an unrelated selected project. Do not invent external services, URLs, assets or dependencies.
+Return this schema (omit empty optional fields):
+{
+ "project_name":"descriptive-kebab-name", "deliverable_type":"web_app",
+ "web_stack":"react_vite", "interaction_mode":"browser",
+ "description":"Concise product scope in the user's language",
+ "tech_decisions":["React 19","TypeScript","Vite","localStorage"],
+ "acceptance_contracts":["Concrete primary behaviour requested by the user","Another independently checkable requested behaviour"],
+ "executable":true, "entry_point":"index.html",
+ "execution_strategy":"Production build then executable browser acceptance tests",
+ "file_specs":[{"path":"src/App.tsx", "purpose":"Application UI",
+   "dependencies":[], "implementation_notes":"Concise behaviours and exact TypeScript import/export interfaces shared with other modules",
+   "edge_cases":["Relevant domain edge cases"]}]
+}
+Include 2–4 concrete, checkable acceptance_contracts in the user's language, never the example placeholders. Specify only product implementation files (usually 3–6), their actual local dependency paths, and tests/acceptance.json. Shared interfaces must be exact and consistent in implementation_notes; do not generate Python function schemas or duplicate data models across files. No circular dependencies.
+The server adds and owns package.json, tsconfig.json and vite.config.ts; do not describe or generate these. Required React files: index.html, src/main.tsx, src/App.tsx, src/styles.css; static: index.html, app.js, styles.css. The server adds missing required files and the executable browser-test protocol to tests/acceptance.json. Describe the domain scenarios to verify, not the full test protocol.
+Every executable app needs a usable index.html entry point. Set executable=false and entry_point=null only if the user explicitly requests a source-only/library deliverable.
+Keep the whole specification concise (target under 2500 output tokens), without sacrificing requested features or cross-file interfaces. Do not write application source code in the specification."""
+
+
 class ArchitectPhase:
     """Produces a ProjectSpec from a user request using LLM planning.
 
@@ -392,6 +438,23 @@ class ArchitectPhase:
         Raises:
             ValueError: If the LLM output can't be parsed into a valid spec.
         """
+        budget = architecture_timeout_seconds()
+        deadline = asyncio.timeout(budget)
+        try:
+            async with deadline:
+                return await self._design_with_repair(
+                    user_request, research_context, expected_deliverable)
+        except (TimeoutError, httpx.TimeoutException) as exc:
+            if deadline.expired():
+                raise ArchitectureTimeout(
+                    f"L’architecte n’a pas terminé dans le budget de {budget:g} s. "
+                    "Aucun contrat ni code n’a été exécuté. Réessayez ou choisissez "
+                    "un modèle de planification plus rapide.") from exc
+            raise ArchitectureTimeout(
+                "Le fournisseur du modèle de planification a dépassé son délai de réponse. "
+                "Aucun contrat ni code n’a été exécuté. Réessayez ou changez de modèle.") from exc
+
+    async def _design_with_repair(self, user_request, research_context, expected_deliverable):
         correction = ""
         for attempt in range(2):
             try:
@@ -421,9 +484,9 @@ class ArchitectPhase:
         correction: str = "",
     ) -> dict:
         """Call the LLM to generate the raw specification JSON."""
-        system = ARCHITECT_SYSTEM_PROMPT.format(
-            current_year=datetime.now().year,
-        )
+        is_web = expected_deliverable == "web_app"
+        system = (WEB_ARCHITECT_SYSTEM_PROMPT if is_web else
+                  ARCHITECT_SYSTEM_PROMPT.format(current_year=datetime.now().year))
         if expected_deliverable:
             system += (f"\nThe routing LLM selected deliverable_type={expected_deliverable!r}. "
                        "Preserve that decision exactly; never substitute another deliverable.")
@@ -444,15 +507,12 @@ class ArchitectPhase:
             {"role": "user", "content": "\n".join(user_parts)},
         ]
 
-        raw = await asyncio.wait_for(
-            self.llm_provider.chat_complete(
-                messages=messages,
-                model=self.model,
-                stream=False,
-                max_tokens=8192,
-                temperature=0.2,
-            ),
-            timeout=45,  # Whole architecture + one repair is also bounded by the orchestrator.
+        raw = await self.llm_provider.chat_complete(
+            messages=messages,
+            model=self.model,
+            stream=False,
+            max_tokens=4096 if is_web else 8192,
+            temperature=0.2,
         )
 
         return self._extract_json(raw)

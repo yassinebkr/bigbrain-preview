@@ -568,7 +568,7 @@ class TestWorkspaceOrchestrator:
         assert result_data["success"] is True
         assert "results" in result_data
     
-    def test_project_metadata_falls_back_to_selected_project_manifest(
+    def test_project_metadata_uses_bound_project_manifest(
             self, orchestrator, tmp_path, monkeypatch):
         import json
 
@@ -585,6 +585,8 @@ class TestWorkspaceOrchestrator:
             payload={"project_path": "sandbox/existing-project"},
         )
         plan = TaskPlan(id="plan", original_task=original_task)
+        from bigbrain.execution_target import ExecutionTarget
+        plan.execution_target = ExecutionTarget("existing", "sandbox/existing-project", str(tmp_path)).prepare()
         subtask = SubTask(id="edit", description="edit one file",
                           brain_target="python_brain", payload={})
         subtask.status = TaskStatus.COMPLETE
@@ -600,6 +602,9 @@ class TestWorkspaceOrchestrator:
 
     def test_project_metadata_preserves_web_preview(self, orchestrator):
         plan = TaskPlan(id="web-plan", original_task=None)
+        from bigbrain.execution_target import ExecutionTarget
+        from bigbrain.web.fs_api import workspace_root
+        plan.execution_target = ExecutionTarget("new", "sandbox/zbrush-course", str(workspace_root())).prepare()
         subtask = SubTask(id="preview", description="preview web app",
                           brain_target="web_app_brain", payload={})
         subtask.status = TaskStatus.COMPLETE
@@ -625,6 +630,9 @@ class TestWorkspaceOrchestrator:
 
     def test_project_metadata_prefers_verified_assembly(self, orchestrator):
         plan = TaskPlan(id="web-plan", original_task=None)
+        from bigbrain.execution_target import ExecutionTarget
+        from bigbrain.web.fs_api import workspace_root
+        plan.execution_target = ExecutionTarget("new", "sandbox/course", str(workspace_root())).prepare()
         assembled = SubTask(id="assemble", description="preview web app", brain_target="web_app_brain", payload={})
         assembled.status = TaskStatus.COMPLETE
         assembled.result = {"success": True, "data": {

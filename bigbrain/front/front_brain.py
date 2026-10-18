@@ -3,6 +3,7 @@
 import asyncio
 from contextvars import ContextVar
 import time
+import uuid
 from typing import Any, Dict, List, Optional
 
 from ..bus.bus import MessageBus
@@ -72,6 +73,7 @@ class FrontBrain:
         self._session_context = ContextVar('front_brain_session', default=None)
         self._stream_context = ContextVar('front_brain_streamed', default=False)
         self._turn_context = ContextVar('front_brain_turn', default=None)
+        self._navigation_context = ContextVar('front_brain_navigation', default=None)
 
         # The soul: batch-consolidated identity memory (memory/soul.py).
         # Injected as a few lines per turn; consolidated by ONE LLM call
@@ -232,6 +234,7 @@ class FrontBrain:
         # Store response
         history.append({"role": "assistant", "content": response})
         self.memory.store_conversation_turn("assistant", response, {
+            "session_id": session_id,
             "conversation_id": self._current_conversation_id
         })
         
@@ -297,7 +300,9 @@ class FrontBrain:
             # Direct persistent query (both scopes): MemoryManager.recall
             # forces a workspace filter that would exclude global
             # (cross-project) memories — the personal ones matter most.
-            results = self.memory.persistent.query(text, limit=4)
+            # Fetch candidates BEFORE deduplication: repeated recall questions
+            # otherwise occupy all four slots and hide the original user fact.
+            results = self.memory.persistent.query(text, limit=24)
         except Exception:
             return []
 
@@ -308,7 +313,7 @@ class FrontBrain:
             if content:
                 window_heads.add(content[:80].lower())
 
-        recalled: List[str] = []
+        candidates = []
         seen: set = set()
         for r in results:
             content = (r.get("content") or "").strip()
@@ -320,17 +325,12 @@ class FrontBrain:
             if not content or head in window_heads or head in seen:
                 continue
             seen.add(head)
-            recalled.append(content[:200])
-        return recalled
-
-    def _current_project(self) -> str | None:
-        """The selected working project, if any (and if web is loaded)."""
-        try:
-            from ..web.fs_api import get_current_project
-
-            return get_current_project()
-        except Exception:
-            return None
+            candidates.append((role, content[:200]))
+        # Reserve room for original user statements rather than letting
+        # previous assistant answers (including "I don't know") crowd them out.
+        chosen = [item for item in candidates if item[0] == "user"][:2]
+        chosen.extend(item for item in candidates if item not in chosen)
+        return [f"{role or 'memory'}: {content}" for role, content in chosen[:4]]
 
     async def _llm_respond(self, input_text: str,
                            session_id: Optional[str] = None,
@@ -356,9 +356,9 @@ class FrontBrain:
                 "memory — use silently, never mention this block):\n"
                 + self._soul_store.summary)})
 
-        # Project context: the chat knows which project the user works in;
-        # generated files land there (the pool's work_dir follows it too).
-        project = self._current_project()
+        # Navigation context supplied by this turn's client. It never owns
+        # the execution destination and never falls back to a global selection.
+        project = self._navigation_context.get()
         if project:
             messages.append({"role": "system", "content": (
                 f"Workspace selection: '{project}' (directory '{project}/'). "
@@ -395,7 +395,9 @@ class FrontBrain:
                 "Older memories that may be relevant to this conversation:\n"
                 + "\n".join(f"- {line}" for line in recalled)
                 + "\nUse them silently if useful; do not mention them "
-                  "unless the user brings them up."
+                  "unless the user brings them up. User statements are the "
+                  "primary evidence; older assistant answers may be mistaken "
+                  "or incomplete and must not override explicit user facts."
             )})
         
         try:
@@ -480,6 +482,13 @@ DELEGATION: When the user asks for work, respond with EXACTLY this JSON format:
 
 ROUTED DELEGATION (preferred when the request matches ONE known brain capability): use "route" instead of "task". The orchestrator executes it EXACTLY as given, without re-planning:
 {{"reply": "brief natural acknowledgment", "route": {{"brain": "<brain>", "payload": {{...}}}}}}
+
+PROJECT DESTINATION (for file/code work): include a top-level "project_target" object.
+- A NEW project: {{"mode":"new"}}; optionally specify "path":"sandbox/descriptive-name" if explicitly requested. Never inherit the explorer selection for a new request.
+- Editing/running an EXISTING project: {{"mode":"existing","path":"sandbox/exact-project"}}. Resolve this from the user's request and conversation; explorer selection is only a hint, never implicit authorization. If the intended project is ambiguous, ask before delegating.
+- Board/research-only work has no project_target.
+Example: {{"reply":"Je prépare une nouvelle application.","task":"Build the requested app","project_target":{{"mode":"new"}}}}
+Example: {{"reply":"Je modifie ce projet.","task":"Apply the requested changes","project_target":{{"mode":"existing","path":"sandbox/exact-project"}}}}
 
 Routable brains and payloads:
 - taskboard — add/create a task or todo on the user's persistent board. Payload: {{"type": "board_task", "title": "<short task title>", "description": "<optional details>", "status": "todo"}}. Use status "todo" unless the user explicitly asks for another status.
@@ -587,12 +596,14 @@ Type 'quit' or 'exit' to stop."""
         token = self._session_context.set(message.payload.get('session_id'))
         stream_token = self._stream_context.set(False)
         turn_token = self._turn_context.set(message.payload.get('turn_id'))
+        navigation_token = self._navigation_context.set(message.payload.get('navigation_project'))
         try:
             await self._process_ui_message(message)
         finally:
             self._session_context.reset(token)
             self._stream_context.reset(stream_token)
             self._turn_context.reset(turn_token)
+            self._navigation_context.reset(navigation_token)
 
     async def _process_ui_message(self, message: BusMessage) -> None:
         """
@@ -665,7 +676,7 @@ Type 'quit' or 'exit' to stop."""
             if parsed and route_valid:
                 reply_text = parsed.get("reply", "Working on it...")
                 await self._emit_chat_message("assistant", reply_text)
-                await self._emit_task_routing(text)
+                run_id = await self._emit_task_routing(text)
                 
                 ws = "default"  # Always route to the single orchestrator
                 task_data = {
@@ -674,7 +685,8 @@ Type 'quit' or 'exit' to stop."""
                     "reply_to_ui": True,
                     "user_request": text,
                     "session_id": session_id,
-                    "project_path": self._current_project(),
+                    "project_target": parsed.get("project_target", route_payload.get("project_target")),
+                    "_ui_run_id": run_id,
                 }
                 await self.bus.send_task(
                     source=self.name,
@@ -686,7 +698,7 @@ Type 'quit' or 'exit' to stop."""
                 # Front Brain wants to delegate — send the reply part to chat
                 reply_text = parsed.get("reply", "Working on it...")
                 await self._emit_chat_message("assistant", reply_text)
-                await self._emit_task_routing(str(parsed["task"]))
+                run_id = await self._emit_task_routing(str(parsed["task"]))
                 
                 # Send ONE compound task to the orchestrator.
                 # Always route to "default" workspace — the system only creates
@@ -706,7 +718,8 @@ Type 'quit' or 'exit' to stop."""
                         "user_request": task_request,
                         "reply_to_ui": True,
                         "session_id": session_id,
-                        "project_path": self._current_project(),
+                        "project_target": parsed.get("project_target"),
+                        "_ui_run_id": run_id,
                     },
                     priority=Priority.NORMAL,
                 )
@@ -714,7 +727,7 @@ Type 'quit' or 'exit' to stop."""
                 # Legacy multi-task format — merge into single compound request
                 reply_text = parsed.get("reply", "Working on it...")
                 await self._emit_chat_message("assistant", reply_text)
-                await self._emit_task_routing(text)
+                run_id = await self._emit_task_routing(text)
                 
                 tasks = parsed.get("tasks", [])
                 combined_request = "; then ".join(
@@ -732,7 +745,8 @@ Type 'quit' or 'exit' to stop."""
                         "user_request": combined_request,
                         "reply_to_ui": True,
                         "session_id": session_id,
-                        "project_path": self._current_project(),
+                        "project_target": parsed.get("project_target"),
+                        "_ui_run_id": run_id,
                     },
                     priority=Priority.NORMAL,
                 )
@@ -992,17 +1006,20 @@ Type 'quit' or 'exit' to stop."""
             priority=Priority.NORMAL,
         )
 
-    async def _emit_task_routing(self, description: str) -> None:
+    async def _emit_task_routing(self, description: str) -> str:
         """Keep the initiating conversation visibly busy during planning."""
+        run_id = str(uuid.uuid4())
         await self.bus.broadcast_event(
             source=self.name,
             event_type="task.routing",
             payload={
                 "description": description[:140],
                 "session_id": self._chat_session(),
+                "task_id": run_id,
             },
             priority=Priority.NORMAL,
         )
+        return run_id
 
     async def _process_filtered_event(self, event: BusMessage) -> None:
         """

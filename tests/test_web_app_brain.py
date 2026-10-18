@@ -108,7 +108,8 @@ async def test_web_app_brain_creates_verified_preview_manifest(tmp_path):
         assert result["success"] is True
         assert result["runnable"] is True
         assert result["deliverable_type"] == "web_app"
-        assert result["preview_url"].startswith("http://127.0.0.1:")
+        assert result["server_running"] is False
+        assert brain._preview_process is None
         manifest = json.loads((tmp_path / "fitness" / ".project.json").read_text())
         assert manifest["deliverable_type"] == "web_app"
         assert manifest["run"] == {"kind": "static_preview"}
@@ -126,13 +127,10 @@ async def test_manual_run_starts_verified_web_preview(tmp_path, monkeypatch):
         "verified": True,
     }))
     result = await fs_api.run_static_preview("fitness/index.html")
-    process = fs_api._manual_web_previews.pop(project.as_posix())
-    try:
-        assert result["ok"] is True
-        assert result["previewUrl"].startswith("http://127.0.0.1:")
-    finally:
-        process.terminate()
-        await process.wait()
+    assert result["ok"] is True
+    assert result["previewAvailable"] is True
+    assert result["serverRunning"] is False
+    assert not fs_api._manual_web_previews
 
 
 def test_architect_repairs_minimal_web_spec_with_required_files():

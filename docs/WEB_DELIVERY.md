@@ -5,12 +5,28 @@ Web assessment is now preserved through architecture and worker assignment;
 invalid planning fails explicitly instead of degrading to Python. The
 architect proposes acceptance contracts in its response, avoiding a separate
 contract-drafting round trip for projects. Preparation stages carry timings.
+Web planning uses a compact browser-specific schema (4096 output-token cap),
+not Python architecture examples. The architect and its optional structural
+repair share one 120s total budget: `BIGBRAIN_ARCHITECT_TIMEOUT_SECONDS` accepts
+5–300s, invalid settings use 120s. Every 5s while waiting, the panel shows real
+elapsed time, not estimated progress. Timeout cancels preparation without
+executing partial plans or retrying automatically; Stop cleans up its child task.
+Actual model/transport latency still needs a new live measurement.
 Recorded approval is required before execution; an HTTP acknowledgement alone
 does not resolve the approval card. Runs/proposals are persisted per conversation;
 Stop targets that session and worker events carry plan/session identifiers.
 Concurrent front replies retain their own coroutine context. Same-conversation
 chat turns are serialized per server, and history defaults to socket scope, not
-another tab's last session. Live multi-tab/product campaign work remains open.
+another tab's last session. Runs are independently keyed by plan, including
+multiple runs in one conversation; quick taskboard work does not displace a
+web project. Board results offer Taskboard, not unrelated project controls.
+History catch-up restores chat and per-run state from the durable bus journal,
+not just the five-minute replay buffer. Closed runs dock at their recorded
+completion time; unfinished work from an older process is interrupted, not
+silently resumed. A compact activity breadcrumb remains outside chat.
+`python -m tools.check_ui_lifecycle` checks the real built UI in Chromium with
+isolated deterministic event fixtures (reload/navigation/two tabs/parallel runs).
+Live generated-product campaigns and concurrent architecture/approval remain open.
 
 ## Conversation isolation
 
@@ -24,6 +40,15 @@ not modify the visible conversation/current run. Stop is hidden on Home.
 The selected workspace directory is navigation context, not an instruction
 to reuse a previous project's name or requirements for a new request. The
 front brain is instructed to distinguish edits from a separate new project.
+This is now enforced structurally: the LLM declares `project_target` (`new`
+or `existing` with an explicit path), and the orchestrator binds an immutable
+ExecutionTarget to the plan. The approval card/evidence contain that target.
+Workers receive its protected context per task; explorer selection never
+retargets worker directories. New directories are exclusively reserved after
+approval, existing ones are pinned, and unsafe/symlink paths are rejected.
+Missing existing-project intent fails closed; new work does not inherit the
+selection. Result metadata and checkpoints use the bound target only.
+This is tool destination isolation, not an OS sandbox for executed code.
 
 Legacy Python file-generation prompts initialize shared progress/interjection
 sections with or without an architect spec. Plans emit a terminal result

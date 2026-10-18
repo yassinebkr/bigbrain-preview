@@ -4,6 +4,7 @@ import { Sidebar, MobileMenuButton } from './Sidebar';
 import { TopBar } from './TopBar';
 import { SidebarPanel } from './SidebarPanel';
 import { CommandPalette } from './CommandPalette';
+import { ActivityStrip } from './ActivityStrip';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -30,6 +31,7 @@ export function Layout({ children }: LayoutProps) {
         <TopBar>
           <MobileMenuButton />
         </TopBar>
+        <ActivityStrip />
 
         {/* Main Content */}
         <main className="flex-1 overflow-hidden relative">

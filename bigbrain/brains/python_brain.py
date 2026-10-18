@@ -81,6 +81,9 @@ class PythonBrain(BaseBrain):
         FS API, so they are visible in the web file explorer; the
         workspace.file_written event lets the explorer auto-refresh.
         """
+        target = self._directory_context.get()
+        if target is not None:
+            target.file(full_path.relative_to(target.directory).as_posix())
         full_path.parent.mkdir(parents=True, exist_ok=True)
         await asyncio.to_thread(full_path.write_text, content, encoding="utf-8")
         await self._notify_workspace_write(full_path)
@@ -289,7 +292,10 @@ class PythonBrain(BaseBrain):
             "success": true
         }
         """
-        payload = message.payload
+        with self.execution_scope(message.payload) as payload:
+            return await self._handle_task_in_scope(payload)
+
+    async def _handle_task_in_scope(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         task_type = payload.get("type")
         
         if task_type == "generate_and_execute":
@@ -449,7 +455,7 @@ Rules:
         MAX_FILE_RETRIES = 4  # 1 initial + up to 3 fix/continuation attempts
         is_python_file = file_path.endswith(".py")
         
-        project_dir = self.work_dir / project_name
+        project_dir = self.project_directory(project_name)
         project_dir.mkdir(exist_ok=True, parents=True)
         full_path = project_dir / file_path
         full_path.parent.mkdir(exist_ok=True, parents=True)
@@ -742,7 +748,7 @@ Rules:
         
         # Determine full path
         if project_name:
-            project_dir = self.work_dir / project_name
+            project_dir = self.project_directory(project_name)
             full_path = project_dir / file_path
         else:
             full_path = self.work_dir / file_path
@@ -942,9 +948,8 @@ Rules:
         """Execute an existing file from the work_dir — no LLM, no generation.
 
         "Run hello.py" from the chat must run what is on disk, not
-        regenerate it. The work_dir tracks the selected project (or the
-        sandbox in global mode), so the file runs in the same layout the
-        agent wrote it in.
+        regenerate it. The work_dir is the explicit destination frozen for
+        this run, independent of later explorer selections.
         """
         import time
 
@@ -1238,7 +1243,7 @@ Rules:
         user_request = payload.get("user_request", "")
         upstream_context = payload.get("upstream_context", {})
         
-        project_dir = self.work_dir / project_name
+        project_dir = self.project_directory(project_name)
         
         # Clean stale files from previous runs that aren't in the current plan.
         # This prevents old broken files from poisoning new builds.

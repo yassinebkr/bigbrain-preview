@@ -485,7 +485,7 @@ _manual_web_previews: Dict[str, asyncio.subprocess.Process] = {}
 
 
 async def run_static_preview(rel: str) -> Dict[str, Any]:
-    """Start (or replace) the preview for a verified static web project."""
+    """Compatibility run readiness check; visible surfaces own preview leases."""
     target = _resolve(workspace_root(), rel)
     if target.name != "index.html" or not target.is_file():
         raise web.HTTPBadRequest(text=json_error("web preview entry point must be index.html"))
@@ -500,52 +500,16 @@ async def run_static_preview(rel: str) -> Dict[str, Any]:
             or not manifest.get("verified")):
         raise web.HTTPBadRequest(text=json_error("web project is not verified runnable"))
 
-    key = project_dir.as_posix()
     preview_dir = project_dir
     if manifest.get("web_stack") == "react_vite":
         preview_dir = project_dir / "dist"
         if not (preview_dir / "index.html").is_file():
             raise web.HTTPBadRequest(text=json_error("verified production build missing; rebuild the project"))
-    previous = _manual_web_previews.pop(key, None)
-    if previous and previous.returncode is None:
-        previous.terminate()
-        try:
-            await asyncio.wait_for(previous.wait(), timeout=2)
-        except asyncio.TimeoutError:
-            previous.kill()
-            await previous.wait()
-
-    port = None
-    import socket
-    for candidate in range(3300, 3400):
-        with socket.socket() as sock:
-            try:
-                sock.bind(("127.0.0.1", candidate))
-            except OSError:
-                continue
-        port = candidate
-        break
-    if port is None:
-        raise RuntimeError("no free manual preview port in 3300-3399")
-
-    started = time.time()
-    process = await asyncio.create_subprocess_exec(
-        "python3", "-m", "http.server", str(port), "--bind", "127.0.0.1",
-        cwd=str(preview_dir), stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    await asyncio.sleep(0.15)
-    if process.returncode is not None:
-        stderr = (await process.stderr.read()).decode(errors="replace")
-        return {"ok": False, "exitCode": process.returncode, "stdout": "",
-                "stderr": stderr[-20000:], "durationMs": int((time.time() - started) * 1000),
-                "timedOut": False}
-    _manual_web_previews[key] = process
-    url = f"http://127.0.0.1:{port}"
-    return {"ok": True, "exitCode": 0, "stdout": f"Preview ready: {url}\n",
-            "stderr": "", "durationMs": int((time.time() - started) * 1000),
-            "timedOut": False, "previewUrl": url, "serverRunning": True,
-            "serverPid": process.pid}
+    # Compatibility run action validates readiness, but never owns a server.
+    # Only a visible surface acquiring /api/fs/preview may allocate a port.
+    return {"ok": True, "exitCode": 0, "stdout": "Projet vérifié : ouvrir Preview pour l’afficher.\n",
+            "stderr": "", "durationMs": 0, "timedOut": False,
+            "previewAvailable": True, "serverRunning": False}
 
 
 async def _run_with_events(rel: str, timeout: float, run_id: str) -> None:
@@ -696,6 +660,34 @@ def set_current_project(project: Optional[str]) -> Dict[str, Any]:
 
 
 def setup_fs_routes(app: web.Application) -> None:
+    from .preview_leases import PreviewLeases
+    previews = PreviewLeases(workspace_root() / '.preview-ports.json')
+    app.cleanup_ctx.append(previews.lifecycle)
+
+    async def preview(request):
+        body = await request.json()
+        token = body.get('leaseId')
+        if token:
+            if body.get('action') == 'release':
+                await previews.release(token)
+            else:
+                await previews.touch(token)
+            return web.json_response({'ok': True})
+        entry = _resolve(workspace_root(), body.get('path', ''))
+        try:
+            manifest = json.loads((entry.parent / PROJECT_MANIFEST).read_text())
+        except (OSError, ValueError):
+            raise web.HTTPBadRequest(text='Verified project manifest missing')
+        if (entry.name != 'index.html' or not entry.is_file()
+                or manifest.get('deliverable_type') != 'web_app'
+                or manifest.get('entry_point') != 'index.html' or not manifest.get('verified')):
+            raise web.HTTPBadRequest(text='Web project is not verified runnable')
+        directory = entry.parent / 'dist' if manifest.get('web_stack') == 'react_vite' else entry.parent
+        if not (directory / 'index.html').is_file() or not directory.resolve().is_relative_to(entry.parent):
+            raise web.HTTPBadRequest(text='Verified build missing or outside project')
+        return web.json_response(await previews.acquire(directory))
+
+    app.router.add_post('/api/fs/preview', preview)
     app.router.add_get("/api/fs/list", _handle_list)
     app.router.add_get("/api/fs/projects", _handle_projects)
     app.router.add_post("/api/fs/project", _handle_project_create)

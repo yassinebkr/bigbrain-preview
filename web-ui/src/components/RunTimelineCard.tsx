@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   CheckCircle2, XCircle, Ban, ChevronDown, ChevronUp, FileEdit,
-  FolderOpen, Play, Loader2, Maximize2, Minimize2, ExternalLink,
+  FolderOpen, Play, Loader2, Maximize2, Minimize2, ExternalLink, ListTodo,
 } from 'lucide-react';
 import { useAppStore, type RunState } from '@/store/appStore';
+import { usePreview } from '@/lib/usePreview';
 
 export function RunTimelineCard({ run }: { run: RunState }) {
   const [open, setOpen] = useState(false);
@@ -15,13 +16,13 @@ export function RunTimelineCard({ run }: { run: RunState }) {
   const [runId, setRunId] = useState<string | null>(null);
   const liveRun = useAppStore((s) => runId ? s.liveRuns[runId] : undefined);
   const outputRef = useRef<HTMLPreElement>(null);
-  const previewUrl = liveRun?.result?.previewUrl || run.previewUrl;
+  const isTaskboard = run.resultKind === 'taskboard' || run.steps.some((step) => step.brain === 'taskboard');
 
   useEffect(() => {
     const el = outputRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [liveRun?.out, liveRun?.err]);
-  const entryPath = run.projectPath && run.entryPoint
+  const entryPath = isTaskboard ? undefined : run.projectPath && run.entryPoint
     ? `${run.projectPath}/${run.entryPoint}`
     : run.entryPoint
       ? run.files.find((file) =>
@@ -29,6 +30,8 @@ export function RunTimelineCard({ run }: { run: RunState }) {
       : undefined;
   const projectPath = run.projectPath || (entryPath?.includes('/')
     ? entryPath.slice(0, entryPath.lastIndexOf('/')) : undefined);
+  const hasPreview = !isTaskboard && !!run.runnable && run.deliverableType === 'web_app';
+  const { url: previewUrl, error: previewError } = usePreview(entryPath, hasPreview);
   const Icon = run.status === 'done'
     ? CheckCircle2 : run.status === 'cancelled' ? Ban : XCircle;
   const color = run.status === 'done'
@@ -51,6 +54,7 @@ export function RunTimelineCard({ run }: { run: RunState }) {
   };
 
   const runProject = async () => {
+    if (hasPreview) { setPreviewExpanded(true); return; }
     if (!entryPath || (runId && !liveRun?.done)) return;
     setOpen(true);
     try {
@@ -107,12 +111,20 @@ export function RunTimelineCard({ run }: { run: RunState }) {
               )}
             </div>
           )}
+          {isTaskboard && run.status === 'done' && (
+            <button onClick={(event) => { event.stopPropagation(); setView('tasks'); }}
+              className="flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer"
+              style={{ color: 'var(--accent-blue)' }} aria-label="Open taskboard">
+              <ListTodo size={12} /> Taskboard
+            </button>
+          )}
           {open ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
         </div>
         {run.error && (
           <div className="mt-2 whitespace-pre-wrap break-words" role="alert"
             style={{ color: 'var(--warning, #ff9500)' }}>{run.error}</div>
         )}
+        {hasPreview && !previewUrl && <div className="mt-2" role="status">{previewError || 'Ouverture de l’aperçu…'}</div>}
         {previewUrl && (
           <div className="mt-2 overflow-hidden rounded-lg" style={{ border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-primary)' }}>
             <div className="flex items-center gap-2 px-2.5 py-1.5" style={{ borderBottom: '1px solid var(--border-subtle)' }}>

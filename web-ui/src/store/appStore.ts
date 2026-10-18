@@ -56,6 +56,7 @@ export interface RunState {
   previewUrl?: string;
   runnable?: boolean;
   awaitingApproval?: boolean;
+  resultKind?: string;
 }
 
 interface AppState {
@@ -80,10 +81,12 @@ interface AppState {
 
   // Messages
   messages: Message[];
+  historyError: string | null;
   addMessage: (message: Message) => void;
   updateMessage: (id: string, updates: Partial<Message>) => void;
   clearMessages: () => void;
   setMessages: (messages: Message[]) => void;
+  restoreSessionHistory: (sessionId: string, messages: Message[], asOf?: number) => void;
 
   // Input
   inputText: string;
@@ -121,9 +124,11 @@ interface AppState {
   // Orchestrated run state (task/subtask/file events) — RunPanel v2.
   activeRun: RunState | null;
   sessionRuns: Record<string, RunState>;
+  runsById: Record<string, RunState>;
+  selectRun: (id: string) => void;
   // Finished runs are timeline records, grouped by their chat session.
   completedRuns: RunState[];
-  applyRunEvent: (activity: Omit<AgentActivity, 'ts'>) => void;
+  applyRunEvent: (activity: Omit<AgentActivity, 'ts'> & { ts?: number }) => void;
   runPanelOpen: boolean;
   setRunPanelOpen: (open: boolean) => void;
   // The user closed the run panel (X). The NudgeBar reads this to surface
@@ -146,12 +151,12 @@ interface AppState {
   // Contract approval (Phase B): before the agent writes code, it proposes
   // checkable contracts; the user approves → execution resumes, the
   // approval is traced in the evidence DesignSpec.
-  contractProposal: { designId: string; planId: string; request: string; contracts: string[] } | null;
+  contractProposal: { designId: string; planId: string; request: string; contracts: string[]; target?: { mode: string; path: string } } | null;
   sessionProposals: Record<string, NonNullable<AppState['contractProposal']>>;
   contractSending: boolean;
   contractError: string | null;
   setContractProposal: (
-    proposal: { designId: string; planId: string; request: string; contracts: string[] } | null
+    proposal: NonNullable<AppState['contractProposal']> | null
   ) => void;
   sendContractDecision: (approve: boolean) => Promise<void>;
 
@@ -272,7 +277,10 @@ export const useAppStore = create<AppState>()(
       },
 
       // Messages
-      messages: JSON.parse(localStorage.getItem('aplot_messages') || '[]'),
+      // Chat history is owned by the selected server session, not a global
+      // localStorage transcript left over from another conversation.
+      messages: [],
+      historyError: null,
       addMessage: (message) => set((state) => {
         const newMessages = [...state.messages, message];
         localStorage.setItem('aplot_messages', JSON.stringify(newMessages));
@@ -291,6 +299,12 @@ export const useAppStore = create<AppState>()(
         localStorage.setItem('aplot_messages', JSON.stringify(messages));
         set({ messages });
       },
+      restoreSessionHistory: (sessionId, messages, asOf) => set((state) => {
+        if (sessionId !== state.activeSessionKey) return {};
+        const later = state.messages.filter((message) => (!asOf || message.timestamp > asOf) &&
+          !messages.some((old) => old.role === message.role && old.content === message.content));
+        return { messages: [...messages, ...later], historyError: null };
+      }),
 
       // Input
       inputText: '',
@@ -338,6 +352,13 @@ export const useAppStore = create<AppState>()(
 
       activeRun: null,
       sessionRuns: {},
+      runsById: {},
+      selectRun: (id) => set((state) => {
+        const run = state.runsById[id];
+        if (!run) return {};
+        return { sessionRuns: { ...state.sessionRuns, [run.sessionId]: run },
+          ...(run.sessionId === state.activeSessionKey ? { activeRun: run } : {}) };
+      }),
       completedRuns: [],
       runPanelOpen: false,
       setRunPanelOpen: (runPanelOpen) => set({ runPanelOpen }),
@@ -401,9 +422,36 @@ export const useAppStore = create<AppState>()(
         if (state.activeRun && !sessionRuns[state.activeRun.sessionId]) {
           sessionRuns[state.activeRun.sessionId] = state.activeRun;
         }
-        const byTask = d.task_id ? Object.values(sessionRuns).find((r) => r.id === d.task_id) : null;
-        const sessionId = String(d.session_id || byTask?.sessionId || state.activeRun?.sessionId || state.activeSessionKey);
-        const run = sessionRuns[sessionId] || null;
+        const runsById = { ...state.runsById };
+        for (const legacy of Object.values(sessionRuns)) runsById[legacy.id] ||= legacy;
+        const taskId = d.task_id || d.plan_id;
+        const byTask = taskId ? runsById[taskId] : null;
+        const finished = taskId ? state.completedRuns.find((r) => r.id === taskId) : null;
+        const terminal = ['task.complete', 'task.failed', 'task.cancelled'].includes(activity.type);
+        const sessionId = String(d.session_id || byTask?.sessionId || finished?.sessionId || state.activeRun?.sessionId || state.activeSessionKey);
+        if (activity.type === 'task.routing' && taskId) {
+          // Migrate pre-correlation cached placeholders during journal catch-up.
+          // Real runs now use a stable UUID, never this legacy prefix.
+          for (const legacy of Object.values(runsById)) {
+            if (legacy.sessionId === sessionId && legacy.id.startsWith('routing-')) {
+              delete runsById[legacy.id];
+              if (sessionRuns[sessionId]?.id === legacy.id) delete sessionRuns[sessionId];
+            }
+          }
+        }
+        const pendingRouting = Object.values(runsById).find((r) => r.sessionId === sessionId && r.id.startsWith('routing-'));
+        const run = byTask || (terminal ? finished : null) || (activity.type === 'task.received' ? pendingRouting :
+          !taskId ? sessionRuns[sessionId] : null) || null;
+        // Replays/snapshots are idempotent. A finished run never becomes live again.
+        if (finished && !terminal) {
+          delete runsById[finished.id];
+          if (sessionRuns[sessionId] && !runsById[sessionRuns[sessionId].id]) delete sessionRuns[sessionId];
+          const sessionProposals = { ...state.sessionProposals };
+          if (sessionProposals[sessionId]?.planId === taskId) delete sessionProposals[sessionId];
+          return { runsById, sessionRuns, sessionProposals,
+            activeRun: sessionRuns[state.activeSessionKey] || null,
+            contractProposal: sessionProposals[state.activeSessionKey] || null };
+        }
         const reduce = (): Partial<AppState> => {
         const opensRun = ['task.routing', 'task.received', 'contracts.proposal'].includes(activity.type);
         if (run && !opensRun) {
@@ -420,26 +468,28 @@ export const useAppStore = create<AppState>()(
             return { activeRun: { ...run, steps: [...run.steps.filter((s) => s.id !== id), step] } };
           }
           case 'task.routing': {
+            if (byTask) return {};
             const sessionId = String(d.session_id || state.activeSessionKey || '');
             const fresh: RunState = {
               sessionId,
-              id: `routing-${Date.now()}`,
+              id: d.task_id || `routing-${Date.now()}`,
               description: String(d.description || 'Preparing task'),
               status: 'running',
-              startedAt: Date.now(),
+              startedAt: activity.ts || Date.now(),
               steps: [],
               files: [],
             };
             return { activeRun: fresh, runPanelDismissed: false };
           }
           case 'task.received': {
+            if (run && run.id === d.task_id) return {};
             const previous = run?.sessionId === d.session_id ? run : null;
             const fresh: RunState = {
               sessionId: String(d.session_id || run?.sessionId || state.activeSessionKey || ''),
               id: d.task_id || `run-${Date.now()}`,
               description: String(d.description || 'Task'),
               status: 'running',
-              startedAt: previous?.startedAt || Date.now(),
+              startedAt: previous?.startedAt || activity.ts || Date.now(),
               steps: previous?.steps.filter((s) => s.id.startsWith('planning-')) || [],
               files: [],
             };
@@ -456,11 +506,15 @@ export const useAppStore = create<AppState>()(
               description: String(d.user_request || 'Awaiting contract approval'),
               status: 'running',
               awaitingApproval: true,
-              startedAt: Date.now(),
+              startedAt: activity.ts || Date.now(),
               steps: [],
               files: [],
             };
             return { activeRun: fresh, runPanelDismissed: false };
+          }
+          case 'contracts.approved':
+          case 'contracts.rejected': {
+            return run ? { activeRun: { ...run, awaitingApproval: false } } : {};
           }
           case 'subtask.started': {
             if (!run || run.status !== 'running') return {};
@@ -499,6 +553,18 @@ export const useAppStore = create<AppState>()(
               },
             };
           }
+          case 'task.progress': {
+            if (!run) return {};
+            const labels: Record<string, string> = {
+              writing_web_file: 'Génération', web_build: 'Build', web_build_repair: 'Correction du build',
+              browser_testing: 'Tests navigateur', browser_repair: 'Correction après test', preview_ready: 'Aperçu prêt',
+            };
+            const label = labels[d.stage] || d.stage;
+            if (!label) return {};
+            return { activeRun: { ...run, steps: run.steps.map((step) => step.id === d.subtask_id
+              ? { ...step, description: `${label}${d.path ? ` · ${d.path}` : ''}${d.attempt ? ` · essai ${d.attempt}` : ''}` }
+              : step) } };
+          }
           case 'subtask.complete':
           case 'subtask.failed': {
             if (!run || run.status !== 'running') return {};
@@ -510,7 +576,8 @@ export const useAppStore = create<AppState>()(
               ? run.steps.map((s) =>
                   s.id === id ? { ...s, status: failed ? ('failed' as const) : ('done' as const), durationMs } : s
                 )
-              : [...run.steps, { id, description: 'subtask', status: failed ? ('failed' as const) : ('done' as const), durationMs }];
+              : [...run.steps, { id, brain: d.brain, description: String(d.description || 'subtask'),
+                  status: failed ? ('failed' as const) : ('done' as const), durationMs }];
             return { activeRun: { ...run, steps } };
           }
           case 'workspace.file_written': {
@@ -552,10 +619,10 @@ export const useAppStore = create<AppState>()(
               : 'failed';
             return {
               activeRun: null,
-              completedRuns: [...state.completedRuns, {
+              completedRuns: [...state.completedRuns.filter((item) => item.id !== run.id), {
                 ...run,
                 status,
-                finishedAt: Date.now(),
+                finishedAt: activity.ts || run.finishedAt || Date.now(),
                 error: d.error ? String(d.error).slice(0, 200) : run.error,
                 projectName: d.project_name ? String(d.project_name) : run.projectName,
                 projectPath: d.project_path ? String(d.project_path) : run.projectPath,
@@ -563,6 +630,7 @@ export const useAppStore = create<AppState>()(
                 deliverableType: d.deliverable_type ? String(d.deliverable_type) : run.deliverableType,
                 previewUrl: d.preview_url ? String(d.preview_url) : run.previewUrl,
                 runnable: typeof d.runnable === 'boolean' ? d.runnable : run.runnable,
+                resultKind: d.result_kind || run.resultKind,
               }].slice(-100),
             };
           }
@@ -572,7 +640,14 @@ export const useAppStore = create<AppState>()(
         };
         const update = reduce();
         if ('activeRun' in update) {
-          if (update.activeRun) sessionRuns[update.activeRun.sessionId] = update.activeRun;
+          if (run && run.id !== update.activeRun?.id) delete runsById[run.id];
+          if (update.activeRun) runsById[update.activeRun.id] = update.activeRun;
+          else if (taskId) delete runsById[taskId];
+          const remaining = Object.values(runsById).filter((r) => r.sessionId === sessionId);
+          // Keep the user's visible project stable while a quick side-task runs.
+          const selected = sessionRuns[sessionId];
+          const preferred = selected && runsById[selected.id] || remaining[0];
+          if (preferred) sessionRuns[sessionId] = preferred;
           else delete sessionRuns[sessionId];
           update.activeRun = sessionRuns[state.activeSessionKey]
             || (state.activeRun?.sessionId !== sessionId ? state.activeRun : null)
@@ -581,13 +656,14 @@ export const useAppStore = create<AppState>()(
         const sessionProposals = { ...state.sessionProposals };
         if (activity.type === 'contracts.proposal' && d.design_id && d.plan_id) {
           sessionProposals[sessionId] = { designId: d.design_id, planId: d.plan_id,
-            request: d.user_request || '', contracts: Array.isArray(d.contracts) ? d.contracts : [] };
+            request: d.user_request || '', contracts: Array.isArray(d.contracts) ? d.contracts : [],
+            ...(d.project_target ? { target: d.project_target } : {}) };
         } else if (['contracts.approved', 'contracts.rejected', 'task.cancelled', 'task.failed', 'task.complete'].includes(activity.type)) {
           const proposal = sessionProposals[sessionId];
           const target = d.plan_id || d.task_id;
           if (!target || proposal?.planId === target) delete sessionProposals[sessionId];
         }
-        return { ...update, sessionRuns, sessionProposals,
+        return { ...update, runsById, sessionRuns, sessionProposals,
           contractProposal: sessionProposals[state.activeSessionKey] || null,
           ...(!sessionProposals[state.activeSessionKey] ? { contractSending: false, contractError: null } : {}) };
       }),
@@ -685,6 +761,7 @@ export const useAppStore = create<AppState>()(
         get().connection?.switchSession(key);
         set({
           activeSessionKey: key,
+          historyError: null,
           sidebarPanel: null,
           messages: [],
           streamingText: '',
@@ -696,17 +773,15 @@ export const useAppStore = create<AppState>()(
         get().connection?.loadHistory((frame: any) => {
           if (get().activeSessionKey !== key) return;
           if (frame?.ok && frame.payload?.messages) {
-            set({
-              messages: frame.payload.messages.map((m: any) => ({
+            get().restoreSessionHistory(key, frame.payload.messages.map((m: any) => ({
                 id: m.id || `hist-${Date.now()}-${Math.random()}`,
                 role: m.role === 'user' ? 'user' : 'assistant',
                 content: m.content,
                 timestamp: m.timestamp
                   ? (m.timestamp < 1e12 ? m.timestamp * 1000 : m.timestamp)
                   : Date.now(),
-              })),
-              view: 'chat',
-            });
+              })), frame.payload.asOf);
+            set({ view: 'chat' });
           }
         }, key);
       },
@@ -883,7 +958,7 @@ export const useAppStore = create<AppState>()(
           }
           if (cancellation !== cancelledSends) return;
           state.connection?.send(text, refs,
-                                  targetSession || undefined);
+                                  targetSession || undefined, state.currentProject);
         })();
       },
 
@@ -894,9 +969,12 @@ export const useAppStore = create<AppState>()(
         cancelledSends += 1;
         get().connection?.cancel?.();
         get().finalizeStreaming();
-        const run = selectSessionRun(get());
-        get().applyRunEvent({ type: 'task.cancelled', detail: {
-          session_id: get().activeSessionKey, ...(run ? { task_id: run.id } : {}),
+        const sessionId = get().activeSessionKey;
+        const runs = Object.values(get().runsById).filter((r) => r.sessionId === sessionId);
+        const legacy = selectSessionRun(get());
+        if (legacy && !runs.some((r) => r.id === legacy.id)) runs.push(legacy);
+        for (const run of runs) get().applyRunEvent({ type: 'task.cancelled', detail: {
+          session_id: sessionId, task_id: run.id,
         } });
         set({ contractProposal: null, contractSending: false });
       },
@@ -911,6 +989,7 @@ export const useAppStore = create<AppState>()(
         // written) — it must survive a page reload, not just tab switches.
         activeRun: state.activeRun,
         sessionRuns: state.sessionRuns,
+        runsById: state.runsById,
         sessionProposals: state.sessionProposals,
         completedRuns: state.completedRuns,
         // Layout persistence: where the user was working (view + workspace

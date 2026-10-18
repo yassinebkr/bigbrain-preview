@@ -38,7 +38,10 @@ class WebAppBrain(BaseBrain):
         self._preview_process: Optional[asyncio.subprocess.Process] = None
 
     async def handle_task(self, message: BusMessage) -> Dict[str, Any]:
-        payload = message.payload or {}
+        with self.execution_scope(message.payload or {}) as payload:
+            return await self._handle_task_in_scope(payload)
+
+    async def _handle_task_in_scope(self, payload: dict) -> Dict[str, Any]:
         task_type = payload.get("type")
         if task_type == "write_web_file":
             return await self._write_web_file(payload)
@@ -69,6 +72,8 @@ class WebAppBrain(BaseBrain):
 
     def _project_dir(self, project_name: Path) -> Path:
         """Resolve a planned project without nesting it in another project."""
+        if self._directory_context.get() is not None:
+            return self.project_directory(str(project_name))
         manifest_path = self.work_dir / ".project.json"
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -167,6 +172,9 @@ Rules:
                                      ensure_ascii=False, indent=2) + "\n"
             except (ValueError, TypeError) as exc:
                 raise ValueError(f"tests/acceptance.json: {exc}") from exc
+        binding = self._directory_context.get()
+        if binding is not None:
+            binding.file(target.relative_to(binding.directory).as_posix())
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
         await self.send_event("workspace.file_written", {
@@ -367,14 +375,13 @@ Rules:
             "preview_dir": "dist" if web_stack == "react_vite" else ".",
         }
         (project_dir / ".project.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-        await self.send_progress({"stage": "preview_ready", "url": url, "port": port})
+        await self.cleanup()
+        await self.send_progress({"stage": "preview_ready"})
         return {
             "success": True, "runnable": True, "project_name": project_name.name,
             "project_path": project_path, "entry_point": "index.html",
             "deliverable_type": "web_app",
-            "files_written": validation["files"], "preview_url": url,
-            "preview_port": port, "server_running": True,
-            "server_pid": self._preview_process.pid,
+            "files_written": validation["files"], "server_running": False,
             "verification": {"verdict": evidence.verdict, "run_id": evidence.run_id,
                              "browser_tests_executed": True},
             "execution_time": time.time() - started,

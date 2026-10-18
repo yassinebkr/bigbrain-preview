@@ -73,6 +73,18 @@ export default function App() {
         content: msg.text,
         timestamp: Date.now(),
       });
+      useAppStore.getState().refreshSessions();
+    });
+
+    connection.on('onResumeCatchUp', (messages, sessionId, asOf) => {
+      const current = useAppStore.getState();
+      if (sessionId !== current.activeSessionKey) return;
+      current.restoreSessionHistory(sessionId, messages, asOf);
+    });
+    connection.on('onHistoryError', (error, sessionId) => {
+      if (sessionId === useAppStore.getState().activeSessionKey) {
+        useAppStore.setState({ historyError: error });
+      }
     });
 
     connection.on('onStreamDelta', (delta) => {
@@ -105,6 +117,7 @@ export default function App() {
             planId: d.plan_id,
             request: d.user_request || '',
             contracts: Array.isArray(d.contracts) ? d.contracts : [],
+            ...(d.project_target ? { target: d.project_target } : {}),
           });
         }
       } else if (activity.type === 'contracts.approved' || activity.type === 'contracts.rejected') {
@@ -126,6 +139,7 @@ export default function App() {
     connection.on('onRunEnd', () => {
       if (useAppStore.getState().view === 'welcome') return;
       finalizeStreaming();
+      useAppStore.getState().refreshSessions();
     });
 
     connection.on('onCanvasUpdate', (payload) => {

@@ -87,8 +87,18 @@ export default function App() {
         assert (target / "dist/index.html").is_file()
         rerun = await fs_api.run_static_preview("tracker/index.html")
         assert rerun["ok"]
-        process = fs_api._manual_web_previews.pop(target.as_posix())
-        process.terminate()
-        await process.wait()
+        assert rerun['previewAvailable']
+        assert not rerun['serverRunning']
+        from bigbrain.web.preview_leases import PreviewLeases
+        import httpx
+        previews = PreviewLeases()
+        lease = await previews.acquire(target / 'dist')
+        try:
+            async with httpx.AsyncClient() as client:
+                page = await client.get(lease['previewUrl'])
+                assert page.status_code == 200
+                assert '/assets/' in page.text
+        finally:
+            await previews.release(lease['leaseId'])
     finally:
         await brain.cleanup()

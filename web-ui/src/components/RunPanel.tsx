@@ -136,6 +136,9 @@ export function RunPanel() {
   const currentProject = useAppStore((s) => s.currentProject);
   const setCurrentProject = useAppStore((s) => s.setCurrentProject);
   const openFileViewer = useAppStore((s) => s.openFileViewer);
+  const runsById = useAppStore((s) => s.runsById);
+  const selectRun = useAppStore((s) => s.selectRun);
+  const sessionRuns = Object.values(runsById).filter((item) => item.sessionId === activeSessionKey);
 
   // The store's project mirror is only filled by the file explorer; when a
   // run writes into sandbox/, fetch the authoritative value once so the
@@ -158,12 +161,14 @@ export function RunPanel() {
 
   const stepsDone = run.steps.filter((s) => s.status !== 'running').length;
   const running = run.steps.find((s) => s.status === 'running');
+  const preparationWait = running?.brain === 'planner' && running.durationMs != null
+    ? ` · ${(running.durationMs / 1000).toFixed(0)} s` : '';
   const summary =
     run.status === 'running'
       ? run.awaitingApproval
         ? 'Awaiting contract approval'
         : running
-        ? `${running.brain || 'brain'} — ${running.description}`
+        ? `${running.brain || 'brain'} — ${running.description}${preparationWait}`
         : run.description
       : run.status === 'done'
         ? 'Run complete'
@@ -188,6 +193,18 @@ export function RunPanel() {
         className="px-4 md:px-10 pb-1.5 flex-shrink-0"
       >
         <div className="max-w-[720px] mx-auto">
+          {sessionRuns.length > 1 && (
+            <div className="flex gap-1 overflow-x-auto pb-1" aria-label="Conversation activities">
+              {sessionRuns.map((item) => (
+                <button key={item.id} onClick={() => selectRun(item.id)}
+                  aria-pressed={item.id === run.id}
+                  className="max-w-[240px] truncate rounded px-2 py-1 text-[11px] cursor-pointer"
+                  style={{ border: '1px solid var(--border-subtle)', color: item.id === run.id ? 'var(--accent-blue)' : 'var(--text-secondary)' }}>
+                  {item.awaitingApproval ? 'À approuver · ' : ''}{item.description}
+                </button>
+              ))}
+            </div>
+          )}
           {/* Collapsed row — always one stable height, no re-layout.
               Width matches the chat input, not the full message column. */}
           <div
@@ -285,7 +302,7 @@ export function RunPanel() {
                             <span className="truncate flex-1 min-w-0" style={{ color: 'var(--text-secondary)' }}>
                               {step.description}
                             </span>
-                            {step.durationMs != null && step.status !== 'running' && (
+                            {step.durationMs != null && (
                               <span className="flex-shrink-0" style={{ color: 'var(--text-tertiary)' }}>
                                 {(step.durationMs / 1000).toFixed(1)}s
                               </span>

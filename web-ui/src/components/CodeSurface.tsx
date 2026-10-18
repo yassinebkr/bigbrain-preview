@@ -8,6 +8,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAppStore } from '@/store/appStore';
+import { usePreview } from '@/lib/usePreview';
 import {
   FileCode2, X, Copy, Check, FolderOpen, Play, Loader2, Pencil, Ban, Eye,
 } from 'lucide-react';
@@ -82,6 +83,8 @@ export function CodeSurface({ path, onClose, onOpenInWorkspace }: CodeSurfacePro
   const [running, setRunning] = useState(false);
   const [runResult, setRunResult] = useState<RunResult | null>(null);
   const [showPreview, setShowPreview] = useState(false);
+  const { url: previewUrl, error: previewError } = usePreview(path, showPreview);
+  useEffect(() => { setShowPreview(false); }, [path]);
 
   // Streaming run: the server answers {runId} immediately and pushes
   // the output over the WS while the program runs.
@@ -178,6 +181,7 @@ export function CodeSurface({ path, onClose, onOpenInWorkspace }: CodeSurfacePro
   };
 
   const run = async () => {
+    if (isHtml) { setShowPreview(true); return; }
     if (running) return;
     setRunning(true);
     setRunResult(null);
@@ -272,7 +276,7 @@ export function CodeSurface({ path, onClose, onOpenInWorkspace }: CodeSurfacePro
                 {isHtml ? ' Preview' : ' Run'}
               </button>
             )}
-            {runResult?.previewUrl && (
+            {showPreview && (
               <button
                 onClick={() => setShowPreview((shown) => !shown)}
                 className="flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer flex-shrink-0 text-[11.5px]"
@@ -331,9 +335,11 @@ export function CodeSurface({ path, onClose, onOpenInWorkspace }: CodeSurfacePro
           <p className="px-4 py-6 text-[12.5px]" style={{ color: 'var(--text-tertiary)' }}>
             Loading…
           </p>
-        ) : showPreview && runResult?.previewUrl ? (
+        ) : showPreview && !previewUrl ? (
+          <p role="status" className="p-4">{previewError || 'Ouverture de l’aperçu…'}</p>
+        ) : showPreview && previewUrl ? (
           <iframe
-            src={runResult.previewUrl}
+            src={previewUrl}
             title={`Preview of ${path}`}
             sandbox="allow-scripts allow-same-origin"
             className="block w-full h-full min-h-[420px] bg-white"
