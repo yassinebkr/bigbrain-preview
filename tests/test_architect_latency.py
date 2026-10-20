@@ -55,6 +55,30 @@ async def test_web_prompt_avoids_python_schema_without_dropping_the_request():
 
 
 @pytest.mark.asyncio
+async def test_python_prompt_is_compact_but_keeps_interfaces_tests_and_safety():
+    provider = AsyncMock()
+    provider.chat_complete.return_value = json.dumps({
+        "project_name": "gcode-report", "deliverable_type": "python",
+        "acceptance_contracts": ["Analyse hors ligne", "Distingue inconnus et mesures"],
+        "file_specs": [{"path": "main.py"}, {"path": "tests/test_report.py", "dependencies": ["main.py"]}],
+        "entry_point": "main.py",
+    })
+    request = "Analyse G-code hors ligne, stdlib uniquement, sans commande imprimante."
+    spec = await architecture.ArchitectPhase(provider).design(request, expected_deliverable="python")
+    call = provider.chat_complete.call_args.kwargs
+    prompt = call["messages"][0]["content"]
+    assert len(prompt) < len(architecture.ARCHITECT_SYSTEM_PROMPT)
+    for required in ["interfaces", "tests/test_", "acceptance_contracts", "safety", "without arguments"]:
+        assert required in prompt
+    assert "auth.py" not in prompt
+    assert "React" not in prompt
+    assert call["messages"][1]["content"] == request
+    assert call["max_tokens"] == 4096
+    assert spec.get_file_spec("tests/test_report.py")
+    spec.dependency_order()
+
+
+@pytest.mark.asyncio
 async def test_structural_repair_shares_one_total_deadline(monkeypatch):
     monkeypatch.setenv("BIGBRAIN_ARCHITECT_TIMEOUT_SECONDS", "120")
     real_timeout = asyncio.timeout

@@ -5,9 +5,10 @@ interface TooltipProps {
   children: React.ReactNode;
   content?: string;
   delay?: number;
+  placement?: 'right' | 'bottom';
 }
 
-export function Tooltip({ children, content, delay = 600 }: TooltipProps) {
+export function Tooltip({ children, content, delay = 600, placement = 'right' }: TooltipProps) {
   const [visible, setVisible] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -45,7 +46,7 @@ export function Tooltip({ children, content, delay = 600 }: TooltipProps) {
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: -4 }}
             transition={{ duration: 0.15 }}
-            className="absolute left-full ml-2 z-50 whitespace-nowrap px-2 py-1.5 rounded-md text-xs font-medium pointer-events-none"
+            className={`absolute ${placement === 'bottom' ? 'top-full mt-4 left-1/2 -translate-x-1/2' : 'left-full ml-2'} z-50 whitespace-nowrap px-2 py-1.5 rounded-md text-xs font-medium pointer-events-none`}
             style={{
               backgroundColor: 'var(--bg-surface)',
               color: 'var(--text-primary)',

@@ -5,7 +5,7 @@
 
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { X, MessageSquare, Search, Plus, Clock } from 'lucide-react';
+import { X, MessageSquare, Search, Plus, Clock, Pencil, Trash2, Check, Loader2 } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 
 const easeOut = [0, 0, 0.2, 1] as [number, number, number, number];
@@ -25,6 +25,17 @@ function timeAgo(timestamp: number): string {
 export function SessionsPanel() {
   const { setSidebarPanel, sessions, activeSessionKey, openSession, startNewSession } = useAppStore();
   const [searchQuery, setSearchQuery] = useState('');
+  const [editing, setEditing] = useState<string | null>(null);
+  const [title, setTitle] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const mutate = async (action: () => Promise<void>) => {
+    setBusy(true); setError('');
+    try { await action(); setEditing(null); setConfirmDelete(null); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
+  };
 
   const filtered = sessions.filter((s) =>
     s.title.toLowerCase().includes(searchQuery.toLowerCase())
@@ -38,8 +49,9 @@ export function SessionsPanel() {
       transition={{ duration: 0.3, ease: easeOut }}
       className="h-full flex flex-col"
       style={{
-        width: '300px',
+        width: 'min(360px, 100vw)',
         backgroundColor: 'var(--bg-surface)',
+        color: 'var(--text-primary)',
         borderRight: '1px solid var(--border-subtle)',
         boxShadow: 'var(--shadow-lg)',
       }}
@@ -95,6 +107,7 @@ export function SessionsPanel() {
 
       {/* Session list */}
       <div className="flex-1 overflow-y-auto">
+        {error && <p role="alert" className="mx-4 mb-3 text-xs" style={{ color: 'var(--warning)' }}>{error}</p>}
         {filtered.length === 0 ? (
           <p className="px-4 py-6 text-xs" style={{ color: 'var(--text-tertiary)' }}>
             {sessions.length === 0
@@ -103,10 +116,9 @@ export function SessionsPanel() {
           </p>
         ) : (
           filtered.map((session) => (
-            <button
+            <div
               key={session.key}
-              onClick={() => openSession(session.key)}
-              className="flex items-center gap-2.5 w-full px-4 py-2.5 text-left cursor-pointer relative group"
+              className="mx-2 mb-1 rounded-xl px-2 py-2 text-left relative group"
               style={{
                 backgroundColor:
                   session.key === activeSessionKey
@@ -114,13 +126,9 @@ export function SessionsPanel() {
                     : 'transparent',
               }}
             >
-              {session.key === activeSessionKey && (
-                <span
-                  className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-5 rounded-r-full"
-                  style={{ backgroundColor: 'var(--accent-blue)' }}
-                />
-              )}
-              <MessageSquare
+              <div className="flex items-center gap-1">
+              <button onClick={() => openSession(session.key)} disabled={busy} aria-label={session.title} className="flex items-center gap-2.5 flex-1 min-w-0 text-left p-1 rounded-lg" aria-current={session.key === activeSessionKey ? 'page' : undefined}>
+              <MessageSquare className="shrink-0"
                 size={16}
                 style={{
                   color: session.key === activeSessionKey
@@ -141,7 +149,20 @@ export function SessionsPanel() {
                   {session.messageCount > 0 && ` · ${session.messageCount} msg`}
                 </div>
               </div>
-            </button>
+              </button>
+              <button disabled={busy} className="p-2 rounded-lg hover:bg-white/10" aria-label={`Renommer ${session.title}`} title="Renommer" onClick={() => { setEditing(session.key); setTitle(session.title); setConfirmDelete(null); setError(''); }}><Pencil size={14} /></button>
+              <button disabled={busy} className="p-2 rounded-lg hover:bg-white/10" aria-label={`Supprimer ${session.title}`} title="Supprimer" onClick={() => { setConfirmDelete(session.key); setEditing(null); setError(''); }}><Trash2 size={14} /></button>
+              </div>
+              {editing === session.key && <form className="mt-2 flex gap-1" onSubmit={(e) => { e.preventDefault(); if (title.trim()) void mutate(() => useAppStore.getState().renameSession(session.key, title.trim())); }}>
+                <input autoFocus aria-label="Titre de la conversation" value={title} maxLength={120} disabled={busy} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') setEditing(null); }} className="min-w-0 flex-1 rounded-lg p-2 text-sm" style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }} />
+                <button type="submit" disabled={busy || !title.trim()} className="p-2" aria-label="Enregistrer le titre">{busy ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}</button>
+                <button type="button" disabled={busy} className="p-2" aria-label="Annuler le renommage" onClick={() => setEditing(null)}><X size={16} /></button>
+              </form>}
+              {confirmDelete === session.key && <div className="mt-3 p-3 rounded-xl text-xs leading-relaxed" role="group" aria-label="Confirmer la suppression" style={{ background: 'var(--bg-input)' }}>
+                <p>Supprimer cette conversation de l’historique et arrêter ses agents ? Les projets, fichiers, souvenirs partagés et journaux techniques seront conservés.</p>
+                <div className="flex gap-2 mt-3"><button disabled={busy} className="work-secondary" onClick={() => setConfirmDelete(null)}>Annuler</button><button disabled={busy} className="work-primary" onClick={() => void mutate(() => useAppStore.getState().deleteSession(session.key))}>{busy ? 'Suppression…' : 'Supprimer définitivement'}</button></div>
+              </div>}
+            </div>
           ))
         )}
       </div>

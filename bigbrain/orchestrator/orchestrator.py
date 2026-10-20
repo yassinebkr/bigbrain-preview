@@ -823,6 +823,13 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             await asyncio.gather(design_task, return_exceptions=True)
 
         project_name = spec.project_name
+        if spec.workspace_widgets:
+            from .widget_proposals import widget_proposal
+            await self.bus.broadcast_event(
+                source=self.name, event_type='workspace.proposal',
+                payload={'session_id': session_id, 'task_id': plan_id,
+                         'producer': 'architect', 'proposal': widget_proposal(spec.workspace_widgets)},
+                workspace=self.workspace, priority=Priority.NORMAL)
         worker_brain = "web_app_brain" if spec.deliverable_type == "web_app" else "python_brain"
         
         logger.info("Architect spec: %s — %d files, %d data models",

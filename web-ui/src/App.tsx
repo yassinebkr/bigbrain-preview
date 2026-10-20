@@ -60,6 +60,12 @@ export default function App() {
       }
     });
 
+    connection.on('onSessionChanged', ({ sessionId, deleted, title }) => {
+      const store = useAppStore.getState();
+      if (deleted) store.forgetSession(sessionId);
+      else if (title) store.setSessions(store.sessions.map((session) => session.key === sessionId ? { ...session, title } : session));
+    });
+
     connection.on('onMessage', (msg) => {
       if (useAppStore.getState().view === 'welcome') return;
       // Skip empty payloads (e.g. system status frames): they used to

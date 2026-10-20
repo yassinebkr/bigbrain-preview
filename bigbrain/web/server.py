@@ -93,6 +93,7 @@ class WebServer:
         self._ws_clients: Set[web.WebSocketResponse] = set()
         self._chat_tasks: set[asyncio.Task] = set()
         self._chat_task_sessions: dict[asyncio.Task, str | None] = {}
+        self._deleting_sessions: set[str] = set()
         self._ws_session_ids = WeakKeyDictionary()
         self._session_locks = WeakValueDictionary()
         self._reply_events: dict[str, asyncio.Event] = {}
@@ -115,6 +116,7 @@ class WebServer:
             # Contract approval proposals are LIVE PENDING STATE — a client
             # reconnecting while a plan awaits approval must see the card.
             "contracts.proposal",
+            "workspace.proposal",
             # NOTE: chat.delta is deliberately absent — transient chunks.
         }
 
@@ -864,6 +866,15 @@ class WebServer:
         self, ws: web.WebSocketResponse, data: dict
     ) -> None:
         payload = data.get('payload') or {}
+        from .sessions import SessionError
+        try:
+            target = payload.get('sessionId') or self._ws_session_ids.get(ws)
+            if target and (target in self._deleting_sessions or self._sessions.is_deleted(target)):
+                raise SessionError('Cette conversation a été supprimée.')
+        except SessionError as exc:
+            await ws.send_json({'type': 'message.status', 'payload': {'messageId': payload.get('messageId'), 'status': 'failed'}})
+            await ws.send_json({'type': 'error', 'payload': {'message': str(exc)}})
+            return
         session = self._sessions.ensure(payload.get('sessionId') or self._ws_session_ids.get(ws))
         session_id = session['id']
         self._ws_session_ids[ws] = session_id
@@ -994,7 +1005,7 @@ class WebServer:
         if method == "sessions.list":
             await ws.send_json({
                 "type": "resp", "id": request_id,
-                "payload": {"sessions": self._sessions.list()},
+                "payload": {"sessions": self._sessions.list(), "deletedSessionIds": self._sessions.deleted_ids()},
             })
             return
         if method == "sessions.create":
@@ -1008,11 +1019,53 @@ class WebServer:
                 }},
             })
             return
-        if method == "sessions.delete":
+        if method in ("sessions.rename", "sessions.delete"):
+            from .sessions import SessionError
+            session_id = params.get('sessionId', '')
+            try:
+                self._sessions._path(session_id)
+                if method == 'sessions.rename':
+                    session = self._sessions.rename(session_id, params.get('title'))
+                    result = {'session': {'id': session_id, 'title': session['title']}}
+                else:
+                    # Stop only this conversation, before acknowledging deletion.
+                    self._deleting_sessions.add(session_id)
+                    if CANCEL_HOOK is not None:
+                        outcome = CANCEL_HOOK(session_id=session_id)
+                        if asyncio.iscoroutine(outcome):
+                            await asyncio.wait_for(outcome, timeout=15)
+                    tasks = [t for t in self._chat_tasks if self._chat_task_sessions.get(t) == session_id]
+                    for task in tasks:
+                        task.cancel()
+                    if tasks:
+                        await asyncio.gather(*tasks, return_exceptions=True)
+                    result = {'deleted': self._sessions.delete(session_id) or self._sessions.is_deleted(session_id)}
+                    if not result['deleted']:
+                        raise SessionError('Conversation introuvable.')
+                    self._replay_buffer[:] = [(ts, frame) for ts, frame in self._replay_buffer
+                        if (frame.get('payload') or {}).get('session_id') != session_id]
+                    if self._active_session_id == session_id:
+                        self._active_session_id = None
+                    for client, target in list(self._ws_session_ids.items()):
+                        if target == session_id:
+                            del self._ws_session_ids[client]
+                event = {'type': 'session.changed', 'payload': {'sessionId': session_id,
+                    'deleted': method == 'sessions.delete', 'title': result.get('session', {}).get('title')}}
+                for client in list(self._ws_clients):
+                    try:
+                        await client.send_json(event)
+                    except (ConnectionError, RuntimeError):
+                        pass
+            except Exception as exc:
+                logger.warning('Session mutation failed: %s', exc)
+                await ws.send_json({'type': 'resp', 'id': request_id, 'error': str(exc) or 'Arrêt des travaux trop long ; réessaie.'})
+                return
+            finally:
+                if isinstance(session_id, str):
+                    self._deleting_sessions.discard(session_id)
             await ws.send_json({
                 "type": "resp", "id": request_id,
-                "payload": {"deleted": self._sessions.delete(
-                    params.get("sessionId", ""))},
+                "payload": result,
             })
             return
         await ws.send_json({
@@ -1040,6 +1093,8 @@ class WebServer:
         target = session_id or self._active_session_id
         if not target:
             return
+        if self._sessions.is_deleted(target):
+            return
         self._sessions.append_message(target, role, text)
 
     # ================================================================
@@ -1055,8 +1110,23 @@ class WebServer:
         """
         # Extract metadata for logging and buffering
         msg_type = message.type if isinstance(message.type, str) else message.type.value
+        session_id = (message.payload or {}).get('session_id')
+        if isinstance(session_id, str) and self._sessions.is_deleted(session_id):
+            return
         event = (message.payload or {}).get("event", "")
         stage = (message.payload or {}).get("stage", "")
+        if event == 'workspace.proposal':
+            from ..orchestrator.widget_proposals import validate_widget_proposal
+            payload = message.payload or {}
+            if (not message.workspace or message.source != f'orchestrator_{message.workspace}'
+                    or payload.get('producer') != 'architect'
+                    or not isinstance(payload.get('session_id'), str) or not payload.get('session_id')
+                    or not isinstance(payload.get('task_id'), str) or not payload.get('task_id')):
+                return
+            try:
+                validate_widget_proposal(payload.get('proposal'))
+            except ValueError:
+                return
 
         # Serialize to JSON-safe dict (always — needed for buffering)
         try:

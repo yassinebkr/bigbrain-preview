@@ -19,6 +19,22 @@ async def emit(bus, event, task_id, session_id="sess-demo", **data):
 
 
 @pytest.mark.asyncio
+async def test_restored_file_progress_keeps_start_before_progress_and_completion(tmp_path):
+    bus = MessageBus(tmp_path / 'logs', auth=None)
+    await emit(bus, 'task.received', 'python')
+    await emit(bus, 'subtask.started', 'python', subtask_id='file', brain='python_brain_0', description='Create file')
+    await emit(bus, 'task.progress', 'python', subtask_id='file', stage='file_written', file_path='parser.py')
+    await emit(bus, 'subtask.complete', 'python', subtask_id='file')
+    await emit(bus, 'task.complete', 'python')
+    await bus.close()
+    frames = conversation_activity(bus.logger.log_dir, 'sess-demo', 0)
+    steps = [f['payload'] for f in frames if f['payload'].get('subtask_id') == 'file']
+    assert [f['event'] for f in steps] == ['subtask.started', 'task.progress', 'subtask.complete']
+    assert steps[1]['file_path'] == 'parser.py'
+    assert steps[2]['brain'] == 'python_brain_0'
+
+
+@pytest.mark.asyncio
 async def test_restore_interleaved_web_and_taskboard_after_buffer_expiry(tmp_path):
     bus = MessageBus(tmp_path / "logs", auth=None)
     server = WebServer(bus)

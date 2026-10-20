@@ -67,7 +67,7 @@ async def check(root: Path):
             try:
                 await page.goto(url)
                 await page.get_by_text("Je prépare le projet de running.", exact=True).wait_for()
-                await page.get_by_label("Conversation activities").wait_for()
+                await page.get_by_role('button', name='Ouvrir l’espace de travail').wait_for()
                 await emit("subtask.complete", "board", subtask_id="board-task")
                 # Deliberately stale project fields verify the defensive UI guard.
                 await emit("task.complete", "board", result_kind="taskboard", project_path="sandbox/unrelated",
@@ -89,7 +89,7 @@ async def check(root: Path):
                 await second.goto(url)
                 await second.get_by_role("button", name="Open taskboard", exact=True).wait_for()
                 await emit("subtask.complete", "web", subtask_id="web-file")
-                await emit("task.complete", "web", deliverable_type='web_app', runnable=True,
+                await emit("task.complete", "web", deliverable_type='web_app', runnable=True, project_name='Running tracker',
                     project_path='sandbox/preview-demo', entry_point='index.html',
                     preview_url='http://127.0.0.1:3200')
                 await page.get_by_text("Run complete — Running tracker", exact=True).wait_for()
@@ -97,12 +97,32 @@ async def check(root: Path):
                 await page.reload()
                 await page.get_by_text("Run complete — Running tracker", exact=True).wait_for()
                 assert await page.get_by_label("Stop generation").count() == 0
+                assert await page.locator('iframe').count() == 0
+                await page.get_by_role('button', name='Afficher le résultat', exact=True).click()
                 frame = page.locator('iframe[title^="Aperçu de"]')
                 await frame.wait_for()
                 await page.frame_locator('iframe[title^="Aperçu de"]').get_by_text('Isolated preview fixture').wait_for()
                 preview_url = await frame.get_attribute('src')
                 assert preview_url != 'http://127.0.0.1:3200'
                 await second.close()
+                await page.set_viewport_size({'width': 390, 'height': 844})
+                await page.frame_locator('iframe').get_by_text('Isolated preview fixture').wait_for()
+                assert await page.locator('iframe').count() == 1
+                await page.get_by_role('button', name='Retour au chat', exact=True).click()
+                await frame.wait_for(state='hidden')
+                async with aiohttp.ClientSession() as client:
+                    for attempt in range(30):
+                        try:
+                            async with client.get(preview_url):
+                                pass
+                        except aiohttp.ClientConnectionError:
+                            break
+                        await asyncio.sleep(0.1)
+                    else:
+                        raise AssertionError('Preview port remained open after closing mobile result')
+                await page.get_by_role('button', name='Afficher le résultat', exact=True).click()
+                await page.frame_locator('iframe[title^="Aperçu de"]').get_by_text('Isolated preview fixture').wait_for()
+                await page.set_viewport_size({'width': 1280, 'height': 900})
                 await page.get_by_role('button', name='Workspace', exact=True).first.click()
                 async with aiohttp.ClientSession() as client:
                     for attempt in range(30):
@@ -139,7 +159,7 @@ async def check(root: Path):
                     "taskboard_action": True, "navigation": True, "reload": True,
                     "two_tabs": True, "terminal_docking": True,
                     "preview_reacquired": True, "preview_released": True,
-                    "workspace_lazy_preview": True, "page_errors": errors}))
+                    "workspace_lazy_preview": True, "mobile_single_preview": True, "page_errors": errors}))
             finally:
                 await context.close()
                 await browser.close()

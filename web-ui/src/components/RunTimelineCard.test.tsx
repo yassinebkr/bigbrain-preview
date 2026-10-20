@@ -11,12 +11,12 @@ describe('verified web delivery card', () => {
     deliverableType: 'web_app', runnable: true, previewUrl: 'http://127.0.0.1:3200',
   };
 
-  it('shows preview and project controls even when docked/collapsed', () => {
+  it('offers the result without starting a preview in the chat', () => {
     const html = renderToStaticMarkup(<RunTimelineCard run={run} />);
-    expect(html).toContain('Ouverture de l’aperçu');
+    expect(html).toContain('Afficher le résultat');
     expect(html).not.toContain('src="http://127.0.0.1:3200"');
     expect(html).toContain('aria-label="Open project"');
-    expect(html).toContain('aria-label="Run project"');
+    expect(html).not.toContain('aria-label="Run project"');
     expect(html).not.toContain('No verified runnable entry point');
   });
 
@@ -29,6 +29,14 @@ describe('verified web delivery card', () => {
     expect(html).not.toContain('aria-label="Run project"');
     expect(html).toContain('Run failed');
     expect(html).toContain('tests/acceptance.json: invalid schema');
+  });
+
+  it('keeps the chat compact when the result belongs to the right surface', () => {
+    const html = renderToStaticMarkup(<RunTimelineCard run={run} />);
+    expect(html).toContain('Afficher le résultat');
+    expect(html).not.toContain('<iframe');
+    expect(html).not.toContain('Ouverture de l’aperçu');
+    expect(html).not.toContain('aria-label="Run project"');
   });
 
   it('opens the taskboard, never a stale selected project, for board results', () => {

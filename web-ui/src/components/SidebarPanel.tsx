@@ -21,7 +21,7 @@ export function SidebarPanel() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.25 }}
-            className="fixed inset-0 z-[35] bg-black/30 md:left-[52px] left-0"
+            className="fixed inset-0 z-[45] bg-black/30"
             onClick={handleClose}
           />
 
@@ -31,7 +31,7 @@ export function SidebarPanel() {
             animate={{ x: 0 }}
             exit={{ x: '-100%' }}
             transition={{ duration: 0.3, ease: easeOut }}
-            className="fixed z-[36] flex left-0 md:left-[52px] top-0 bottom-0"
+            className="fixed z-[46] flex left-0 md:left-3 top-0 md:top-3 bottom-0 md:bottom-3 rounded-3xl overflow-hidden"
           >
             {sidebarPanel === 'sessions' && <SessionsPanel />}
             {sidebarPanel === 'settings' && <SettingsPanel />}

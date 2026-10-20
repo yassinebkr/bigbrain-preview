@@ -18,6 +18,7 @@ export interface ConnectionCallbacks {
   onResumeCatchUp?: (messages: any[], sessionId?: string, asOf?: number) => void;
   onHistoryError?: (error: string, sessionId?: string) => void;
   onRunEnd?: () => void;
+  onSessionChanged?: (change: { sessionId: string; deleted?: boolean; title?: string }) => void;
 }
 
 /**
@@ -41,7 +42,8 @@ export interface ConnectionLike {
   loadHistory(callback?: (frame: any) => void, sessionId?: string): void;
   listSessions?(callback: (sessions: SessionSummary[]) => void): void;
   createSession?(callback: (session: SessionSummary) => void): void;
-  deleteSession?(sessionId: string, callback?: (deleted: boolean) => void): void;
+  deleteSession?(sessionId: string): Promise<void>;
+  renameSession?(sessionId: string, title: string): Promise<void>;
   switchSession(newSessionKey: string): void;
   forceReconnect(): void;
   checkHealth(callback: (alive: boolean) => void, timeoutMs?: number): void;
