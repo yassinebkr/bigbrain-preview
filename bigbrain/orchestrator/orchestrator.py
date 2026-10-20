@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Set
 from ..bus.bus import MessageBus
 from ..bus.message import BusMessage, MessageType, Priority
 from ..bus.participant import BusParticipant
+from ..bus.results import result_data
 from .architect import ArchitectPhase, ProjectSpec
 from ..execution_target import ExecutionTarget, FILE_TASKS, resolve_target
 from .execution_modes import BrainExecutionConfig, ExecutionMode
@@ -87,6 +88,8 @@ class TaskPlan:
     approval_design_id: Optional[str] = None
     project_spec: Optional[ProjectSpec] = None
     execution_target: Optional[ExecutionTarget] = None
+    inspection: Optional[dict] = None
+    transaction: Optional[str] = None
     
     def get_ready_subtasks(self) -> List[SubTask]:
         """Get subtasks that are ready to execute (dependencies satisfied)."""
@@ -121,7 +124,7 @@ class TaskPlan:
         results = {}
         for subtask in self.subtasks:
             if subtask.status == TaskStatus.COMPLETE and subtask.result:
-                results[subtask.id] = subtask.result
+                results[subtask.id] = result_data(subtask.result)
         return results
 
 
@@ -381,6 +384,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                 "workspace": self.workspace,
                 "subtasks_count": len(plan.subtasks),
                 "session_id": task_data.get("session_id"),
+                "project_path": plan.execution_target.path if plan.execution_target else None,
             },
             workspace=self.workspace,
             priority=Priority.NORMAL
@@ -431,13 +435,22 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
 
         contracts = await draft_contracts(
             self.llm_provider, user_request, project_spec=plan.project_spec)
+        if plan.inspection and plan.project_spec:
+            changes = [f'{"modifier" if fs.operation == "modify" else "créer"} {fs.path}' for fs in plan.project_spec.file_specs if fs.operation != 'keep']
+            contracts.append('Périmètre des changements approuvés : ' + (' ; '.join(changes) or 'vérification seule, aucun fichier à modifier'))
+            for decision in plan.project_spec.test_changes:
+                contracts.append(f"Modification des tests {decision['path']} : {decision['reason']} — comportement attendu : {decision['expected_behavior']} — fondement : {decision['authority']}")
         if plan.status == TaskStatus.CANCELLED:
             raise asyncio.CancelledError
         if not any(not item.startswith("[Stack]") for item in contracts):
             raise ValueError("No verifiable acceptance contracts were produced; execution remains blocked")
         spec = build_proposal_spec(user_request, contracts)
+        spec.metadata['business_criteria'] = list(plan.project_spec.acceptance_contracts) if plan.project_spec else list(contracts)
         if plan.execution_target is not None:
             spec.metadata["execution_target"] = plan.execution_target.public()
+        if plan.inspection:
+            spec.metadata['inspection'] = {k: plan.inspection[k] for k in ('inventory', 'limits', 'limited')}
+            spec.metadata['baseline_diagnostic'] = plan.inspection.get('baseline')
         try:
             default_repository().save_spec(spec)
         except ImmutableRunError:
@@ -446,12 +459,16 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             if stored is None:
                 raise ValueError("Existing proposal could not be loaded")
             if (stored.contracts == spec.contracts and "approval" not in stored.metadata
-                    and stored.metadata.get("execution_target") == spec.metadata.get("execution_target")):
+                    and stored.metadata.get("execution_target") == spec.metadata.get("execution_target")
+                    and stored.metadata.get('inspection') == spec.metadata.get('inspection')):
                 spec = stored
             else:
                 spec = spec.model_copy(update={"revision": stored.revision + 1})
                 default_repository().save_spec(spec)
         plan.approval_design_id = spec.design_id
+        for subtask in plan.subtasks:
+            subtask.payload['acceptance_contracts'] = list(spec.contracts)
+            subtask.payload['contract_revision'] = {'design_id': spec.design_id, 'revision': spec.revision}
         plan.awaiting_approval = True
         plan.status = TaskStatus.RUNNING
         await self.bus.broadcast_event(
@@ -521,6 +538,10 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         plan.awaiting_approval = False
 
         if approved:
+            for subtask in plan.subtasks:
+                subtask.payload['acceptance_contracts'] = list(stamped.contracts)
+                subtask.payload['business_contracts'] = stamped.metadata.get('business_criteria', [])
+                subtask.payload['contract_revision'] = {'design_id': stamped.design_id, 'revision': stamped.revision}
             await self.bus.broadcast_event(
                 source=self.name,
                 event_type="contracts.approved",
@@ -548,8 +569,62 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
     async def _create_task_plan(self, message: BusMessage) -> TaskPlan:
         plan = await self._create_unbound_task_plan(message)
         try:
-            plan.execution_target = resolve_target(
-                plan.id, message.payload or {}, plan.subtasks, plan.project_spec)
+            from ..memory.shared import SharedMemory
+            log_dir = getattr(getattr(self.bus, 'logger', None), 'log_dir', None)
+            target = resolve_target(
+                plan.id, message.payload or {}, plan.subtasks, plan.project_spec,
+                partial_project_check=lambda path: bool(log_dir) and SharedMemory(log_dir).owns_partial_project(
+                    (message.payload or {}).get("session_id"), path))
+            if plan.execution_target:
+                plan.execution_target.validate()  # retain the identity inspected before planning
+                if target is None or target.public() != plan.execution_target.public():
+                    raise ValueError('Execution destination changed after inspection')
+            else:
+                plan.execution_target = target
+            if target and target.mode == 'existing' and not plan.inspection and any(
+                    s.payload.get('type') in {'edit_file', 'write_project_file', 'write_web_file'} for s in plan.subtasks):
+                from ..project_inspection import inspect_project, diagnose_project
+                plan.inspection = await asyncio.to_thread(inspect_project, target)
+                plan.inspection['baseline'] = await diagnose_project(target, plan.inspection)
+                for subtask in plan.subtasks:
+                    if subtask.payload.get('type') not in {'edit_file', 'write_project_file', 'write_web_file'}:
+                        continue
+                    path = subtask.payload.get('file_path', '')
+                    if path.startswith(target.path + '/'):
+                        path = path[len(target.path) + 1:]
+                    original = plan.inspection['sources'].get(path)
+                    if target.file(path).exists():
+                        if not original or not original['complete']:
+                            raise ValueError(f'{path}: existing file was not completely inspected')
+                        subtask.payload['_existing_source'] = original
+                    else:
+                        subtask.payload['_create_only'] = True
+            if plan.inspection:
+                writers = [st for st in plan.subtasks if st.payload.get('type') in
+                           {'edit_file', 'write_project_file', 'write_web_file'}]
+                if writers and not any(st.payload.get('type') in {'assemble_and_run', 'assemble_and_preview'} for st in plan.subtasks):
+                    manifest = target.file('.project.json')
+                    if not manifest.is_file():
+                        raise ValueError('Native modification needs an existing entry-point manifest; use an architect project plan to recover it')
+                    metadata = json.loads(manifest.read_text())
+                    entry = metadata.get('entry_point')
+                    if not isinstance(entry, str):
+                        raise ValueError('Existing project has no declared entry point for post-edit validation')
+                    target.file(entry)
+                    web = metadata.get('deliverable_type') == 'web_app'
+                    plan.subtasks.append(SubTask(id=plan.id + '_validation', description='Verify modified project',
+                        brain_target='web_app_brain' if web else 'python_brain',
+                        payload={'type': 'assemble_and_preview' if web else 'assemble_and_run',
+                            'project_name': target.directory.name, 'entry_point': entry,
+                            'web_stack': metadata.get('web_stack', 'static'),
+                            'user_request': writers[0].payload.get('user_request', ''),
+                            'all_files': [{'path': path} for path in sorted(
+                                {p for p, source in plan.inspection['sources'].items() if source['complete']} |
+                                {st.payload['file_path'].removeprefix(target.path + '/') for st in writers})],
+                            '_editable_paths': [st.payload['file_path'].removeprefix(target.path + '/') for st in writers]},
+                        dependencies={st.id for st in writers}))
+                for subtask in plan.subtasks:
+                    subtask.payload['baseline_diagnostic'] = plan.inspection.get('baseline')
         except ValueError as exc:
             raise PlanningError("destination", str(exc), plan.id) from exc
         return plan
@@ -653,6 +728,8 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                     plan.tracker = TaskTracker.create_from_plan(subtasks)
                     return plan
                     
+            except PlanningError:
+                raise
             except Exception as e:
                 # Preserve an explicitly typed direct action if the planner
                 # is unavailable. Generic/compound work must fail closed.
@@ -680,7 +757,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
     async def _planning_progress(self, stage: str, status: str,
                                  session_id: Optional[str], started: Optional[float] = None,
                                  task_id: Optional[str] = None) -> None:
-        labels = {"assessment": "Analyse de la demande", "architect": "Architecture et critères d’acceptation",
+        labels = {"inspection": "Inspection du projet existant", "assessment": "Analyse de la demande", "architect": "Architecture et critères d’acceptation",
                   "decomposition": "Préparation des étapes", "contracts": "Enregistrement de la proposition"}
         await self.bus.broadcast_event(
             source=self.name, event_type="planning.stage",
@@ -699,6 +776,9 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             error=str(error), result={"success": False, "error": str(error)})
         payload = {"task_id": plan_id, "session_id": message.payload.get("session_id"),
                    "error": str(error), "stage": error.stage, "runnable": False}
+        target = message.payload.get("project_target")
+        if isinstance(target, dict) and target.get("mode") == "existing":
+            payload["project_path"] = target.get("path")
         await self.bus.broadcast_event(
             source=self.name, event_type="task.received",
             payload={**payload, "description": message.payload.get("user_request", "Preparation"),
@@ -806,10 +886,29 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         )
 
         started = time.monotonic()
+        if plan:
+            task_data = plan.original_task.payload or {}
+            choice = task_data.get('project_target')
+            if task_data.get('project_path') or isinstance(choice, dict) and choice.get('mode') == 'existing':
+                from ..memory.shared import SharedMemory
+                from ..project_inspection import inspect_project, diagnose_project
+                log_dir = getattr(getattr(self.bus, 'logger', None), 'log_dir', None)
+                try:
+                    target = resolve_target(plan_id, task_data,
+                        [SubTask(id='inspect', description='Inspect existing project', brain_target='python_brain', payload={'type': 'search_project'})],
+                        partial_project_check=lambda path: bool(log_dir) and SharedMemory(log_dir).owns_partial_project(session_id, path))
+                    plan.execution_target = target
+                    await self._planning_progress('inspection', 'running', session_id, task_id=plan_id)
+                    plan.inspection = await asyncio.to_thread(inspect_project, target)
+                    plan.inspection['baseline'] = await diagnose_project(target, plan.inspection)
+                    await self._planning_progress('inspection', 'done', session_id, started, task_id=plan_id)
+                except (ValueError, OSError) as exc:
+                    raise PlanningError('inspection', str(exc), plan_id) from exc
         # The architect owns ONE total deadline, including its optional repair.
         # Report real elapsed waiting time, never fictional percentage progress.
         design_task = asyncio.create_task(
-            architect.design(user_request, expected_deliverable=deliverable_type))
+            architect.design(user_request, expected_deliverable=deliverable_type,
+                **({'existing_project': plan.inspection} if plan and plan.inspection else {})))
         try:
             while True:
                 done, _ = await asyncio.wait({design_task}, timeout=PLANNING_HEARTBEAT_SECONDS)
@@ -857,16 +956,22 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         # Step 3: Build subtask DAG from architect spec
         # Use topological order so dependencies are dispatched first
         ordered_specs = spec.dependency_order()
+        kept_hashes = {fs.path: plan.inspection['sources'][fs.path]['sha256']
+            for fs in ordered_specs if fs.operation == 'keep' and plan and plan.inspection}
 
         # Map file paths to subtask IDs
         file_to_sid = {}
         for fs in ordered_specs:
+            if fs.operation == 'keep':
+                continue
             sid = f"{plan_id}_s{task_idx}"
             file_to_sid[fs.path] = sid
             task_idx += 1
         
         # Create file-writing subtasks with RICH context from architect
         for fs in ordered_specs:
+            if fs.operation == 'keep':
+                continue
             sid = file_to_sid[fs.path]
             
             # Resolve dependencies: file deps + research deps
@@ -909,6 +1014,13 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                     "architect_spec": worker_spec_text,
                     "implementation_notes": fs.implementation_notes,
                     "edge_cases": fs.edge_cases,
+                    "acceptance_contracts": list(spec.acceptance_contracts),
+                    "_existing_source": plan.inspection['sources'].get(fs.path) if plan and plan.inspection and fs.operation == 'modify' else None,
+                    "_create_only": bool(plan and plan.inspection and fs.operation == 'create'),
+                    "_kept_hashes": kept_hashes,
+                    "_existing_dependencies": {p: {'file_path': p, 'file_content': plan.inspection['sources'][p]['content']}
+                        for p in fs.dependencies if plan and plan.inspection and p in plan.inspection['sources']
+                        and plan.inspection['sources'][p]['complete']},
                 },
                 dependencies=deps,
             ))
@@ -937,6 +1049,10 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                 "execution_strategy": spec.execution_strategy,
                 "deliverable_type": spec.deliverable_type,
                 "interaction_mode": spec.interaction_mode,
+                "_editable_paths": [fs.path for fs in spec.file_specs if fs.operation != 'keep'] if plan and plan.inspection else None,
+                "_kept_hashes": kept_hashes,
+                "acceptance_contracts": list(spec.acceptance_contracts) + [f"Test decision: {json.dumps(item, ensure_ascii=False)}" for item in spec.test_changes],
+                "baseline_diagnostic": plan.inspection.get('baseline') if plan and plan.inspection else None,
             },
             dependencies=all_file_sids,
         ))
@@ -1277,6 +1393,13 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         if plan.execution_target is not None:
             try:
                 plan.execution_target = plan.execution_target.prepare()
+                if not plan.transaction and plan.execution_target.mode == 'existing':
+                    paths = [st.payload['file_path'].removeprefix(plan.execution_target.path + '/') for st in plan.subtasks
+                             if st.payload.get('type') in {'edit_file', 'write_project_file', 'write_web_file'}
+                             and st.payload.get('file_path')]
+                    if paths:
+                        from ..project_transaction import ProjectTransaction
+                        plan.transaction = str(ProjectTransaction.begin(plan.execution_target, paths).journal)
             except (ValueError, OSError) as exc:
                 pending = next((st for st in plan.subtasks if st.status in {TaskStatus.PENDING, TaskStatus.RUNNING}), None)
                 if pending is not None:
@@ -1425,8 +1548,11 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         
         # Resolve any variable references in payload
         resolved_payload = await self._resolve_payload_references(subtask.payload, plan)
+        resolved_payload.pop('_transaction', None)  # runtime-owned, never an LLM capability
         if subtask.payload.get("type") in FILE_TASKS and plan.execution_target is not None:
             resolved_payload["_execution_target"] = plan.execution_target.to_payload()
+            if plan.transaction:
+                resolved_payload['_transaction'] = plan.transaction
         if plan.status in (TaskStatus.COMPLETE, TaskStatus.FAILED, TaskStatus.CANCELLED):
             self.brain_load[subtask.brain_target] = max(0, self.brain_load.get(subtask.brain_target, 0) - 1)
             return
@@ -1529,7 +1655,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             upstream = {}
             for st in plan.subtasks:
                 if st.status == TaskStatus.COMPLETE and st.result:
-                    result = st.result
+                    result = result_data(st.result)
                     # Use file_path as key if available (file-writing tasks)
                     key = None
                     if isinstance(result, dict) and result.get("file_path"):
@@ -1644,13 +1770,13 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         
         # ── Normal result handling ──
         subtask.end_time = time.time()
-        subtask.result = message.payload
+        subtask.result = result_data(message.payload)
         
-        if message.payload.get("success", False):
+        if subtask.result.get("success", False):
             subtask.status = TaskStatus.COMPLETE
         else:
             subtask.status = TaskStatus.FAILED
-            subtask.error = message.payload.get("error", "Unknown error")
+            subtask.error = subtask.result.get("error", "Unknown error")
         
         # Update TaskTracker
         if plan.tracker:
@@ -1730,15 +1856,44 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             return
         if plan.is_complete() or plan.is_failed():
             import time
+            transaction_outcome = None
+            if plan.transaction:
+                from ..project_transaction import ProjectTransaction
+                transaction = ProjectTransaction(plan.transaction)
+                try:
+                    transaction_outcome = transaction.finish(commit=not plan.is_failed())
+                    if transaction_outcome['state'] == 'conflict' and not plan.is_failed():
+                        plan.subtasks[-1].status = TaskStatus.FAILED
+                        plan.subtasks[-1].error = 'Concurrent project changes prevent transaction commit'
+                        transaction_outcome = transaction.finish(commit=False)
+                except (OSError, ValueError) as exc:
+                    plan.subtasks[-1].status = TaskStatus.FAILED
+                    plan.subtasks[-1].error = f'Project transaction recovery required: {exc}'
+                    transaction_outcome = {'state': 'recovery_required', 'journal': plan.transaction}
             
             if plan.is_failed():
                 plan.status = TaskStatus.FAILED
+                # Journal is already fenced/rolled back. Stop sibling workers
+                # rather than paying for results that can no longer be committed.
+                for dispatch_id, owner in list(self.active_subtasks.items()):
+                    if owner != plan.id:
+                        continue
+                    sibling = next((st for st in plan.subtasks if getattr(st, '_dispatch_msg_id', None) == dispatch_id), None)
+                    if sibling and sibling.assigned_brain:
+                        await self.bus.send(BusMessage(type=MessageType.CANCEL, source=self.name,
+                            target=sibling.assigned_brain, payload={'task_id': dispatch_id, 'mode': 'soft'}))
+                        self.brain_load[sibling.assigned_brain] = max(0, self.brain_load.get(sibling.assigned_brain, 0) - 1)
+                        sibling.status = TaskStatus.CANCELLED
+                    self.active_subtasks.pop(dispatch_id, None)
                 failed_subtasks = [st for st in plan.subtasks if st.status == TaskStatus.FAILED]
                 plan.error = "; ".join(dict.fromkeys(st.error or "Unknown error" for st in failed_subtasks))[:2000]
                 plan.result = {
                     "success": False,
                     "error": plan.error,
-                    "failed_subtasks": [{"id": st.id, "error": st.error} for st in failed_subtasks]
+                    "failed_subtasks": [{"id": st.id, "error": st.error,
+                        "verification": (st.result or {}).get('verification'),
+                        "repair_error": (st.result or {}).get('repair_error')}
+                        for st in failed_subtasks]
                 }
             else:
                 plan.status = TaskStatus.COMPLETE
@@ -1749,6 +1904,8 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                 }
             
             # Send final result back to original requester (explicit target)
+            if transaction_outcome:
+                plan.result['transaction'] = transaction_outcome
             await self.bus.send_result(
                 source=self.name,
                 target=plan.original_task.source,
@@ -1896,10 +2053,16 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             return
         
         plan.status = TaskStatus.CANCELLED
+        if plan.transaction:
+            from ..project_transaction import ProjectTransaction
+            try:
+                ProjectTransaction(plan.transaction).fence()
+            except (OSError, ValueError) as exc:
+                plan.rollback = {'state': 'recovery_required', 'error': str(exc), 'journal': plan.transaction}
         
         # Cancel active subtasks (keys are dispatch message IDs)
         for dispatch_id in list(self.active_subtasks.keys()):
-            if self.active_subtasks[dispatch_id] == task_id:
+            if self.active_subtasks.get(dispatch_id) == task_id:
                 # Find subtask by dispatch message ID
                 subtask = None
                 for st in plan.subtasks:
@@ -1918,6 +2081,12 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                     brain = subtask.assigned_brain
                     self.brain_load[brain] = max(0, self.brain_load.get(brain, 0) - 1)
                 self.active_subtasks.pop(dispatch_id, None)
+        if plan.transaction:
+            try:
+                # Workers/process groups have stopped; only now restore the build.
+                plan.rollback = ProjectTransaction(plan.transaction).finish(commit=False)
+            except (OSError, ValueError) as exc:
+                plan.rollback = {'state': 'recovery_required', 'error': str(exc), 'journal': plan.transaction}
         for subtask in plan.subtasks:
             if subtask.status in (TaskStatus.PENDING, TaskStatus.RUNNING):
                 subtask.status = TaskStatus.CANCELLED
@@ -2319,7 +2488,11 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                 not (isinstance(subtask.result, dict) and subtask.result.get("_compacted", False))):
                 
                 # Extract key information for summary
-                result = subtask.result
+                result = result_data(subtask.result)
+                # Source results are dependency artifacts, not conversational
+                # prose. Compaction must never replace them with summaries.
+                if isinstance(result, dict) and result.get('file_content') is not None:
+                    continue
                 if isinstance(result, dict):
                     summary = {
                         "success": result.get("success", False),

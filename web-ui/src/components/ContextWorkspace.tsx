@@ -4,7 +4,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { ArrowLeft, ExternalLink, Loader2, Maximize2, Minimize2, PanelRight, Layers, X } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 import { useWorkspaceStore } from '@/store/workspaceStore';
-import { isBoardRun, reconcileWorkspace, runTitle, surfaceRegistry, webEntryPath, type WorkSurface } from '@/lib/morphable';
+import { isBoardRun, nextProjectAttempt, reconcileWorkspace, runTitle, surfaceRegistry, webEntryPath, type WorkSurface } from '@/lib/morphable';
 import { usePreview } from '@/lib/usePreview';
 import { WorkOverview } from './WorkWidgets';
 
@@ -92,6 +92,14 @@ export function ContextWorkspace({ children }: { children: (ownsActivity: boolea
       update(sessionId, { selectedId: runs[0].id });
     }
   }, [sessionId, preference?.selectedId, runs, update]);
+  // Follow a newer attempt on this exact project, without letting unrelated
+  // concurrent work (e.g. taskboard) steal the selected surface or reopen it.
+  useEffect(() => {
+    const selected = state.selected?.run;
+    if (!sessionId || !selected) return;
+    const next = nextProjectAttempt(selected, runs, preference?.selectedAt);
+    if (next) update(sessionId, { selectedId: next.id });
+  }, [sessionId, state.selected, runs, preference?.selectedAt, update]);
   const drag = useRef<{ x: number; width: number } | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const positions = useRef<Record<string, number>>({});
@@ -126,16 +134,16 @@ export function ContextWorkspace({ children }: { children: (ownsActivity: boolea
             <button className="min-[1100px]:hidden mt-1" aria-label="Retour au chat" onClick={close}><ArrowLeft size={16} /></button>
             <div className="context-identity" aria-hidden="true"><Layers size={19} /></div>
             <div className="flex-1 min-w-0">
+              <p className="text-[10px] uppercase tracking-[0.14em] work-muted mb-1">Atelier</p>
               {runs.length > 1 ? <select aria-label="Travail consulté" className="w-full text-[14px] font-medium bg-transparent" style={{ color: 'var(--text-primary)' }} value={state.selected?.run.id || ''} onChange={(event) => { const surface = runs.find((s) => s.run.id === event.target.value); if (surface) inspect(surface.run); }}>
                 {!state.selected && <option value="">Autres travaux…</option>}
                 {runs.map(({ run }) => <option key={run.id} value={run.id} style={{ backgroundColor: 'var(--bg-surface)' }}>{runTitle(run)}</option>)}
               </select> : <h2 className="text-[14px] font-medium line-clamp-2" title={state.selected?.run.description}>{state.selected ? (state.selected.run.projectName || state.selected.run.projectPath ? runTitle(state.selected.run) : 'Travail de la conversation') : 'Résultat indisponible'}</h2>}
-              {state.selected && <p className="context-status text-[11px] mt-1" data-status={state.selected.run.status}>{statuses[state.selected.run.status]}</p>}
+              {state.selected && <p className="context-status text-[11px] mt-1 flex items-center gap-2" data-status={state.selected.run.status}>{state.selected.run.status === 'running' && !state.selected.run.awaitingApproval && <span className="work-pulse" aria-hidden="true" />}{state.selected.run.awaitingApproval ? 'Ton accord est nécessaire' : statuses[state.selected.run.status]}</p>}
             </div>
             <button className="p-1" aria-label={expanded ? 'Redonner la place principale au chat' : 'Donner la place principale à cette activité'} onClick={() => change({ mode: expanded ? 'workspace' : 'expanded' })}>{expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
             <button className="p-1" aria-label="Fermer la surface" onClick={close}><X size={16} /></button>
           </header>
-          {state.selected?.run.awaitingApproval && <button className="mx-4 mb-3 text-left text-[12px] underline underline-offset-4" onClick={close}>Voir le contrat dans le chat</button>}
           <nav className="context-tabs flex shrink-0 overflow-x-auto" aria-label="Contenu de la surface">
             {surfaces.filter((s) => s.run.id === state.selected?.run.id).sort((a, b) => ['activity', 'preview', 'files', 'verification'].indexOf(a.kind) - ['activity', 'preview', 'files', 'verification'].indexOf(b.kind)).map((surface) => <button key={surface.id} aria-pressed={state.selected?.id === surface.id} className="text-[11px] shrink-0" onClick={() => change({ selectedId: surface.id })}>{labels[surface.kind]}</button>)}
           </nav>

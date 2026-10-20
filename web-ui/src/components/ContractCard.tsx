@@ -11,6 +11,14 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import { Check, X, Loader2 } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
+import { useWorkspaceStore } from '@/store/workspaceStore';
+
+export function ContractCriteria({ contracts }: { contracts: string[] }) {
+  return <ol className="contract-criteria">{contracts.filter((item) => !item.startsWith('[Stack]')).map((item, i) =>
+    <li key={i}><span className="contract-number">{i + 1}</span>{item.length > 190
+      ? <details className="min-w-0 flex-1"><summary><span>{item.slice(0, 180)}…</span><span className="work-link block mt-2 text-[11px]">Lire le critère intégral</span></summary><p className="mt-3 work-muted">{item}</p></details>
+      : <p>{item}</p>}</li>)}</ol>;
+}
 
 export function StackSummary({ value }: { value: string }) {
   const fields = value.replace(/^\[Stack\]\s*/, '').split(' · ');
@@ -31,17 +39,22 @@ export function StackSummary({ value }: { value: string }) {
         {interactionLabel && <span className="rounded-full px-2 py-0.5 text-[11px]" style={{ color: 'var(--text-secondary)', border: '1px solid var(--border-subtle)' }}>{interactionLabel}</span>}
       </div>
       {entryPoint && <div className="flex items-baseline gap-2 mb-3 text-[12px]"><span className="shrink-0" style={{ color: 'var(--text-tertiary)' }}>Point d’entrée</span><code className="rounded px-1.5 py-0.5" style={{ color: 'var(--text-primary)', backgroundColor: 'var(--bg-primary)' }}>{entryPoint}</code></div>}
-      {technologies && <div className="mb-3"><div className="text-[10px] uppercase tracking-[0.1em] mb-1" style={{ color: 'var(--text-tertiary)' }}>Choix techniques</div><p className="m-0 text-[12.5px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{technologies}</p></div>}
-      {validation && <div><div className="text-[10px] uppercase tracking-[0.1em] mb-1" style={{ color: 'var(--text-tertiary)' }}>Vérification</div><p className="m-0 text-[12.5px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{validation}</p></div>}
+      {technologies && <details className="mb-3"><summary className="work-link text-[12px]">Choix techniques</summary><p className="mt-2 text-[12px] leading-relaxed work-muted">{technologies}</p></details>}
+      {validation && <details><summary className="work-link text-[12px]">Méthode de vérification</summary><p className="mt-2 text-[12px] leading-relaxed work-muted">{validation}</p></details>}
     </div>
   );
 }
 
-export function ContractCard() {
+export function ContractCard({ compact = false }: { compact?: boolean }) {
   const proposal = useAppStore((s) => s.contractProposal);
   const sending = useAppStore((s) => s.contractSending);
   const error = useAppStore((s) => s.contractError);
   const sendContractDecision = useAppStore((s) => s.sendContractDecision);
+  const sessionId = useAppStore((s) => s.activeSessionKey);
+  const selectedId = useWorkspaceStore((s) => s.sessions[sessionId]?.selectedId);
+  if (proposal && compact && selectedId?.startsWith(`${encodeURIComponent(sessionId)}/${encodeURIComponent(proposal.planId)}/`)) {
+    return <div className="self-start max-w-sm rounded-2xl px-4 py-3 text-[13px] work-muted" style={{ border: '1px solid var(--border-subtle)' }} role="status">Contrat prêt à examiner dans l’Atelier → <span className="block mt-1 text-[11px]">Le travail attend ton accord.</span></div>;
+  }
 
   return (
     <AnimatePresence>
@@ -73,7 +86,7 @@ export function ContractCard() {
               }}
             >
               <p className="text-[15px] leading-relaxed m-0" style={{ color: 'var(--text-primary)' }}>
-                Before I write code — approve these contracts:
+                Voici le contrat proposé
               </p>
 
               {proposal.target && (
@@ -89,20 +102,10 @@ export function ContractCard() {
               {proposal.contracts.some((contract) => contract.startsWith('[Stack]')) && (
                 <StackSummary value={proposal.contracts.find((contract) => contract.startsWith('[Stack]'))!} />
               )}
-              <ul className="list-disc pl-5 my-1.5 space-y-1">
-                {proposal.contracts.filter((contract) => !contract.startsWith('[Stack]')).map((contract, i) => (
-                  <li
-                    key={i}
-                    className="text-[13.5px] leading-relaxed"
-                    style={{ color: 'var(--text-secondary)' }}
-                  >
-                    {contract}
-                  </li>
-                ))}
-              </ul>
+              <ContractCriteria contracts={proposal.contracts} />
 
               <p className="text-[12px] mt-1 mb-2 m-0" style={{ color: 'var(--text-tertiary)' }}>
-                Execution is paused until you decide.
+                Le travail attend ton accord.
               </p>
 
               <div className="flex items-center gap-2">

@@ -62,6 +62,19 @@ def test_new_project_collision_is_not_implicit_permission_to_edit():
     assert target.mode == "existing"
 
 
+def test_partial_project_requires_provenance_and_still_pins_identity():
+    directory = fs_api.workspace_root() / 'sandbox' / 'partial'
+    directory.mkdir(parents=True)
+    data = {'project_target': {'mode': 'existing', 'path': 'sandbox/partial'}}
+    with pytest.raises(ValueError, match='manifeste'):
+        resolve_target('fix', data, [action()])
+    with pytest.raises(ValueError, match='manifeste'):
+        resolve_target('fix', data, [action()], partial_project_check=lambda path: False)
+    target = resolve_target('fix', data, [action()], partial_project_check=lambda path: path == 'sandbox/partial')
+    assert target.inode == directory.stat().st_ino
+    assert not (directory / '.project.json').exists()  # no fabricated runnable claim
+
+
 def test_existing_operations_need_an_explicit_project():
     existing(fs_api.workspace_root(), "blender")
     fs_api.set_current_project("sandbox/blender")

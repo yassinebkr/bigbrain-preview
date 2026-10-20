@@ -6,6 +6,7 @@ export type WorkspaceMode = 'focus' | 'peek' | 'workspace' | 'expanded';
 export interface WorkspacePreference {
   mode?: WorkspaceMode;
   selectedId?: string;
+  selectedAt?: number; // explicit inspection; new work may follow, old work may not steal it
   width?: number;
   widgetChoices?: Record<string, { revision: number; widgets: WidgetKind[] }>;
 }
@@ -19,6 +20,13 @@ export const surfaceId = (run: RunState, kind: SurfaceKind) =>
   `${encodeURIComponent(run.sessionId)}/${encodeURIComponent(run.id)}/${kind}`;
 
 export const isBoardRun = (run: RunState) => run.resultKind === 'taskboard' || run.steps.some((step) => step.brain === 'taskboard');
+export function nextProjectAttempt(selected: RunState | undefined, surfaces: WorkSurface[], inspectedAt = 0) {
+  if (!selected) return undefined;
+  return surfaces.filter((s) => s.kind === 'activity' && !!s.run.projectPath
+    && (s.run.projectPath === selected.projectPath || !selected.projectPath && selected.status !== 'running')
+    && s.run.sessionId === selected.sessionId && s.run.startedAt > Math.max(selected.startedAt, inspectedAt))
+    .sort((a, b) => b.run.startedAt - a.run.startedAt)[0];
+}
 export function webEntryPath(run: RunState) {
   if (isBoardRun(run) || run.status !== 'done' || !run.runnable || run.deliverableType !== 'web_app') return undefined;
   return run.projectPath && run.entryPoint ? `${run.projectPath}/${run.entryPoint}` : undefined;

@@ -115,6 +115,12 @@ class ChromaMemoryBackend:
         brain: str = None,
     ) -> List[Dict[str, Any]]:
         """Semantic search. Returns list of {id, content, metadata, distance}."""
+        if self._collection is None:
+            return self._fallback_search(query_text, limit, self._build_where(scope, workspace, memory_type, brain))
+        return self.query_report(query_text, limit, scope, workspace, memory_type, brain)['items']
+
+    def query_report(self, query_text, limit=5, scope=None, workspace=None, memory_type=None, brain=None):
+        """Observable retrieval; an unavailable/error backend is not an empty hit."""
         where_filter = self._build_where(scope, workspace, memory_type, brain)
 
         if self._collection is not None:
@@ -123,11 +129,14 @@ class ChromaMemoryBackend:
                 if where_filter:
                     kwargs["where"] = where_filter
                 results = self._collection.query(**kwargs)
-                return self._unpack_chroma_results(results)
+                items = self._unpack_chroma_results(results)
+                return {'status': 'ok' if items else 'empty', 'items': items}
             except Exception:
-                return []
+                import logging
+                logging.getLogger(__name__).exception('Persistent semantic recall failed')
+                return {'status': 'error', 'items': []}
         else:
-            return self._fallback_search(query_text, limit, where_filter)
+            return {'status': 'unavailable', 'items': [], 'reason': 'Persistent semantic backend unavailable'}
 
     def get_by_id(self, entry_id: str) -> Optional[Dict[str, Any]]:
         """Retrieve a specific entry by ID."""

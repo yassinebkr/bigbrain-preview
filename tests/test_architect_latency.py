@@ -21,6 +21,24 @@ def web_spec():
     })
 
 
+@pytest.mark.asyncio
+async def test_runtime_manifest_is_not_dispatched_as_worker_source():
+    provider = AsyncMock()
+    raw = {'project_name': 'repair', 'deliverable_type': 'python',
+           'acceptance_contracts': ['Actual behaviour works', 'Tests pass'],
+           'file_specs': [{'path': '.project.json'}, {'path': 'main.py'}, {'path': 'tests/test_main.py', 'dependencies': ['main.py']}],
+           'entry_point': 'main.py'}
+    provider.chat_complete.return_value = json.dumps(raw)
+    spec = await architecture.ArchitectPhase(provider).design('Repair the missing manifest then fix the application', expected_deliverable='python')
+    assert '.project.json' not in [f.path for f in spec.dependency_order()]
+    assert provider.chat_complete.await_count == 1
+    assert 'runtime-owned metadata' in provider.chat_complete.call_args.kwargs['messages'][0]['content']
+    raw['file_specs'].append({'path': '.env'})
+    provider.chat_complete.return_value = json.dumps(raw)
+    with pytest.raises(ValueError, match='Unsafe project file path'):
+        await architecture.ArchitectPhase(provider).design('Repair', expected_deliverable='python')
+
+
 @pytest.mark.parametrize("value", ["", "NaN", "inf", "0", "-1", "301", "typo"])
 def test_invalid_timeout_setting_has_a_safe_default(monkeypatch, value):
     monkeypatch.setenv("BIGBRAIN_ARCHITECT_TIMEOUT_SECONDS", value)

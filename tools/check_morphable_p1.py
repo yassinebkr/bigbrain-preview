@@ -256,7 +256,43 @@ async def check(root):
                 assert server._sessions.get(original) is not None
                 assert project.joinpath('example.py').is_file()
                 await second.close()
+                await page.get_by_role('button', name='P1 original conversation', exact=True).click()
+                opener = page.get_by_role('button', name='Ouvrir l’espace de travail')
+                if await opener.is_visible():
+                    await opener.click()
+                await page.get_by_label('Travail consulté').select_option('python')
+                await emit('task.routing', 'repair', description='Repair existing project', project_path='sandbox/p1-demo')
+                try:
+                    await page.wait_for_function("document.querySelector('[aria-label=\"Travail consulté\"]')?.value === 'repair'")
+                except Exception:
+                    print({'page_errors': errors, 'body': (await page.locator('body').inner_text())[:1800]})
+                    raise
+                await emit('planning.stage', 'repair', stage='architecture', status='running', description='Preparing repair')
+                await pane.get_by_text('Preparing repair', exact=True).first.wait_for()
+                await emit('task.failed', 'repair', error='Isolated repair planning failure', project_path='sandbox/p1-demo')
+                await pane.get_by_text('Isolated repair planning failure', exact=True).first.wait_for()
+                assert await page.get_by_label('Travail consulté').input_value() == 'repair'
+                # Separate explicit user navigation from the earlier no-bump
+                # regression: closing/reopening intentionally changes layout.
+                await emit('task.routing', 'approval', description='Isolated contract review', project_path='sandbox/p1-demo')
+                await emit('contracts.proposal', 'approval', plan_id='approval', design_id='isolated-design',
+                    user_request='Isolated implementation', project_target={'mode': 'existing', 'path': 'sandbox/p1-demo'},
+                    contracts=['[Stack] livrable web_app · interaction browser · point d’entrée index.html · technologies HTML/CSS/JavaScript · validation ' + 'Actual browser verification. ' * 20,
+                               'An actual user-visible acceptance criterion', 'Long criterion. ' * 30])
+                await pane.get_by_role('button', name='Approuver et lancer').wait_for()
+                await page.get_by_text('Contrat prêt à examiner dans l’Atelier →', exact=False).wait_for()
+                assert await page.get_by_text('An actual user-visible acceptance criterion', exact=True).count() == 1
+                assert await page.get_by_role('button', name='Approve & run', exact=True).count() == 0
+                await page.screenshot(path='/tmp/bigbrain-atelier-contract.png')
+                await pane.get_by_role('button', name='Fermer la surface', exact=True).click()
+                await page.get_by_role('button', name='Approve & run', exact=True).wait_for()
+                await page.get_by_role('button', name='Ouvrir l’espace de travail').click()
+                await pane.get_by_role('button', name='Approuver et lancer').wait_for()
+                await emit('contracts.approved', 'approval', plan_id='approval', design_id='isolated-design')
+                await pane.get_by_label('Proposition à approuver').wait_for(state='detached')
                 print(json.dumps({'draft_focus_preserved': True, 'automatic_side_surface_no_preview': True,
+                    'single_contract_owner_with_chat_fallback': True,
+                    'same_project_repair_followed_through_failure': True,
                     'activity_expansion_preserves_iframe_and_draft': True,
                     'real_python_console_and_chat_launch': True, 'completed_console_reload': True,
                     'widget_acceptance_no_preview_autostart': True, 'accepted_composition_stays_pinned': True,

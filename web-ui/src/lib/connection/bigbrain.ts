@@ -84,7 +84,8 @@ export class BigBrainConnection implements ConnectionLike {
     const messageId = `msg-${Date.now()}-${this.messageIdCounter}`;
     this._emitStatus(messageId, 'sending');
     try {
-      this.ws?.send(JSON.stringify({
+      if (!this.ws || this.ws.readyState !== 1) throw new Error('Connexion au serveur indisponible. Le message n’a pas été envoyé.');
+      this.ws.send(JSON.stringify({
         type: 'chat.send',
         payload: {
           text,
@@ -279,6 +280,7 @@ export class BigBrainConnection implements ConnectionLike {
     if (frame.type === 'message.status') {
       const { messageId, status } = frame.payload || {};
       if (messageId) this._emitStatus(messageId, status);
+      if (status === 'failed') this.callbacks.onSendError?.({ message: 'Le serveur a refusé l’envoi du message.' }, messageId);
       if (status === 'sent') this.callbacks.onQueueDrained?.();
       return;
     }
