@@ -25,7 +25,7 @@ export function Layout({ children }: LayoutProps) {
 
       {/* Main Content Area */}
       <div
-        className="flex flex-col flex-1 h-screen overflow-hidden ml-0 md:ml-[52px]"
+        className="app-main flex flex-col flex-1 h-screen overflow-hidden"
       >
         {/* Top Bar */}
         <TopBar>
@@ -34,8 +34,8 @@ export function Layout({ children }: LayoutProps) {
         <ActivityStrip />
 
         {/* Main Content */}
-        <main className="flex-1 overflow-hidden relative">
-          <div className={isWorkspace ? "w-full h-full" : "max-w-[720px] md:max-w-[1200px] mx-auto w-full px-3 sm:px-4 md:px-6 h-full"}>
+        <main className="flex-1 min-h-0 overflow-hidden relative">
+          <div className={isWorkspace || view === 'chat' ? "w-full h-full" : "max-w-[720px] md:max-w-[1200px] mx-auto w-full px-3 sm:px-4 md:px-6 h-full"}>
             {children}
           </div>
         </main>

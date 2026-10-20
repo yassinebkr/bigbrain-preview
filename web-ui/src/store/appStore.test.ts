@@ -114,6 +114,29 @@ describe('applyRunEvent — run state machine', () => {
     expect(useAppStore.getState().activeRun).toBeNull();
   });
 
+  it('presents file progress without raw stages or first-attempt noise', () => {
+    const s = useAppStore.getState();
+    s.applyRunEvent(ev('task.received', { task_id: 't1' }));
+    s.applyRunEvent(ev('subtask.started', { task_id: 't1', subtask_id: 'file', brain: 'python_brain', description: 'Prepare file' }));
+    for (const stage of ['writing_file', 'writing_web_file']) {
+      s.applyRunEvent(ev('task.progress', { task_id: 't1', subtask_id: 'file', stage, path: 'README.md', attempt: 1 }));
+      expect(useAppStore.getState().activeRun!.steps[0].description).toBe('Création du fichier · README.md');
+    }
+    s.applyRunEvent(ev('task.progress', { task_id: 't1', subtask_id: 'file', stage: 'writing_file', path: 'main.py', attempt: 2 }));
+    expect(useAppStore.getState().activeRun!.steps[0].description).toBe('Création du fichier · main.py · tentative 2');
+    s.applyRunEvent(ev('task.progress', { task_id: 't1', subtask_id: 'file', stage: 'file_written', file_path: 'main.py' }));
+    expect(useAppStore.getState().activeRun!.steps[0].description).toBe('Fichier enregistré · main.py');
+    s.applyRunEvent(ev('subtask.complete', { task_id: 't1', subtask_id: 'file' }));
+    expect(useAppStore.getState().activeRun!.steps[0].description).toBe('Fichier enregistré · main.py');
+    s.applyRunEvent(ev('task.progress', { task_id: 't1', subtask_id: 'file', stage: 'internal_unknown_stage' }));
+    expect(useAppStore.getState().activeRun!.steps[0].description).toBe('Fichier enregistré · main.py');
+    s.applyRunEvent(ev('task.complete', { task_id: 't1' }));
+    s.applyRunEvent(ev('task.progress', { task_id: 't1', subtask_id: 'file', stage: 'file_written', file_path: 'restored.py' }));
+    const restored = useAppStore.getState().completedRuns.find((run) => run.id === 't1')!;
+    expect(restored.steps[0].description).toBe('Fichier enregistré · restored.py');
+    expect(restored.status).toBe('done');
+  });
+
   it('subtask.started upserts a running step; complete updates it with duration', () => {
     const s = useAppStore.getState();
     s.applyRunEvent(ev('task.received', { task_id: 't1' }));
@@ -525,6 +548,33 @@ describe('applyFsRunEvent — streaming manual runs', () => {
 });
 
 describe('run record is scoped to its conversation', () => {
+  it('accepts only correlated newer widget proposals and carries them into the result', () => {
+    reset();
+    const store = useAppStore.getState();
+    store.applyRunEvent(ev('task.routing', { task_id: 'ui-run', session_id: 'sess-live' }));
+    const detail = { task_id: 'ui-run', session_id: 'sess-live', producer: 'architect', proposal: { version: 1, revision: 2, widgets: ['files'] } };
+    store.applyRunEvent(ev('workspace.proposal', { ...detail, session_id: 'foreign' }));
+    expect(useAppStore.getState().activeRun?.widgetProposal).toBeUndefined();
+    store.applyRunEvent(ev('workspace.proposal', detail));
+    store.applyRunEvent(ev('workspace.proposal', { ...detail, proposal: { version: 1, revision: 1, widgets: ['console'] } }));
+    expect(useAppStore.getState().activeRun?.widgetProposal?.widgets).toEqual(['files']);
+    store.applyRunEvent(ev('task.complete', { task_id: 'ui-run', session_id: 'sess-live' }));
+    expect(useAppStore.getState().completedRuns[0].widgetProposal?.revision).toBe(2);
+  });
+  it('settles pending architecture when planning fails and ignores late progress', () => {
+    reset();
+    const store = useAppStore.getState();
+    store.applyRunEvent(ev('task.routing', { task_id: 'timeout', session_id: 'sess-live' }));
+    store.applyRunEvent(ev('planning.stage', { task_id: 'timeout', stage: 'assessment', status: 'done' }));
+    store.applyRunEvent(ev('planning.stage', { task_id: 'timeout', stage: 'architect', status: 'running' }));
+    store.applyRunEvent(ev('task.failed', { task_id: 'timeout', error: 'Planning timeout' }));
+    const finished = useAppStore.getState().completedRuns[0];
+    expect(finished.steps.map((step) => step.status)).toEqual(['done', 'failed']);
+    expect(finished.awaitingApproval).toBe(false);
+    store.applyRunEvent(ev('planning.stage', { task_id: 'timeout', stage: 'architect', status: 'running' }));
+    expect(useAppStore.getState().activeRun).toBeNull();
+    expect(useAppStore.getState().completedRuns[0].steps[1].status).toBe('failed');
+  });
   it('preparation progress is timed, kept through task.received and scoped to its session', () => {
     useAppStore.setState({ activeSessionKey: 'sess-progress', activeRun: null });
     useAppStore.getState().applyRunEvent(ev('task.routing', { session_id: 'sess-progress' }));

@@ -39,7 +39,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
       onMouseEnter={() => setShowActions(true)}
       onMouseLeave={() => setShowActions(false)}
     >
-      <div className={`flex ${isUser ? 'flex-row-reverse' : 'flex-row'} items-start gap-2 w-full max-w-[92%] sm:max-w-[85%] md:max-w-[82%] lg:max-w-[78%] xl:max-w-[75%]`}>
+      <div className={`chat-message-row flex ${isUser ? 'flex-row-reverse' : 'flex-row'} items-start gap-2 w-full max-w-[92%] sm:max-w-[85%] md:max-w-[82%] lg:max-w-[78%] xl:max-w-[75%]`}>
         {/* Avatar (AI only) */}
         {!isUser && (
           <div

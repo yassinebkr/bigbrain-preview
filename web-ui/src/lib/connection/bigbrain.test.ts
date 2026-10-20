@@ -2,6 +2,20 @@ import { describe, expect, it, vi } from 'vitest';
 import { BigBrainConnection } from './bigbrain';
 
 describe('session-scoped websocket replies', () => {
+  it('restores replayed widget suggestions without ending a reply or executing anything', () => {
+    const conn = new BigBrainConnection({ wsUrl: 'ws://localhost/ws' });
+    conn.switchSession('s');
+    const activity = vi.fn();
+    const end = vi.fn();
+    conn.on('onAgentActivity', activity);
+    conn.on('onRunEnd', end);
+    (conn as any)._handleFrame({ type: 'event', _replay: true, source: 'orchestrator_default', payload: {
+      event: 'workspace.proposal', task_id: 'r', session_id: 's', producer: 'architect',
+      proposal: { version: 1, revision: 1, widgets: ['files'] },
+    } });
+    expect(activity).toHaveBeenCalledWith(expect.objectContaining({ type: 'workspace.proposal' }));
+    expect(end).not.toHaveBeenCalled();
+  });
   it('does not finalize front-brain streaming when a worker finishes', () => {
     const conn = new BigBrainConnection({ wsUrl: 'ws://localhost/ws' });
     conn.switchSession('sess-live');

@@ -5,6 +5,7 @@ The journal is already fsync'd by BusLogger before events reach the UI.
 """
 
 import json
+from ..orchestrator.widget_proposals import validate_widget_proposal
 from pathlib import Path
 
 RUN_EVENTS = {
@@ -14,6 +15,7 @@ RUN_EVENTS = {
     "workspace.file_written", "verification.run_recorded",
     "task.complete", "task.failed", "task.cancelled",
     "task.progress",
+    "workspace.proposal",
 }
 TERMINAL_EVENTS = {"task.complete", "task.failed", "task.cancelled"}
 
@@ -59,11 +61,25 @@ An unfinished plan from a previous process is interrupted, not live work.
                 if not isinstance(run_id, str) or not run_id:
                     continue
                 data["task_id"] = run_id
-                # Final subtask states replace started, preserving its label/brain.
-                key = ("subtask" if event.startswith("subtask.") else event,
+                # Keep the start before progress: the client needs its step to
+                # exist when restoring file progress, then applies the terminal.
+                key = ("subtask" if event in ("subtask.complete", "subtask.failed") else event,
                        data.get("subtask_id"), data.get("path"), data.get("stage"))
                 records = runs.setdefault(run_id, {})
                 old = records.get(key)
+                if event in ('subtask.complete', 'subtask.failed'):
+                    old = old or records.get(('subtask.started', data.get('subtask_id'), data.get('path'), data.get('stage')))
+                if event == 'workspace.proposal':
+                    if not frame.get('workspace') or frame.get('source') != f"orchestrator_{frame['workspace']}":
+                        continue
+                    try:
+                        proposal = validate_widget_proposal(data.get('proposal'))
+                    except ValueError:
+                        continue
+                    if data.get('producer') != 'architect':
+                        continue
+                    if old and old['payload']['proposal']['revision'] >= proposal['revision']:
+                        continue
                 if old and event.startswith("subtask."):
                     frame["payload"] = {**old["payload"], **data}
                 records[key] = frame

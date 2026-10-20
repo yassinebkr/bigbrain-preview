@@ -17,7 +17,7 @@ import { useAppStore } from '@/store/appStore';
 import { Tooltip } from './Tooltip';
 
 const sidebarItems: { id: string; icon: React.ComponentType<{ size?: number; strokeWidth?: number; style?: React.CSSProperties }> | null; tooltip?: string; isAvatar?: boolean; isSpacer?: boolean }[] = [
-  { id: 'avatar', icon: null, tooltip: 'New Chat', isAvatar: true },
+  { id: 'avatar', icon: null, tooltip: 'Retour au chat', isAvatar: true },
   { id: 'newchat', icon: Plus, tooltip: 'New conversation' },
   { id: 'search', icon: Search, tooltip: 'Search (Ctrl+K)' },
   { id: 'home', icon: Home, tooltip: 'Home' },
@@ -48,6 +48,8 @@ function SidebarContent({ onItemClick }: { onItemClick?: () => void }) {
     onItemClick?.();
     switch (id) {
       case 'avatar':
+        setView(useAppStore.getState().activeSessionKey ? 'chat' : 'welcome');
+        break;
       case 'newchat':
         // A new conversation — a REAL session on the server (the server
         // keeps its own history; the session list refreshes).
@@ -86,10 +88,10 @@ function SidebarContent({ onItemClick }: { onItemClick?: () => void }) {
   };
 
   return (
-    <div className="flex flex-col items-center py-3 px-1.5 h-full" style={{ gap: '4px' }}>
+    <div className="navigation-items flex items-center" style={{ gap: '4px' }}>
       {sidebarItems.map((item, index) => {
         if (item.isSpacer) {
-          return <div key={item.id} className="flex-grow min-h-0" />;
+          return null;
         }
 
         if (item.isAvatar) {
@@ -106,7 +108,7 @@ function SidebarContent({ onItemClick }: { onItemClick?: () => void }) {
               whileHover={{ scale: 1.1 }}
               whileTap={{ scale: 0.92 }}
               onClick={() => handleClick(item.id)}
-              className="relative flex items-center justify-center w-9 h-9 rounded-full mb-1 cursor-pointer"
+              className="relative flex items-center justify-center w-9 h-9 rounded-full shrink-0 cursor-pointer"
               style={{ backgroundColor: '#0071e3' }}
               aria-label={item.tooltip}
             >
@@ -157,7 +159,7 @@ function SidebarContent({ onItemClick }: { onItemClick?: () => void }) {
             whileHover={{ scale: 1.12 }}
             whileTap={{ scale: 0.92 }}
             onClick={() => handleClick(item.id)}
-            className="relative flex items-center justify-center w-10 h-10 rounded-[10px] transition-colors duration-200 cursor-pointer"
+            className="relative flex items-center justify-center w-9 h-9 shrink-0 rounded-full transition-colors duration-200 cursor-pointer"
             style={{
               backgroundColor: isActive ? 'var(--bg-icon-hover)' : 'transparent',
               border: isActive ? '1px solid var(--border-subtle)' : '1px solid transparent',
@@ -173,6 +175,7 @@ function SidebarContent({ onItemClick }: { onItemClick?: () => void }) {
               }
             }}
             aria-label={item.tooltip}
+            aria-pressed={isActive}
           >
             {/* Active indicator - left border */}
             {isActive && (
@@ -180,7 +183,7 @@ function SidebarContent({ onItemClick }: { onItemClick?: () => void }) {
                 initial={{ scaleY: 0 }}
                 animate={{ scaleY: 1 }}
                 transition={{ duration: 0.2, ease: easeOut }}
-                className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-5 rounded-r-full"
+                className="absolute bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full"
                 style={{ backgroundColor: 'var(--accent-blue)' }}
               />
             )}
@@ -205,15 +208,11 @@ function SidebarContent({ onItemClick }: { onItemClick?: () => void }) {
 function DesktopSidebar() {
   return (
     <motion.aside
-      initial={{ opacity: 0, x: -20 }}
-      animate={{ opacity: 1, x: 0 }}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
       transition={{ duration: 0.4, ease: easeOut }}
-      className="fixed left-0 top-0 h-screen flex flex-col items-center z-40 hidden md:flex"
-      style={{
-        width: '52px',
-        backgroundColor: 'var(--bg-sidebar)',
-        borderRight: '1px solid var(--border-subtle)',
-      }}
+      className="navigation-island z-40 hidden md:flex"
+      aria-label="Navigation principale"
     >
       <SidebarContent />
     </motion.aside>

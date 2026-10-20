@@ -107,6 +107,9 @@ export class BigBrainConnection implements ConnectionLike {
 
   listSessions(callback: (sessions: any[]) => void): void {
     this._request('sessions.list', (frame) => {
+      for (const sessionId of frame.payload?.deletedSessionIds || []) {
+        this.callbacks.onSessionChanged?.({ sessionId, deleted: true });
+      }
       callback(frame.payload?.sessions || []);
     });
   }
@@ -117,10 +120,27 @@ export class BigBrainConnection implements ConnectionLike {
     });
   }
 
-  deleteSession(sessionId: string, callback?: (deleted: boolean) => void): void {
-    this._request('sessions.delete', (frame) => {
-      callback?.(!!frame.payload?.deleted);
-    }, { sessionId });
+  deleteSession(sessionId: string): Promise<void> {
+    return this._mutateSession('sessions.delete', { sessionId });
+  }
+
+  renameSession(sessionId: string, title: string): Promise<void> {
+    return this._mutateSession('sessions.rename', { sessionId, title });
+  }
+
+  private _mutateSession(method: string, params: Record<string, string>): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (id) delete this.pendingRequests[id];
+        reject(new Error('Le serveur ne répond pas. Vérifie la connexion puis réessaie.'));
+      }, 20000);
+      const id = this._request(method, (frame) => {
+        clearTimeout(timer);
+        if (frame.error) reject(new Error(String(frame.error)));
+        else resolve();
+      }, params);
+      if (!id) { clearTimeout(timer); reject(new Error('Connexion au serveur indisponible.')); }
+    });
   }
 
   cancel(): void {
@@ -223,6 +243,10 @@ export class BigBrainConnection implements ConnectionLike {
   }
 
   private _handleFrame(frame: any): void {
+    if (frame.type === 'session.changed') {
+      this.callbacks.onSessionChanged?.(frame.payload);
+      return;
+    }
     // req/res resolution first.
     if (frame.type === 'resp' && frame.id && this.pendingRequests[frame.id]) {
       const cb = this.pendingRequests[frame.id];
@@ -273,6 +297,7 @@ export class BigBrainConnection implements ConnectionLike {
     const replayableLiveState = new Set([
       'contracts.proposal', 'task.routing', 'task.received',
       'subtask.started',
+      'workspace.proposal',
     ]);
     if (isReplay && !replayableLiveState.has(event)) return;
 

@@ -12,7 +12,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Check, X, Loader2 } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 
-function StackSummary({ value }: { value: string }) {
+export function StackSummary({ value }: { value: string }) {
   const fields = value.replace(/^\[Stack\]\s*/, '').split(' · ');
   const read = (prefix: string) => fields.find((field) => field.startsWith(prefix))?.slice(prefix.length).trim() || '';
   const deliverable = read('livrable ');

@@ -2,12 +2,17 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { Message, Attachment, Session, Settings, Theme, View, ConnectionStatus, SidebarPanel, User, CanvasOp, Task } from '@/types';
 import type { ConnectionLike } from '@/lib/connection';
+import { parseWidgetProposal, type WidgetProposal } from '@/lib/widgetPolicy';
 
 // A first message can arrive before sessions.create answers. Never send it
 // with the previous conversation's id (or the server's implicit fallback).
 let pendingSession: Promise<string> | null = null;
 let sessionGeneration = 0;
 let cancelledSends = 0;
+const fileProgressLabels: Record<string, string> = {
+  writing_file: 'Création du fichier', writing_web_file: 'Création du fichier',
+  file_written: 'Fichier enregistré', editing_file: 'Modification du fichier',
+};
 
 export interface AgentActivity {
   type: string;
@@ -39,6 +44,7 @@ export interface RunVerification {
 }
 
 export interface RunState {
+  widgetProposal?: WidgetProposal;
   sessionId: string;
   id: string;
   description: string;
@@ -186,6 +192,9 @@ interface AppState {
   refreshSessions: () => void;
   startNewSession: () => void;
   openSession: (key: string) => void;
+  forgetSession: (key: string) => void;
+  renameSession: (key: string, title: string) => Promise<void>;
+  deleteSession: (key: string) => Promise<void>;
 
   // Canvas
   canvasOps: CanvasOp[];
@@ -443,6 +452,13 @@ export const useAppStore = create<AppState>()(
         const run = byTask || (terminal ? finished : null) || (activity.type === 'task.received' ? pendingRouting :
           !taskId ? sessionRuns[sessionId] : null) || null;
         // Replays/snapshots are idempotent. A finished run never becomes live again.
+        if (finished && activity.type === 'task.progress') {
+          const path = typeof d.path === 'string' ? d.path : typeof d.file_path === 'string' ? d.file_path : '';
+          const label = fileProgressLabels[d.stage];
+          if (path && label) return { completedRuns: state.completedRuns.map((item) => item.id === finished.id
+            ? { ...item, steps: item.steps.map((step) => step.id === d.subtask_id
+              ? { ...step, description: `${label} · ${path}` } : step) } : item) };
+        }
         if (finished && !terminal) {
           delete runsById[finished.id];
           if (sessionRuns[sessionId] && !runsById[sessionRuns[sessionId].id]) delete sessionRuns[sessionId];
@@ -459,11 +475,18 @@ export const useAppStore = create<AppState>()(
           if (d.task_id && d.task_id !== run.id && !run.id.startsWith('routing-')) return {};
         }
         switch (activity.type) {
+          case 'workspace.proposal': {
+            if (!run || run.status !== 'running' || !d.session_id || !d.task_id
+                || d.session_id !== run.sessionId || d.task_id !== run.id || d.producer !== 'architect') return {};
+            const proposal = parseWidgetProposal(d.proposal);
+            if (!proposal || proposal.revision <= (run.widgetProposal?.revision || 0)) return {};
+            return { activeRun: { ...run, widgetProposal: proposal } };
+          }
           case 'planning.stage': {
             if (!run || run.status !== 'running') return {};
             const id = `planning-${d.stage}`;
             const step: RunStep = { id, brain: 'planner', description: String(d.description || d.stage),
-              status: d.status === 'done' ? 'done' : 'running',
+              status: d.status === 'done' ? 'done' : d.status === 'failed' ? 'failed' : 'running',
               durationMs: typeof d.elapsed_ms === 'number' ? d.elapsed_ms : undefined };
             return { activeRun: { ...run, steps: [...run.steps.filter((s) => s.id !== id), step] } };
           }
@@ -556,13 +579,25 @@ export const useAppStore = create<AppState>()(
           case 'task.progress': {
             if (!run) return {};
             const labels: Record<string, string> = {
-              writing_web_file: 'Génération', web_build: 'Build', web_build_repair: 'Correction du build',
+              ...fileProgressLabels,
+              creating_venv: 'Préparation de l’environnement Python', installing_deps: 'Installation des dépendances',
+              install_warning: 'Installation à vérifier', syntax_error: 'Correction de la syntaxe',
+              batch_write_start: 'Création des fichiers', batch_write_complete: 'Fichiers enregistrés',
+              diff_failed_fallback: 'Reprise de la modification', searching: 'Recherche',
+              assembling: 'Assemblage du projet', running: 'Exécution du projet', executing: 'Exécution',
+              generating_code: 'Génération du code', retrying: 'Correction en cours',
+              completed: 'Étape terminée', succeeded: 'Exécution réussie', failed_after_retries: 'Correction non aboutie',
+              starting_server: 'Démarrage du serveur', server_running: 'Serveur disponible', server_failed: 'Démarrage impossible',
+              web_build: 'Compilation de l’application', web_build_repair: 'Correction de la compilation',
               browser_testing: 'Tests navigateur', browser_repair: 'Correction après test', preview_ready: 'Aperçu prêt',
             };
-            const label = labels[d.stage] || d.stage;
+            const label = labels[d.stage];
             if (!label) return {};
+            const retry = typeof d.attempt === 'number' && Number.isInteger(d.attempt) && d.attempt > 1
+              ? ` · tentative ${d.attempt}` : '';
+            const path = typeof d.path === 'string' ? d.path : typeof d.file_path === 'string' ? d.file_path : '';
             return { activeRun: { ...run, steps: run.steps.map((step) => step.id === d.subtask_id
-              ? { ...step, description: `${label}${d.path ? ` · ${d.path}` : ''}${d.attempt ? ` · essai ${d.attempt}` : ''}` }
+              ? { ...step, description: `${label}${path ? ` · ${path}` : ''}${retry}` }
               : step) } };
           }
           case 'subtask.complete':
@@ -622,6 +657,9 @@ export const useAppStore = create<AppState>()(
               completedRuns: [...state.completedRuns.filter((item) => item.id !== run.id), {
                 ...run,
                 status,
+                steps: run.steps.map((step) => status === 'failed' && step.status === 'running'
+                  ? { ...step, status: 'failed' as const } : step),
+                awaitingApproval: false,
                 finishedAt: activity.ts || run.finishedAt || Date.now(),
                 error: d.error ? String(d.error).slice(0, 200) : run.error,
                 projectName: d.project_name ? String(d.project_name) : run.projectName,
@@ -690,6 +728,42 @@ export const useAppStore = create<AppState>()(
 
       // Sessions — real server-side conversations (data/sessions/).
       sessions: [],
+      renameSession: async (key, title) => {
+        const connection = get().connection;
+        if (!connection?.renameSession) throw new Error('Renommage indisponible sur cette connexion.');
+        await connection.renameSession(key, title);
+        set((s) => ({ sessions: s.sessions.map((session) => session.key === key ? { ...session, title: title.trim() } : session) }));
+        get().refreshSessions();
+      },
+      deleteSession: async (key) => {
+        const connection = get().connection;
+        if (!connection?.deleteSession) throw new Error('Suppression indisponible sur cette connexion.');
+        await connection.deleteSession(key);
+        get().forgetSession(key);
+        get().refreshSessions();
+      },
+      forgetSession: (key) => {
+        if (get().activeSessionKey === key) {
+          get().switchSession('');
+          set({ inputText: '', attachments: [], activeRun: null, canvasOps: [], historyError: null });
+          localStorage.removeItem('aplot_messages');
+        }
+        set((s) => ({ sessions: s.sessions.filter((session) => session.key !== key),
+          runsById: Object.fromEntries(Object.entries(s.runsById).filter(([, run]) => run.sessionId !== key)),
+          completedRuns: s.completedRuns.filter((run) => run.sessionId !== key),
+          sessionRuns: Object.fromEntries(Object.entries(s.sessionRuns).filter(([id]) => id !== key)),
+          sessionProposals: Object.fromEntries(Object.entries(s.sessionProposals).filter(([id]) => id !== key)),
+          agentActivities: s.agentActivities.filter((activity) => activity.detail?.session_id !== key),
+        }));
+        void import('./workspaceStore').then(({ useWorkspaceStore }) => useWorkspaceStore.getState().forgetSession(key));
+        void import('./projectRunStore').then(({ useProjectRunStore }) => {
+          const ids = Object.entries(useProjectRunStore.getState().launches).filter(([id]) => {
+            try { return JSON.parse(id)[0] === key; } catch { return false; }
+          }).map(([, launch]) => launch.runId);
+          set((s) => ({ liveRuns: Object.fromEntries(Object.entries(s.liveRuns).filter(([id]) => !ids.includes(id))) }));
+          useProjectRunStore.getState().forgetSession(key);
+        });
+      },
       activeSessionKey: '',
       setSessions: (sessions) => set({ sessions }),
       setActiveSessionKey: (activeSessionKey) => {
@@ -998,6 +1072,9 @@ export const useAppStore = create<AppState>()(
         workspaceView: state.workspaceView,
         viewerFilePath: state.viewerFilePath,
         dismissedNudges: state.dismissedNudges,
+        // Only completed manual execution records are restored as results.
+        // An interrupted WS subscription must not become a fictional success.
+        liveRuns: Object.fromEntries(Object.entries(state.liveRuns).filter(([, run]) => run.done).slice(-30)),
       }),
     }
   )

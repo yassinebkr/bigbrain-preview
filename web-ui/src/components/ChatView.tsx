@@ -11,8 +11,13 @@ import { ContractCard } from './ContractCard';
 import { NudgeBar } from './NudgeBar';
 import { RunTimelineCard } from './RunTimelineCard';
 import { ArrowDown } from 'lucide-react';
+import { ContextWorkspace } from './ContextWorkspace';
 
 export function ChatView() {
+  return <ContextWorkspace>{(ownsActivity) => <Conversation contextOwnsActivity={ownsActivity} />}</ContextWorkspace>;
+}
+
+function Conversation({ contextOwnsActivity }: { contextOwnsActivity: boolean }) {
   const { messages, isStreaming, historyError } = useAppStore();
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -105,7 +110,7 @@ export function ChatView() {
       </motion.div>
 
       {/* Live agent activity — what is happening, which brain works */}
-      <RunPanel />
+      {!contextOwnsActivity && <RunPanel />}
 
       {/* GenUI Canvas - between messages and input */}
       <GenUICanvas />

@@ -1,14 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   CheckCircle2, XCircle, Ban, ChevronDown, ChevronUp, FileEdit,
-  FolderOpen, Play, Loader2, Maximize2, Minimize2, ExternalLink, ListTodo,
+  FolderOpen, Play, Loader2, ListTodo,
 } from 'lucide-react';
 import { useAppStore, type RunState } from '@/store/appStore';
-import { usePreview } from '@/lib/usePreview';
+import { runTitle, webEntryPath } from '@/lib/morphable';
+import { useWorkspaceStore } from '@/store/workspaceStore';
+import { pythonEntry, useProjectRunStore } from '@/store/projectRunStore';
 
 export function RunTimelineCard({ run }: { run: RunState }) {
   const [open, setOpen] = useState(false);
-  const [previewExpanded, setPreviewExpanded] = useState(false);
+  const inspect = useWorkspaceStore((s) => s.inspect);
+  const onInspect = () => inspect(run);
   const openFileViewer = useAppStore((s) => s.openFileViewer);
   const setView = useAppStore((s) => s.setView);
   const setPendingOpenFile = useAppStore((s) => s.setPendingOpenFile);
@@ -30,8 +33,7 @@ export function RunTimelineCard({ run }: { run: RunState }) {
       : undefined;
   const projectPath = run.projectPath || (entryPath?.includes('/')
     ? entryPath.slice(0, entryPath.lastIndexOf('/')) : undefined);
-  const hasPreview = !isTaskboard && !!run.runnable && run.deliverableType === 'web_app';
-  const { url: previewUrl, error: previewError } = usePreview(entryPath, hasPreview);
+  const hasPreview = !!webEntryPath(run);
   const Icon = run.status === 'done'
     ? CheckCircle2 : run.status === 'cancelled' ? Ban : XCircle;
   const color = run.status === 'done'
@@ -54,7 +56,8 @@ export function RunTimelineCard({ run }: { run: RunState }) {
   };
 
   const runProject = async () => {
-    if (hasPreview) { setPreviewExpanded(true); return; }
+    if (hasPreview) { onInspect(); return; }
+    if (pythonEntry(run)) { onInspect(); await useProjectRunStore.getState().launch(run); return; }
     if (!entryPath || (runId && !liveRun?.done)) return;
     setOpen(true);
     try {
@@ -74,7 +77,7 @@ export function RunTimelineCard({ run }: { run: RunState }) {
   return (
     <div className="flex justify-start w-full">
       <div
-        className="ml-9 w-full max-w-[720px] rounded-xl px-3 py-2 text-[12px]"
+        className="ml-9 min-w-0 flex-1 max-w-[720px] rounded-xl px-3 py-2 text-[12px]"
         style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)' }}
       >
         <div
@@ -88,7 +91,7 @@ export function RunTimelineCard({ run }: { run: RunState }) {
           <Icon size={13} style={{ color }} className="flex-shrink-0" />
           <span className="truncate flex-1 text-left" style={{ color: 'var(--text-secondary)' }}>
             {run.status === 'done' ? 'Run complete' : run.status === 'cancelled' ? 'Run cancelled' : 'Run failed'}
-            {' — '}{run.description}
+            {' — '}{runTitle(run)}
           </span>
           {run.files.length > 0 && (
             <span style={{ color: 'var(--text-tertiary)' }}>
@@ -102,7 +105,7 @@ export function RunTimelineCard({ run }: { run: RunState }) {
                 title="Open project" aria-label="Open project">
                 <FolderOpen size={12} />
               </button>
-              {run.runnable && (
+              {run.runnable && !hasPreview && (
                 <button onClick={(event) => { event.stopPropagation(); void runProject(); }}
                   disabled={!!runId && !liveRun?.done} className="p-1 rounded-md cursor-pointer"
                   style={{ color: 'var(--accent-blue)' }} title="Run project" aria-label="Run project">
@@ -124,36 +127,9 @@ export function RunTimelineCard({ run }: { run: RunState }) {
           <div className="mt-2 whitespace-pre-wrap break-words" role="alert"
             style={{ color: 'var(--warning, #ff9500)' }}>{run.error}</div>
         )}
-        {hasPreview && !previewUrl && <div className="mt-2" role="status">{previewError || 'Ouverture de l’aperçu…'}</div>}
-        {previewUrl && (
-          <div className="mt-2 overflow-hidden rounded-lg" style={{ border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-primary)' }}>
-            <div className="flex items-center gap-2 px-2.5 py-1.5" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-              <span className="font-medium flex-1" style={{ color: 'var(--text-secondary)' }}>Aperçu</span>
-              <button
-                onClick={() => setPreviewExpanded((expanded) => !expanded)}
-                className="inline-flex items-center gap-1 rounded px-1.5 py-1 cursor-pointer"
-                style={{ color: 'var(--text-secondary)' }}
-                aria-label={previewExpanded ? 'Réduire l’aperçu' : 'Agrandir l’aperçu'}
-                title={previewExpanded ? 'Réduire' : 'Agrandir'}
-              >
-                {previewExpanded ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
-                {previewExpanded ? 'Réduire' : 'Agrandir'}
-              </button>
-              <a href={previewUrl} target="_blank" rel="noreferrer"
-                className="inline-flex items-center gap-1 rounded px-1.5 py-1"
-                style={{ color: 'var(--accent-blue)' }} title="Ouvrir dans un nouvel onglet">
-                <ExternalLink size={12} /> Ouvrir
-              </a>
-            </div>
-            <iframe
-              src={previewUrl}
-              title={`Aperçu de ${run.projectName || run.description}`}
-              sandbox="allow-scripts allow-same-origin"
-              className="block w-full bg-white transition-[height] duration-300"
-              style={{ height: previewExpanded ? 'min(65vh, 620px)' : '220px' }}
-            />
-          </div>
-        )}
+        {!isTaskboard && <button onClick={onInspect} className="mt-2 text-[12px] inline-flex items-center gap-2 py-1" style={{ color: 'var(--accent-blue)' }}>
+          {hasPreview ? <><Play size={12} /> Afficher le résultat</> : 'Voir les détails'}
+        </button>}
         {open && (
           <div className="mt-2 pt-2 space-y-1.5" style={{ borderTop: '1px solid var(--border-subtle)' }}>
             {run.steps.map((step) => (
@@ -183,7 +159,7 @@ export function RunTimelineCard({ run }: { run: RunState }) {
                 >
                   <FolderOpen size={11} /> Open project
                 </button>
-                {run.runnable && (
+                {run.runnable && !hasPreview && (
                   <button
                     onClick={runProject}
                     disabled={!!runId && !liveRun?.done}

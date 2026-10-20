@@ -14,6 +14,27 @@ def store(tmp_path, monkeypatch):
 
 
 class TestSessionStore:
+    def test_custom_title_survives_message_and_restart(self, store):
+        session = store.create()
+        store.rename(session['id'], '  New conversation  ')
+        store.append_message(session['id'], 'user', 'Do not replace my title')
+        assert SessionStore(store.root).get(session['id'])['title'] == 'New conversation'
+        for title in ('', '   ', 'x' * 121, None):
+            with pytest.raises(SessionError):
+                store.rename(session['id'], title)
+
+    def test_deletion_cannot_be_resurrected(self, store):
+        session = store.create('Private conversation')
+        store.append_message(session['id'], 'user', 'Private content')
+        assert store.delete(session['id'])
+        reopened = SessionStore(store.root)
+        assert reopened.get(session['id']) is None
+        assert not reopened.list()
+        assert session['id'] in reopened.deleted_ids()
+        with pytest.raises(SessionError):
+            reopened.append_message(session['id'], 'assistant', 'Late reply')
+        assert not (store.root / f"{session['id']}.json").exists()
+
     def test_create_and_persist(self, store):
         session = store.create()
         assert session["id"].startswith("sess-")
@@ -178,6 +199,30 @@ class TestServerSessionRouting:
             "params": {"sessionId": created["id"]},
         })
         assert ws.send_json.call_args_list[-1].args[0]["payload"]["deleted"] is True
+
+    async def test_mutations_notify_tabs_and_drop_late_replies(self, server, monkeypatch):
+        from unittest.mock import AsyncMock
+        from bigbrain.web import server as server_module
+        cancel = AsyncMock()
+        monkeypatch.setattr(server_module, 'CANCEL_HOOK', cancel)
+        ws, other = AsyncMock(), AsyncMock()
+        server._ws_clients.update((ws, other))
+        session = server._sessions.create('Old title')
+        sid = session['id']
+        server._ws_session_ids[other] = sid
+        server._replay_buffer.append((0, {'payload': {'session_id': sid}}))
+        await server._handle_request(ws, {'id': 'rename', 'method': 'sessions.rename', 'params': {'sessionId': sid, 'title': 'New title'}})
+        assert server._sessions.get(sid)['title'] == 'New title'
+        assert other.send_json.call_args.args[0]['payload']['title'] == 'New title'
+        await server._handle_request(ws, {'id': 'delete', 'method': 'sessions.delete', 'params': {'sessionId': sid}})
+        cancel.assert_awaited_once_with(session_id=sid)
+        assert other.send_json.call_args.args[0]['payload']['deleted'] is True
+        assert other not in server._ws_session_ids
+        assert not server._replay_buffer
+        server._capture_to_session(sid, 'assistant', 'Late reply')
+        assert server._sessions.get(sid) is None
+        await server._handle_chat_send(ws, {'payload': {'sessionId': sid, 'text': 'stale tab', 'messageId': 'late'}})
+        assert server._sessions.get(sid) is None
 
 
 class TestFrontBrainSessionHistories:

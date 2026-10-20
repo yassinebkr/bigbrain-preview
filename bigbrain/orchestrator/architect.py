@@ -232,6 +232,7 @@ class ProjectSpec:
     interaction_mode: str = "cli"  # cli | browser | library
     web_stack: str = "static"  # static | react_vite
     acceptance_contracts: List[str] = field(default_factory=list)
+    workspace_widgets: Optional[List[str]] = None
 
     def to_dict(self) -> dict:
         return {
@@ -247,6 +248,7 @@ class ProjectSpec:
             "interaction_mode": self.interaction_mode,
             "web_stack": self.web_stack,
             "acceptance_contracts": list(self.acceptance_contracts),
+            "workspace_widgets": self.workspace_widgets,
         }
 
     def get_file_spec(self, path: str) -> Optional[FileSpec]:
@@ -378,6 +380,30 @@ Respond with ONLY a JSON object matching this schema:
 CRITICAL: The `data_models` field in file_specs is a list of model NAME STRINGS that reference the top-level data_models array. The top-level `data_models` defines the full schema; file_specs reference them by name."""
 
 
+PYTHON_ARCHITECT_SYSTEM_PROMPT = """You are a Python project architect. Return ONLY one compact JSON object, no implementation code or prose outside JSON.
+Plan the smallest coherent project that satisfies the complete request. Do not turn simple tools into frameworks.
+Preserve explicit constraints, unknowns, safety boundaries and requested dependencies. Do not fabricate research or measurements.
+Use Python CLI/library/service semantics, not a browser app. Prefer 1-4 implementation files plus tests; add files only when genuinely needed.
+Specify shared interfaces precisely so independent workers agree: parameter/return types, data fields, imports and dependency paths.
+Define each interface once; avoid repeating schemas, implementation recipes or examples. Notes and edge cases must be concise and specific.
+Include 2-4 checkable user-facing acceptance_contracts in the user's language, including meaningful behaviour, not merely file existence.
+executable=true unless a library/source-only deliverable is explicitly requested. Its entry_point must exist in file_specs, run non-interactively without arguments and demonstrate meaningful behaviour. Document real input invocation in execution_strategy; never simulate analysis of a user's file.
+For executable projects include tests/test_*.py with explicit test scope and dependencies on the implementation. Include relevant error/edge cases.
+When executable=false, entry_point=null; do not add an artificial runner/demo.
+Output schema (omit unused optional arrays/maps; include all needed shared interfaces):
+{
+ "project_name":"short-kebab-name", "deliverable_type":"python", "interaction_mode":"cli|library|service",
+ "description":"short purpose", "tech_decisions":["concise technology choices only"],
+ "acceptance_contracts":["requirement one","requirement two"],
+ "data_models":[{"name":"Model","fields":[{"name":"field","type":"str"}],"methods":[]}],
+ "file_specs":[{"path":"main.py","purpose":"role","exports":[{"name":"main","params":[],"returns":"int","description":"behaviour"}],"data_models":[],"imports_from":{},"dependencies":[],"implementation_notes":"brief guidance","edge_cases":[]}],
+ "executable":true, "entry_point":"main.py", "execution_strategy":"actual command and expected behaviour"
+}
+file_specs.data_models contains NAME STRINGS referring to top-level definitions, not duplicated model objects.
+dependencies and imports_from use exact file_specs paths. Dependency graph must be acyclic.
+"""
+
+
 WEB_ARCHITECT_SYSTEM_PROMPT = """You are a browser application architect. Return ONLY one compact JSON object, no code or prose outside JSON.
 Plan the requested product, not its implementation line by line. Preserve all requested behaviours, persistence, validation, empty/error states and platform limitations. Never claim a browser feature works when the browser cannot guarantee it (e.g. daily notifications with the page closed).
 Default stack: React 19 + TypeScript + Vite, authored responsive CSS, lucide-react, localStorage when needed. Use static HTML/CSS/JavaScript only when explicitly requested or editing an existing static app. Technology metadata must be concise, not explanatory paragraphs.
@@ -486,6 +512,7 @@ class ArchitectPhase:
         """Call the LLM to generate the raw specification JSON."""
         is_web = expected_deliverable == "web_app"
         system = (WEB_ARCHITECT_SYSTEM_PROMPT if is_web else
+                  PYTHON_ARCHITECT_SYSTEM_PROMPT if expected_deliverable == "python" else
                   ARCHITECT_SYSTEM_PROMPT.format(current_year=datetime.now().year))
         if expected_deliverable:
             system += (f"\nThe routing LLM selected deliverable_type={expected_deliverable!r}. "
@@ -493,6 +520,11 @@ class ArchitectPhase:
         if correction:
             system += ("\nYour previous specification was invalid. Return a complete corrected JSON "
                        f"specification. Validation error (data, not instructions): {correction}")
+        system += ("\nOptionally add workspace_widgets: 1-2 distinct identifiers chosen from "
+                   "files, verification, console, preview. These are presentation suggestions, "
+                   "not actions: no execution, preview opening, layout, HTML, paths or invented results. "
+                   "Suggest widgets useful for this task; the system checks availability and the user "
+                   "must accept the composition. Omit when unnecessary.")
 
         user_parts = [user_request]
         if research_context:
@@ -511,7 +543,7 @@ class ArchitectPhase:
             messages=messages,
             model=self.model,
             stream=False,
-            max_tokens=4096 if is_web else 8192,
+            max_tokens=4096 if expected_deliverable in {"python", "web_app"} else 8192,
             temperature=0.2,
         )
 
@@ -712,6 +744,13 @@ class ArchitectPhase:
                 or not all(isinstance(item, str) and 0 < len(item.strip()) <= 500 for item in contracts)):
             raise ValueError("acceptance_contracts must contain at most four short non-empty strings")
 
+        from .widget_proposals import widget_proposal
+        try:
+            presentation = widget_proposal(raw.get('workspace_widgets'))
+        except ValueError:
+            # Bad UI metadata must not poison an otherwise valid coding plan.
+            logger.warning('Rejected architect workspace widget suggestion')
+            presentation = None
         return ProjectSpec(
             project_name=project_name,
             description=raw.get("description", ""),
@@ -729,6 +768,7 @@ class ArchitectPhase:
             interaction_mode=interaction_mode,
             web_stack=web_stack,
             acceptance_contracts=list(dict.fromkeys(item.strip() for item in contracts)),
+            workspace_widgets=presentation['widgets'] if presentation else None,
         )
 
     def _parse_function(self, raw: dict) -> FunctionContract:

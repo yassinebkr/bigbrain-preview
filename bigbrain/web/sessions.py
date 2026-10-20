@@ -86,6 +86,8 @@ class SessionStore:
         """
         if not session_id:
             return self.create()
+        if self.is_deleted(session_id):
+            raise SessionError('Cette conversation a été supprimée.')
         path = self._path(session_id)
         if path.is_file():
             return self.get(session_id)  # type: ignore[return-value]
@@ -102,6 +104,8 @@ class SessionStore:
     def get(self, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not session_id:
             return None
+        if self.is_deleted(session_id):
+            return None
         path = self._path(session_id)
         if not path.is_file():
             return None
@@ -113,6 +117,8 @@ class SessionStore:
     def list(self) -> List[Dict[str, Any]]:
         sessions: List[Dict[str, Any]] = []
         for path in self.root.glob("sess-*.json"):
+            if self.is_deleted(path.stem):
+                continue
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
@@ -138,7 +144,7 @@ class SessionStore:
         if len(messages) > MAX_MESSAGES:
             del messages[:len(messages) - MAX_MESSAGES]
         # Auto-title from the first user message.
-        if role == "user" and session.get("title") in (None, "", "New conversation"):
+        if role == "user" and not session.get('title_custom') and session.get("title") in (None, "", "New conversation"):
             session["title"] = text.strip().splitlines()[0][:60] or "New conversation"
         session["updated_at"] = time.time()
         self._atomic_write(self._path(session["id"]), session)
@@ -148,5 +154,27 @@ class SessionStore:
         path = self._path(session_id)
         if not path.is_file():
             return False
-        path.unlink()
+        deleted = self.root / '.deleted'
+        deleted.mkdir(exist_ok=True)
+        # Persist the tombstone first: delayed replies cannot recreate a chat,
+        # including after restart or a crash between these two operations.
+        self._atomic_write(deleted / path.name, {'id': session_id})
+        path.unlink(missing_ok=True)
         return True
+
+    def is_deleted(self, session_id: str) -> bool:
+        return (self.root / '.deleted' / self._path(session_id).name).is_file()
+
+    def deleted_ids(self) -> List[str]:
+        return [p.stem for p in (self.root / '.deleted').glob('*.json')]
+
+    def rename(self, session_id: str, title: str) -> Dict[str, Any]:
+        if not isinstance(title, str) or not title.strip() or len(title.strip()) > 120:
+            raise SessionError('Le titre doit contenir entre 1 et 120 caractères.')
+        session = self.get(session_id)
+        if session is None:
+            raise SessionError('Conversation introuvable.')
+        session['title'] = ' '.join(title.split())
+        session['title_custom'] = True
+        self._atomic_write(self._path(session_id), session)
+        return session

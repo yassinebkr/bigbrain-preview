@@ -37,7 +37,77 @@ async def test_assemble_fails_when_acceptance_tests_fail(tmp_path, monkeypatch):
 
     assert result["success"] is False
     assert result["verification"]["verdict"] == "failed"
+    assert 'tests' in result['error']
+    assert 'not runnable' not in result['error']
+    assert result['exit_code'] == 0
     assert not (project / ".project.json").exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('repair', ['valid', 'ineffective', 'tests', 'traversal'])
+async def test_assembly_repairs_sources_with_frozen_tests_and_bounded_attempts(tmp_path, monkeypatch, repair):
+    import json
+    import sys
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setenv('BIGBRAIN_WORKSPACE_DIR', str(tmp_path))
+    monkeypatch.setenv('BIGBRAIN_EVIDENCE_ROOT', str(tmp_path / 'evidence'))
+    brain = PythonBrain('python_repair', MessageBus(auth=None), 'default', work_dir=tmp_path)
+    project = tmp_path / 'repair-demo'
+    (project / 'tests').mkdir(parents=True)
+    original_test = 'from main import value\n\ndef test_value():\n    assert value() == 2\n'
+    (project / 'tests/test_value.py').write_text(original_test)
+    (project / 'main.py').write_text('def value(): return 1\nprint(value())\n')
+    async def current_python(_):
+        return Path(sys.executable)
+    monkeypatch.setattr(brain, '_setup_project_venv', current_python)
+    calls = 0
+    async def proposal(**kwargs):
+        nonlocal calls
+        calls += 1
+        path = {'tests': 'tests/test_value.py', 'traversal': '../escape.py'}.get(repair, 'main.py')
+        value = 2 if repair == 'valid' else 10 + calls
+        current = (project / 'main.py').read_text()
+        return json.dumps({'edits': [{'path': path, 'old': current, 'new': f'def value(): return {value}\nprint(value())\n'}]})
+    provider = AsyncMock()
+    provider.chat_complete.side_effect = proposal
+    brain.llm_provider = provider
+    result = await brain._assemble_and_run({
+        'project_name': 'repair-demo', 'user_request': 'Return and print 2',
+        'entry_point': 'main.py',
+        'all_files': [{'path': 'main.py'}, {'path': 'tests/test_value.py'}],
+    })
+    assert result['success'] is (repair == 'valid'), result
+    assert calls == (2 if repair == 'ineffective' else 1)
+    assert (project / 'tests/test_value.py').read_text() == original_test
+    assert not (tmp_path / 'escape.py').exists()
+    if repair == 'valid':
+        assert result['stdout'].strip() == '2'
+        assert result['verification']['verdict'] == 'passed'
+        assert len(result['repair_history']) == 1
+    else:
+        assert 'tests' in result['error']
+        assert not (project / '.project.json').exists()
+
+
+@pytest.mark.asyncio
+async def test_assembly_gate_exception_is_not_a_success(tmp_path, monkeypatch):
+    import sys
+    monkeypatch.setenv('BIGBRAIN_WORKSPACE_DIR', str(tmp_path))
+    brain = PythonBrain('python_gate_error', MessageBus(auth=None), 'default', work_dir=tmp_path)
+    project = tmp_path / 'gate-error'
+    project.mkdir()
+    (project / 'main.py').write_text('print("works")\n')
+    async def current_python(_):
+        return Path(sys.executable)
+    async def broken_gate(*args, **kwargs):
+        raise RuntimeError('Evidence unavailable')
+    monkeypatch.setattr(brain, '_setup_project_venv', current_python)
+    monkeypatch.setattr(RunGate, 'evaluate_attempt', broken_gate)
+    result = await brain._assemble_and_run({'project_name': 'gate-error', 'entry_point': 'main.py', 'all_files': [{'path': 'main.py'}]})
+    assert result['success'] is False
+    assert 'verification unavailable' in result['error']
+    assert not (project / '.project.json').exists()
 
 
 @pytest.mark.asyncio
