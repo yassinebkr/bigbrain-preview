@@ -3,7 +3,7 @@ import { Check, ChevronRight, FileCode2, FolderOpen, Loader2, Play, ShieldCheck,
 import { useAppStore, type RunState } from '@/store/appStore';
 import { projectRunKey, pythonEntry, useProjectRunStore } from '@/store/projectRunStore';
 import { isBoardRun, webEntryPath, type SurfaceKind } from '@/lib/morphable';
-import { StackSummary } from './ContractCard';
+import { ContractCriteria, StackSummary } from './ContractCard';
 import { composeWidgets, parseWidgetProposal } from '@/lib/widgetPolicy';
 import { useWorkspaceStore } from '@/store/workspaceStore';
 
@@ -38,11 +38,11 @@ function ProposalWidget({ run }: { run: RunState }) {
   const stack = proposal.contracts.find((item) => item.startsWith('[Stack]'));
   const canDecide = activeProposal?.planId === proposal.planId && activeProposal?.designId === proposal.designId;
   return <section className="work-widget" aria-label="Proposition à approuver">
-    <div className="work-eyebrow">Avant de construire</div>
-    <h3 className="work-heading">Voici ce qui sera livré</h3>
+    <div className="work-eyebrow">{proposal.target?.mode === 'existing' ? 'Modification du projet' : 'Avant de construire'}</div>
+    <h3 className="work-heading">{proposal.target?.mode === 'existing' ? 'Valider les changements proposés' : 'Voici ce qui sera livré'}</h3>
     {proposal.target && <code className="block text-[11px] break-all mt-3 work-muted">{proposal.target.path}</code>}
     {stack && <StackSummary value={stack} />}
-    <ul className="mt-4 space-y-3 text-[12px] leading-relaxed">{proposal.contracts.filter((item) => !item.startsWith('[Stack]')).map((item, i) => <li className="flex gap-2" key={i}><span className="work-muted">{i + 1}.</span><span>{item}</span></li>)}</ul>
+    <ContractCriteria contracts={proposal.contracts} />
     <div className="mt-5 flex flex-wrap gap-2"><button disabled={sending || !canDecide} className="work-primary" onClick={() => void decide(true)}>{sending ? <Loader2 size={14} className="animate-spin motion-reduce:animate-none" /> : <Check size={14} />} Approuver et lancer</button>
       <button disabled={sending || !canDecide} className="work-secondary" onClick={() => void decide(false)}><X size={13} /> Refuser</button></div>
     {canDecide && error && <p role="alert" className="text-[12px] mt-3" style={{ color: 'var(--warning)' }}>{error}</p>}
@@ -106,10 +106,11 @@ export function WorkOverview({ run, select, journal }: { run: RunState; select: 
   };
   return <div className="work-overview">
     {run.awaitingApproval ? <ProposalWidget run={run} /> : <section className="work-widget" aria-label="Objet du travail">
-      <div className="work-eyebrow">{board ? 'Organisation' : running ? 'En construction' : 'Livrable'}</div>
+      <div className="work-eyebrow">{running && <span className="work-pulse" aria-hidden="true" />}{board ? 'Organisation' : running ? 'En construction' : 'Livrable'}</div>
       <h3 className="work-heading">{running ? 'Le travail prend forme' : run.status === 'done' ? 'Le résultat est disponible' : run.status === 'failed' ? 'Le travail a rencontré un obstacle' : 'Travail arrêté'}</h3>
       {run.error && <p role="alert" className="mt-3 text-[12px] leading-relaxed break-words" style={{ color: 'var(--warning)' }}>{run.error}</p>}
-      {running && <div className="mt-5 space-y-4">{current.length ? current.map((step) => <div key={step.id} className="flex gap-3"><span className="work-pulse mt-1" /><div className="min-w-0"><p className="text-[13px] leading-relaxed break-words">{step.description}</p><p className="work-muted text-[11px] mt-1">{step.brain}{step.durationMs != null ? ` · ${(step.durationMs / 1000).toFixed(0)} s écoulées` : ''}</p></div></div>) : <p className="work-muted text-[12px]">{run.steps.length ? 'Préparation de la prochaine étape…' : 'Préparation du plan…'}</p>}</div>}
+      {running && <div className="mt-5 space-y-4">{current.length ? current.map((step) => <div key={`${step.id}:${step.description}`} className="work-live-step flex gap-3"><span className="work-pulse mt-1" /><div className="min-w-0"><p className="text-[13px] leading-relaxed break-words">{step.description}</p><p className="work-muted text-[11px] mt-1">{step.brain}{step.durationMs != null ? ` · ${(step.durationMs / 1000).toFixed(0)} s écoulées` : ''}</p></div></div>) : <p className="work-muted text-[12px]">{run.steps.length ? 'Préparation de la prochaine étape…' : 'Préparation du plan…'}</p>}</div>}
+      {running && !!run.steps.length && <p className="work-muted text-[11px] mt-4" aria-label="Avancement observé">{run.steps.filter((step) => step.status === 'done').length} étapes terminées · {current.length} actives{run.files.length ? ` · ${run.files.length} fichiers enregistrés` : ''}</p>}
       {!!run.steps.length && running && <div className="work-stage-list" aria-label="Étapes récentes">{run.steps.slice(-3).map((step, index) => <div className="work-stage" data-status={step.status} key={step.id}><span className="work-stage-marker">{step.status === 'done' ? <Check size={12} /> : step.status === 'failed' ? <X size={12} /> : run.steps.length - Math.min(3, run.steps.length) + index + 1}</span><span className="line-clamp-2" title={step.description}>{step.description}</span></div>)}</div>}
       {run.projectPath && <code className="block text-[11px] break-all mt-3 work-muted">{run.projectPath}/</code>}
       {!board && run.entryPoint && <div className="work-artifact mt-5" aria-label="Point d’entrée du livrable"><div className="work-artifact-icon"><FileCode2 size={25} strokeWidth={1.4} /></div><div className="min-w-0"><p className="text-[13px] font-medium break-all">{run.entryPoint}</p><p className="text-[11px] mt-1 work-muted">{run.deliverableType === 'python' ? 'Programme Python' : run.deliverableType === 'web_app' ? 'Application web' : 'Point d’entrée déclaré'}</p></div></div>}

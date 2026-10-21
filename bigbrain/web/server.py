@@ -940,7 +940,7 @@ class WebServer:
             for item in (session.get("messages") or [])[-20:]
             if item.get("role") in ("user", "assistant") and item.get("text")
         ]
-        self._sessions.append_message(session["id"], "user", text)
+        session = self._sessions.append_message(session["id"], "user", text)
 
         from ..bus.message import BusMessage, MessageType, Priority
 
@@ -959,6 +959,7 @@ class WebServer:
             payload={"type": "user_message", "text": text,
                      "attachments": attachments,
                      "session_id": session["id"],
+                     "user_message_id": session['messages'][-1]['id'],
                      "turn_id": payload.get('turn_id'),
                      "navigation_project": payload.get("navigationProject") if isinstance(payload.get("navigationProject"), str) else None,
                      "conversation_history": conversation_history},

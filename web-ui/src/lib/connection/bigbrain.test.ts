@@ -2,6 +2,23 @@ import { describe, expect, it, vi } from 'vitest';
 import { BigBrainConnection } from './bigbrain';
 
 describe('session-scoped websocket replies', () => {
+  it('reports a missing socket instead of pretending to send', () => {
+    const conn = new BigBrainConnection({ wsUrl: 'ws://localhost/ws' });
+    const error = vi.fn();
+    const status = vi.fn();
+    conn.on('onSendError', error);
+    conn.on('onMessageStatus', status);
+    const id = conn.send('Retry', [], 'sess-live');
+    expect(error).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('pas été envoyé') }), id);
+    expect(status).toHaveBeenLastCalledWith(id, 'failed');
+  });
+  it('surfaces a rejected delivery so the app can stop its waiting indicator', () => {
+    const conn = new BigBrainConnection({ wsUrl: 'ws://localhost/ws' });
+    const error = vi.fn();
+    conn.on('onSendError', error);
+    (conn as any)._handleFrame({ type: 'message.status', payload: { messageId: 'm', status: 'failed' } });
+    expect(error).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('refusé') }), 'm');
+  });
   it('restores replayed widget suggestions without ending a reply or executing anything', () => {
     const conn = new BigBrainConnection({ wsUrl: 'ws://localhost/ws' });
     conn.switchSession('s');

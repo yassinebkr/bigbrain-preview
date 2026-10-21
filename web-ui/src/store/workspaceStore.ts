@@ -35,6 +35,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(persist((set) => ({
   }),
   inspect: (run) => set((state) => ({ sessions: { ...state.sessions,
     [run.sessionId]: { ...state.sessions[run.sessionId], mode: 'workspace',
+      selectedAt: Date.now(),
       selectedId: surfaceId(run, webEntryPath(run) ? 'preview' : 'activity') },
   } })),
   update: (sessionId, preference) => set((state) => ({

@@ -41,6 +41,15 @@ const ev = (type: string, detail: any) => ({ type, detail });
 
 describe('multiple independent runs in the same conversation', () => {
   beforeEach(reset);
+  it('restores the authoritative project association of a cached failed run without reactivating it', () => {
+    const s = useAppStore.getState();
+    s.applyRunEvent(ev('task.routing', { task_id: 'old', session_id: 'sess-live' }));
+    s.applyRunEvent(ev('task.failed', { task_id: 'old', session_id: 'sess-live', error: 'Old failure' }));
+    s.applyRunEvent(ev('contracts.proposal', { plan_id: 'old', session_id: 'sess-live', project_target: { mode: 'new', path: 'sandbox/gcode' } }));
+    expect(useAppStore.getState().completedRuns.find((r) => r.id === 'old')?.projectPath).toBe('sandbox/gcode');
+    expect(useAppStore.getState().runsById.old).toBeUndefined();
+    expect(useAppStore.getState().contractProposal).toBeNull();
+  });
   it('replaces only obsolete uncorrelated cache entries during restoration', () => {
     const s = useAppStore.getState();
     s.applyRunEvent(ev('task.routing', { session_id: 'sess-live' }));
@@ -57,6 +66,11 @@ describe('multiple independent runs in the same conversation', () => {
     expect(useAppStore.getState().messages.map((m) => m.content)).toEqual(['Previous response', 'New message']);
     useAppStore.getState().restoreSessionHistory('sess-other', [], 4000);
     expect(useAppStore.getState().messages).toHaveLength(2);
+  });
+  it('keeps an unconfirmed local message even when history snapshot is newer', () => {
+    useAppStore.setState({ messages: [{ id: 'user-123', role: 'user', content: 'Retry', timestamp: 1000 }] });
+    useAppStore.getState().restoreSessionHistory('sess-live', [], 2000);
+    expect(useAppStore.getState().messages[0].content).toBe('Retry');
   });
 
   it('a quick taskboard action cannot replace or finish an ongoing web project', () => {
@@ -322,7 +336,7 @@ describe('sessions', () => {
   it('first send waits for session creation and keeps the first message visible', async () => {
     let created!: (session: any) => void;
     const conn = mockConnection({ createSession: vi.fn((cb) => { created = cb; }) });
-    useAppStore.setState({ connection: conn as any });
+    useAppStore.setState({ connection: conn as any, connectionStatus: 'connected' });
     useAppStore.getState().startNewSession();
     useAppStore.getState().setInputText('new React project');
     useAppStore.getState().sendMessage();
@@ -428,11 +442,21 @@ describe('sessions', () => {
     const conn = mockConnection();
     useAppStore.setState({
       connection: conn as any,
+      connectionStatus: 'connected',
       activeSessionKey: 'sess-live',
       inputText: 'bonjour',
     });
     useAppStore.getState().sendMessage();
     expect(conn.send).toHaveBeenCalledWith('bonjour', [], 'sess-live', null);
+  });
+  it('keeps input and never starts phantom streaming while disconnected', () => {
+    const conn = mockConnection();
+    useAppStore.setState({ connection: conn as any, connectionStatus: 'disconnected', inputText: 'réessaie', isStreaming: false });
+    useAppStore.getState().sendMessage();
+    expect(conn.send).not.toHaveBeenCalled();
+    expect(useAppStore.getState().inputText).toBe('réessaie');
+    expect(useAppStore.getState().isStreaming).toBe(false);
+    expect(useAppStore.getState().historyError).toContain('conservé');
   });
 });
 
@@ -706,7 +730,7 @@ describe('concurrent runs and approvals', () => {
   it('Stop while a session is being created prevents the delayed send', async () => {
     let created!: (session: any) => void;
     const conn = mockConnection({ createSession: vi.fn((cb) => { created = cb; }) });
-    useAppStore.setState({ connection: conn as any });
+    useAppStore.setState({ connection: conn as any, connectionStatus: 'connected' });
     useAppStore.getState().startNewSession();
     useAppStore.getState().setInputText('Do not send after Stop');
     useAppStore.getState().sendMessage();

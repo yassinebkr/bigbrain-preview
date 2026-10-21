@@ -258,7 +258,8 @@ async def test_batch_is_atomic_in_its_verdict_and_rejects_traversal(tmp_path, mo
 
 
 @pytest.mark.asyncio
-async def test_assemble_cleans_stale_files_without_crashing(tmp_path, monkeypatch):
+@pytest.mark.parametrize('editing_existing', [False, True])
+async def test_assemble_cleans_stale_files_without_crashing(tmp_path, monkeypatch, editing_existing):
     """Regression (live): re-running a project whose dir already holds a
     file NOT in the new plan crashed with NameError — the stale-file
     cleanup called a logger that was never defined in python_brain."""
@@ -278,6 +279,9 @@ async def test_assemble_cleans_stale_files_without_crashing(tmp_path, monkeypatc
         return Path(sys.executable)
 
     monkeypatch.setattr(brain, "_setup_project_venv", current_python)
+    if editing_existing:
+        from bigbrain.execution_target import ExecutionTarget
+        brain._directory_context.set(ExecutionTarget('existing', 'web-scraper', str(tmp_path)).prepare())
     execution = await brain._assemble_and_run({
         "project_name": "web-scraper",
         "user_request": "update main.py",
@@ -289,7 +293,7 @@ async def test_assemble_cleans_stale_files_without_crashing(tmp_path, monkeypatc
     assert execution["stdout"].strip() == "new main"
     # The stale file was cleaned, the planned file kept
     assert (project / "main.py").is_file()
-    assert not (project / "old_module.py").exists()
+    assert (project / "old_module.py").exists() is editing_existing
 @pytest.mark.asyncio
 @pytest.mark.parametrize('architect_spec', ['', 'A module exporting VALUE = 1'])
 @pytest.mark.parametrize('extra', [{}, {'_user_interjection': 'keep it simple', '_task_state': 'one file left'}])

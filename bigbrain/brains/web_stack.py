@@ -99,9 +99,23 @@ async def command(project: Path, argv: list[str], timeout: int = 120) -> dict:
 
 
 async def build_react(project: Path) -> list[dict]:
+    from ..project_transaction import active_transaction, ProjectTransaction
+    transaction = active_transaction.get()
+    if transaction:
+        ProjectTransaction(transaction).prepare_build_tree(project)
     # Toolchain files are owned by BigBrain, never generated build scripts.
     for name, content in REACT_FILES.items():
-        (project / name).write_text(content, encoding="utf-8")
+        destination = project / name
+        if destination.exists() and destination.read_text(encoding='utf-8') != content and transaction:
+            return [{'name': 'toolchain_configuration', 'status': 'inconclusive',
+                     'output': f'{name}: explicit toolchain migration required; preserved file not overwritten'}]
+        if transaction:
+            # Existing scaffolds are already inspected/approved; avoid any
+            # unjournaled rewrite of a kept config during build.
+            if not destination.is_file():
+                return [{'name': 'toolchain_configuration', 'status': 'inconclusive', 'output': f'{name}: missing approved scaffold'}]
+        else:
+            destination.write_text(content, encoding="utf-8")
     stages = []
     for name, argv in (
         ("dependencies", ["npm", "install", "--ignore-scripts", "--no-audit", "--no-fund"]),

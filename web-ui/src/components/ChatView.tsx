@@ -90,7 +90,7 @@ function Conversation({ contextOwnsActivity }: { contextOwnsActivity: boolean })
 
         {/* Contract approval card — the run is paused until the user
             decides. Shown in the message flow: it answers the last ask. */}
-        <ContractCard />
+        <ContractCard compact={contextOwnsActivity} />
 
         </div>
 

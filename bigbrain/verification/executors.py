@@ -23,6 +23,7 @@ programming errors in the stage itself propagate.
 from __future__ import annotations
 
 import ast
+import json
 import asyncio
 import importlib.util
 import os
@@ -157,7 +158,44 @@ def stage_run(execution: Mapping[str, Any]) -> StageResult:
                        tool="subprocess", tool_version=_PY, details=details)
 
 
-async def stage_tests(work_dir: Path, *, timeout: float = 60.0) -> StageResult:
+_PYTEST_REPORTER = '''
+import json, sys, pytest
+reports = []
+class Recorder:
+    def pytest_runtest_logreport(self, report):
+        reports.append({"nodeid": report.nodeid, "phase": report.when, "outcome": report.outcome})
+result = pytest.main(sys.argv[2:], plugins=[Recorder()])
+with open(sys.argv[1], "w", encoding="utf-8") as stream:
+    json.dump(reports, stream)
+raise SystemExit(result)
+'''
+
+
+async def _pytest_with_report(interpreter, work_dir, test_files, env):
+    """Structured pytest hooks, not status-like text printed by generated code."""
+    import signal
+    with tempfile.TemporaryDirectory(prefix='bigbrain-test-report-') as scratch:
+        report = Path(scratch) / 'report.json'
+        process = await asyncio.create_subprocess_exec(interpreter, '-c', _PYTEST_REPORTER, str(report),
+            '-q', '--no-header', '-p', 'no:cacheprovider', *[str(p.relative_to(work_dir)) for p in test_files],
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+            stdin=asyncio.subprocess.DEVNULL, env=env, cwd=str(work_dir), start_new_session=(os.name == 'posix'))
+        try:
+            stdout, _ = await process.communicate()
+            records = json.loads(report.read_text()) if report.is_file() and report.stat().st_size <= 2_000_000 else None
+            return stdout, process.returncode, records
+        finally:
+            if os.name == 'posix':
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            elif process.returncode is None:
+                process.kill()
+            await process.wait()
+
+
+async def stage_tests(work_dir: Path, *, timeout: float = 60.0, python: str | Path | None = None) -> StageResult:
     """pytest over the work_dir — honest about what was NOT tested.
 
     * no test files     → ``not_applicable`` (not a pass, not a block)
@@ -176,34 +214,60 @@ async def stage_tests(work_dir: Path, *, timeout: float = 60.0) -> StageResult:
             name="tests", status="not_applicable", tool="pytest",
             details={"reason": "no test files in work_dir"},
         )
-    if importlib.util.find_spec("pytest") is None:
+    interpreter = str(python) if python is not None else sys.executable
+    env = {'PATH': str(Path(interpreter).parent) + os.pathsep + os.environ.get('PATH', ''),
+           'HOME': str(work_dir), 'LANG': 'C.UTF-8', 'LC_ALL': 'C.UTF-8',
+           'PYTHONIOENCODING': 'utf-8', 'PYTHONDONTWRITEBYTECODE': '1'}
+    try:
+        probe = await asyncio.create_subprocess_exec(interpreter, '-c',
+            'import importlib.util,json,sys; print(json.dumps({"python":sys.executable,"prefix":sys.prefix,"version":sys.version.split()[0],"pytest":importlib.util.find_spec("pytest") is not None}))',
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            stdin=asyncio.subprocess.DEVNULL, env=env, cwd=str(work_dir))
+        out, _ = await asyncio.wait_for(probe.communicate(), timeout=min(timeout, 10))
+        environment = json.loads(out) if probe.returncode == 0 else {}
+    except (OSError, ValueError, asyncio.TimeoutError):
+        if 'probe' in locals() and probe.returncode is None:
+            probe.kill()
+            await probe.wait()
+        environment = {}
+    expected_venv = Path(interpreter).parent.parent
+    if expected_venv.name == '.venv' and environment and Path(environment.get('prefix', '')).resolve() != expected_venv.resolve():
+        return StageResult(name='tests', status='inconclusive', tool='pytest',
+            details={'reason': 'Project interpreter is not running in its declared venv; no host fallback',
+                     'interpreter': interpreter, 'environment': environment})
+    if not environment.get('pytest'):
         return StageResult(
             name="tests", status="inconclusive", tool="pytest",
-            details={"reason": "pytest is not installed"},
+            details={"reason": "project Python or pytest unavailable; no host fallback", "interpreter": interpreter,
+                     "environment": environment},
         )
-    process = await asyncio.create_subprocess_exec(
-        sys.executable, "-m", "pytest", "-q", "--no-header", "-p", "no:cacheprovider",
-        *[str(p.relative_to(work_dir)) for p in test_files],
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-        cwd=str(work_dir),
-    )
     try:
-        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=timeout)
+        stdout, returncode, records = await asyncio.wait_for(
+            _pytest_with_report(interpreter, work_dir, test_files, env), timeout=timeout)
     except asyncio.TimeoutError:
-        process.kill()
-        await process.wait()
         return StageResult(
             name="tests", status="inconclusive", tool="pytest",
             details={"reason": f"test run exceeded {timeout:.0f}s"},
         )
     output = stdout.decode(errors="replace")
-    status = "passed" if process.returncode == 0 else "failed"
+    # Keep actionable failures, not just the final traceback. Bound the
+    # diagnostic explicitly; large logs remain honestly marked incomplete.
+    valid_records = isinstance(records, list) and all(isinstance(item, dict) and isinstance(item.get('nodeid'), str)
+        and item.get('outcome') in {'passed', 'failed', 'skipped'} and item.get('phase') in {'setup', 'call', 'teardown'} for item in records)
+    failed_cases = sorted({item['nodeid'] for item in records if item['outcome'] == 'failed'}) if valid_records else []
+    status = 'passed' if returncode == 0 and valid_records else 'failed' if returncode != 0 else 'inconclusive'
     return StageResult(
-        name="tests", status=status, tool="pytest", tool_version=_PY,
+        name="tests", status=status, tool="pytest", tool_version=environment['version'],
         details={
-            "returncode": process.returncode,
+            "environment": environment,
+            "returncode": returncode,
             "tests": [str(p.relative_to(work_dir)) for p in test_files],
             "output_tail": output[-2000:],
+            "diagnostic_output": output if len(output) <= 64000 else output[:32000] + '\n[diagnostic truncated]\n' + output[-32000:],
+            "diagnostic_truncated": len(output) > 64000,
+            "failed_cases": failed_cases[:100],
+            "passed_cases": sorted({item['nodeid'] for item in records if item['phase'] == 'call' and item['outcome'] == 'passed'}) if valid_records else [],
+            "structured_report_valid": valid_records,
         },
     )
 

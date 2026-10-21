@@ -490,6 +490,11 @@ async def run_static_preview(rel: str) -> Dict[str, Any]:
     if target.name != "index.html" or not target.is_file():
         raise web.HTTPBadRequest(text=json_error("web preview entry point must be index.html"))
     project_dir = target.parent
+    from ..project_transaction import assert_project_idle
+    try:
+        assert_project_idle(workspace_root(), project_dir)
+    except ValueError as exc:
+        raise web.HTTPConflict(text=json_error(str(exc)))
     manifest_path = project_dir / PROJECT_MANIFEST
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -674,6 +679,11 @@ def setup_fs_routes(app: web.Application) -> None:
                 await previews.touch(token)
             return web.json_response({'ok': True})
         entry = _resolve(workspace_root(), body.get('path', ''))
+        from ..project_transaction import assert_project_idle
+        try:
+            assert_project_idle(workspace_root(), entry.parent)
+        except ValueError as exc:
+            raise web.HTTPConflict(text=json_error(str(exc)))
         try:
             manifest = json.loads((entry.parent / PROJECT_MANIFEST).read_text())
         except (OSError, ValueError):

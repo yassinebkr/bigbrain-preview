@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { AnimatePresence, motion } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { useAppStore } from '@/store/appStore';
 import { Layout } from '@/components/Layout';
 import { LoginPage } from '@/components/LoginPage';
@@ -91,6 +91,10 @@ export default function App() {
       if (sessionId === useAppStore.getState().activeSessionKey) {
         useAppStore.setState({ historyError: error });
       }
+    });
+
+    connection.on('onSendError', (error) => {
+      useAppStore.setState({ historyError: error.message, isStreaming: false, streamingText: '' });
     });
 
     connection.on('onStreamDelta', (delta) => {
@@ -195,12 +199,12 @@ export default function App() {
 
   return (
     <Layout>
-      <AnimatePresence mode="wait">
+      {/* Route content follows the store immediately. Waiting for an exiting
+          route can retain a stale welcome screen during rapid session changes. */}
         <motion.div
           key={view}
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -6 }}
           transition={{ duration: 0.18, ease: 'easeOut' }}
           className="h-full"
         >
@@ -220,7 +224,6 @@ export default function App() {
           <ChatView />
         )}
         </motion.div>
-      </AnimatePresence>
       {/* Global file viewer — opened from the run panel or the explorer */}
       <CodeViewer />
     </Layout>

@@ -109,10 +109,14 @@ class WebAppBrain(BaseBrain):
             return path.name
 
     async def _write_web_file(self, payload: dict) -> Dict[str, Any]:
+        if payload.get('_existing_source'):
+            return await self.edit_inspected_file(payload, model=os.getenv('BIGBRAIN_WEB_MODEL', self.model or 'default'))
         if self.llm_provider is None:
             raise RuntimeError("WebAppBrain requires an LLM provider")
         project_name = self._safe_project_name(str(payload.get("project_name") or "web-app"))
         file_path = self._safe_relative(str(payload.get("file_path") or ""))
+        if self._directory_context.get():
+            self._directory_context.get().file(file_path.as_posix())
         project_dir = self._project_dir(project_name)
         target = (project_dir / file_path).resolve()
         if project_dir not in target.parents:
@@ -140,6 +144,10 @@ Stack: {payload.get('web_stack', 'static')}
 Architect contract:
 {payload.get('architect_spec', '')}
 
+Approved acceptance criteria (authoritative):
+{json.dumps(payload.get('acceptance_contracts', []), ensure_ascii=False)}
+Tests must assert these exact behaviours, not invent incompatible interfaces or replace existing expectations.
+
 Implementation notes:
 {payload.get('implementation_notes', '')}
 
@@ -157,7 +165,7 @@ Rules:
 - No placeholders, TODOs, fake data presented as external/live data, or missing handlers.
 - Keep contracts with the other planned files exactly as specified.
 """
-        raw = scaffold if scaffold is not None else await self.llm_provider.chat_complete(
+        raw = scaffold if scaffold is not None else await self.complete_with_memory(
             messages=[{"role": "system", "content": "You implement production-quality web application files."},
                       {"role": "user", "content": prompt}],
             model=os.getenv("BIGBRAIN_WEB_MODEL", self.model or "default"),
@@ -175,8 +183,15 @@ Rules:
         binding = self._directory_context.get()
         if binding is not None:
             binding.file(target.relative_to(binding.directory).as_posix())
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
+        if not binding:
+            target.parent.mkdir(parents=True, exist_ok=True)
+        if payload.get('_create_only') and target.exists():
+            raise ValueError(f'{file_path}: create cannot overwrite an existing file')
+        if binding:
+            from ..project_transaction import write_text
+            write_text(binding, target.relative_to(binding.directory).as_posix(), content)
+        else:
+            target.write_text(content, encoding="utf-8")
         await self.send_event("workspace.file_written", {
             "path": self._workspace_relative(target),
             "project_name": project_name.as_posix(),
@@ -245,7 +260,9 @@ Rules:
         return None
 
     async def _assemble_and_preview(self, payload: dict) -> Dict[str, Any]:
-        from ..verification.web_gate import browser_report, record_attempt, failure_summary
+        from ..verification.web_gate import browser_report, record_attempt as record_web_attempt, failure_summary
+        def record_attempt(*args, **kwargs):
+            return record_web_attempt(*args, **kwargs, contract_revision=payload.get('contract_revision'))
         started = time.time()
         project_name = self._safe_project_name(str(payload.get("project_name") or "web-app"))
         project_dir = self._project_dir(project_name)
@@ -255,7 +272,12 @@ Rules:
         if previous_manifest.is_file():
             previous = json.loads(previous_manifest.read_text())
             previous["verified"] = False
-            previous_manifest.write_text(json.dumps(previous, indent=2))
+            binding = self._directory_context.get()
+            if binding:
+                from ..project_transaction import write_text
+                write_text(binding, '.project.json', json.dumps(previous, indent=2))
+            else:
+                previous_manifest.write_text(json.dumps(previous, indent=2))
         project_path = self._workspace_relative(project_dir)
         if not validation["passed"]:
             evidence = record_attempt(project_dir, payload.get("user_request") or project_name.name,
@@ -326,6 +348,15 @@ Rules:
                                           "project_name": project_name.name})
                 report = await browser_report(url, acceptance)
                 report["build_stages"] = build_stages
+                if report.get('status') == 'passed' and payload.get('contract_revision'):
+                    from ..verification.semantics import review_semantics
+                    sources = {item['path']: (project_dir / item['path']).read_text()
+                               for item in payload.get('all_files', [])}
+                    semantic = await review_semantics(self.llm_provider,
+                        request=payload.get('user_request', ''), contracts=payload.get('business_contracts'),
+                        sources=sources, tests={'status': report['status'],
+                            'passed_cases': [case['name'] for case in report.get('cases', []) if case['status'] == 'passed']})
+                    report['semantic_review'] = semantic.model_dump(mode='json')
                 evidence = record_attempt(project_dir, payload.get("user_request") or project_name.name,
                     validation, report, brain=self.name, attempt=repair_count + 1, parent_run_id=parent_run_id)
                 await self._publish_browser_evidence(evidence)
@@ -374,7 +405,15 @@ Rules:
             "web_stack": web_stack,
             "preview_dir": "dist" if web_stack == "react_vite" else ".",
         }
-        (project_dir / ".project.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        binding = self._directory_context.get()
+        if binding:
+            from ..project_transaction import write_text
+            write_text(binding, '.project.json', json.dumps(manifest, indent=2))
+        else:
+            (project_dir / '.project.json').write_text(json.dumps(manifest, indent=2))
+        from ..project_transaction import active_transaction, ProjectTransaction
+        if active_transaction.get():
+            ProjectTransaction(active_transaction.get()).seal_build_tree(project_dir)
         await self.cleanup()
         await self.send_progress({"stage": "preview_ready"})
         return {
@@ -395,6 +434,8 @@ Rules:
         })
 
     async def _repair_browser_failure(self, project_dir: Path, report: dict, payload: dict) -> None:
+        if payload.get('_editable_paths') is not None:
+            raise ValueError('Browser verification failed; existing projects require a new targeted repair plan, not automatic whole-file replacements')
         """Allow two bounded code repairs; acceptance scenarios remain frozen."""
         from ..verification.web_gate import failure_summary
         files = {path.relative_to(project_dir).as_posix(): path.read_text(encoding="utf-8")

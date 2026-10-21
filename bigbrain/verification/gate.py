@@ -87,6 +87,11 @@ class RunGate:
         parent_run_id: str | None = None,
         toolchain: Mapping[str, str] | None = None,
         filename: str = "generated.py",
+        contract_revision: Mapping[str, Any] | None = None,
+        test_python: str | Path | None = None,
+        semantic_provider: Any = None,
+        semantic_sources: Mapping[str, str] | None = None,
+        execution_required: bool = True,
     ) -> tuple[RunManifest, str]:
         """Run all deterministic stages, persist the manifest, return it.
 
@@ -104,7 +109,14 @@ class RunGate:
         # (approved contracts + approval trace), not a fresh bare one.
         design_id = "task-" + hashlib.sha256(
             user_request.encode("utf-8")).hexdigest()[:16]
-        approved_spec = self.repository.load_latest_spec(design_id)
+        if contract_revision is not None:
+            if contract_revision.get('design_id') != design_id:
+                raise ValueError('Approved contract belongs to another request')
+            approved_spec = self.repository.load_spec(design_id, contract_revision['revision'])
+            if approved_spec is None or approved_spec.metadata.get('approval', {}).get('decision') != 'approved':
+                raise ValueError('Pinned approved contract revision is unavailable')
+        else:
+            approved_spec = self.repository.load_latest_spec(design_id)
         if approved_spec is not None:
             spec = approved_spec
         else:
@@ -132,16 +144,18 @@ class RunGate:
         # Stages, cheapest first.
         syntax = stage_syntax(code, filename=filename)
         compile_stage = stage_compile(code, filename=filename)
-        run_stage = stage_run(execution)
+        run_stage = (stage_run(execution) if execution_required else
+            StageResult(name='run', status='not_applicable', mandatory=False, tool='explicit_non_executable',
+                        details={'reason': 'Approved non-executable deliverable; no entry point was executed'}))
         contracts = stage_contracts(work_dir, requested_file,
                                     persisted_file=persisted_file)
-        tests = await stage_tests(work_dir)
+        tests = await stage_tests(work_dir, python=test_python)
 
         # Attach artifacts to the stages that produced/consumed them.
         syntax.artifact_hashes = [code_ref.sha256]
         compile_stage.artifact_hashes = [code_ref.sha256]
         run_stage.artifact_hashes = [stdout_ref.sha256, stderr_ref.sha256]
-        tests_output = str(tests.details.get("output_tail") or "")
+        tests_output = str(tests.details.get("diagnostic_output") or tests.details.get("output_tail") or "")
         if tests.status in ("passed", "failed"):
             tests_ref = self.repository.put_artifact(
                 tests_output.encode("utf-8"), name="tests.output",
@@ -152,6 +166,37 @@ class RunGate:
         stages: list[StageResult] = [
             syntax, compile_stage, run_stage, contracts, tests,
         ]
+        if contract_revision is not None:
+            from ..execution_target import ExecutionTarget
+            from ..project_inspection import read_source
+            pinned = ExecutionTarget('existing', work_dir.name, str(work_dir.parent.resolve())).prepare()
+            def changed_sources():
+                changed = []
+                for path, expected in (semantic_sources or {}).items():
+                    try:
+                        actual, complete = read_source(pinned, path, max(48000, len(expected.encode('utf-8'))))
+                        if not complete or actual != expected:
+                            changed.append(path)
+                    except (OSError, ValueError, UnicodeError):
+                        changed.append(path)
+                return changed
+            changed = changed_sources()
+            revision = StageResult(name='source_revision', status='inconclusive' if changed else 'passed',
+                tool='source_snapshot_compare', details={'changed_sources': changed})
+            stages.append(revision)
+            from .semantics import review_semantics
+            if changed:
+                semantic = StageResult(name='semantics', status='inconclusive', tool='independent_llm_review',
+                    details={'reason': 'Source revision changed after execution/tests', 'requires_arbitration': True})
+            else:
+                semantic = await review_semantics(semantic_provider, request=user_request,
+                    contracts=spec.metadata.get('business_criteria'), sources=dict(semantic_sources or {}),
+                    tests={'status': tests.status, **tests.details})
+                changed = changed_sources()
+                if changed:
+                    revision.status = 'inconclusive'
+                    revision.details['changed_sources'] = changed
+            stages.append(semantic)
         for stage in stages:
             stage.started_at = datetime.now(timezone.utc)
             stage.finished_at = datetime.now(timezone.utc)

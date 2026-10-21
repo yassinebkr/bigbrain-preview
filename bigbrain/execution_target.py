@@ -85,7 +85,7 @@ class ExecutionTarget:
         return current
 
 
-def resolve_target(plan_id: str, task_data: dict, subtasks: list, project_spec=None) -> ExecutionTarget | None:
+def resolve_target(plan_id: str, task_data: dict, subtasks: list, project_spec=None, *, partial_project_check=None) -> ExecutionTarget | None:
     files = [st for st in subtasks if st.payload.get("type") in FILE_TASKS]
     if not files:
         return None  # research/taskboard never inherit a project
@@ -122,7 +122,7 @@ def resolve_target(plan_id: str, task_data: dict, subtasks: list, project_spec=N
     target.validate()
     if mode == "existing":
         manifest = target.file(".project.json")
-        if not manifest.is_file():
+        if not manifest.is_file() and not (partial_project_check and partial_project_check(path)):
             raise ValueError("Le projet existant doit posséder un manifeste .project.json")
         target = target.prepare()  # pin identity now; creates nothing in existing mode
     return target

@@ -56,14 +56,18 @@ def _front(tmp_path, monkeypatch, provider=None):
 
 
 class TestRecall:
-    async def test_recall_injects_relevant_memory(self, isolated_memory,
+    async def test_recall_is_consulted_on_demand(self, isolated_memory,
                                                   tmp_path, monkeypatch):
         class RecordingProvider:
             def __init__(self):
                 self.messages = None
+                self.calls = []
 
             async def chat_complete(self, messages=None, **kwargs):
                 self.messages = messages
+                self.calls.append(messages)
+                if len(self.calls) == 1:
+                    return '{"memory":{"tool":"memory.search","arguments":{"query":"nom de mon chien"}}}'
                 return "Bonjour !"
 
         provider = RecordingProvider()
@@ -79,6 +83,7 @@ class TestRecall:
         # The retrieved memory reached the LLM prompt
         blocks = [m.get("content", "") for m in (provider.messages or [])]
         assert any("Rex" in block for block in blocks)
+        assert not any('Rex' in str(m.get('content')) for m in provider.calls[0])
 
     async def test_recall_dedupes_the_live_window(self, isolated_memory,
                                                   tmp_path, monkeypatch):

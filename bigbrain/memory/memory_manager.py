@@ -51,6 +51,12 @@ class MemoryManager:
         
         # Cache
         self._context_cache: Dict[str, Any] = {}
+
+    def consult(self, request, *, session_id: str | None, log_dir: Path, exclude=()):
+        """Shared contract; runtime brain identity determines fact-write authority."""
+        from .shared import SharedMemory, execute_memory
+        return execute_memory(request, SharedMemory(log_dir, self.persistent.storage_dir), self.persistent, session_id, exclude,
+                              allow_write=self.brain_name == 'front_brain')
     
     def store(self, content: str, memory_type: str = "auto",
               metadata: Dict[str, Any] = None) -> str:

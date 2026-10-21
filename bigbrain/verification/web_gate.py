@@ -60,10 +60,18 @@ def record_attempt(
     brain: str,
     attempt: int,
     parent_run_id: str | None = None,
+    contract_revision: dict | None = None,
 ) -> RunManifest:
     repository = default_repository()
     design_id = "task-" + hashlib.sha256(user_request.encode()).hexdigest()[:16]
-    spec = repository.load_latest_spec(design_id)
+    if contract_revision:
+        if contract_revision.get('design_id') != design_id:
+            raise ValueError('Web contract belongs to another request')
+        spec = repository.load_spec(design_id, contract_revision['revision'])
+        if spec is None or spec.metadata.get('approval', {}).get('decision') != 'approved':
+            raise ValueError('Approved web contract revision unavailable')
+    else:
+        spec = repository.load_latest_spec(design_id)
     if spec is None:
         spec = DesignSpec(
             design_id=design_id,
@@ -136,6 +144,8 @@ def record_attempt(
             },
         ),
     ]
+    if report.get('semantic_review'):
+        stages.append(StageResult.model_validate(report['semantic_review']))
     for build in report.get("build_stages", []):
         stages.insert(
             -1,

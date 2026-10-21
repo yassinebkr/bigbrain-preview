@@ -1,10 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import { reconcileWorkspace, surfaceId, surfaceRegistry } from './morphable';
+import { nextProjectAttempt, reconcileWorkspace, surfaceId, surfaceRegistry } from './morphable';
 import type { RunState } from '@/store/appStore';
 
 const run: RunState = { id: 'web', sessionId: 's1', description: 'Actual web run', status: 'running', startedAt: 1, steps: [], files: [] };
 
 describe('deterministic workspace reconciler', () => {
+  it('follows a repair of the same project through planning and failure, not unrelated work', () => {
+    const old = { ...run, projectPath: 'sandbox/gcode', status: 'failed' as const };
+    const repair = { ...old, id: 'repair', startedAt: 2 };
+    const board = { ...run, id: 'board', startedAt: 3, resultKind: 'taskboard' };
+    for (const status of ['running', 'failed'] as const) {
+      expect(nextProjectAttempt(old, surfaceRegistry('s1', [old, { ...repair, status }, board]))?.run.id).toBe('repair');
+    }
+    expect(nextProjectAttempt(old, surfaceRegistry('s1', [old, board]))).toBeUndefined();
+    expect(nextProjectAttempt(old, surfaceRegistry('s2', [{ ...repair, sessionId: 's2' }]))).toBeUndefined();
+    expect(nextProjectAttempt({ ...old, projectPath: undefined }, surfaceRegistry('s1', [repair]))?.run.id).toBe('repair');
+    expect(nextProjectAttempt({ ...old, projectPath: undefined, status: 'running' }, surfaceRegistry('s1', [repair]))).toBeUndefined();
+    expect(nextProjectAttempt(old, surfaceRegistry('s1', [repair]), 3)).toBeUndefined();
+    expect(nextProjectAttempt(old, surfaceRegistry('s1', [{ ...repair, startedAt: 4 }]), 3)?.run.id).toBe('repair');
+  });
   it('keeps simple conversations in focus without fabricating artifacts', () => {
     expect(surfaceRegistry(null, [run])).toEqual([]);
     expect(reconcileWorkspace(surfaceRegistry('empty', [run])).mode).toBe('focus');

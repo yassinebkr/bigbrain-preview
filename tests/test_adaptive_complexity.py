@@ -257,7 +257,7 @@ class TestContextCompaction:
         orch._running = True
         return orch
 
-    def test_compact_truncates_verbose_results(self, orchestrator):
+    def test_compact_preserves_source_artifacts_for_downstream_workers(self, orchestrator):
         plan = TaskPlan(
             id="p1",
             original_task=BusMessage(type=MessageType.TASK, source="u", target="o")
@@ -278,13 +278,11 @@ class TestContextCompaction:
         orchestrator._compact_plan_context(plan)
 
         r = s1.result
-        assert r["_compacted"] is True
         assert r["file_path"] == "models.py"
         assert r["lines"] == 42
-        # stdout truncated to ~100 chars
-        assert len(r["stdout"]) < 200
-        # file_content should be gone (not in compact keys)
-        assert "file_content" not in r
+        # Source results are versioned dependencies, not disposable prose.
+        assert r["file_content"] == "huge content " * 1000
+        assert not r.get('_compacted', False)
 
     def test_compact_skips_already_compacted(self, orchestrator):
         plan = TaskPlan(

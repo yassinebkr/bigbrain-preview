@@ -310,7 +310,7 @@ export const useAppStore = create<AppState>()(
       },
       restoreSessionHistory: (sessionId, messages, asOf) => set((state) => {
         if (sessionId !== state.activeSessionKey) return {};
-        const later = state.messages.filter((message) => (!asOf || message.timestamp > asOf) &&
+        const later = state.messages.filter((message) => (message.role === 'user' && message.id.startsWith('user-') || !asOf || message.timestamp > asOf) &&
           !messages.some((old) => old.role === message.role && old.content === message.content));
         return { messages: [...messages, ...later], historyError: null };
       }),
@@ -460,6 +460,10 @@ export const useAppStore = create<AppState>()(
               ? { ...step, description: `${label} · ${path}` } : step) } : item) };
         }
         if (finished && !terminal) {
+          if (activity.type === 'contracts.proposal' && typeof d.project_target?.path === 'string') {
+            return { completedRuns: state.completedRuns.map((item) => item.id === finished.id
+              ? { ...item, projectPath: d.project_target.path } : item) };
+          }
           delete runsById[finished.id];
           if (sessionRuns[sessionId] && !runsById[sessionRuns[sessionId].id]) delete sessionRuns[sessionId];
           const sessionProposals = { ...state.sessionProposals };
@@ -497,6 +501,7 @@ export const useAppStore = create<AppState>()(
               sessionId,
               id: d.task_id || `routing-${Date.now()}`,
               description: String(d.description || 'Preparing task'),
+              projectPath: typeof d.project_path === 'string' ? d.project_path : undefined,
               status: 'running',
               startedAt: activity.ts || Date.now(),
               steps: [],
@@ -505,12 +510,14 @@ export const useAppStore = create<AppState>()(
             return { activeRun: fresh, runPanelDismissed: false };
           }
           case 'task.received': {
-            if (run && run.id === d.task_id) return {};
+            if (run && run.id === d.task_id) return { activeRun: { ...run,
+              projectPath: typeof d.project_path === 'string' ? d.project_path : run.projectPath } };
             const previous = run?.sessionId === d.session_id ? run : null;
             const fresh: RunState = {
               sessionId: String(d.session_id || run?.sessionId || state.activeSessionKey || ''),
               id: d.task_id || `run-${Date.now()}`,
               description: String(d.description || 'Task'),
+              projectPath: typeof d.project_path === 'string' ? d.project_path : previous?.projectPath,
               status: 'running',
               startedAt: previous?.startedAt || activity.ts || Date.now(),
               steps: previous?.steps.filter((s) => s.id.startsWith('planning-')) || [],
@@ -521,7 +528,8 @@ export const useAppStore = create<AppState>()(
           case 'contracts.proposal': {
             const sessionId = String(d.session_id || run?.sessionId || state.activeSessionKey || '');
             if (run && run.status === 'running' && run.sessionId === sessionId) {
-              return { activeRun: { ...run, sessionId, awaitingApproval: true }, runPanelDismissed: false };
+              return { activeRun: { ...run, sessionId, awaitingApproval: true,
+                projectPath: typeof d.project_target?.path === 'string' ? d.project_target.path : run.projectPath }, runPanelDismissed: false };
             }
             const fresh: RunState = {
               sessionId,
@@ -984,6 +992,10 @@ export const useAppStore = create<AppState>()(
         const state = get();
         const text = state.inputText.trim();
         if (!text && state.attachments.length === 0) return;
+        if (!state.connection || state.connectionStatus !== 'connected') {
+          set({ historyError: 'Connexion au serveur indisponible. Votre message est conservé dans le champ de saisie.', isStreaming: false });
+          return;
+        }
         const userMessage: Message = { id: `user-${Date.now()}`, role: 'user', content: text, timestamp: Date.now(), attachments: state.attachments.length > 0 ? [...state.attachments] : undefined };
         // Sending from the home page ALWAYS starts a new conversation —
         // the previous transcript must not bleed into it.
@@ -1003,6 +1015,7 @@ export const useAppStore = create<AppState>()(
           inputText: '',
           attachments: [],
           view: 'chat',
+          historyError: null,
           isStreaming: true,
           streamingText: '',
         }));
