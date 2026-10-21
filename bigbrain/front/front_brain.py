@@ -539,6 +539,7 @@ PROJECT DESTINATION (for file/code work): include a top-level "project_target" o
 - Editing/running an EXISTING project: {{"mode":"existing","path":"sandbox/exact-project"}}. Resolve this from the user's request and conversation; explorer selection is only a hint, never implicit authorization. If the intended project is ambiguous, ask before delegating.
 - Board/research-only work has no project_target.
 - .project.json belongs to the runtime and is published only after verification. Its absence after a failed run is not an instruction to generate it. Delegate repair of the implementation and tests, never fabrication of verification metadata.
+- Existing-project maintenance may report a contradiction requiring a new approval. Propose precise validation changes with a top-level "test_changes" array, each item containing "path", "reason", "expected_behavior", "authority". Cite only the user's explicit requirement or an actually verified source; never invent authority. These are proposals, not permissions: the runtime includes them in a new contract for Approve/Reject. Keep unrelated assertions and safety checks intact.
 Example: {{"reply":"Je prépare une nouvelle application.","task":"Build the requested app","project_target":{{"mode":"new"}}}}
 Example: {{"reply":"Je modifie ce projet.","task":"Apply the requested changes","project_target":{{"mode":"existing","path":"sandbox/exact-project"}}}}
 
@@ -773,6 +774,7 @@ Type 'quit' or 'exit' to stop."""
                         "reply_to_ui": True,
                         "session_id": session_id,
                         "project_target": parsed.get("project_target"),
+                        **({'test_changes': parsed['test_changes']} if 'test_changes' in parsed else {}),
                         "_ui_run_id": run_id,
                     },
                     priority=Priority.NORMAL,
@@ -800,6 +802,7 @@ Type 'quit' or 'exit' to stop."""
                         "reply_to_ui": True,
                         "session_id": session_id,
                         "project_target": parsed.get("project_target"),
+                        **({'test_changes': parsed['test_changes']} if 'test_changes' in parsed else {}),
                         "_ui_run_id": run_id,
                     },
                     priority=Priority.NORMAL,

@@ -91,6 +91,8 @@ class RunGate:
         test_python: str | Path | None = None,
         semantic_provider: Any = None,
         semantic_sources: Mapping[str, str] | None = None,
+        semantic_progressive: bool = False,
+        semantic_runtime_evidence: Mapping[str, Any] | None = None,
         execution_required: bool = True,
     ) -> tuple[RunManifest, str]:
         """Run all deterministic stages, persist the manifest, return it.
@@ -191,7 +193,8 @@ class RunGate:
             else:
                 semantic = await review_semantics(semantic_provider, request=user_request,
                     contracts=spec.metadata.get('business_criteria'), sources=dict(semantic_sources or {}),
-                    tests={'status': tests.status, **tests.details})
+                    tests={'status': tests.status, **tests.details}, progressive=semantic_progressive,
+                    runtime_evidence=semantic_runtime_evidence)
                 changed = changed_sources()
                 if changed:
                     revision.status = 'inconclusive'

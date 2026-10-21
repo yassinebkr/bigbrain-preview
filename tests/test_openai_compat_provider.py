@@ -62,6 +62,48 @@ def _provider(handler, key="openrouter-gpt-sol", monkeypatch=None):
 
 
 @pytest.mark.asyncio
+async def test_structured_review_schema_is_forwarded_and_not_silently_dropped():
+    from bigbrain.verification.semantics import _review_format
+    handler = _SSEHandler(content='{"decision":"needs_arbitration"}')
+    provider = _provider(handler, key='openrouter-gpt-6.1-sol')
+    try:
+        await provider.chat_complete([{'role': 'user', 'content': 'Review the evidence as JSON'}],
+                                     response_format=_review_format())
+        body = json.loads(handler.requests[0].content)
+        assert body['response_format'] == _review_format()
+        assert body['response_format']['json_schema']['strict'] is True
+        assert body['provider'] == {'require_parameters': True}
+        assert 'temperature' not in body
+        assert 'stream_options' not in body
+    finally:
+        await provider._client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('count', [0, 1, 2])
+async def test_native_single_action_requires_exactly_one_named_call(count):
+    requests = []
+    def respond(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json={'choices': [{'message': {'content': 'must not become a text fallback',
+            'tool_calls': [{'type': 'function', 'function': {'name': 'step', 'arguments': '{"action":{"type":"read"}}'}}] * count}}]})
+    provider = OpenAICompatProvider('openrouter-gpt-6.1-sol', api_key='test-key')
+    provider._client = httpx.AsyncClient(base_url=provider.entry.base_url, transport=httpx.MockTransport(respond))
+    schema = {'name': 'step', 'description': 'One action', 'parameters': {'type': 'object'}}
+    try:
+        if count == 1:
+            assert await provider.chat_complete([{'role': 'user', 'content': 'One read action'}], tool_schema=schema) == '{"action":{"type":"read"}}'
+        else:
+            with pytest.raises(ValueError, match='exactly'):
+                await provider.chat_complete([{'role': 'user', 'content': 'One read action'}], tool_schema=schema)
+        assert requests[0]['tools'][0]['function'] == schema
+        assert requests[0]['tool_choice']['function']['name'] == 'step'
+        assert requests[0]['provider']['require_parameters'] is True
+    finally:
+        await provider._client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_non_stream_completion():
     handler = _SSEHandler(
         content="answer",

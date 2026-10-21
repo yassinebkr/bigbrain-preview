@@ -12,6 +12,12 @@ let cancelledSends = 0;
 const fileProgressLabels: Record<string, string> = {
   writing_file: 'Création du fichier', writing_web_file: 'Création du fichier',
   file_written: 'Fichier enregistré', editing_file: 'Modification du fichier',
+  maintenance_list: 'Exploration du projet', maintenance_search: 'Recherche dans le projet',
+  maintenance_read: 'Lecture du fichier', maintenance_diagnose: 'Diagnostic du projet',
+  maintenance_patch: 'Correction ciblée', maintenance_verify: 'Vérification du projet',
+  maintenance_prepare_environment: 'Préparation des outils du projet',
+  maintenance_diagnostic_read: 'Analyse des diagnostics', maintenance_entry_point: 'Point d’entrée',
+  maintenance_arbitrate: 'Décision nécessaire',
 };
 
 export interface AgentActivity {

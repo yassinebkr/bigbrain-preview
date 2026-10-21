@@ -55,6 +55,8 @@ class ModelEntry:
     reasoning_effort_default: str | None = None
     # Accepts OpenAI-style image_url content blocks.
     vision: bool = False
+    # Some reasoning endpoints reject temperature rather than sampling with it.
+    supports_temperature: bool = True
     # Optional monthly context window, for budget heuristics only.
     context_window: int | None = None
 
@@ -80,6 +82,7 @@ class ModelEntry:
             reasoning_efforts=list(self.reasoning_efforts),
             reasoning_effort_default=reasoning_effort_default,
             vision=self.vision,
+            supports_temperature=self.supports_temperature,
             context_window=self.context_window,
         )
 
@@ -97,6 +100,7 @@ _REGISTRY: dict[str, ModelEntry] = {
         reasoning=True,
         reasoning_efforts=["low", "medium", "high", "xhigh", "max"],
         reasoning_effort_default="medium",
+        supports_temperature=False,
         vision=True,
         context_window=1_050_000,
     ),

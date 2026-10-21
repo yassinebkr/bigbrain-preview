@@ -81,8 +81,9 @@ class OpenAICompatProvider(LLMProvider):
             "max_tokens": effective_max_tokens,
             "temperature": temperature,
             "stream": False,
-            "stream_options": {"include_usage": True},
         }
+        if not self.entry.supports_temperature:
+            body.pop('temperature', None)
         if self.entry.reasoning:
             body["max_tokens"] = max_tokens + _REASONING_MAX_TOKENS_HEADROOM
             effort = self.entry.reasoning_effort_default
@@ -115,13 +116,36 @@ class OpenAICompatProvider(LLMProvider):
         **kwargs,
     ):
         body = self._request_params(messages, model, max_tokens, temperature)
+        if kwargs.get('response_format') is not None:
+            body['response_format'] = kwargs['response_format']
+            if self.registry_key.startswith('openrouter-'):
+                # Endpoint support, not a prompt promise. Never silently route
+                # a structured protocol to an endpoint that drops its schema.
+                body['provider'] = {'require_parameters': True}
+        tool_schema = kwargs.get('tool_schema')
+        if tool_schema is not None:
+            if stream or kwargs.get('response_format') is not None:
+                raise ValueError('Single-action tool protocol is non-streaming and cannot combine response formats')
+            body['tools'] = [{'type': 'function', 'function': tool_schema}]
+            body['tool_choice'] = {'type': 'function', 'function': {'name': tool_schema['name']}}
+            if self.registry_key.startswith('openrouter-'):
+                body['provider'] = {'require_parameters': True}
         if stream:
+            body['stream_options'] = {'include_usage': True}
             return self._stream_chat(body)
         response = await self.client.post("/chat/completions", json=body)
         response.raise_for_status()
         data = response.json()
         self._record_usage(data, model)
         choices = data.get("choices") or [{}]
+        if tool_schema is not None:
+            calls = (choices[0].get('message') or {}).get('tool_calls') or []
+            if len(calls) != 1 or calls[0].get('function', {}).get('name') != tool_schema['name']:
+                raise ValueError('Provider must return exactly the requested single tool call; no text fallback')
+            arguments = calls[0]['function'].get('arguments')
+            if not isinstance(arguments, str) or not isinstance(json.loads(arguments), dict):
+                raise ValueError('Native tool arguments must be a JSON object')
+            return arguments
         return (choices[0].get("message") or {}).get("content") or ""
 
     async def _stream_chat(self, body: dict) -> AsyncIterator[str]:

@@ -435,6 +435,11 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
 
         contracts = await draft_contracts(
             self.llm_provider, user_request, project_spec=plan.project_spec)
+        maintenance = any(st.payload.get('type') == 'maintain_project' for st in plan.subtasks)
+        if maintenance:
+            contracts.append('Maintenance du projet existant : inspection progressive, corrections ciblées des sources dans le projet approuvé, sans remplacement du projet. Tests existants et comportement attendu inchangés sauf décision explicitement approuvée ci-dessous. Maximum 40 actions / 600 secondes ; livraison uniquement après vérification indépendante.')
+            for decision in plan.project_spec.test_changes:
+                contracts.append(f"Modification de validation {decision['path']} : {decision['reason']} — comportement attendu : {decision['expected_behavior']} — fondement : {decision['authority']}")
         if plan.inspection and plan.project_spec:
             changes = [f'{"modifier" if fs.operation == "modify" else "créer"} {fs.path}' for fs in plan.project_spec.file_specs if fs.operation != 'keep']
             contracts.append('Périmètre des changements approuvés : ' + (' ; '.join(changes) or 'vérification seule, aucun fichier à modifier'))
@@ -446,6 +451,11 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             raise ValueError("No verifiable acceptance contracts were produced; execution remains blocked")
         spec = build_proposal_spec(user_request, contracts)
         spec.metadata['business_criteria'] = list(plan.project_spec.acceptance_contracts) if plan.project_spec else list(contracts)
+        if maintenance:
+            # Runtime capability derives from the recorded user-approved proposal,
+            # never from a worker's tool action or an arbitrary payload flag.
+            spec.metadata['maintenance'] = {'protocol': 'bigbrain-maintenance/1',
+                'test_changes': plan.project_spec.test_changes}
         if plan.execution_target is not None:
             spec.metadata["execution_target"] = plan.execution_target.public()
         if plan.inspection:
@@ -542,6 +552,9 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                 subtask.payload['acceptance_contracts'] = list(stamped.contracts)
                 subtask.payload['business_contracts'] = stamped.metadata.get('business_criteria', [])
                 subtask.payload['contract_revision'] = {'design_id': stamped.design_id, 'revision': stamped.revision}
+                if subtask.payload.get('type') == 'maintain_project':
+                    subtask.payload['_approved_test_paths'] = [d['path'] for d in
+                        stamped.metadata.get('maintenance', {}).get('test_changes', [])]
             await self.bus.broadcast_event(
                 source=self.name,
                 event_type="contracts.approved",
@@ -656,6 +669,16 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         # no re-planning and no decomposition. Unknown brain names fall
         # through to the normal planning pipeline.
         routed_brain = task_data.get("brain")
+        if task_data.get('type') == 'maintain_project':
+            deliverable = task_data.get('deliverable_type')
+            if deliverable not in {'python', 'web_app'}:
+                raise PlanningError('maintenance', 'Explicit specialist deliverable required', plan_id)
+            expected_brain = 'web_app_brain' if deliverable == 'web_app' else 'python_brain'
+            if routed_brain and routed_brain != expected_brain:
+                raise PlanningError('maintenance', 'Explicit route and deliverable disagree', plan_id)
+            plan.subtasks = await self._plan_maintenance(plan, user_request, deliverable)
+            plan.tracker = TaskTracker.create_from_plan(plan.subtasks)
+            return plan
         if routed_brain and (
             routed_brain in self.registered_brains
             or routed_brain in self.brain_pools
@@ -700,12 +723,17 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                 needs_research = assessment.get("needs_research", False)
                 research_queries = assessment.get("research_queries", [])
                 
-                if mode == "project" or assessment["deliverable_type"] == "web_app":
-                    stage = "architect"
+                choice = task_data.get('project_target') or {}
+                maintenance = bool(task_data.get('project_path') or choice.get('mode') == 'existing')
+                if maintenance or mode == "project" or assessment["deliverable_type"] == "web_app":
+                    stage = 'maintenance' if maintenance else 'architect'
                     started = time.monotonic()
                     await self._planning_progress(stage, "running", task_data.get("session_id"), task_id=plan_id)
                     # Step 2a: Project mode — plan file structure, build DAG
-                    subtasks = await self._plan_project(plan_id, user_request, 
+                    if maintenance:
+                        subtasks = await self._plan_maintenance(plan, user_request, assessment['deliverable_type'])
+                    else:
+                        subtasks = await self._plan_project(plan_id, user_request,
                                                          needs_research, research_queries,
                                                          deliverable_type=assessment["deliverable_type"],
                                                          session_id=task_data.get("session_id"),
@@ -757,7 +785,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
     async def _planning_progress(self, stage: str, status: str,
                                  session_id: Optional[str], started: Optional[float] = None,
                                  task_id: Optional[str] = None) -> None:
-        labels = {"inspection": "Inspection du projet existant", "assessment": "Analyse de la demande", "architect": "Architecture et critères d’acceptation",
+        labels = {"maintenance": "Préparation de la maintenance", "inspection": "Inspection du projet existant", "assessment": "Analyse de la demande", "architect": "Architecture et critères d’acceptation",
                   "decomposition": "Préparation des étapes", "contracts": "Enregistrement de la proposition"}
         await self.bus.broadcast_event(
             source=self.name, event_type="planning.stage",
@@ -830,6 +858,58 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             raise ValueError("assessment requires an array of research queries")
         return {**result, "research_queries": queries[:3]}
     
+    async def _plan_maintenance(self, plan, user_request, deliverable):
+        """Approve the repair objective, not an architect's guessed file list."""
+        from ..memory.shared import SharedMemory
+        from ..project_inspection import digest
+        from ..verification.contracts import draft_contracts
+        data = plan.original_task.payload
+        log_dir = getattr(getattr(self.bus, 'logger', None), 'log_dir', None)
+        marker = SubTask(id=plan.id + '_maintenance', description='Inspect and maintain existing project',
+            brain_target='web_app_brain' if deliverable == 'web_app' else 'python_brain',
+            payload={'type': 'maintain_project', 'user_request': user_request})
+        target = resolve_target(plan.id, data, [marker], partial_project_check=lambda path:
+            bool(log_dir) and SharedMemory(log_dir).owns_partial_project(data.get('session_id'), path))
+        if not target or target.mode != 'existing':
+            raise ValueError('Maintenance requires an explicit existing project')
+        manifest_path = target.file('.project.json')
+        raw = manifest_path.read_text() if manifest_path.is_file() else '{}'
+        manifest = json.loads(raw)
+        declared = manifest.get('deliverable_type')
+        if declared and declared != deliverable:
+            raise ValueError('Requested specialist differs from existing project deliverable; explicit migration required')
+        entry = manifest.get('entry_point')
+        if entry is not None:
+            target.file(entry)
+        decisions = data.get('test_changes', [])
+        if not isinstance(decisions, list) or len(decisions) > 20:
+            raise ValueError('Invalid proposed validation changes')
+        from ..maintenance import ProjectTools, protected_test
+        for decision in decisions:
+            if not isinstance(decision, dict) or not all(isinstance(decision.get(k), str) and decision[k].strip()
+                    for k in ('path', 'reason', 'expected_behavior', 'authority')):
+                raise ValueError('Validation changes require path, reason, expected_behavior and authority')
+            ProjectTools(target).path(decision['path'])
+            if not protected_test(decision['path']):
+                raise ValueError('Validation decision must identify a validation file')
+        spec = ProjectSpec(project_name=target.directory.name, description=user_request,
+            deliverable_type=deliverable, entry_point=entry,
+            interaction_mode=manifest.get('interaction_mode', 'browser' if deliverable == 'web_app' else 'cli'),
+            web_stack=manifest.get('web_stack', 'static'),
+            executable=manifest.get('interaction_mode') != 'library',
+            tech_decisions=['Preserve existing project stack; investigate before choosing implementation changes'],
+            execution_strategy='Reproduce, patch minimally, run project checks and independent acceptance review',
+            test_changes=decisions)
+        proposed = await draft_contracts(self.llm_provider, user_request, project_spec=spec)
+        spec.acceptance_contracts = [c for c in proposed if not c.startswith('[Stack]')]
+        if not spec.acceptance_contracts:
+            raise ValueError('No checkable maintenance objective; do not execute')
+        marker.payload.update(project_name=spec.project_name, entry_point=entry, executable=spec.executable,
+            deliverable_type=deliverable, web_stack=spec.web_stack, interaction_mode=spec.interaction_mode,
+            _maintenance_manifest_sha=digest(raw))
+        plan.execution_target, plan.project_spec = target, spec
+        return [marker]
+
     async def _plan_project(self, plan_id: str, user_request: str,
                             needs_research: bool, research_queries: list,
                             deliverable_type: Optional[str] = None,
@@ -1397,7 +1477,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                     paths = [st.payload['file_path'].removeprefix(plan.execution_target.path + '/') for st in plan.subtasks
                              if st.payload.get('type') in {'edit_file', 'write_project_file', 'write_web_file'}
                              and st.payload.get('file_path')]
-                    if paths:
+                    if paths or any(st.payload.get('type') == 'maintain_project' for st in plan.subtasks):
                         from ..project_transaction import ProjectTransaction
                         plan.transaction = str(ProjectTransaction.begin(plan.execution_target, paths).journal)
             except (ValueError, OSError) as exc:
@@ -1549,6 +1629,16 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         # Resolve any variable references in payload
         resolved_payload = await self._resolve_payload_references(subtask.payload, plan)
         resolved_payload.pop('_transaction', None)  # runtime-owned, never an LLM capability
+        resolved_payload.pop('_approved_test_paths', None)
+        for runtime_only in ('_maintenance_runtime_evidence', '_maintenance_mode', '_diagnostic_only'):
+            resolved_payload.pop(runtime_only, None)
+        if subtask.payload.get('type') == 'maintain_project' and plan.approval_design_id:
+            from ..verification.evidence import default_repository
+            ref = subtask.payload.get('contract_revision', {})
+            approved = default_repository().load_spec(ref.get('design_id', ''), ref.get('revision', 0))
+            if approved and approved.metadata.get('approval', {}).get('decision') == 'approved':
+                resolved_payload['_approved_test_paths'] = [d['path'] for d in
+                    approved.metadata.get('maintenance', {}).get('test_changes', [])]
         if subtask.payload.get("type") in FILE_TASKS and plan.execution_target is not None:
             resolved_payload["_execution_target"] = plan.execution_target.to_payload()
             if plan.transaction:

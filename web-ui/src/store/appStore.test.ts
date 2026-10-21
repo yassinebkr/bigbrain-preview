@@ -128,6 +128,17 @@ describe('applyRunEvent — run state machine', () => {
     expect(useAppStore.getState().activeRun).toBeNull();
   });
 
+  it('presents maintenance progress on the existing conversation work', () => {
+    const s = useAppStore.getState();
+    s.applyRunEvent(ev('task.received', { task_id: 'maintenance', session_id: 's1' }));
+    s.applyRunEvent(ev('subtask.started', { task_id: 'maintenance', subtask_id: 'repair', brain: 'python_brain', description: 'Maintenance' }));
+    s.applyRunEvent(ev('task.progress', { task_id: 'maintenance', subtask_id: 'repair', stage: 'maintenance_read', file_path: 'helper.py' }));
+    expect(useAppStore.getState().activeRun!.steps[0].description).toBe('Lecture du fichier · helper.py');
+    s.applyRunEvent(ev('task.progress', { task_id: 'maintenance', subtask_id: 'repair', stage: 'maintenance_verify' }));
+    expect(useAppStore.getState().activeRun!.steps[0].description).toBe('Vérification du projet');
+    expect(useAppStore.getState().activeRun!.steps).toHaveLength(1);
+  });
+
   it('presents file progress without raw stages or first-attempt noise', () => {
     const s = useAppStore.getState();
     s.applyRunEvent(ev('task.received', { task_id: 't1' }));

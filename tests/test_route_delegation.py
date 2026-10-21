@@ -5,6 +5,7 @@ This is tool-call routing — no keyword matching anywhere. The LLM decides,
 the orchestrator executes deterministically.
 """
 
+import json
 import pytest
 
 from bigbrain.bus.bus import MessageBus
@@ -88,6 +89,18 @@ def _make_front(provider):
 
 
 class TestFrontBrainRouteDispatch:
+    async def test_validation_change_proposal_is_forwarded_not_granted_as_permission(self):
+        decision = {'path': 'tests/test_old.py', 'reason': 'Conflicting expected result',
+                    'expected_behavior': 'Return the requested sum', 'authority': 'Explicit user requirement'}
+        provider = RecordingProvider(json.dumps({'reply': 'Je propose un nouveau contrat.',
+            'task': 'Repair the existing project after arbitration',
+            'project_target': {'mode': 'existing', 'path': 'sandbox/calculator'}, 'test_changes': [decision]}))
+        front, bus = _make_front(provider)
+        await front._handle_ui_message(BusMessage(type=MessageType.TASK, source='morphable_ui', target='front_brain',
+            payload={'text': 'Propose the correction', 'session_id': 's1'}))
+        assert bus.tasks[0][1]['test_changes'] == [decision]
+        assert '_approved_test_paths' not in bus.tasks[0][1]
+
     async def test_stop_during_provider_wait_prevents_delegation(self):
         class StoppingProvider:
             async def chat_complete(self, **kwargs):

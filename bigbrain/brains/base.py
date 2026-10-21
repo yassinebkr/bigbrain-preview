@@ -197,6 +197,65 @@ class BaseBrain(BusParticipant, ABC):
                 'source_sha256': digest(updated), 'dependency_versions': dependency_versions,
                 'stdout': '', 'stderr': '', 'exit_code': 0}
 
+    async def maintain_project(self, payload):
+        """The specialist owns the loop; runtime scope owns Stop and identity."""
+        from ..maintenance import maintain, ProjectTools, protected_test
+        from ..project_inspection import digest
+        target = self._directory_context.get()
+        if not target:
+            raise ValueError('Maintenance needs a bound execution target')
+        manifest = target.file('.project.json')
+        raw = manifest.read_text() if manifest.is_file() else '{}'
+        if digest(raw) != payload.get('_maintenance_manifest_sha'):
+            raise ValueError('Project metadata changed since approval; approve again')
+        tools = ProjectTools(target)
+        from ..verification.evidence import default_repository
+        ref = payload.get('contract_revision', {})
+        approved = default_repository().load_spec(ref.get('design_id', ''), ref.get('revision', 0))
+        allowed_tests = [d['path'] for d in approved.metadata.get('maintenance', {}).get('test_changes', [])] if approved else []
+        frozen = {p: digest(tools.source(p)) for p in tools.inventory()
+                  if protected_test(p) and p not in allowed_tests}
+        initial_versions = tools.fingerprints()
+
+        def check_tests():
+            now = {p: digest(tools.source(p)) for p in tools.inventory()
+                   if protected_test(p) and p not in allowed_tests}
+            if any(now.get(path) != version for path, version in frozen.items()):
+                raise ValueError('Unapproved validation source changed during maintenance')
+
+        async def diagnose():
+            versions = tools.fingerprints()
+            result = await self.maintenance_diagnose(payload)
+            if versions != tools.fingerprints():
+                raise ValueError('Project sources changed while diagnostics executed')
+            check_tests()
+            return result
+
+        async def verify(selected):
+            check_tests()
+            current = tools.fingerprints()
+            if set(current) - set(initial_versions) - selected.changed:
+                raise ValueError('Source appeared outside maintenance tools')
+            preserved = {p: version for p, version in initial_versions.items() if p not in selected.changed}
+            if any(current.get(p) != version for p, version in preserved.items()):
+                raise ValueError('Unedited source changed outside maintenance tools')
+            import json
+            def preservation_proof(before):
+                after = {p: current[p] for p in before}
+                artifact = default_repository().put_artifact(json.dumps({'before': before, 'after': after}, sort_keys=True).encode(),
+                    name='maintenance-preservation.json', media_type='application/json')
+                return {'status': 'passed', 'before': digest(json.dumps(before, sort_keys=True)),
+                    'after': digest(json.dumps(after, sort_keys=True)), 'file_count': len(before),
+                    'paths': sorted(before)[:100], 'manifest_artifact_sha256': artifact.sha256}
+            payload['_maintenance_runtime_evidence'] = {
+                'validation_unchanged': preservation_proof(frozen),
+                'unedited_sources_unchanged': preservation_proof(preserved)}
+            result = await self.maintenance_verify(payload, selected)
+            check_tests()
+            return result
+
+        return await maintain(self, payload, diagnose=diagnose, verify=verify)
+
     @work_dir.setter
     def work_dir(self, value) -> None:
         self._default_work_dir = Path(value)

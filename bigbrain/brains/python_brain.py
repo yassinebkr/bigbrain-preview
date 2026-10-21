@@ -335,7 +335,11 @@ class PythonBrain(BaseBrain):
     async def _handle_task_in_scope(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         task_type = payload.get("type")
         
-        if task_type == "generate_and_execute":
+        if task_type == 'maintain_project':
+            if payload.get('deliverable_type') != 'python':
+                raise ValueError('PythonBrain maintains Python projects only')
+            return await self.maintain_project(payload)
+        elif task_type == "generate_and_execute":
             # LLM generates code from natural language, then we execute it
             return await self._generate_and_execute(payload)
         elif task_type == "write_project_file":
@@ -366,6 +370,26 @@ class PythonBrain(BaseBrain):
         else:
             raise ValueError(f"Unknown task type: {task_type}")
     
+    async def maintenance_diagnose(self, payload):
+        from ..verification.executors import stage_tests
+        target = self._directory_context.get()
+        tests = await stage_tests(target.directory, python=target.directory / '.venv/bin/python', timeout=30)
+        return {'status': tests.status, **tests.details}
+
+    async def maintenance_prepare(self, payload):
+        target = self._directory_context.get()
+        python = await self._setup_project_venv(target.directory)
+        ready = await self._ensure_project_test_runner(python, target.directory)
+        return {'status': 'ready' if ready else 'inconclusive', 'interpreter': str(python),
+                'reason': 'Declared pytest>=8,<10 only; no host fallback'}
+
+    async def maintenance_verify(self, payload, tools):
+        if not payload.get('entry_point') and payload.get('executable', True):
+            return {'success': False, 'status': 'requires_arbitration',
+                    'error': 'No declared entry point; approve recovery metadata explicitly'}
+        return await self._assemble_and_run({**payload, '_maintenance_mode': True,
+            'all_files': [{'path': p} for p in tools.inventory()], '_editable_paths': sorted(tools.changed)})
+
     # --- Project Mode: Write individual files ---
 
     async def _write_project_file(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -1482,7 +1506,9 @@ Rules:
                     user_request=user_request, code=written_files[source], execution={}, execution_required=False,
                     work_dir=project_dir, requested_files=list(written_files), persisted_files=list(written_files),
                     filename=source, contract_revision=payload['contract_revision'], test_python=python,
-                    semantic_provider=self.llm_provider, semantic_sources=written_files)
+                    semantic_provider=self.llm_provider, semantic_sources=written_files,
+                    semantic_progressive=bool(payload.get('_maintenance_mode')),
+                    semantic_runtime_evidence=payload.get('_maintenance_runtime_evidence'))
                 verification = {'run_id': manifest.run_id, 'verdict': verdict,
                     'stages': [{'name': stage.name, 'status': stage.status} for stage in manifest.stages]}
                 await self._notify_verification(manifest, verdict)
@@ -1660,6 +1686,8 @@ Rules:
                     test_python=venv_python,
                     semantic_provider=self.llm_provider,
                     semantic_sources=written_files,
+                    semantic_progressive=bool(payload.get('_maintenance_mode')),
+                    semantic_runtime_evidence=payload.get('_maintenance_runtime_evidence'),
                 )
                 result["verification"] = {
                     "run_id": manifest.run_id,
@@ -1693,7 +1721,7 @@ Rules:
             if stderr_str:
                 result["error"] += f": {stderr_str[:200]}"
 
-        if (not success and _repair_attempt < 2 and self.llm_provider
+        if (not success and not payload.get('_maintenance_mode') and _repair_attempt < 2 and self.llm_provider
                 and result.get('verification', {}).get('verdict') == 'failed'):
             await self.send_progress({"stage": "retrying", "attempt": _repair_attempt + 1,
                                       "reason": result['error'], "project_name": project_name})
