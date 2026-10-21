@@ -1,5 +1,27 @@
 # Mémoire partagée et modification fiable — état local
 
+## Clôture du lot et transition maintenance — 21/10
+
+L'utilisateur autorise le merge du lot complet après contrôle des régressions,
+puis une nouvelle branche `feat/project-maintenance` depuis main. Ne plus
+développer sur `feat/shared-memory` après cette clôture.
+
+Contrôle pré-merge effectué le 21/10 : 1158 tests Python réussis, 9 warnings
+(155,18 s), 101 tests UI réussis et build Vite réussi. Warnings de chunks et
+imports dynamiques UI conservés ; aucun assouplissement de test pour ce contrôle.
+
+Ce lot livre les mécanismes de mémoire partagée, suivi UI et gates, **pas une
+capacité de réparation de projets validée en conditions réelles**. La dernière
+tentative G-code a échoué : tests prescriptifs sur la formulation, périmètre
+approuvé sans implémentation modifiable, réparation au-delà du budget de sources
+et revue sémantique inconclusive au-delà de son propre budget. Rollback confirmé
+sans conflit. Les tests internes ne remplacent pas cette validation réelle.
+
+La prochaine phase introduit une enquête progressive portée par le spécialiste,
+un périmètre approuvé au niveau du projet, des patches révisionnés et une boucle
+diagnostic/correction/vérification. Création et maintenance restent distinctes ;
+les tests/contrats ne sont pas affaiblis et PythonBrain ne devient pas WebAppBrain.
+
 Publication demandée le 21/10 : commit et push de `feat/shared-memory` pour
 validation utilisateur. Aucun merge autorisé avant cette validation. Données
 mémoire d'exécution et `uv.lock` hors périmètre du commit.
