@@ -65,11 +65,11 @@ proof of domain truth. Keep missing live evaluations explicitly unverified.
   rolls back via the existing orchestrator transaction. New/late/stale writes
   are rejected. Source inventory is bounded; hashes are not injected as a full
   source snapshot. Test stdout collection is capped at 2 MB before truncation.
-- Local gates: 1182 full Python tests passed (152.21 s, 9 existing warnings),
+- Local gates: final 1183 full Python tests passed (150.59 s, 9 existing warnings),
   102 UI tests and build passed. Additional targeted tests cover the
   real bus/approval/commit lifecycle, real Chromium repair, preservation, source
-  pagination, stale reads, output flooding, Stop and rollback. A final additional
-  test covers safe HTTP-status diagnostics without leaking provider secrets.
+  pagination, stale reads, output flooding, Stop and rollback, including safe
+  HTTP-status diagnostics without leaking provider secrets.
 - Live G-code copy: reproduced baseline conflicts and requested arbitration
   without changing any file (50.28 s, 9 calls, 36845 provider-reported tokens).
   Temperature-origin expectations conflict with the requested provenance rule;
@@ -111,6 +111,21 @@ provider bodies. Final native G-code acceptance and the completed native frozen
 campaign remain unverified until provider access is restored and the user agrees
 to resume spending. No silent model/provider substitution, no merge, no claim
 that this phase or its active goal is complete.
+
+## Completion audit (not a completion claim)
+
+| Requirement | Authoritative evidence / remaining limit |
+| --- | --- |
+| Dedicated loop, scoped approval and event lifecycle | `test_existing_project_plans_maintenance_without_guessing_files`, `test_bus_approval_dispatch_live_progress_and_terminal_commit`; actual bus, scripted model |
+| Progressive large-project inspection | `test_progressive_reader_handles_large_projects_without_source_dump`; live native large-project delivery still pending |
+| Revision checks, concurrent edits, Stop and rollback | `test_dynamic_journal_rejects_stale_reads_and_rolls_back`, `test_concurrent_user_change_and_fencing_are_not_overwritten`, `test_cancellation_does_not_swallow_stop_or_commit` |
+| No unapproved test weakening / no worker-declared success | `test_validation_is_not_an_unapproved_repair_surface`, `test_new_regression_tests_allowed_but_existing_tests_stay_frozen`, `test_loop_cannot_claim_success_or_weaken_tests_and_failure_rolls_back` |
+| Project Python, environment failure and bounded diagnostics | `test_real_cross_module_repair_project_python_review_and_commit`, `test_missing_environment_is_inconclusive_not_a_patch_license`, `test_excessive_test_output_is_inconclusive_and_terminated` |
+| Separate web specialist with actual preview/browser checks | `test_web_specialist_repairs_actual_browser_behavior`; model scripted, browser real |
+| Independent evidence-based review | `test_progressive_reviewer_cannot_cite_unread_sources` plus successful native live cross-module review; not exhaustive domain verification |
+| Preserve creation / explicit routing | Full regression suite, legacy baseline in `test_project_modification.py`, native-route tests; no keyword routing added |
+| Real G-code repair and complete old/new competence comparison | **Not achieved**: deterministic G-code checks passed once, independent review did not finish; later provider interruption. No final success claim or merge |
+| Automatic recovery of imported legacy metadata | **Not demonstrated by campaign**: fixture metadata supplied explicitly; not interchangeable with the real user workflow |
 
 ## Provider protocol
 
