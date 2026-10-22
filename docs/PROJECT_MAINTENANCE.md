@@ -103,14 +103,128 @@ HTTP errors, including its local-case final review. These outcomes are NOT code
 failures or successful deliveries. Evidence:
 `/tmp/bigbrain-maintenance-campaign-_wy4mmcu`.
 
-A read-only OpenRouter `/credits` check confirmed exhausted credit. No further
-paid calls are running or scheduled. Earlier exception capture retained only the
+A read-only OpenRouter `/credits` check confirmed exhausted credit. At that
+checkpoint paid calls stopped; the later Mistral continuation was explicitly
+authorized. Earlier exception capture retained only the
 exception class, so do not invent exact HTTP status codes for those requests.
 Subsequent evidence capture now retains status only, never request headers or raw
-provider bodies. Final native G-code acceptance and the completed native frozen
-campaign remain unverified until provider access is restored and the user agrees
-to resume spending. No silent model/provider substitution, no merge, no claim
-that this phase or its active goal is complete.
+provider bodies. Successful G-code acceptance remains unproven; completed Mistral
+comparison results are recorded below. No silent model/provider substitution, no merge, no
+claim that this phase or its active goal is complete.
+
+### Mistral Studio continuation (2026-10-22)
+
+User explicitly authorized Mistral Large 4 through Studio for the upcoming tests;
+authenticated `/models` confirmed reasoning, function calling and vision. Studio
+credentials remain separate from Vibe, are loaded from the existing durable key
+file as well as `.env`, and never enter experiment artifacts.
+
+The connector now filters Mistral chunk-list responses to visible text only,
+including streaming. Thinking chunks do not become worker JSON or chat text.
+Native single-action requests explicitly disable parallel tool calls. High
+reasoning was selectable with `MISTRAL_STUDIO_LARGE_4_REASONING_EFFORT=high`;
+the initial default was `none`. Those early high-mode requests reserved 8192 extra output
+tokens and up to 180 seconds per call. Progressive independent review allows
+360 seconds in this mode; maintenance still stops at 40 actions / 600 seconds.
+These are bounded runtime allowances, not claims about model speed or competence.
+
+Initial local trials: one native protocol rejection (no writes), one manually
+interrupted after alternating valid and flattened invalid actions (transaction
+rolled back), one high-mode contract timeout at the former 20-second limit.
+They are failed/incomplete trials, not deliveries. The action loop now explains
+the exact expected nested shape and stops after three consecutive malformed
+actions instead of spending its whole action budget on them.
+
+The high-mode local trial with revised allowances ended after 235.10 s / 9
+completed calls / 25718 reported tokens: its last completion returned zero native
+tool calls despite forced selection. No text fallback was executed; rollback left
+zero changed files. Evidence: `/tmp/bigbrain-maintenance-campaign-pm55ki_c`.
+The old diagnostic did not retain finish_reason, so token exhaustion cannot be
+claimed as the precise cause; subsequent errors retain that field. Short-mode
+local trials with corrected protocol feedback completed below. No original G-code
+repair so far. Latest full local suite: 1189 passed / 9 warnings (147.29 s).
+The independent reviewer now has distinct inspection and final-decision schemas,
+rejects repeated identical pages early, and can correct unsupported evidence IDs
+within a bounded budget. A proposed pass with no executed evidence is downgraded
+to `needs_evidence` with the exact approved criterion; it is never upgraded to a
+pass. The rejected verdict remains in the diagnostic. Tests cover fabricated IDs,
+absent assertions, decision-phase bounds and fail-closed behavior.
+
+Two short-mode local trials passed after this protocol work. The standalone trial
+used 109.89 s / 24 calls / 40612 tokens; only main.py and runtime metadata changed.
+Its CLI coverage remains indirect (source inspection plus function test, no
+dedicated subprocess assertion); passing the reviewer is not proof of exhaustive
+acceptance coverage. Evidence: `/tmp/bigbrain-maintenance-campaign-flmg0ncb`.
+
+Frozen Mistral comparison (one sample per path; not a statistical benchmark):
+`/tmp/bigbrain-maintenance-campaign-vx_136uy`, ordinary reasoning `none`.
+
+| Case | Previous creation DAG | Maintenance loop |
+| --- | --- | --- |
+| Local | Planning rejection; 41.51 s / 4615 tokens | Delivery accepted; 61.13 s / 21460 tokens |
+| Cross-module | Planning rejection; 21.68 s / 5369 tokens | Independent review inconclusive; rollback; 154.19 s / 60868 tokens |
+| Contradictory test | ArchitectureConflict; 30.88 s / 5375 tokens | Correct explicit arbitration, no source changes; 30.11 s / 8063 tokens |
+| Missing environment | Planning rejection; 16.58 s / 4639 tokens | Action budget exhausted without preparing environment; rollback; 163.17 s / 55846 tokens |
+| Large selective context | Planning rejection; 43.07 s / 62377 tokens | Independent review inconclusive; rollback; 156.47 s / 53660 tokens |
+
+G-code on the same candidate failed to deliver: 203.37 s / 41 calls / 200625
+tokens, action budget exhausted after repeated list/read actions. No patch was
+made; rollback completed and original source hashes matched. Evidence:
+`/tmp/bigbrain-maintenance-campaign-o6kbn1e6`. This is a real negative competence
+result, not an infrastructure credit failure and not a reason to lower the gate.
+No immediate G-code retry was started.
+
+### Explicit runtime state and unrestricted local thinking (2026-10-23)
+
+User requested an explicit state of reads, diagnostics and blockers, plus high
+reasoning without a local thinking-length cap. `MaintenanceState` now owns these
+facts rather than the model notebook. Every action context carries paged exact
+inventory names, read hashes/merged line ranges/next unread line, stale coverage,
+source epoch, diagnostic status/failing case IDs/environment, environment setup
+status, failed verification stages and unresolved tool/precondition blockers.
+Preparing an environment does not grant patch permission: an actual passed or
+failed diagnostic is still required. A new successful diagnostic clears the
+specific diagnostic-required blocker. Patches invalidate affected read coverage
+and mark previous diagnostics as belonging to an older source epoch.
+
+`state_read` pages older/remaining metadata; `diagnostic_read` retrieves full
+recorded results by observation ID. Full metadata snapshots are content-addressed
+artifacts after every recorded step. Prompt snapshots do not inject whole source
+files or all diagnostics. Model notebook text cannot modify these runtime facts.
+Tests cover persistence beyond the last four observations, paging, range merging,
+version invalidation, blocker resolution, missing environment and malformed review
+output. This is per-run state, not a replacement for the shared-memory branch.
+
+Studio Large 4 now defaults to `reasoning_effort=high` (explicit env override
+`none` remains available). High requests omit `max_tokens` entirely, including
+contract drafting and tool calls; the former small completion budgets no longer
+starve the final answer after thinking. No per-call HTTP read or reasoning-stage
+timeout applies in this mode; connection establishment is still bounded at 10 s.
+The maintenance task still has its advertised 40-action / 600-second outer bound
+and cancellation/rollback. Provider context/output limits still exist: this is
+not infinite reasoning or spending. A provider `finish_reason=length` fails
+explicitly instead of accepting a partial answer, also for streaming responses.
+
+First new high/state trial reproduced the bug, patched and verified, then the
+review request hit HTTP 400 (33.46 s / 5 calls / 8708 tokens). A minimal live
+probe confirmed `top_p must be 1 when using greedy sampling`. High Studio
+requests with temperature zero now explicitly send `top_p=1`. This is API
+compatibility, not a relaxed acceptance gate. That follow-up (205.89 s / 21 calls /
+53144 tokens) reproduced and repaired the defect, then added a new CLI regression
+test in response to the independent review; the new test passed. Delivery still
+failed because the independent reader returned a flattened action and its parser
+raised AttributeError. Transaction rolled back. Evidence:
+`/tmp/bigbrain-maintenance-campaign-6ibt4u7d`. Malformed reader action/coverage
+shapes now receive bounded schema feedback without executing them or accepting
+their claims; a regression test covers recovery and unread-source protection.
+Final full local gate: 1200 passed / 9 existing warnings (146.33 s).
+The new follow-up is running: `/tmp/bigbrain-maintenance-campaign-6i9ti8lq`.
+The completed G-code and
+low-reasoning comparisons above predate this runtime-state/high profile; do not
+reuse them as competence evidence for the new configuration.
+
+Primary contracts: [reasoning](https://docs.mistral.ai/studio/conversations/reasoning),
+[function calling](https://docs.mistral.ai/studio/conversations/function-calling).
 
 ## Completion audit (not a completion claim)
 

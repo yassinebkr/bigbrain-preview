@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import asyncio
 import os
+from ..llm.provider import reasoning_timeout
 from typing import Any, List, Optional
 
 # Subtask types that WRITE code/files — those need contract approval
@@ -96,7 +97,7 @@ async def draft_contracts(llm_provider: Any, user_request: str,
             stream=False,
             max_tokens=768,
             temperature=0.1,
-        ), timeout=20)
+        ), timeout=reasoning_timeout(llm_provider, 20))
     except Exception:
         return [architecture] if architecture else []
     contracts = parse_contracts(str(response))

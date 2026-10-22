@@ -178,11 +178,19 @@ async def run_case(case, workflow, provider, scratch, *, approve_gcode_conflicts
 async def main(args):
     from dotenv import load_dotenv
     load_dotenv(ROOT / '.env')
+    load_dotenv(ROOT / 'data/provider_keys.env')
     from bigbrain.auth.registry import build_provider
     from bigbrain.llm.model_registry import DEFAULT_CODE_MODEL_KEY
     provider = build_provider(args.model or DEFAULT_CODE_MODEL_KEY)
     scratch = Path(tempfile.mkdtemp(prefix='bigbrain-maintenance-campaign-'))
     print('Evidence directory:', scratch, flush=True)
+    entry = getattr(provider, 'entry', None)
+    (scratch / 'provider-profile.json').write_text(json.dumps({
+        'registry_key': getattr(provider, 'registry_key', None),
+        'model': getattr(entry, 'model_id', None),
+        'reasoning_effort': getattr(entry, 'reasoning_effort_default', None),
+        'reasoning_timeout_seconds': getattr(provider, 'reasoning_timeout_seconds', 0),
+    }, indent=2))
     import hashlib
     snapshot = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
                 for p in [*sorted((ROOT / 'bigbrain').rglob('*.py')), Path(__file__)]}
@@ -195,7 +203,14 @@ async def main(args):
         nonlocal call_number
         call_number += 1
         number = call_number
-        response = await original_chat(messages=messages, **kwargs)
+        try:
+            response = await original_chat(messages=messages, **kwargs)
+        except ValueError as exc:
+            # Protocol exceptions contain runtime-authored diagnostics only;
+            # keep them private to distinguish malformed output from API errors.
+            (replies / f'{number:03}-error.json').write_text(json.dumps({
+                'type': 'ValueError', 'reason': str(exc)[:1000]}))
+            raise
         # Private local experiment evidence, not provider headers or secrets.
         (replies / f'{number:03}.json').write_text(json.dumps({'messages': messages,
             'response_format': kwargs.get('response_format'), 'tool_schema': kwargs.get('tool_schema'),

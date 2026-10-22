@@ -14,9 +14,15 @@ from pathlib import Path
 
 from .project_inspection import digest, read_source, SENSITIVE_NAME, SENSITIVE_TEXT, SKIP_DIRS, EXTENSIONS
 from .project_transaction import ProjectTransaction, active_transaction, write_text
+from .llm.provider import reasoning_timeout
+from .maintenance_state import MaintenanceState
 
 PROTOCOL = 'bigbrain-maintenance/1'
 MAX_ACTIONS, MAX_SECONDS, MAX_SOURCE = 40, 600, 1_000_000
+
+
+class DiagnosticRequired(ValueError):
+    code = 'diagnostic_required'
 
 
 def protected_test(path):
@@ -180,6 +186,7 @@ One action per turn. Actions:
 {"type":"diagnose"}: real specialist diagnostics; reproduce before patching.
 {"type":"prepare_environment"}: provision the specialist's declared project tooling, never host fallback.
 {"type":"diagnostic_read","id":"observation id","start":0}: page stored diagnostics.
+{"type":"state_read","section":"inventory|reads|diagnostics|blockers","offset":0}: page runtime facts.
 {"type":"patch","path":"module.py","sha256":"hash from read","edits":[{"old":"unique fragment","new":"replacement"}]}.
 New files use sha256 of empty text and one empty old fragment. Preserve interfaces,
 unrelated behavior, and tests. Never rewrite the project or add parallel implementations.
@@ -195,7 +202,8 @@ Keep notebook under 3000 characters. No shell commands or unverifiable completio
 
 def action_schema():
     properties = {'type': {'type': 'string', 'enum': ['list', 'search', 'read', 'diagnose',
-        'prepare_environment', 'diagnostic_read', 'patch', 'entry_point', 'arbitrate', 'verify']},
+        'prepare_environment', 'diagnostic_read', 'state_read', 'patch', 'entry_point', 'arbitrate', 'verify']},
+        'section': {'type': 'string', 'enum': ['inventory', 'reads', 'diagnostics', 'blockers']},
         'path': {'type': 'string'}, 'query': {'type': 'string'}, 'id': {'type': 'string'},
         'sha256': {'type': 'string'}, 'reason': {'type': 'string'},
         'start': {'type': 'integer', 'minimum': 0}, 'offset': {'type': 'integer', 'minimum': 0},
@@ -223,13 +231,15 @@ async def maintain(brain, payload, *, diagnose, verify):
     if approved.metadata.get('execution_target') not in (None, target.public()):
         raise ValueError('Approved maintenance target differs from bound project')
     tools = ProjectTools(target)
+    runtime_state = MaintenanceState(tools.inventory())
     started, notebook, history, trace = time.monotonic(), '', [], []
-    reproduced, calls, input_chars, output_chars = False, 0, 0, 0
+    calls, input_chars, output_chars = 0, 0, 0
     approved_tests = [d['path'] for d in approved.metadata.get('maintenance', {}).get('test_changes', [])]
 
     def outcome(status, **extra):
         return {'success': False, 'maintenance_status': status, 'error': extra.pop('error', status),
                 'maintenance': {'protocol': PROTOCOL, 'actions': trace, 'changed_files': sorted(tools.changed),
+                    'runtime_state': runtime_state.snapshot(),
                     'model_calls': calls, 'input_chars': input_chars, 'output_chars': output_chars,
                     'elapsed_seconds': round(time.monotonic() - started, 3),
                     'usage_note': 'Character counts are not tokens; provider billing remains authoritative'}, **extra}
@@ -239,19 +249,26 @@ async def maintain(brain, payload, *, diagnose, verify):
         encoded = json.dumps(result, ensure_ascii=False, default=str)
         identifier = f'observation-{step}'
         tools.observations[identifier] = encoded
+        runtime_state.observe(kind, action, result, identifier)
         artifact = default_repository().put_artifact(encoded.encode(), name=identifier + '.json', media_type='application/json')
+        state_artifact = default_repository().put_artifact(
+            json.dumps(runtime_state.export(), ensure_ascii=False).encode(),
+            name='maintenance-state.json', media_type='application/json')
         trace.append({'step': step, 'type': kind, 'path': action.get('path'),
-                      'status': result.get('status'), 'observation_id': identifier, 'artifact_sha256': artifact.sha256})
+                      'status': result.get('status'), 'observation_id': identifier, 'artifact_sha256': artifact.sha256,
+                      'state_artifact_sha256': state_artifact.sha256})
         history.append({'id': identifier, 'action': kind, 'result': encoded[:18000], 'has_more': len(encoded) > 18000})
 
     async def loop():
-        nonlocal calls, input_chars, output_chars, notebook, reproduced
+        nonlocal calls, input_chars, output_chars, notebook
+        invalid_actions = 0
         for step in range(MAX_ACTIONS):
             if brain._cancelled:
                 raise asyncio.CancelledError
             context = {'objective': payload.get('user_request'), 'project': target.public(),
                        'acceptance': payload.get('business_contracts') or payload.get('acceptance_contracts'),
                        'approved_test_paths': approved_tests, 'notebook': notebook,
+                       'runtime_state': runtime_state.snapshot(),
                        'remaining_actions': MAX_ACTIONS - step, 'observations': history[-4:]}
             text = json.dumps(context, ensure_ascii=False)
             input_chars += len(SYSTEM) + len(text)
@@ -260,18 +277,24 @@ async def maintain(brain, payload, *, diagnose, verify):
                 messages=[{'role': 'system', 'content': SYSTEM}, {'role': 'user', 'content': text}],
                 stream=False, max_tokens=4096, temperature=0.1,
                 tool_schema=action_schema(),
-                **({'model': brain.model} if getattr(brain, 'model', None) else {})), timeout=90)
+                **({'model': brain.model} if getattr(brain, 'model', None) else {})),
+                timeout=reasoning_timeout(brain.llm_provider, 90))
             output_chars += len(raw)
             try:
                 data = json.loads(raw)
                 action, notebook = data['action'], str(data.get('notebook', notebook))[:3000]
-                kind = action['type']
-                if not isinstance(action, dict) or not isinstance(kind, str):
+                if not isinstance(action, dict) or not isinstance(action.get('type'), str):
                     raise ValueError('Expected typed action')
+                kind = action['type']
             except (ValueError, TypeError, KeyError):
-                history.append({'error': 'Invalid JSON action; nothing changed'})
-                trace.append({'step': step, 'type': 'invalid_action'})
+                invalid_actions += 1
+                record(step, 'invalid_action', {}, {'status': 'tool_error',
+                    'reason': 'Invalid action shape; nothing changed. action must be an OBJECT, not a string. '
+                    'Exact example: {"action":{"type":"read","path":"main.py","start":1,"count":120},"notebook":"findings"}'})
+                if invalid_actions >= 3:
+                    return outcome('protocol_error', error='Three consecutive invalid maintenance actions; no verified delivery')
                 continue
+            invalid_actions = 0
             await brain.send_progress({'stage': 'maintenance_' + kind, 'file_path': action.get('path'),
                                        'maintenance_step': step + 1, 'max_actions': MAX_ACTIONS})
             try:
@@ -288,7 +311,6 @@ async def maintain(brain, payload, *, diagnose, verify):
                     result = tools.search(action['query'], action.get('paths'), action.get('offset', 0))
                 elif kind == 'diagnose':
                     result = await diagnose()
-                    reproduced = result.get('status') in {'passed', 'failed'}
                 elif kind == 'prepare_environment':
                     result = await brain.maintenance_prepare(payload)
                 elif kind == 'entry_point':
@@ -307,9 +329,11 @@ async def maintain(brain, payload, *, diagnose, verify):
                         raise ValueError('Invalid diagnostic cursor')
                     result = {'content': stored[start:start + 14000],
                               'next_start': start + 14000 if start + 14000 < len(stored) else None}
+                elif kind == 'state_read':
+                    result = runtime_state.section(action['section'], action.get('offset', 0))
                 elif kind == 'patch':
-                    if not reproduced:
-                        raise ValueError('Run diagnostics before editing; missing environment is not reproduction')
+                    if not runtime_state.reproduced:
+                        raise DiagnosticRequired('Run diagnostics before editing; missing environment is not reproduction')
                     result = tools.patch(action, approved_tests=approved_tests)
                     if result.get('status') == 'requires_arbitration':
                         record(step, kind, action, result)
@@ -337,7 +361,7 @@ async def maintain(brain, payload, *, diagnose, verify):
                 else:
                     raise ValueError('Unknown action; nothing executed')
             except (ValueError, OSError, KeyError, TypeError) as exc:
-                result = {'status': 'tool_error', 'reason': str(exc)[:1000]}
+                result = {'status': 'tool_error', 'reason': str(exc)[:1000], 'code': getattr(exc, 'code', None)}
             record(step, kind, action, result)
         return outcome('budget_exhausted', error='Maintenance action budget exhausted; no verified delivery')
 

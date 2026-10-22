@@ -32,6 +32,17 @@ from .usage import UsageRecord, get_tracker
 _REASONING_MAX_TOKENS_HEADROOM = 2048
 
 
+def visible_content(content):
+    """Mistral high reasoning uses chunk lists; never expose thinking chunks."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return ''.join(chunk['text'] for chunk in content
+                       if isinstance(chunk, dict) and chunk.get('type') == 'text'
+                       and isinstance(chunk.get('text'), str))
+    return ''
+
+
 def image_content_block(data: bytes, media_type: str) -> dict:
     """Build an OpenAI-compatible inline image content block."""
     if not media_type.startswith("image/"):
@@ -53,6 +64,13 @@ class OpenAICompatProvider(LLMProvider):
         self._client: Optional[httpx.AsyncClient] = None
 
     @property
+    def reasoning_timeout_seconds(self) -> float | None:
+        """Bound long-thinking calls explicitly; ordinary models keep their stage budgets."""
+        if self.registry_key == 'mistral-studio-large-4' and self.entry.reasoning_effort_default == 'high':
+            return None
+        return 180.0 if self.entry.reasoning_effort_default == 'high' else 0.0
+
+    @property
     def client(self) -> httpx.AsyncClient:
         if self._client is None:
             self._client = httpx.AsyncClient(
@@ -61,7 +79,8 @@ class OpenAICompatProvider(LLMProvider):
                     "Authorization": f"Bearer {self.api_key}",
                     "Content-Type": "application/json",
                 },
-                timeout=httpx.Timeout(120.0, connect=10.0),
+                timeout=httpx.Timeout(None if self.reasoning_timeout_seconds is None else
+                                      max(120.0, self.reasoning_timeout_seconds), connect=10.0),
             )
         return self._client
 
@@ -85,10 +104,18 @@ class OpenAICompatProvider(LLMProvider):
         if not self.entry.supports_temperature:
             body.pop('temperature', None)
         if self.entry.reasoning:
-            body["max_tokens"] = max_tokens + _REASONING_MAX_TOKENS_HEADROOM
             effort = self.entry.reasoning_effort_default
+            body["max_tokens"] = max_tokens + _REASONING_MAX_TOKENS_HEADROOM
             if effort and effort in self.entry.reasoning_efforts:
                 body["reasoning_effort"] = effort
+            if self.registry_key == 'mistral-studio-large-4' and effort == 'high':
+                # The API owns its context/output limits. A local 4K/8K budget
+                # must not consume thinking then starve the final tool call.
+                body.pop('max_tokens', None)
+                if temperature == 0:
+                    # Studio's high-mode preset otherwise defaults top_p below
+                    # one and rejects greedy independent-review requests (400).
+                    body['top_p'] = 1
         return body
 
     async def complete(
@@ -128,6 +155,7 @@ class OpenAICompatProvider(LLMProvider):
                 raise ValueError('Single-action tool protocol is non-streaming and cannot combine response formats')
             body['tools'] = [{'type': 'function', 'function': tool_schema}]
             body['tool_choice'] = {'type': 'function', 'function': {'name': tool_schema['name']}}
+            body['parallel_tool_calls'] = False
             if self.registry_key.startswith('openrouter-'):
                 body['provider'] = {'require_parameters': True}
         if stream:
@@ -138,15 +166,18 @@ class OpenAICompatProvider(LLMProvider):
         data = response.json()
         self._record_usage(data, model)
         choices = data.get("choices") or [{}]
+        if choices[0].get('finish_reason') == 'length':
+            raise ValueError('Provider truncated generation at its token/context limit; no partial answer accepted')
         if tool_schema is not None:
             calls = (choices[0].get('message') or {}).get('tool_calls') or []
             if len(calls) != 1 or calls[0].get('function', {}).get('name') != tool_schema['name']:
-                raise ValueError('Provider must return exactly the requested single tool call; no text fallback')
+                finish = choices[0].get('finish_reason')
+                raise ValueError(f'Provider must return exactly the requested single tool call; received {len(calls)} calls; finish_reason={finish}; no text fallback')
             arguments = calls[0]['function'].get('arguments')
             if not isinstance(arguments, str) or not isinstance(json.loads(arguments), dict):
                 raise ValueError('Native tool arguments must be a JSON object')
             return arguments
-        return (choices[0].get("message") or {}).get("content") or ""
+        return visible_content((choices[0].get("message") or {}).get("content"))
 
     async def _stream_chat(self, body: dict) -> AsyncIterator[str]:
         """Yield text deltas from an SSE stream; record usage at stream end."""
@@ -168,10 +199,12 @@ class OpenAICompatProvider(LLMProvider):
                 if chunk.get("usage"):
                     collected_usage = chunk["usage"]
                 for choice in chunk.get("choices", []):
+                    if choice.get('finish_reason') == 'length':
+                        raise ValueError('Provider truncated generation at its token/context limit')
                     delta = choice.get("delta") or {}
                     # reasoning_content deltas are thinking; only the visible
                     # content field is surfaced to the caller.
-                    text = delta.get("content")
+                    text = visible_content(delta.get("content"))
                     if text:
                         yield text
         if collected_usage:

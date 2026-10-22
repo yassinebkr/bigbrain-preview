@@ -201,6 +201,133 @@ async def test_real_cross_module_repair_project_python_review_and_commit(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_flattened_review_action_is_rejected_then_corrected_not_executed():
+    calls = []
+    class Reviewing:
+        async def chat_complete(self, **kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                return json.dumps({'action': 'read', 'path': 'main.py'})
+            if len(calls) <= 3:
+                return json.dumps({'action': {'type': 'read', 'path': ['main.py', 'test_main.py'][len(calls) - 2]}})
+            return json.dumps({'decision': 'pass', 'contradictions': [], 'coverage': [{
+                'criterion_id': '0', 'tests': ['test_main.py::test_ok'], 'runtime': [],
+                'sources': ['main.py', 'test_main.py'], 'reason': 'Observed executed assertion'}]})
+    result = await review_semantics(Reviewing(), request='Repair', contracts=['Print six'],
+        sources={'main.py': 'print(6)', 'test_main.py': 'assert True'},
+        tests={'status': 'passed', 'passed_cases': ['test_main.py::test_ok']}, progressive=True)
+    assert result.status == 'passed'
+    assert len(calls) == 4
+    assert json.loads(calls[1]['messages'][1]['content'])['inspected_paths'] == []
+    assert 'action must be an OBJECT' in calls[1]['messages'][1]['content']
+
+
+@pytest.mark.asyncio
+async def test_runtime_diagnostic_survives_last_four_observations_and_notebook(tmp_path):
+    target = project(tmp_path)
+    payload, transaction = approved_payload(target)
+    provider = ScriptedProvider([{'type': 'diagnose'}] +
+        [{'type': 'read', 'path': 'arithmetic.py'} for _ in range(6)] +
+        [{'type': 'state_read', 'section': 'diagnostics'},
+         {'type': 'arbitrate', 'reason': 'Need project environment'}])
+    bus = MessageBus(tmp_path / 'logs', auth=None)
+    brain = PythonBrain('python', bus, work_dir=Path(target.root), llm_provider=provider)
+    try:
+        with brain.execution_scope(payload):
+            result = await maintain(brain, payload, diagnose=AsyncMock(return_value={
+                'status': 'inconclusive', 'reason': 'Project interpreter absent'}), verify=AsyncMock())
+        context = json.loads(provider.calls[-2][1]['content'])
+        assert all(item.get('action') != 'diagnose' for item in context['observations'])
+        assert context['runtime_state']['diagnostics'][0]['observation_id'] == 'observation-0'
+        assert context['runtime_state']['patching_allowed'] is False
+        assert context['runtime_state']['blockers'][0]['reason'] == 'Project interpreter absent'
+        assert context['runtime_state']['reads']['items'][0]['complete'] is True
+        assert result['maintenance']['runtime_state']['diagnostic_count'] == 1
+        assert all(len(step['state_artifact_sha256']) == 64 for step in result['maintenance']['actions'])
+    finally:
+        transaction.finish()
+        await bus.close()
+
+
+@pytest.mark.asyncio
+async def test_unsupported_pass_becomes_actionable_missing_evidence_never_success():
+    count = 0
+    class MissingCLI:
+        async def chat_complete(self, **kwargs):
+            nonlocal count
+            count += 1
+            if count <= 2:
+                return json.dumps({'action': {'type': 'read', 'path': ['main.py', 'test_main.py'][count - 1]}})
+            return json.dumps({'decision': 'pass', 'contradictions': [], 'coverage': [{
+                'criterion_id': '0', 'tests': [], 'runtime': [],
+                'sources': ['main.py'], 'reason': 'Looks correct but no CLI assertion'}]})
+    result = await review_semantics(MissingCLI(), request='Repair', contracts=['CLI prints six'],
+        sources={'main.py': 'print(6)', 'test_main.py': 'assert True'},
+        tests={'status': 'passed', 'passed_cases': ['test_main.py::test_ok']}, progressive=True)
+    assert result.status == 'inconclusive'
+    assert result.details['repairable_evidence_gap'] is True
+    assert result.details['requires_arbitration'] is False
+    assert 'CLI prints six' in result.details['review']['missing_evidence'][0]
+    assert result.details['review']['rejected_review']['decision'] == 'pass'
+
+
+@pytest.mark.asyncio
+async def test_reviewer_decision_phase_keeps_executed_evidence_requirements():
+    seen = []
+    class Reviewing:
+        async def chat_complete(self, **kwargs):
+            seen.append(kwargs['tool_schema'])
+            if len(seen) <= 2:
+                return json.dumps({'action': {'type': 'read', 'path': ['main.py', 'test_main.py'][len(seen) - 1]}})
+            assert seen[-1]['name'] == 'acceptance_review_decision'
+            assert 'action' not in seen[-1]['parameters']['properties']
+            return json.dumps({'decision': 'pass', 'contradictions': [], 'coverage': [{
+                'criterion_id': '0', 'tests': ['invented::test'],
+                'sources': ['main.py', 'test_main.py'], 'reason': 'Unsupported claim'}]})
+    result = await review_semantics(Reviewing(), request='Repair', contracts=['Works'],
+        sources={'main.py': 'pass', 'test_main.py': 'assert True'},
+        tests={'status': 'passed', 'passed_cases': ['test_main.py::test_ok']}, progressive=True)
+    assert result.status == 'inconclusive'
+    assert len(seen) == 5  # two reads, then three rejected fabricated verdicts
+    assert 'invalid output' in result.details['reason']
+
+
+@pytest.mark.asyncio
+async def test_reviewer_stops_repeated_pages_instead_of_spending_whole_budget():
+    calls = []
+    class Repeating:
+        async def chat_complete(self, **kwargs):
+            calls.append(kwargs)
+            return json.dumps({'action': {'type': 'read', 'path': 'main.py', 'start': 1, 'count': 120}})
+    result = await review_semantics(Repeating(), request='Repair', contracts=['Works'],
+        sources={'main.py': 'pass', 'test_main.py': 'assert True'},
+        tests={'status': 'passed', 'passed_cases': ['test_main.py::test_ok']}, progressive=True)
+    assert result.status == 'inconclusive'
+    assert len(calls) == 6  # one page + two repeats, then at most three final-verdict corrections
+    assert all(call['tool_schema']['name'] == 'acceptance_review_decision' for call in calls[-3:])
+    assert 'unread_test_paths' in calls[2]['messages'][1]['content']
+
+
+@pytest.mark.asyncio
+async def test_three_invalid_action_shapes_stop_without_writes(tmp_path):
+    target = project(tmp_path)
+    payload, transaction = approved_payload(target)
+    provider = ScriptedProvider(['read', 'read', 'read'])
+    bus = MessageBus(tmp_path / 'logs', auth=None)
+    brain = PythonBrain('python', bus, work_dir=Path(target.root), llm_provider=provider)
+    try:
+        with brain.execution_scope(payload):
+            result = await maintain(brain, payload, diagnose=AsyncMock(), verify=AsyncMock())
+        assert result['maintenance_status'] == 'protocol_error'
+        assert len(provider.calls) == 3
+        assert result['maintenance']['changed_files'] == []
+        assert 'action must be an OBJECT' in provider.calls[1][1]['content']
+    finally:
+        transaction.finish()
+        await bus.close()
+
+
+@pytest.mark.asyncio
 async def test_missing_environment_is_inconclusive_not_a_patch_license(tmp_path):
     target = project(tmp_path)
     payload, transaction = approved_payload(target)
