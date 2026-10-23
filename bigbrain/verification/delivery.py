@@ -63,6 +63,11 @@ def issue(target, payload, result, kind, hashes):
     stack = payload.get('web_stack', 'static')
     run_id = result.get('verification', {}).get('run_id')
     spec = _check_manifest(ref, run_id, kind, executable, stack)
+    if kind == 'python':
+        from ..brains.python_execution import interaction_mode
+        mode = interaction_mode(payload)
+        if result.get('interaction_mode', mode) != mode:
+            raise ValueError('Verified Python execution differs from approved interaction')
     entry = result.get('entry_point') or payload.get('entry_point')
     if executable and (not entry or entry not in hashes or not target.file(entry).is_file()):
         raise ValueError('Delivery entry point is absent from verified sources')
@@ -71,6 +76,7 @@ def issue(target, payload, result, kind, hashes):
     if spec.metadata.get('delivery') and declaration != spec.metadata['delivery']:
         raise ValueError('Delivery differs from the approved architecture')
     receipt = {'protocol': 'project-delivery/1', 'target': target.to_payload(),
+        'execution': spec.metadata.get('execution'),
         'contract_revision': ref, 'run_id': run_id, **declaration,
         'file_hashes': file_snapshot(target, set(hashes) | {f['path'] for f in payload.get('all_files', [])}),
         'source_hashes': hashes, 'source_revision': digest(json.dumps(hashes, sort_keys=True))}
@@ -95,6 +101,11 @@ def validate(target, payload, result):
         raise ValueError('Delivery receipt belongs to another target, contract or run')
     spec = _check_manifest(receipt['contract_revision'], receipt['run_id'], receipt['deliverable_type'],
                           receipt['executable'], receipt['web_stack'])
+    if receipt.get('execution') != spec.metadata.get('execution'):
+        raise ValueError('Delivery execution differs from the approved contract')
+    if receipt['deliverable_type'] == 'python':
+        from ..brains.python_execution import interaction_mode
+        interaction_mode(payload)
     declaration = {k: receipt[k] for k in ('deliverable_type', 'executable', 'entry_point', 'web_stack')}
     if spec.metadata.get('delivery') and declaration != spec.metadata['delivery']:
         raise ValueError('Delivery differs from the approved architecture')

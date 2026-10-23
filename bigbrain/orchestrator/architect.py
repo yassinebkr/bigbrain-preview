@@ -235,7 +235,7 @@ class ProjectSpec:
     entry_point: Optional[str] = "main.py"
     execution_strategy: str = ""  # how to run/test
     deliverable_type: str = "python"  # python | web_app
-    interaction_mode: str = "cli"  # cli | browser | library
+    interaction_mode: str = "cli"  # cli | browser | library | service
     web_stack: str = "static"  # static | react_vite
     acceptance_contracts: List[str] = field(default_factory=list)
     workspace_widgets: Optional[List[str]] = None
@@ -397,6 +397,7 @@ Define each interface once; avoid repeating schemas, implementation recipes or e
 Include 2-4 checkable user-facing acceptance_contracts in the user's language, including meaningful behaviour, not merely file existence.
 executable=true unless a library/source-only deliverable is explicitly requested. Its entry_point must exist in file_specs, run non-interactively without arguments and demonstrate meaningful behaviour. Document real input invocation in execution_strategy; never simulate analysis of a user's file.
 For executable projects include tests/test_*.py with explicit test scope and dependencies on the implementation. Include relevant error/edge cases.
+Use interaction_mode=service only for an explicitly requested Python backend/service. Ordinary browser applications belong to the web-app specialist. Service declarations require a dedicated execution/verification adapter; the finite Python runner currently reports that capability as unavailable, rather than guessing a launch or claiming delivery. Do not silently replace a requested service with a CLI.
 When executable=false, entry_point=null; do not add an artificial runner/demo.
 Output schema (omit unused optional arrays/maps; include all needed shared interfaces):
 {
@@ -731,6 +732,11 @@ class ArchitectPhase:
         if web_stack not in {"static", "react_vite"}:
             raise ValueError(f"Unsupported web_stack: {web_stack}")
         executable = raw.get("executable", True) is not False
+        if 'interaction_mode' not in raw and not executable:
+            interaction_mode = 'library'
+        allowed_modes = {'browser'} if deliverable_type == 'web_app' else {'cli', 'library', 'service'}
+        if interaction_mode not in allowed_modes or executable != (interaction_mode != 'library'):
+            raise ValueError('Architect interaction mode must match deliverable type and executable declaration')
         default_entry = "index.html" if deliverable_type == "web_app" else "main.py"
         entry_point = str(raw.get("entry_point") or default_entry) if executable else None
         implementation_paths = [spec.path for spec in file_specs

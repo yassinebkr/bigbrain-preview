@@ -48,6 +48,19 @@ class TestInit:
         srv = WebServer(bus=bus)
         assert srv.focus_manager is None
 
+    @pytest.mark.asyncio
+    async def test_preview_diagnostics_use_web_specialist_registry(self, server, tmp_path, monkeypatch):
+        from bigbrain.brains.web_app_brain import WebAppBrain
+        import bigbrain.web.server as server_module
+        monkeypatch.setattr(server_module.tempfile, 'gettempdir', lambda: str(tmp_path))
+        monkeypatch.setattr(WebAppBrain, '_active_previews', {
+            3200: MagicMock(pid=123, returncode=None)})
+        response = await server._handle_preview_logs(MagicMock())
+        assert response.status == 200
+        body = json.loads(response.text)
+        assert body['active_previews'] == [{'kind': 'web_app', 'port': 3200,
+            'pid': 123, 'alive': True, 'exit_code': None}]
+
 
 # ================================================================
 # BUS MESSAGE FORWARDING

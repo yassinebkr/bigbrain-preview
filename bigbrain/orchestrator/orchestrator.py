@@ -453,6 +453,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         spec = build_proposal_spec(user_request, contracts)
         spec.metadata['business_criteria'] = list(plan.project_spec.acceptance_contracts) if plan.project_spec else list(contracts)
         if plan.project_spec:
+            spec.metadata['execution'] = {'interaction_mode': plan.project_spec.interaction_mode}
             spec.metadata['delivery'] = {
                 'deliverable_type': plan.project_spec.deliverable_type,
                 'executable': plan.project_spec.executable,
@@ -462,6 +463,8 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                 st.payload.get('type') == 'generate_and_execute' for st in plan.subtasks):
             script = next(st for st in plan.subtasks if st.payload.get('type') == 'generate_and_execute')
             executable = script.payload.get('executable', True) is not False
+            spec.metadata['execution'] = {'interaction_mode': script.payload.get('interaction_mode') or
+                ('cli' if executable else 'library')}
             spec.metadata['delivery'] = {'deliverable_type': 'python', 'executable': executable,
                 'entry_point': script.payload.get('entry_point') or 'main.py' if executable else None, 'web_stack': 'static'}
             spec.contracts.append('Livraison Python : point d’entrée ' + str(spec.metadata['delivery']['entry_point'])
@@ -486,6 +489,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             if (stored.contracts == spec.contracts and "approval" not in stored.metadata
                     and stored.metadata.get("execution_target") == spec.metadata.get("execution_target")
                     and stored.metadata.get('delivery') == spec.metadata.get('delivery')
+                    and stored.metadata.get('execution') == spec.metadata.get('execution')
                     and stored.metadata.get('business_criteria') == spec.metadata.get('business_criteria')
                     and stored.metadata.get('inspection') == spec.metadata.get('inspection')):
                 spec = stored
@@ -2009,6 +2013,8 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                 'contract_revision': ref, 'business_contracts': approved.metadata.get('business_criteria', []),
                 'deliverable_type': kind, 'executable': executable, 'entry_point': entry,
                 'web_stack': declaration.get('web_stack', 'static'),
+                'interaction_mode': approved.metadata.get('execution', {}).get('interaction_mode') or
+                    ('browser' if kind == 'web_app' else 'cli' if executable else 'library'),
                 'all_files': [{'path': p} for p in sorted(paths)]},
             dependencies={st.id for st in plan.subtasks}))
         if plan.tracker:
