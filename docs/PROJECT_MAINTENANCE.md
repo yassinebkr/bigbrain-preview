@@ -567,6 +567,11 @@ rejection of search-only coverage. No new inference or candidate modification.
 
 ## Closure validation — 24 October 2026
 
+Post-closure execution-intent correction: [Declared Python execution](PYTHON_EXECUTION.md).
+Source regexes no longer choose server startup. Approved CLI/library intent is
+checked; Python services remain explicit incomplete capabilities pending a
+dedicated lifecycle/validation design. Browser previews remain WebAppBrain-owned.
+
 Both entry paths are validated for the agreed probes. The frozen G-code
 candidate's final four-criterion acceptance was rechecked, then its exact sources
 passed 64 unittest tests and main.py in a dedicated project venv on a disposable

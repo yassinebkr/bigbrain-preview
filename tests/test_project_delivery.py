@@ -102,7 +102,7 @@ async def test_verified_receipt_is_required_before_commit_and_terminal_success(t
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('tamper', ['receipt', 'source', 'data', 'entry', 'contract', 'tests', 'criteria'])
+@pytest.mark.parametrize('tamper', ['receipt', 'source', 'data', 'entry', 'contract', 'tests', 'criteria', 'interaction'])
 async def test_unproved_or_stale_success_never_becomes_project_delivery(tmp_path, monkeypatch, tamper):
     target, payload, result, transaction, bus = await verified_project(tmp_path, monkeypatch)
     if tamper == 'receipt':
@@ -115,6 +115,8 @@ async def test_unproved_or_stale_success_never_becomes_project_delivery(tmp_path
             target.file(path).write_text('VALUE = 99\n')
     elif tamper == 'contract':
         payload['contract_revision'] = {**payload['contract_revision'], 'revision': 999}
+    elif tamper == 'interaction':
+        payload['interaction_mode'] = 'service'
     else:
         # A synthetic incomplete manifest tests the guard, not program validity.
         # Even a manifest whose remaining stages pass must contain all gates.
