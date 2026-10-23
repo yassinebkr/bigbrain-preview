@@ -127,7 +127,8 @@ def record_attempt(
             name="web_artifacts",
             status="passed" if validation["passed"] else "failed",
             tool="BigBrain static web validator",
-            details={"errors": validation["errors"]},
+            details={"errors": validation["errors"],
+                     **({'cause': 'missing_test'} if not validation['passed'] and validation.get('acceptance') is None else {})},
         ),
         StageResult(
             name="browser",
@@ -136,6 +137,7 @@ def record_attempt(
             tool_version=report.get("browser_version"),
             artifact_hashes=[report_ref.sha256, *screenshot_hashes],
             details={
+                **({'cause': 'awaiting_checks'} if report['status'] == 'skipped' else {}),
                 "error": failure_summary(report) if report["status"] != "passed" else None,
                 "cases": [
                     {"name": case["name"], "status": case["status"], "error": case.get("error")}
@@ -149,7 +151,9 @@ def record_attempt(
     for build in report.get("build_stages", []):
         stages.insert(
             -1,
-            StageResult(name=build["name"], status=build["status"], tool="Node/npm", details=build),
+            StageResult(name=build["name"], status=build["status"], tool="Node/npm",
+                        details={**build, **({'cause': 'environment_blocked'}
+                            if build['name'] == 'dependencies' and build['status'] != 'passed' else {})}),
         )
     manifest = RunManifest(
         design_id=spec.design_id,

@@ -197,6 +197,122 @@ class BaseBrain(BusParticipant, ABC):
                 'source_sha256': digest(updated), 'dependency_versions': dependency_versions,
                 'stdout': '', 'stderr': '', 'exit_code': 0}
 
+    async def maintain_project(self, payload):
+        """The specialist owns the loop; runtime scope owns Stop and identity."""
+        return await self.repair_project(payload, mode='existing')
+
+    async def repair_project(self, payload, *, mode):
+        """Bind shared repair tools to either preservation or delivery evidence."""
+        from ..maintenance import repair_project, ProjectTools, protected_test
+        from ..project_inspection import digest
+        target = self._directory_context.get()
+        if not target or target.mode != mode:
+            raise ValueError('Repair needs a matching bound execution target')
+        manifest = target.file('.project.json')
+        raw = manifest.read_text() if manifest.is_file() else '{}'
+        if mode == 'existing' and digest(raw) != payload.get('_maintenance_manifest_sha'):
+            raise ValueError('Project metadata changed since approval; approve again')
+        tools = ProjectTools(target)
+        from ..verification.evidence import default_repository
+        ref = payload.get('contract_revision', {})
+        approved = default_repository().load_spec(ref.get('design_id', ''), ref.get('revision', 0))
+        allowed_tests = [d['path'] for d in approved.metadata.get('maintenance', {}).get('test_changes', [])] if approved else []
+        frozen = {p: digest(tools.source(p)) for p in tools.inventory()
+                  if protected_test(p) and p not in allowed_tests}
+        initial_versions = tools.fingerprints()
+        # Capture before diagnostics or writes; worker-generated baseline literals
+        # never become authoritative preservation evidence.
+        baseline_sources = {p: tools.source(p) for p in initial_versions} if mode == 'existing' else {}
+        if mode == 'existing' and {p: digest(s) for p, s in baseline_sources.items()} != initial_versions:
+            raise ValueError('Project changed while capturing maintenance baseline')
+        import json
+        baseline_artifact = default_repository().put_artifact(
+            json.dumps(baseline_sources, sort_keys=True).encode(),
+            name='maintenance-baseline.json', media_type='application/json') if mode == 'existing' else None
+        initial_diagnostic = None
+        verification_attempt = 0
+
+        def check_tests():
+            now = {p: digest(tools.source(p)) for p in tools.inventory()
+                   if protected_test(p) and p not in allowed_tests}
+            if any(now.get(path) != version for path, version in frozen.items()):
+                raise ValueError('Unapproved validation source changed during maintenance')
+
+        async def diagnose():
+            nonlocal initial_diagnostic
+            versions = tools.fingerprints()
+            if mode == 'existing':
+                result = await self.maintenance_diagnose(payload)
+            else:
+                # Refresh the complete gate after a new validation test. A
+                # missing test alone cannot authorize production changes.
+                result = await verify(selected_tools)
+                from ..verification.disposition import verification_disposition
+                action = verification_disposition(result.get('verification', {}).get('failures', []))['action']
+                result = {**result, 'status': 'failed' if action == 'repair' else
+                          'passed' if result.get('success') else 'inconclusive'}
+            if versions != tools.fingerprints():
+                raise ValueError('Project sources changed while diagnostics executed')
+            check_tests()
+            if initial_diagnostic is None:
+                artifact = default_repository().put_artifact(json.dumps(result, default=str).encode(),
+                    name='maintenance-initial-diagnostic.json', media_type='application/json')
+                initial_diagnostic = {'artifact_sha256': artifact.sha256,
+                    'status': result.get('status'), 'source_hashes': versions}
+            return result
+
+        async def verify(selected):
+            nonlocal selected_tools, verification_attempt
+            selected_tools = selected
+            verification_attempt += 1
+            payload['_verification_attempt'] = verification_attempt
+            check_tests()
+            current = tools.fingerprints()
+            from ..verification.delivery import file_snapshot
+            declared = file_snapshot(target, {f['path'] for f in payload.get('all_files', [])})
+            if set(current) - set(initial_versions) - selected.changed:
+                raise ValueError('Source appeared outside maintenance tools')
+            preserved = {p: version for p, version in initial_versions.items() if p not in selected.changed}
+            if any(current.get(p) != version for p, version in preserved.items()):
+                raise ValueError('Unedited source changed outside maintenance tools')
+            import json
+            def preservation_proof(before):
+                after = {p: current[p] for p in before}
+                artifact = default_repository().put_artifact(json.dumps({'before': before, 'after': after}, sort_keys=True).encode(),
+                    name='maintenance-preservation.json', media_type='application/json')
+                return {'status': 'passed', 'before': digest(json.dumps(before, sort_keys=True)),
+                    'after': digest(json.dumps(after, sort_keys=True)), 'file_count': len(before),
+                    'paths': sorted(before)[:100], 'manifest_artifact_sha256': artifact.sha256}
+            payload['_maintenance_runtime_evidence'] = {
+                'validation_unchanged': preservation_proof(frozen),
+                'unedited_sources_unchanged': preservation_proof(preserved)}
+            if mode == 'existing':
+                payload['_maintenance_runtime_evidence']['_baseline'] = {'sources': baseline_sources,
+                    'source_hashes': initial_versions, 'current_hashes': current,
+                    'artifact_sha256': baseline_artifact.sha256,
+                    'initial_diagnostic': initial_diagnostic,
+                    'revision': digest(json.dumps(initial_versions, sort_keys=True)),
+                    'current_revision': digest(json.dumps(current, sort_keys=True))}
+            result = await self.maintenance_verify(payload, selected)
+            payload['_verification_parent_run_id'] = result.get('verification', {}).get('run_id')
+            check_tests()
+            if tools.fingerprints() != current:
+                raise ValueError('Project sources changed while delivery verification executed')
+            if file_snapshot(target, declared) != declared:
+                raise ValueError('Project artifacts changed while delivery verification executed')
+            return result
+
+        selected_tools = tools
+        result = await repair_project(self, payload, diagnose=diagnose, verify=verify, mode=mode)
+        if mode == 'new' and result.get('success'):
+            from ..verification.delivery import issue
+            try:
+                return issue(target, payload, result, self.project_kind, tools.fingerprints())
+            except (ValueError, OSError, KeyError, TypeError) as exc:
+                return {**result, 'success': False, 'runnable': False, 'verified': False,
+                        'delivery_status': 'incomplete', 'error': str(exc)}
+        return result
+
     @work_dir.setter
     def work_dir(self, value) -> None:
         self._default_work_dir = Path(value)
@@ -245,7 +361,9 @@ class BaseBrain(BusParticipant, ABC):
         from ..project_transaction import active_transaction
         transaction_token = active_transaction.set(local.get('_transaction'))
         try:
-            yield local
+            from ..llm.conversation import conversation_scope
+            with conversation_scope(local.get('session_id'), 'worker:' + self.name):
+                yield local
         finally:
             active_transaction.reset(transaction_token)
             self._directory_context.reset(token)

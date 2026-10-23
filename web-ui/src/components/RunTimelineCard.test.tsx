@@ -39,6 +39,17 @@ describe('verified web delivery card', () => {
     expect(html).not.toContain('aria-label="Run project"');
   });
 
+  it('labels incomplete delivery and blocks launch even with stale success metadata', () => {
+    const html = renderToStaticMarkup(<RunTimelineCard run={{ ...run,
+      deliveryStatus: 'incomplete', deliverableType: 'python', entryPoint: 'main.py',
+    }} />);
+    expect(html).toContain('Projet incomplet');
+    expect(html).toContain('non validé');
+    expect(html).not.toContain('Run complete');
+    expect(html).not.toContain('aria-label="Run project"');
+    expect(html).not.toContain('Afficher le résultat');
+  });
+
   it('opens the taskboard, never a stale selected project, for board results', () => {
     const html = renderToStaticMarkup(<RunTimelineCard run={{ ...run,
       resultKind: 'taskboard', steps: [{ id: 'board', brain: 'taskboard', description: 'Add task', status: 'done' }],

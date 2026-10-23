@@ -8,11 +8,12 @@ from pathlib import Path, PurePosixPath
 
 
 FILE_TASKS = frozenset({
+    "maintain_project",
     "write_web_file", "assemble_and_preview", "run_web_project",
     "write_project_file", "assemble_and_run", "batch_write_files",
     "generate_and_execute", "edit_file", "run_file", "execute_code", "search_project",
 })
-EXISTING_TASKS = frozenset({"edit_file", "run_file", "run_web_project", "search_project"})
+EXISTING_TASKS = frozenset({"maintain_project", "edit_file", "run_file", "run_web_project", "search_project"})
 
 
 def relative_path(value: str) -> str:

@@ -24,6 +24,7 @@ from ..bus.message import BusMessage
 
 class WebAppBrain(BaseBrain):
     """Generate dependency-free web files and serve verified previews."""
+    project_kind = 'web_app'
 
     _active_previews: Dict[int, asyncio.subprocess.Process] = {}
     _preview_ports = range(3200, 3300)
@@ -43,6 +44,10 @@ class WebAppBrain(BaseBrain):
 
     async def _handle_task_in_scope(self, payload: dict) -> Dict[str, Any]:
         task_type = payload.get("type")
+        if task_type == 'maintain_project':
+            if payload.get('deliverable_type') != 'web_app':
+                raise ValueError('WebAppBrain maintains browser projects only')
+            return await self.maintain_project(payload)
         if task_type == "write_web_file":
             return await self._write_web_file(payload)
         if task_type in {"assemble_and_preview", "run_web_project"}:
@@ -55,6 +60,22 @@ class WebAppBrain(BaseBrain):
 
     async def handle_message(self, message: BusMessage) -> None:
         return None
+
+    async def maintenance_diagnose(self, payload):
+        from ..maintenance import ProjectTools
+        result = await self.maintenance_verify({**payload, '_diagnostic_only': True}, ProjectTools(self._directory_context.get()))
+        evidence = result.get('verification', {})
+        status = evidence.get('verdict') or ('failed' if evidence.get('passed') is False else 'inconclusive')
+        return {'status': status, **result}
+
+    async def maintenance_prepare(self, payload):
+        return {'status': 'ready', 'reason': 'The browser diagnostic pipeline provisions the declared web toolchain'}
+
+    async def maintenance_verify(self, payload, tools):
+        return await self._assemble_and_preview({**payload, '_maintenance_mode': True,
+            'all_files': [{'path': p} for p in sorted(set(tools.inventory()) |
+                         {f['path'] for f in payload.get('all_files', [])})],
+            '_editable_paths': sorted(tools.changed)})
 
     @staticmethod
     def _safe_relative(path: str) -> Path:
@@ -260,6 +281,9 @@ Rules:
         return None
 
     async def _assemble_and_preview(self, payload: dict) -> Dict[str, Any]:
+        target = self._directory_context.get()
+        if target and target.mode == 'new' and not payload.get('_maintenance_mode'):
+            return await self.repair_project(payload, mode='new')
         from ..verification.web_gate import browser_report, record_attempt as record_web_attempt, failure_summary
         def record_attempt(*args, **kwargs):
             return record_web_attempt(*args, **kwargs, contract_revision=payload.get('contract_revision'))
@@ -286,11 +310,14 @@ Rules:
             return {"success": False, "runnable": False, "project_name": project_name.as_posix(),
                     "project_path": project_path, "entry_point": "index.html",
                     "deliverable_type": "web_app",
-                    "error": "; ".join(validation["errors"]), "verification": validation}
+                    "error": "; ".join(validation["errors"]),
+                    "verification": {"run_id": evidence.run_id, "verdict": evidence.verdict,
+                        "failures": [{"stage": s.name, "status": s.status, "details": s.details}
+                                     for s in evidence.stages if s.status not in {'passed', 'not_applicable'}]}}
 
         build_stages = []
-        parent_run_id = None
-        repair_count = 0
+        parent_run_id = payload.get('_verification_parent_run_id')
+        repair_count = payload.get('_verification_attempt', 1) - 1
         if web_stack == "react_vite":
             from .web_stack import build_react
             while True:
@@ -304,13 +331,10 @@ Rules:
                     validation, report, brain=self.name, attempt=repair_count + 1, parent_run_id=parent_run_id)
                 await self._publish_browser_evidence(evidence)
                 parent_run_id = evidence.run_id
-                if (repair_count >= 2 or self.llm_provider is None or evidence.verdict == "inconclusive"
-                        or build_stages[-1]["name"] == "dependencies"):
-                    return {"success": False, "runnable": False, "error": build_stages[-1]["output"],
-                            "verification": {"run_id": evidence.run_id, "verdict": evidence.verdict}}
-                repair_count += 1
-                await self.send_progress({"stage": "web_build_repair", "attempt": repair_count})
-                await self._repair_browser_failure(project_dir, report, payload)
+                return {"success": False, "runnable": False, "error": build_stages[-1]["output"],
+                        "verification": {"run_id": evidence.run_id, "verdict": evidence.verdict,
+                            "failures": [{"stage": s.name, "status": s.status, "details": s.details}
+                                         for s in evidence.stages if s.status not in {'passed', 'not_applicable'}]}}
         preview_dir = project_dir / "dist" if web_stack == "react_vite" else project_dir
         port = self._free_port()
         if port is None:
@@ -337,25 +361,29 @@ Rules:
             error = (await self._preview_process.stderr.read()).decode(errors="replace")
             self._active_previews.pop(port, None)
             return {"success": False, "runnable": False, "error": error[:1000],
-                    "verification": validation}
+                    "verification": {**validation, 'verdict': 'inconclusive', 'failures': [
+                        {'stage': 'preview_environment', 'status': 'inconclusive', 'details': {
+                            'cause': 'environment_blocked', 'next_action': 'stop',
+                            'reason': 'Preview server could not start', 'diagnostic': error[:1000]}}]}}
 
         url = f"http://127.0.0.1:{port}"
-        acceptance_bytes = (project_dir / "tests/acceptance.json").read_bytes()
         acceptance = validation["acceptance"]
         try:
-            for attempt in range(1, 4):
+            for attempt in [repair_count + 1]:
                 await self.send_progress({"stage": "browser_testing", "attempt": attempt,
                                           "project_name": project_name.name})
                 report = await browser_report(url, acceptance)
                 report["build_stages"] = build_stages
-                if report.get('status') == 'passed' and payload.get('contract_revision'):
+                if report.get('status') == 'passed' and payload.get('contract_revision') and not payload.get('_diagnostic_only'):
                     from ..verification.semantics import review_semantics
                     sources = {item['path']: (project_dir / item['path']).read_text()
                                for item in payload.get('all_files', [])}
                     semantic = await review_semantics(self.llm_provider,
                         request=payload.get('user_request', ''), contracts=payload.get('business_contracts'),
                         sources=sources, tests={'status': report['status'],
-                            'passed_cases': [case['name'] for case in report.get('cases', []) if case['status'] == 'passed']})
+                            'passed_cases': [case['name'] for case in report.get('cases', []) if case['status'] == 'passed']},
+                        progressive=bool(payload.get('_maintenance_mode')),
+                        runtime_evidence=payload.get('_maintenance_runtime_evidence'))
                     report['semantic_review'] = semantic.model_dump(mode='json')
                 evidence = record_attempt(project_dir, payload.get("user_request") or project_name.name,
                     validation, report, brain=self.name, attempt=repair_count + 1, parent_run_id=parent_run_id)
@@ -363,36 +391,23 @@ Rules:
                 parent_run_id = evidence.run_id
                 if evidence.verdict == "passed":
                     break
-                if evidence.verdict == "inconclusive" or repair_count >= 2 or self.llm_provider is None:
+                if evidence.verdict != 'passed':
                     await self.cleanup()
                     return {"success": False, "runnable": False, "project_name": project_name.name,
                             "project_path": project_path, "entry_point": "index.html",
                             "deliverable_type": "web_app", "error": failure_summary(report),
-                            "verification": {"verdict": evidence.verdict, "run_id": evidence.run_id}}
-                await self.send_progress({"stage": "browser_repair", "attempt": attempt})
-                repair_count += 1
-                await self._repair_browser_failure(project_dir, report, payload)
-                if (project_dir / "tests/acceptance.json").read_bytes() != acceptance_bytes:
-                    raise ValueError("Browser acceptance tests changed during repair")
-                validation = self.validate_project(project_dir, payload.get("all_files") or [], web_stack)
-                if web_stack == "react_vite":
-                    build_stages = await build_react(project_dir)
-                    if any(stage["status"] != "passed" for stage in build_stages):
-                        evidence = record_attempt(project_dir, payload.get("user_request") or project_name.name,
-                            validation, {"status": "skipped", "build_stages": build_stages}, brain=self.name,
-                            attempt=repair_count + 1, parent_run_id=parent_run_id)
-                        await self._publish_browser_evidence(evidence)
-                        raise ValueError(build_stages[-1]["output"])
-                    validation = self.validate_project(project_dir, payload.get("all_files") or [], web_stack)
-                if not validation["passed"]:
-                    evidence = record_attempt(project_dir, payload.get("user_request") or project_name.name,
-                        validation, {"status": "skipped"}, brain=self.name,
-                        attempt=attempt + 1, parent_run_id=parent_run_id)
-                    await self._publish_browser_evidence(evidence)
-                    raise ValueError("; ".join(validation["errors"]))
+                            **({'browser_report': report} if payload.get('_maintenance_mode') else {}),
+                            "verification": {"verdict": evidence.verdict, "run_id": evidence.run_id,
+                                "failures": [{"stage": s.name, "status": s.status, "details": s.details}
+                                             for s in evidence.stages if s.status not in {'passed', 'not_applicable'}]}}
         except BaseException:
             await self.cleanup()
             raise
+
+        if payload.get('_diagnostic_only'):
+            await self.cleanup()
+            return {'success': evidence.verdict == 'passed', 'verification': {'verdict': evidence.verdict,
+                    'run_id': evidence.run_id}, 'browser_report': report}
 
         manifest = {
             "name": project_name.name, "created": time.time(),

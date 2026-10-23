@@ -34,9 +34,10 @@ export function RunTimelineCard({ run }: { run: RunState }) {
   const projectPath = run.projectPath || (entryPath?.includes('/')
     ? entryPath.slice(0, entryPath.lastIndexOf('/')) : undefined);
   const hasPreview = !!webEntryPath(run);
-  const Icon = run.status === 'done'
+  const canRun = run.deliveryStatus !== 'incomplete' && run.runnable;
+  const Icon = run.status === 'done' && run.deliveryStatus !== 'incomplete'
     ? CheckCircle2 : run.status === 'cancelled' ? Ban : XCircle;
-  const color = run.status === 'done'
+  const color = run.status === 'done' && run.deliveryStatus !== 'incomplete'
     ? 'var(--success, #34c759)' : 'var(--warning, #ff9500)';
 
   const openProject = async () => {
@@ -90,7 +91,7 @@ export function RunTimelineCard({ run }: { run: RunState }) {
         >
           <Icon size={13} style={{ color }} className="flex-shrink-0" />
           <span className="truncate flex-1 text-left" style={{ color: 'var(--text-secondary)' }}>
-            {run.status === 'done' ? 'Run complete' : run.status === 'cancelled' ? 'Run cancelled' : 'Run failed'}
+            {run.deliveryStatus === 'incomplete' ? 'Projet incomplet · non validé' : run.status === 'done' ? 'Run complete' : run.status === 'cancelled' ? 'Run cancelled' : 'Run failed'}
             {' — '}{runTitle(run)}
           </span>
           {run.files.length > 0 && (
@@ -105,7 +106,7 @@ export function RunTimelineCard({ run }: { run: RunState }) {
                 title="Open project" aria-label="Open project">
                 <FolderOpen size={12} />
               </button>
-              {run.runnable && !hasPreview && (
+              {canRun && !hasPreview && (
                 <button onClick={(event) => { event.stopPropagation(); void runProject(); }}
                   disabled={!!runId && !liveRun?.done} className="p-1 rounded-md cursor-pointer"
                   style={{ color: 'var(--accent-blue)' }} title="Run project" aria-label="Run project">
@@ -159,7 +160,7 @@ export function RunTimelineCard({ run }: { run: RunState }) {
                 >
                   <FolderOpen size={11} /> Open project
                 </button>
-                {run.runnable && !hasPreview && (
+                {canRun && !hasPreview && (
                   <button
                     onClick={runProject}
                     disabled={!!runId && !liveRun?.done}
@@ -194,7 +195,7 @@ export function RunTimelineCard({ run }: { run: RunState }) {
             )}
             {run.verification && (
               <div style={{ color: 'var(--text-tertiary)' }}>
-                Verification: {run.verification.verdict}
+                {run.deliveryStatus === 'incomplete' ? 'Livraison non validée · contrôles enregistrés : ' : 'Verification: '}{run.verification.verdict}
               </div>
             )}
           </div>

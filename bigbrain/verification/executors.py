@@ -181,7 +181,16 @@ async def _pytest_with_report(interpreter, work_dir, test_files, env):
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
             stdin=asyncio.subprocess.DEVNULL, env=env, cwd=str(work_dir), start_new_session=(os.name == 'posix'))
         try:
-            stdout, _ = await process.communicate()
+            # Generated tests can print without limit. Bound collection itself,
+            # not just the diagnostic after an unbounded communicate().
+            chunks, size = [], 0
+            while chunk := await process.stdout.read(65536):
+                size += len(chunk)
+                if size > 2_000_000:
+                    return b''.join(chunks), None, None
+                chunks.append(chunk)
+            await process.wait()
+            stdout = b''.join(chunks)
             records = json.loads(report.read_text()) if report.is_file() and report.stat().st_size <= 2_000_000 else None
             return stdout, process.returncode, records
         finally:
@@ -212,7 +221,8 @@ async def stage_tests(work_dir: Path, *, timeout: float = 60.0, python: str | Pa
     if not test_files:
         return StageResult(
             name="tests", status="not_applicable", tool="pytest",
-            details={"reason": "no test files in work_dir"},
+            details={"reason": "no test files in work_dir", 'cause': 'missing_test',
+                     'next_action': 'extend_validation'},
         )
     interpreter = str(python) if python is not None else sys.executable
     env = {'PATH': str(Path(interpreter).parent) + os.pathsep + os.environ.get('PATH', ''),
@@ -234,11 +244,13 @@ async def stage_tests(work_dir: Path, *, timeout: float = 60.0, python: str | Pa
     if expected_venv.name == '.venv' and environment and Path(environment.get('prefix', '')).resolve() != expected_venv.resolve():
         return StageResult(name='tests', status='inconclusive', tool='pytest',
             details={'reason': 'Project interpreter is not running in its declared venv; no host fallback',
+                     'cause': 'environment_blocked', 'next_action': 'stop',
                      'interpreter': interpreter, 'environment': environment})
     if not environment.get('pytest'):
         return StageResult(
             name="tests", status="inconclusive", tool="pytest",
             details={"reason": "project Python or pytest unavailable; no host fallback", "interpreter": interpreter,
+                     'cause': 'environment_blocked', 'next_action': 'stop',
                      "environment": environment},
         )
     try:
@@ -255,10 +267,12 @@ async def stage_tests(work_dir: Path, *, timeout: float = 60.0, python: str | Pa
     valid_records = isinstance(records, list) and all(isinstance(item, dict) and isinstance(item.get('nodeid'), str)
         and item.get('outcome') in {'passed', 'failed', 'skipped'} and item.get('phase') in {'setup', 'call', 'teardown'} for item in records)
     failed_cases = sorted({item['nodeid'] for item in records if item['outcome'] == 'failed'}) if valid_records else []
-    status = 'passed' if returncode == 0 and valid_records else 'failed' if returncode != 0 else 'inconclusive'
+    status = ('inconclusive' if returncode is None else
+              'passed' if returncode == 0 and valid_records else 'failed' if returncode != 0 else 'inconclusive')
     return StageResult(
         name="tests", status=status, tool="pytest", tool_version=environment['version'],
         details={
+            **({'reason': 'Test output exceeded 2000000-byte execution budget; process group terminated'} if returncode is None else {}),
             "environment": environment,
             "returncode": returncode,
             "tests": [str(p.relative_to(work_dir)) for p in test_files],

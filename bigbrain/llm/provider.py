@@ -1,8 +1,19 @@
 """Abstract LLM Provider interface."""
 
 import asyncio
+import math
 from abc import ABC, abstractmethod
 from typing import AsyncIterator, Union
+
+
+def reasoning_timeout(provider, default, *, multiplier=1):
+    """Optional concrete provider allowance; unknown capabilities keep the default."""
+    value = getattr(provider, 'reasoning_timeout_seconds', 0)
+    if value is None:
+        return None  # explicit provider policy; outer task budget and Stop still apply
+    if type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value <= 600:
+        return default
+    return max(default, value * multiplier)
 
 
 class LLMProvider(ABC):

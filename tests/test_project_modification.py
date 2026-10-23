@@ -82,12 +82,12 @@ async def test_architect_preserves_omitted_files_and_requires_explicit_operation
 
 
 @pytest.mark.asyncio
-async def test_plan_inspects_before_architect_and_dispatches_only_the_modified_file(tmp_path, monkeypatch):
+async def test_existing_project_plans_maintenance_without_guessing_files(tmp_path, monkeypatch):
     binding = existing(tmp_path, {'main.py': 'VALUE = 1\nprint(VALUE)\n', 'helper.py': '# keep\n',
         'tests/test_main.py': 'def test_value():\n    assert True\n'})
     monkeypatch.setenv('BIGBRAIN_WORKSPACE_DIR', binding.root)
     provider = AsyncMock()
-    provider.chat_complete.side_effect = [json.dumps({'mode': 'project', 'deliverable_type': 'python', 'needs_research': False}), json.dumps(raw_spec())]
+    provider.chat_complete.side_effect = [json.dumps({'mode': 'project', 'deliverable_type': 'python', 'needs_research': False}), json.dumps(['Correct the value and preserve unrelated behavior'])]
     bus = MessageBus(tmp_path / 'logs', auth=None)
     orchestrator = WorkspaceOrchestrator('default', bus, llm_provider=provider)
     message = BusMessage(type=MessageType.TASK, source='front_brain', target='orchestrator_default',
@@ -95,14 +95,13 @@ async def test_plan_inspects_before_architect_and_dispatches_only_the_modified_f
                  'project_target': binding.public()})
     before = {p: p.read_bytes() for p in binding.directory.rglob('*') if p.is_file()}
     plan = await orchestrator._create_task_plan(message)
-    writers = [s for s in plan.subtasks if s.payload['type'] == 'write_project_file']
-    assert [s.payload['file_path'] for s in writers] == ['main.py']
-    assert writers[0].payload['_existing_source']['content'].startswith('VALUE = 1')
-    assert {f['path'] for f in plan.subtasks[-1].payload['all_files']} == {'main.py', 'helper.py', 'tests/test_main.py'}
+    assert [s.payload['type'] for s in plan.subtasks] == ['maintain_project']
+    assert plan.subtasks[0].brain_target == 'python_brain'
+    assert 'file_path' not in plan.subtasks[0].payload
     assert plan.execution_target.inode == binding.inode
-    assert plan.inspection['baseline']['tests']['status'] == 'inconclusive'  # no project venv yet
+    assert plan.inspection is None  # approved investigation owns diagnostics
     architecture_messages = provider.chat_complete.call_args.kwargs['messages']
-    assert 'source_versions' in architecture_messages[1]['content']
+    assert 'VALUE = 1' not in architecture_messages[1]['content']
     assert all(p.read_bytes() == source for p, source in before.items())  # diagnostic, no implementation edits
     await bus.close()
 
@@ -265,7 +264,7 @@ async def test_targeted_patch_preserves_project_and_produces_executable_result(t
 
 
 @pytest.mark.asyncio
-async def test_multifile_repair_keeps_entry_and_tests_then_passes_real_gate(tmp_path, monkeypatch):
+async def test_legacy_multifile_baseline_keeps_entry_and_tests_then_passes_real_gate(tmp_path, monkeypatch):
     files = {'main.py': 'from calc import value\nprint(value())\n',
              'calc.py': 'def value():\n    return 1\n\ndef unrelated():\n    return "keep me"\n',
              'tests/test_calc.py': 'from calc import value, unrelated\n\ndef test_value():\n    assert value() == 2\n\ndef test_preserved():\n    assert unrelated() == "keep me"\n',
@@ -276,14 +275,16 @@ async def test_multifile_repair_keeps_entry_and_tests_then_passes_real_gate(tmp_
     specification = raw_spec()
     specification['file_specs'] = [{'path': 'calc.py', 'operation': 'modify', 'implementation_notes': 'Change only value() to return 2'},
         {'path': 'tests/test_calc.py', 'operation': 'keep', 'dependencies': ['calc.py']}]
-    provider.chat_complete.side_effect = [json.dumps({'mode': 'project', 'deliverable_type': 'python', 'needs_research': False}),
-        json.dumps(specification), json.dumps({'edits': [{'old': 'return 1', 'new': 'return 2'}]})]
+    provider.chat_complete.side_effect = [json.dumps(specification), json.dumps({'edits': [{'old': 'return 1', 'new': 'return 2'}]})]
     bus = MessageBus(tmp_path / 'logs', auth=None)
     orchestrator = WorkspaceOrchestrator('default', bus, llm_provider=provider)
     message = BusMessage(type=MessageType.TASK, source='front_brain', target='orchestrator_default',
         payload={'type': 'compound', 'user_request': 'Fix value to return 2, keep all other behaviour and tests',
                  'session_id': 'sess-multifile', 'project_target': binding.public()})
-    plan = await orchestrator._create_task_plan(message)
+    from bigbrain.orchestrator.orchestrator import TaskPlan
+    plan = TaskPlan('legacy-baseline', message)
+    plan.subtasks = await orchestrator._plan_project(plan.id, message.payload['user_request'], False, [],
+        deliverable_type='python', session_id='sess-multifile', plan=plan)
     assert [s.payload.get('file_path') for s in plan.subtasks[:-1]] == ['calc.py']
     brain = PythonBrain('python', bus, work_dir=Path(binding.root), llm_provider=provider)
     async def current_python(directory): return Path(sys.executable)

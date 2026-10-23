@@ -14,10 +14,25 @@ guessed number.
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
+from contextvars import ContextVar
 import threading
 import time
 from dataclasses import dataclass, field
 from typing import Optional
+
+_usage_capture = ContextVar('inference_usage_capture', default=None)
+
+
+@contextmanager
+def capture_usage():
+    """Task-local accounting, excluding concurrent conversations' records."""
+    records = []
+    token = _usage_capture.set(records)
+    try:
+        yield records
+    finally:
+        _usage_capture.reset(token)
 
 
 @dataclass
@@ -63,7 +78,8 @@ class UsageRecord:
             output_tokens=output_tokens,
             reasoning_output_tokens=int(completion_details.get("reasoning_tokens") or 0),
             total_tokens=int(usage.get("total_tokens") or (input_tokens + output_tokens)),
-            cost_usd=estimate_cost_usd(model_id, input_tokens, output_tokens),
+            # Subscription credits are not priced as API-key tokens.
+            cost_usd=None if provider == 'codex' else estimate_cost_usd(model_id, input_tokens, output_tokens),
         )
 
     @property
@@ -148,6 +164,9 @@ class UsageTracker:
     def record(self, record: UsageRecord) -> None:
         with self._lock:
             self._records.append(record)
+        captured = _usage_capture.get()
+        if captured is not None:
+            captured.append(record)
 
     def check_budget(self, role: str) -> None:
         """Raise BudgetExceeded if ``role`` is over its daily token budget."""
@@ -172,9 +191,13 @@ class UsageTracker:
         for r in records:
             slot = by_model.setdefault(
                 r.model_id,
-                {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "calls": 0},
+                {"input_tokens": 0, "cached_input_tokens": 0, "cache_write_input_tokens": 0,
+                 "output_tokens": 0, "reasoning_output_tokens": 0, "total_tokens": 0, "calls": 0},
             )
             slot["input_tokens"] += r.input_tokens
+            slot['cached_input_tokens'] += r.cached_input_tokens
+            slot['cache_write_input_tokens'] += r.cache_write_input_tokens
+            slot['reasoning_output_tokens'] += r.reasoning_output_tokens
             slot["output_tokens"] += r.output_tokens
             slot["total_tokens"] += r.total_tokens
             slot["calls"] += 1
@@ -182,7 +205,7 @@ class UsageTracker:
         return {
             "calls": len(records),
             "total_tokens": sum(r.total_tokens for r in records),
-            "cost_usd": cost if records else None,
+            "cost_usd": cost if records and all(r.cost_usd is not None for r in records) else None,
             "by_model": by_model,
         }
 

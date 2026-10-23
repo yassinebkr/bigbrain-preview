@@ -41,6 +41,16 @@ const ev = (type: string, detail: any) => ({ type, detail });
 
 describe('multiple independent runs in the same conversation', () => {
   beforeEach(reset);
+  it('keeps incomplete delivery unlaunchable even if a terminal frame contains stale success flags', () => {
+    const store = useAppStore.getState();
+    store.applyRunEvent(ev('task.received', { task_id: 'delivery', session_id: 'sess-live' }));
+    store.applyRunEvent(ev('task.complete', { task_id: 'delivery', session_id: 'sess-live',
+      delivery_status: 'incomplete', runnable: true, project_path: 'sandbox/tool', entry_point: 'main.py' }));
+    const run = useAppStore.getState().completedRuns.find((r) => r.id === 'delivery');
+    expect(run?.status).toBe('failed');
+    expect(run?.deliveryStatus).toBe('incomplete');
+    expect(run?.runnable).toBe(false);
+  });
   it('restores the authoritative project association of a cached failed run without reactivating it', () => {
     const s = useAppStore.getState();
     s.applyRunEvent(ev('task.routing', { task_id: 'old', session_id: 'sess-live' }));
@@ -126,6 +136,17 @@ describe('applyRunEvent — run state machine', () => {
     useAppStore.getState().applyRunEvent(
       ev('subtask.complete', { task_id: 't1', subtask_id: 's1' }));
     expect(useAppStore.getState().activeRun).toBeNull();
+  });
+
+  it('presents maintenance progress on the existing conversation work', () => {
+    const s = useAppStore.getState();
+    s.applyRunEvent(ev('task.received', { task_id: 'maintenance', session_id: 's1' }));
+    s.applyRunEvent(ev('subtask.started', { task_id: 'maintenance', subtask_id: 'repair', brain: 'python_brain', description: 'Maintenance' }));
+    s.applyRunEvent(ev('task.progress', { task_id: 'maintenance', subtask_id: 'repair', stage: 'maintenance_read', file_path: 'helper.py' }));
+    expect(useAppStore.getState().activeRun!.steps[0].description).toBe('Lecture du fichier · helper.py');
+    s.applyRunEvent(ev('task.progress', { task_id: 'maintenance', subtask_id: 'repair', stage: 'maintenance_verify' }));
+    expect(useAppStore.getState().activeRun!.steps[0].description).toBe('Vérification du projet');
+    expect(useAppStore.getState().activeRun!.steps).toHaveLength(1);
   });
 
   it('presents file progress without raw stages or first-attempt noise', () => {

@@ -2,6 +2,7 @@
 
 import asyncio
 from contextvars import ContextVar
+from ..llm.conversation import scoped_conversation
 import time
 import uuid
 from typing import Any, Dict, List, Optional
@@ -256,6 +257,7 @@ class FrontBrain:
         import asyncio
         self._soul_task = asyncio.create_task(self._consolidate_soul())
 
+    @scoped_conversation('soul', independent=True)
     async def _consolidate_soul(self) -> None:
         """ONE LLM call distilling recent turns into the updated soul."""
         from ..memory.soul import (SOUL_PROMPT, collect_recent_transcript)
@@ -428,6 +430,7 @@ class FrontBrain:
             self._stream_context.set(False)
             return f"I encountered an error processing your request: {e}"
 
+    @scoped_conversation('front', session_argument='session_id')
     async def _consult_and_respond(self, messages, session_id):
         import asyncio
         import json
@@ -539,6 +542,7 @@ PROJECT DESTINATION (for file/code work): include a top-level "project_target" o
 - Editing/running an EXISTING project: {{"mode":"existing","path":"sandbox/exact-project"}}. Resolve this from the user's request and conversation; explorer selection is only a hint, never implicit authorization. If the intended project is ambiguous, ask before delegating.
 - Board/research-only work has no project_target.
 - .project.json belongs to the runtime and is published only after verification. Its absence after a failed run is not an instruction to generate it. Delegate repair of the implementation and tests, never fabrication of verification metadata.
+- Existing-project maintenance may report a contradiction requiring a new approval. Propose precise validation changes with a top-level "test_changes" array, each item containing "path", "reason", "expected_behavior", "authority". Cite only the user's explicit requirement or an actually verified source; never invent authority. These are proposals, not permissions: the runtime includes them in a new contract for Approve/Reject. Keep unrelated assertions and safety checks intact.
 Example: {{"reply":"Je prépare une nouvelle application.","task":"Build the requested app","project_target":{{"mode":"new"}}}}
 Example: {{"reply":"Je modifie ce projet.","task":"Apply the requested changes","project_target":{{"mode":"existing","path":"sandbox/exact-project"}}}}
 
@@ -773,6 +777,7 @@ Type 'quit' or 'exit' to stop."""
                         "reply_to_ui": True,
                         "session_id": session_id,
                         "project_target": parsed.get("project_target"),
+                        **({'test_changes': parsed['test_changes']} if 'test_changes' in parsed else {}),
                         "_ui_run_id": run_id,
                     },
                     priority=Priority.NORMAL,
@@ -800,6 +805,7 @@ Type 'quit' or 'exit' to stop."""
                         "reply_to_ui": True,
                         "session_id": session_id,
                         "project_target": parsed.get("project_target"),
+                        **({'test_changes': parsed['test_changes']} if 'test_changes' in parsed else {}),
                         "_ui_run_id": run_id,
                     },
                     priority=Priority.NORMAL,
@@ -934,6 +940,7 @@ Type 'quit' or 'exit' to stop."""
         
         return None
     
+    @scoped_conversation('result-summary', session_argument='session_id')
     async def _summarize_result(self, raw_outputs: list, session_id: Optional[str] = None) -> str:
         """Use the LLM to turn raw task output into a conversational answer.
         
@@ -1375,7 +1382,11 @@ Type 'quit' or 'exit' to stop."""
                                if kind == "preview"), None)
         files_output = next((str(content) for kind, content in raw_outputs
                              if kind == "files"), None)
-        if success and preview_output:
+        if result.get('delivery_status') == 'incomplete':
+            notification = f"Projet incomplet — non validé et non livré. {result.get('error', 'La validation reste à terminer.')}"
+        elif success and result.get('delivery_status') == 'ready':
+            notification = '✅ Projet validé. Les contrôles et les critères approuvés sont satisfaits ; consulte le résultat dans l’Atelier.'
+        elif success and preview_output:
             # Project cards own the rich result UI. Keep chat deterministic
             # and compact instead of asking an LLM to retell the application.
             notification = "✅ Projet web terminé. Utilise l’aperçu ou les contrôles du projet ci-dessous."

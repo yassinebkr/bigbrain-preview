@@ -136,6 +136,31 @@ class ProjectTransaction:
                 self._save(state)
         self._locked(fence)
 
+    def reserve(self, target, path, expected):
+        """Journal a discovered implementation path before its first write.
+
+        Callers enforce the approved project-level maintenance policy. This does
+        not grant arbitrary paths: target identity, revision and lifecycle still
+        match, and the original bytes are durably recorded before any mutation.
+        """
+        def reserve(state):
+            if state['state'] != 'open' or state['target'] != target.to_payload():
+                raise ValueError('Transaction is closed or belongs to another target')
+            relative_path(path)
+            destination = target.file(path)
+            raw = _read(destination)
+            if _hash(raw) != expected:
+                raise ValueError(f'{path}: concurrent source change before reservation')
+            if path in state['files']:
+                if state['files'][path]['after'] != expected:
+                    raise ValueError(f'{path}: concurrent transaction change')
+                return
+            state['files'][path] = {'before': base64.b64encode(raw).decode() if raw is not None else None,
+                'after': expected, 'written': False,
+                'mode': destination.stat().st_mode & 0o777 if raw is not None else 0o600}
+            self._save(state)
+        self._locked(reserve)
+
     def prepare_build_tree(self, project, path='dist'):
         """Retain the old production build by rename; never recursively delete it."""
         def prepare(state):

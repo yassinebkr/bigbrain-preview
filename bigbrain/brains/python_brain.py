@@ -39,6 +39,7 @@ class PythonBrain(BaseBrain):
     Security Note: This is a preview implementation without full sandboxing.
     Production use requires proper isolation (bubblewrap, Docker, etc.).
     """
+    project_kind = 'python'
     
     def __init__(self, name: str = "python_brain", bus=None, workspace: str = None,
                  timeout: int = 60, work_dir: Path = None, llm_provider=None):
@@ -335,7 +336,11 @@ class PythonBrain(BaseBrain):
     async def _handle_task_in_scope(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         task_type = payload.get("type")
         
-        if task_type == "generate_and_execute":
+        if task_type == 'maintain_project':
+            if payload.get('deliverable_type') != 'python':
+                raise ValueError('PythonBrain maintains Python projects only')
+            return await self.maintain_project(payload)
+        elif task_type == "generate_and_execute":
             # LLM generates code from natural language, then we execute it
             return await self._generate_and_execute(payload)
         elif task_type == "write_project_file":
@@ -366,6 +371,28 @@ class PythonBrain(BaseBrain):
         else:
             raise ValueError(f"Unknown task type: {task_type}")
     
+    async def maintenance_diagnose(self, payload):
+        from ..verification.executors import stage_tests
+        target = self._directory_context.get()
+        tests = await stage_tests(target.directory, python=target.directory / '.venv/bin/python', timeout=30)
+        return {'status': tests.status, **tests.details}
+
+    async def maintenance_prepare(self, payload):
+        target = self._directory_context.get()
+        python = await self._setup_project_venv(target.directory)
+        ready = await self._ensure_project_test_runner(python, target.directory)
+        return {'status': 'ready' if ready else 'inconclusive', 'interpreter': str(python),
+                'reason': 'Declared pytest>=8,<10 only; no host fallback'}
+
+    async def maintenance_verify(self, payload, tools):
+        if not payload.get('entry_point') and payload.get('executable', True):
+            return {'success': False, 'status': 'requires_arbitration',
+                    'error': 'No declared entry point; approve recovery metadata explicitly'}
+        return await self._assemble_and_run({**payload, '_maintenance_mode': True,
+            'all_files': [{'path': p} for p in sorted(set(tools.inventory()) |
+                         {f['path'] for f in payload.get('all_files', [])})],
+            '_editable_paths': sorted(tools.changed)})
+
     # --- Project Mode: Write individual files ---
 
     async def _write_project_file(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -1363,6 +1390,10 @@ Rules:
         This is the final step after all individual files have been written.
         It verifies all files exist, then runs the main entry point.
         """
+        target = self._directory_context.get()
+        if target and target.mode == 'new' and not payload.get('_maintenance_mode'):
+            return await self.repair_project(payload, mode='new')
+        from ..verification.preflight import failure as preflight_failure
         project_name = payload.get("project_name", "project")
         all_files = payload.get("all_files", [])
         user_request = payload.get("user_request", "")
@@ -1373,7 +1404,7 @@ Rules:
         # Clean stale files from previous runs that aren't in the current plan.
         # This prevents old broken files from poisoning new builds.
         target = self._directory_context.get()
-        if project_dir.exists() and not (target and target.mode == 'existing'):
+        if project_dir.exists() and target is None:
             expected_paths = {f["path"] for f in all_files}
             for existing in project_dir.glob("*.py"):
                 rel = existing.name
@@ -1397,7 +1428,7 @@ Rules:
             else:
                 missing.append(f["path"])
         
-        if missing:
+        if missing and not payload.get('_maintenance_mode'):
             # Some files are missing — they might be in upstream_context
             # Collect files to write concurrently
             files_to_write = []
@@ -1440,6 +1471,8 @@ Rules:
                 "error": f"Missing project files: {', '.join(missing)}",
                 "stdout": "", "stderr": f"Files not found: {missing}",
                 "exit_code": -1,
+                "verification": preflight_failure(payload, stage='contracts', cause='reproduced_defect',
+                    details={'missing_files': missing}),
             }
         
         # Syntax-check all Python files before running
@@ -1460,6 +1493,8 @@ Rules:
                 "stderr": error_list,
                 "exit_code": -4,
                 "files_with_errors": syntax_errors,
+                "verification": preflight_failure(payload, stage='syntax', cause='reproduced_defect',
+                    details={'errors': syntax_errors}),
             }
         
         # The architect owns the entry point contract. A non-executable
@@ -1482,8 +1517,14 @@ Rules:
                     user_request=user_request, code=written_files[source], execution={}, execution_required=False,
                     work_dir=project_dir, requested_files=list(written_files), persisted_files=list(written_files),
                     filename=source, contract_revision=payload['contract_revision'], test_python=python,
-                    semantic_provider=self.llm_provider, semantic_sources=written_files)
+                    attempt=payload.get('_verification_attempt', 1),
+                    parent_run_id=payload.get('_verification_parent_run_id'),
+                    semantic_provider=self.llm_provider, semantic_sources=written_files,
+                    semantic_progressive=bool(payload.get('_maintenance_mode')),
+                    semantic_runtime_evidence=payload.get('_maintenance_runtime_evidence'))
                 verification = {'run_id': manifest.run_id, 'verdict': verdict,
+                    'failures': [{'stage': s.name, 'status': s.status, 'details': s.details}
+                                 for s in manifest.stages if s.status not in {'passed', 'not_applicable'}],
                     'stages': [{'name': stage.name, 'status': stage.status} for stage in manifest.stages]}
                 await self._notify_verification(manifest, verdict)
                 if verdict != 'passed':
@@ -1502,7 +1543,7 @@ Rules:
             else:
                 (project_dir / '.project.json').write_text(json.dumps(project_manifest, indent=2))
             await self.send_progress({
-                "stage": "completed",
+                "stage": "verification_checked" if payload.get('_maintenance_mode') else "completed",
                 "success": True,
                 "files_verified": len(written_files),
                 "runnable": False,
@@ -1528,6 +1569,8 @@ Rules:
                 "error": f"Declared entry point is missing: {entry_point}",
                 "stdout": "",
                 "stderr": f"{entry_point} is not present in the project plan",
+                "verification": preflight_failure(payload, stage='contracts', cause='reproduced_defect',
+                    details={'missing_entry_point': entry_point}),
                 "exit_code": -5,
                 "entry_point": entry_point,
                 "project_name": project_name,
@@ -1564,6 +1607,8 @@ Rules:
             return {
                 "success": False,
                 "error": f"Failed to create venv: {e}",
+                "verification": preflight_failure(payload, stage='environment', cause='environment_blocked',
+                    details={'error': str(e)}),
                 "stdout": "", "stderr": str(e), "exit_code": -3,
                 "execution_time": 0,
             }
@@ -1655,11 +1700,14 @@ Rules:
                     persisted_files=list(written_files),
                     toolchain={"python": _platform.python_version(), "brain": self.name},
                     filename=entry_point,
-                    attempt=_repair_attempt + 1,
+                    attempt=payload.get('_verification_attempt', _repair_attempt + 1),
+                    parent_run_id=payload.get('_verification_parent_run_id'),
                     contract_revision=payload.get('contract_revision'),
                     test_python=venv_python,
                     semantic_provider=self.llm_provider,
                     semantic_sources=written_files,
+                    semantic_progressive=bool(payload.get('_maintenance_mode')),
+                    semantic_runtime_evidence=payload.get('_maintenance_runtime_evidence'),
                 )
                 result["verification"] = {
                     "run_id": manifest.run_id,
@@ -1676,7 +1724,7 @@ Rules:
                     failed_stages = [stage.name for stage in manifest.stages if stage.status != 'passed']
                     result["error"] = f"Project verification {verdict}: {', '.join(failed_stages)}; it is not deliverable"
                     result["verification"]["failures"] = [
-                        {"stage": stage.name, "details": stage.details}
+                        {"stage": stage.name, "status": stage.status, "details": stage.details}
                         for stage in manifest.stages if stage.status != 'passed']
             except Exception as gate_error:
                 success = False
@@ -1693,29 +1741,9 @@ Rules:
             if stderr_str:
                 result["error"] += f": {stderr_str[:200]}"
 
-        if (not success and _repair_attempt < 2 and self.llm_provider
-                and result.get('verification', {}).get('verdict') == 'failed'):
-            await self.send_progress({"stage": "retrying", "attempt": _repair_attempt + 1,
-                                      "reason": result['error'], "project_name": project_name})
-            try:
-                repaired = await self._repair_project_sources(
-                    project_dir, written_files, user_request,
-                    result['verification'].get('failures', []),
-                    acceptance_contracts=payload.get('acceptance_contracts', []),
-                    baseline=payload.get('baseline_diagnostic'),
-                    **({'editable_paths': payload['_editable_paths']} if payload.get('_editable_paths') is not None else {}))
-            except Exception as repair_error:
-                repaired = False
-                result['repair_error'] = str(repair_error)[:200]
-            if repaired:
-                retried = await self._assemble_and_run(payload, _repair_attempt=_repair_attempt + 1)
-                retried['repair_history'] = [{"attempt": _repair_attempt + 1,
-                    "error": result['error'], "verification": result.get('verification')},
-                    *retried.get('repair_history', [])]
-                return retried
         
         await self.send_progress({
-            "stage": "completed",
+            "stage": "verification_checked" if payload.get('_maintenance_mode') else "completed",
             "success": success,
             "entry_point": entry_point,
             "exit_code": exit_code,
@@ -2028,6 +2056,30 @@ Rules:
         5. Repeat up to MAX_RETRIES times
         6. Return final result with full attempt history
         """
+        target = self._directory_context.get()
+        if target and target.mode == 'new':
+            # Bound script generation must not bypass project delivery through
+            # the legacy stdout-only retry path below.
+            from ..verification.evidence import default_repository
+            from ..project_transaction import active_transaction
+            ref = payload.get('contract_revision', {})
+            approved = default_repository().load_spec(ref.get('design_id', ''), ref.get('revision', 0))
+            if (not active_transaction.get() or not approved
+                    or approved.metadata.get('approval', {}).get('decision') != 'approved'
+                    or approved.user_request != payload.get('user_request')
+                    or approved.metadata.get('execution_target') not in (None, target.public())
+                    or 'delivery' not in approved.metadata):
+                raise ValueError('Project code generation requires approved scope and delivery architecture')
+            declaration = approved.metadata['delivery']
+            entry = declaration.get('entry_point') or payload.get('file_path') or 'main.py'
+            code = await self._generate_initial_code(approved.user_request, payload.get('upstream_context', {}), payload)
+            if not code.strip():
+                return {'success': False, 'runnable': False, 'verified': False,
+                        'delivery_status': 'incomplete', 'error': 'Code generation returned an empty source'}
+            await self._write_and_notify(target.file(entry), code)
+            return await self._assemble_and_run({**payload, **declaration,
+                'entry_point': declaration.get('entry_point'),
+                'all_files': [{'path': entry}], 'user_request': approved.user_request})
         if not self.llm_provider:
             return {
                 "success": False,

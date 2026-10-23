@@ -23,7 +23,7 @@ export function deriveNudge({ run, viewerFilePath }: NudgeInputs): Nudge | null 
   if (run.status === 'failed') {
     return {
       key: `run-failed-${run.id}`,
-      message: run.error
+      message: run.deliveryStatus === 'incomplete' ? `Projet incomplet · non validé${run.error ? ` : ${run.error.slice(0, 120)}` : ''}` : run.error
         ? `Run failed: ${run.error.slice(0, 120)}`
         : 'The last run failed.',
       actionLabel: 'See details',

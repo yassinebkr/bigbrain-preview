@@ -59,7 +59,7 @@ export function SurfaceContent({ surface, select = () => {} }: { surface: WorkSu
       <ul className="space-y-1">{run.files.map((file) => <li key={file.path}><button className="w-full text-left py-2 break-all hover:underline underline-offset-4" title={file.path} onClick={() => openFile(file.path)}>{run.projectPath && file.path.startsWith(`${run.projectPath}/`) ? file.path.slice(run.projectPath.length + 1) : file.path}</button></li>)}</ul>
     </>}
     {kind === 'verification' && run.verification && <>
-      <p className="font-medium">Verdict : {run.verification.verdict}</p>
+      <p className="font-medium">{run.deliveryStatus === 'incomplete' ? 'Livraison non validée · contrôles enregistrés : ' : 'Verdict : '}{run.verification.verdict}</p>
       <ul className="space-y-3">{run.verification.stages.map((stage) => <li key={stage.name} className="flex justify-between gap-2"><span>{stage.name}</span><span style={{ color: stage.status === 'failed' ? 'var(--warning)' : 'var(--text-secondary)' }}>{stage.status}</span></li>)}</ul>
       <button className="underline underline-offset-4" onClick={() => setView('evidence')}>Consulter les preuves</button>
     </>}
@@ -139,7 +139,7 @@ export function ContextWorkspace({ children }: { children: (ownsActivity: boolea
                 {!state.selected && <option value="">Autres travaux…</option>}
                 {runs.map(({ run }) => <option key={run.id} value={run.id} style={{ backgroundColor: 'var(--bg-surface)' }}>{runTitle(run)}</option>)}
               </select> : <h2 className="text-[14px] font-medium line-clamp-2" title={state.selected?.run.description}>{state.selected ? (state.selected.run.projectName || state.selected.run.projectPath ? runTitle(state.selected.run) : 'Travail de la conversation') : 'Résultat indisponible'}</h2>}
-              {state.selected && <p className="context-status text-[11px] mt-1 flex items-center gap-2" data-status={state.selected.run.status}>{state.selected.run.status === 'running' && !state.selected.run.awaitingApproval && <span className="work-pulse" aria-hidden="true" />}{state.selected.run.awaitingApproval ? 'Ton accord est nécessaire' : statuses[state.selected.run.status]}</p>}
+              {state.selected && <p className="context-status text-[11px] mt-1 flex items-center gap-2" data-status={state.selected.run.status}>{state.selected.run.status === 'running' && !state.selected.run.awaitingApproval && <span className="work-pulse" aria-hidden="true" />}{state.selected.run.deliveryStatus === 'incomplete' ? 'Incomplet · non validé' : state.selected.run.awaitingApproval ? 'Ton accord est nécessaire' : statuses[state.selected.run.status]}</p>}
             </div>
             <button className="p-1" aria-label={expanded ? 'Redonner la place principale au chat' : 'Donner la place principale à cette activité'} onClick={() => change({ mode: expanded ? 'workspace' : 'expanded' })}>{expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
             <button className="p-1" aria-label="Fermer la surface" onClick={close}><X size={16} /></button>

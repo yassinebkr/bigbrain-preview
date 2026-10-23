@@ -28,7 +28,7 @@ export function nextProjectAttempt(selected: RunState | undefined, surfaces: Wor
     .sort((a, b) => b.run.startedAt - a.run.startedAt)[0];
 }
 export function webEntryPath(run: RunState) {
-  if (isBoardRun(run) || run.status !== 'done' || !run.runnable || run.deliverableType !== 'web_app') return undefined;
+  if (run.deliveryStatus === 'incomplete' || isBoardRun(run) || run.status !== 'done' || !run.runnable || run.deliverableType !== 'web_app') return undefined;
   return run.projectPath && run.entryPoint ? `${run.projectPath}/${run.entryPoint}` : undefined;
 }
 export function runTitle(run: RunState) {

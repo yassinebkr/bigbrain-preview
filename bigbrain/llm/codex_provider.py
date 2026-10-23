@@ -12,10 +12,10 @@ an ``authUrl`` the browser must open; codex itself owns the OAuth callback,
 token exchange and credential storage in ``~/.codex``; completion is
 observed by polling ``codex_auth_status()``.
 
-Runtime uses one ephemeral App Server thread per visible request
-(the shopifast "Runtime v2" discipline): BigBrain owns the durable
-conversation, so old raw tool payloads are never re-sent — and therefore
-never re-charged — on every inference.
+Scoped calls reuse a durable thread per conversation/account/agent. BigBrain
+sends unseen message suffixes and resumes the thread after restart. Native
+history still contributes to model input; reuse is not a cost-free-context
+guarantee. Unidentified callers stay ephemeral to avoid cross-user leakage.
 """
 
 from __future__ import annotations
@@ -24,18 +24,17 @@ import asyncio
 import json
 import os
 import shutil
+import tempfile
 from typing import Any, Callable, Optional
 
 from .model_registry import get_model
 from .provider import LLMProvider
 from .usage import UsageRecord, get_tracker
+from .conversation import current_conversation
+from .codex_sessions import CodexSessions, digest, incremental_messages
 
 CODEX_MODEL_KEY = "codex-chatgpt"
-
-# Inactivity timeout (not total duration) so a healthy multi-tool turn can
-# finish normally. Mirrors the shopifast provider's 120s inactivity cap.
-_TURN_INACTIVE_TIMEOUT_S = 120
-
+RPC_FRAME_LIMIT = 8 * 1024 * 1024  # source-bearing native notifications exceed asyncio's 64 KiB default
 
 class CodexUnavailable(RuntimeError):
     """The codex CLI is not installed or the app-server failed to start."""
@@ -54,16 +53,18 @@ class CodexJsonRpcClient:
 
     @classmethod
     async def start(cls) -> "CodexJsonRpcClient":
-        if shutil.which("codex") is None:
+        executable = os.environ.get("BIGBRAIN_CODEX_BINARY") or shutil.which("codex")
+        if not executable:
             raise CodexUnavailable(
                 "codex CLI not found on PATH — install codex-cli to use the "
                 "ChatGPT subscription provider"
             )
         process = await asyncio.create_subprocess_exec(
-            "codex", "app-server",
+            executable, "app-server",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
+            limit=RPC_FRAME_LIMIT,
         )
         client = cls(process)
         client._reader_task = asyncio.create_task(client._read_loop())
@@ -71,6 +72,7 @@ class CodexJsonRpcClient:
 
     async def _read_loop(self) -> None:
         assert self.proc.stdout is not None
+        failure = 'app-server closed its output'
         try:
             while True:
                 line = await self.proc.stdout.readline()
@@ -94,11 +96,20 @@ class CodexJsonRpcClient:
                 elif message.get("method"):
                     for listener in list(self._listeners):
                         listener(message)
+        except Exception as exc:
+            failure = 'app-server transport failed: ' + type(exc).__name__
         finally:
             self._closed = True
             for future in self._pending.values():
                 if not future.done():
-                    future.set_exception(CodexUnavailable("app-server exited"))
+                    future.set_exception(CodexUnavailable(failure))
+            # A turn can be awaiting completion after turn/start has already
+            # replied: it is then absent from _pending and still needs waking.
+            for listener in list(self._listeners):
+                try:
+                    listener({'method': 'bigbrain/transport/error', 'params': {'reason': failure}})
+                except Exception:
+                    pass
 
     async def call(self, method: str, params: dict | None = None) -> Any:
         if self._closed:
@@ -159,6 +170,15 @@ async def close_codex_app_server() -> None:
         for value in client:
             if isinstance(value, CodexJsonRpcClient):
                 value.kill()
+                if value._reader_task:
+                    value._reader_task.cancel()
+                    await asyncio.gather(value._reader_task, return_exceptions=True)
+                async def drain():
+                    if value.proc.stdout:
+                        while await value.proc.stdout.read(65536):
+                            pass
+                # wait() alone may hang when a failed reader left the pipe full.
+                await asyncio.wait_for(asyncio.gather(value.proc.wait(), drain()), timeout=5)
 
 
 async def _initialize(client: CodexJsonRpcClient) -> CodexJsonRpcClient:
@@ -168,7 +188,7 @@ async def _initialize(client: CodexJsonRpcClient) -> CodexJsonRpcClient:
     await client.call(
         "initialize",
         {"clientInfo": {"name": "bigbrain", "version": "0.1.0"},
-         "capabilities": {}},
+         "capabilities": {"experimentalApi": True}},
     )
     client.notify("initialized")
     _initialized_client = client
@@ -180,21 +200,20 @@ async def _get_session() -> CodexJsonRpcClient:
     if _rpc_override is not None:
         return await _initialize(_rpc_override)
     if _session is not None:
-        return await _session
-    task = asyncio.get_event_loop().create_task(CodexJsonRpcClient.start())
+        client = await _session
+        if not client._closed:
+            return client
+        _session = None
+    async def start_initialized():
+        return await _initialize(await CodexJsonRpcClient.start())
+    task = asyncio.get_event_loop().create_task(start_initialized())
     _session = task
     try:
         client = await task
     except Exception:
         _session = None
         raise
-    # Respawn on next use if the child exits.
-    def _on_exit(_future) -> None:
-        global _session, _initialized_client
-        _session = None
-        _initialized_client = None
-    task.add_done_callback(_on_exit)
-    return await _initialize(client)
+    return client
 
 
 # -- auth (the "Connect with ChatGPT" button pipeline) ---------------------------
@@ -239,9 +258,22 @@ async def codex_start_login(open_browser: bool = True) -> dict:
 class CodexProvider(LLMProvider):
     """LLMProvider backed by the codex app-server (ChatGPT subscription)."""
 
+    maintenance_event_context = True
+    review_event_context = True
+
     def __init__(self, registry_key: str = CODEX_MODEL_KEY):
+        self.registry_key = registry_key
         self.entry = get_model(registry_key)
         self.default_model = self.entry.model_id
+        self.reasoning_effort = os.environ.get("BIGBRAIN_CODEX_EFFORT", "low")
+        # The caller's task budget and explicit Stop remain authoritative.
+        self.reasoning_timeout_seconds = None
+        self._inference_directory = tempfile.TemporaryDirectory(prefix="bigbrain-codex-inference-")
+        self._conversations = CodexSessions()
+        self._loaded_threads = {}
+        self.auto_compact_tokens = int(os.environ.get('BIGBRAIN_CODEX_AUTO_COMPACT_TOKENS', '128000'))
+        if self.auto_compact_tokens < 1024:
+            raise ValueError('Codex automatic compaction threshold must be at least 1024 tokens')
 
     async def complete(
         self,
@@ -267,87 +299,281 @@ class CodexProvider(LLMProvider):
         temperature: float = 0.7,
         **kwargs,
     ):
-        text, usage = await self.run_turn(messages, model=model)
+        schema = None
+        if kwargs.get("tool_schema"):
+            schema = kwargs["tool_schema"]["parameters"]
+        elif (kwargs.get("response_format") or {}).get("type") == "json_schema":
+            schema = kwargs["response_format"]["json_schema"]["schema"]
+        scope = current_conversation.get()
+        if kwargs.get('conversation_id'):
+            scope = (kwargs['conversation_id'], kwargs.get('conversation_role', 'front'))
+        encoded_schema = _strict_schema(schema) if schema else None
+        if scope:
+            text, usage = await self._scoped_turn(messages, model, encoded_schema, scope, schema,
+                                                 kwargs.get('context_checkpoint'))
+        else:
+            # Unidentified callers must not share a global anonymous history.
+            text, usage = await self.run_turn(messages, model=model, output_schema=encoded_schema)
         if usage:
             get_tracker().record(usage)
+        if schema:
+            text = json.dumps(_restore_optional_fields(json.loads(text), schema), ensure_ascii=False)
         return text
+
+    async def _binding(self, scope):
+        client = await _get_session()
+        account = await client.call('account/read', {})
+        if (account.get('account') or {}).get('type') != 'chatgpt':
+            raise CodexUnavailable('A signed-in ChatGPT account is required; no API fallback')
+        identity = (account.get('workspaceRouting') or {}).get('chatgptAccountId') or account['account'].get('email')
+        if not identity:
+            raise CodexUnavailable('Cannot establish account identity for conversation isolation')
+        path, lock = self._conversations.binding(*scope, digest(identity))
+        return client, path, lock
+
+    async def _scoped_turn(self, messages, model, encoded_schema, scope, original_schema, checkpoint=None):
+        client, path, lock = await self._binding(scope)
+        async with lock:
+            # Reload under the shared lock, including when another provider
+            # instance owns the same conversation.
+            self._conversations.loaded.pop(path, None)
+            state = self._conversations.load(path)
+            state['_save'] = lambda: self._conversations.save(path, state, scope[0])
+            delta, hashes = incremental_messages(messages, state)
+            compactions = state.get('compactions', 0)
+            checkpoint_due = checkpoint is not None and compactions > state.get('checkpoint_compactions', 0)
+            if checkpoint_due:
+                delta.insert(0, {'role': 'user', 'content': json.dumps({
+                    'authoritative_checkpoint': checkpoint,
+                    'instruction': 'Current runtime facts supersede stale historical observations.'}, ensure_ascii=False)})
+            state['_pending_hashes'] = hashes
+            text, usage = await self.run_turn(delta, model=model, output_schema=encoded_schema,
+                                             _state=state)
+            try:
+                visible = (json.dumps(_restore_optional_fields(json.loads(text), original_schema), ensure_ascii=False)
+                           if original_schema else text)
+            except ValueError:
+                # Preserve the accepted assistant cursor and let chat_complete
+                # record usage BEFORE rejecting malformed structured output.
+                visible = text
+            state['message_hashes'] = [*hashes['message_hashes'], digest({'role': 'assistant', 'content': visible})][-256:]
+            state['last_request'] = {'supplied_messages': len(messages), 'sent_messages': len(delta),
+                'supplied_chars': len(_flatten(messages)), 'sent_chars': len(_flatten(delta))}
+            if checkpoint_due:
+                state['checkpoint_compactions'] = compactions
+            self._conversations.check(scope[0])
+            state['_save']()
+            return text, usage
 
     async def run_turn(
         self, messages: list[dict], model: str = "default",
         instructions: str = "", cwd: str | None = None,
+        output_schema: dict | None = None,
+        _state: dict | None = None,
     ) -> tuple[str, Optional[UsageRecord]]:
-        """One ephemeral thread per visible request (shopifast Runtime v2).
+        """Run in the bound conversation, or an isolated ephemeral thread.
 
-        Returns (text, usage). The ephemeral thread is abandoned after the
-        turn: BigBrain keeps the durable conversation, so old raw payloads
-        are never re-sent on the next inference.
+        Returns visible text and per-turn usage, never a lifetime counter.
         """
         client = await _get_session()
         model_id = model if model and model != "default" else self.default_model
-        thread_result = await client.call(
-            "thread/start",
-            {
-                "cwd": cwd or os.getcwd(),
+        thread_id = await self._open_thread(client, model_id, instructions, cwd, _state)
+        turn_future: asyncio.Future = asyncio.get_event_loop().create_future()
+        reply: list[str] = []
+        usage_holder: dict[str, dict] = {}
+        turn_id = None
+        completed_ok = False
+
+        def _on_notification(message: dict) -> None:
+            params = message.get("params") or {}
+            if params.get("threadId") not in (None, thread_id):
+                return
+            method = message.get("method", "")
+            if method == 'bigbrain/transport/error':
+                if not turn_future.done():
+                    turn_future.set_exception(CodexUnavailable(params.get('reason', 'app-server transport failed')))
+                return
+            item = params.get("item") or {}
+            if method == "item/agentMessage" or (method == "item/completed" and item.get("type") == "agentMessage"):
+                text = item.get("text") or params.get("text") or ""
+                if text:
+                    reply.append(text)
+            usage = params.get("usage") or item.get("usage")
+            if usage:
+                usage_holder["usage"] = usage
+            if method == "thread/tokenUsage/updated":
+                usage_holder['native'] = params['tokenUsage']
+            if method == 'item/completed' and item.get('type') == 'contextCompaction' and _state is not None:
+                _state['compactions'] = _state.get('compactions', 0) + 1
+            if method == "item/started" and item.get("type") not in {"userMessage", "agentMessage", "reasoning", "contextCompaction"}:
+                if not turn_future.done():
+                    turn_future.set_exception(RuntimeError("Codex attempted autonomous tool use; inference-only trial invalid"))
+            if method == "turn/completed" or item.get("type") == "turn/completed":
+                if not turn_future.done():
+                    turn = params.get("turn") or {}
+                    if turn.get("status") in {"failed", "interrupted"}:
+                        turn_future.set_exception(RuntimeError(f"Codex turn {turn.get('status')}: {turn.get('error')}"))
+                    else:
+                        turn_future.set_result(None)
+
+        off = client.on_notification(_on_notification)
+        try:
+            started = await client.call("turn/start", {
+                "threadId": thread_id, 'model': model_id,
+                "input": [{"type": "text", "text": _flatten(messages)}],
+                "effort": self.reasoning_effort,
+                **({"outputSchema": output_schema} if output_schema else {}),
+            })
+            turn_id = (started or {}).get("turn", {}).get("id")
+            if _state is not None:
+                _state.update(_state.get('_pending_hashes', {}))
+                _state['_save']()
+            await turn_future
+            completed_ok = True
+        except BaseException:
+            if turn_id:
+                try:
+                    await asyncio.wait_for(client.call("turn/interrupt", {
+                        "threadId": thread_id, "turnId": turn_id}), timeout=5)
+                except Exception:
+                    pass
+            raise
+        finally:
+            off()
+            if usage_holder.get('native'):
+                usage_holder['usage'] = _account_usage(usage_holder['native'], _state)
+                if _state is not None:
+                    _state['_save']()
+            if not completed_ok and usage_holder.get('usage'):
+                get_tracker().record(UsageRecord.from_openai_usage(
+                    usage_holder['usage'], model_id=model_id, provider='codex'))
+
+        usage_record = None
+        if usage_holder.get("usage"):
+            usage_record = UsageRecord.from_openai_usage(usage_holder["usage"], model_id=model_id, provider="codex")
+        return "".join(reply) or "(no agent text returned)", usage_record
+
+    async def _open_thread(self, client, model_id, instructions, cwd, state):
+        if state and self._loaded_threads.get(state.get('thread_id')) is client:
+            return state['thread_id']
+        params = {
+                "cwd": cwd or self._inference_directory.name,
                 "model": model_id,
-                "ephemeral": True,
+                "allowProviderModelFallback": False,
+                "ephemeral": state is None,
                 "threadSource": "bigbrain",
                 "approvalPolicy": "never",
-                "sandbox": "read-only",
-            },
-        )
+                "permissions": "bigbrain-inference",
+                "baseInstructions": "You are the inference component of BigBrain. Return only the requested response. Do not invoke Codex tools: BigBrain alone executes actions. " + instructions,
+                "environments": [],
+                "config": {
+                    "model_auto_compact_token_limit": self.auto_compact_tokens,
+                    # Defining a profile requires a default even when the
+                    # thread explicitly selects it. Otherwise Codex reports
+                    # the config error as "failed to load workspace requirements".
+                    "default_permissions": "bigbrain-inference",
+                    "permissions.bigbrain-inference": {
+                        "filesystem": {":root": "deny", ":minimal": "read", self._inference_directory.name: "read"},
+                        "network": {"enabled": False}},
+                    "web_search": "disabled",
+                    "features.shell_tool": False,
+                    "features.apply_patch_freeform": False,
+                    "features.multi_agent_v2": False,
+                    "agents.enabled": False,
+                    "features.plugins": False,
+                    "features.apps": False,
+                },
+            }
+        if state and state.get('thread_id'):
+            resume = {k: v for k, v in params.items() if k in {
+                'cwd', 'model', 'approvalPolicy', 'permissions', 'baseInstructions', 'config'}}
+            thread_result = await client.call('thread/resume', {**resume, 'threadId': state['thread_id'], 'excludeTurns': True})
+        else:
+            thread_result = await client.call('thread/start', params)
         thread_id = (thread_result or {}).get("thread", {}).get("id")
         if not thread_id:
             raise RuntimeError(f"thread/start returned no thread id: {thread_result!r}")
 
-        turn_future: asyncio.Future = asyncio.get_event_loop().create_future()
-        reply: list[str] = []
-        usage_holder: dict[str, dict] = {}
+        if state is not None:
+            if state.get('thread_id') not in (None, thread_id):
+                raise RuntimeError('Codex resumed a different thread; conversation was not reset')
+            state['thread_id'] = thread_id
+            state['model'] = model_id
+            state['_save']()
+            self._loaded_threads[thread_id] = client
+        return thread_id
 
-        def _on_notification(message: dict) -> None:
-            params = message.get("params") or {}
-            method = message.get("method", "")
-            item = params.get("item") or {}
-            if method == "item/agentMessage" or item.get("type") == "agentMessage":
-                text = item.get("text") or params.get("text") or ""
-                if text:
-                    reply.append(text)
-            # Usage may ride on any notification (item/completed,
-            # turn/completed): always extract it, never elif past it.
-            usage = params.get("usage") or item.get("usage")
-            if usage:
-                usage_holder["usage"] = usage
-            if method == "turn/completed" or item.get("type") == "turn/completed":
-                if not turn_future.done():
-                    turn_future.set_result(None)
+    async def compact_conversation(self, session_id, role='front', timeout=180):
+        """Explicit native compaction, serialized with turns of this conversation."""
+        scope = (session_id, role)
+        client, path, lock = await self._binding(scope)
+        async with lock:
+            self._conversations.loaded.pop(path, None)
+            state = self._conversations.load(path)
+            if not state.get('thread_id'):
+                return {'status': 'not_started'}
+            state['_save'] = lambda: self._conversations.save(path, state, session_id)
+            thread_id = await self._open_thread(client, self.default_model, '', None, state)
+            done = asyncio.get_running_loop().create_future()
+            compacted = False
+            turn_id = None
+            native = None
 
-        off = client.on_notification(_on_notification)
-        try:
-            await client.call(
-                "turn/start",
-                {
-                    "threadId": thread_id,
-                    # The conversation flattened to one visible turn: the
-                    # durable history lives in BigBrain, not in codex.
-                    "input": [{"type": "message", "role": "user",
-                               "content": [{"type": "input_text",
-                                            "text": _flatten(messages)}]}],
-                    "effort": "low",
-                },
-            )
+            def observe(message):
+                nonlocal compacted, turn_id, native
+                params = message.get('params') or {}
+                if params.get('threadId') != thread_id:
+                    return
+                method = message.get('method')
+                if method == 'turn/started':
+                    turn_id = params.get('turn', {}).get('id')
+                if method == 'thread/tokenUsage/updated':
+                    native = params['tokenUsage']
+                if method == 'item/completed' and params.get('item', {}).get('type') == 'contextCompaction':
+                    compacted = True
+                if method == 'turn/completed' and not done.done():
+                    if params.get('turn', {}).get('status') == 'completed' and compacted:
+                        done.set_result(None)
+                    else:
+                        done.set_exception(RuntimeError('Codex compaction did not complete'))
+
+            off = client.on_notification(observe)
             try:
-                await asyncio.wait_for(turn_future, timeout=_TURN_INACTIVE_TIMEOUT_S)
-            except asyncio.TimeoutError as exc:
-                await client.call("turn/interrupt", {"threadId": thread_id})
-                raise RuntimeError("codex turn inactive for 120s") from exc
-        finally:
-            off()
+                await client.call('thread/compact/start', {'threadId': thread_id})
+                await asyncio.wait_for(done, timeout)
+                state['compactions'] = state.get('compactions', 0) + 1
+                usage_reported = False
+                if native:
+                    usage = _account_usage(native, state)
+                    if usage and usage['total_tokens'] > 0:
+                        get_tracker().record(UsageRecord.from_openai_usage(usage, self.default_model, 'codex'))
+                        usage_reported = True
+                if not usage_reported:
+                    state['compaction_usage_unknown'] = True
+                state['_save']()
+                return {'status': 'compacted', 'thread_id': thread_id, 'usage_reported': usage_reported}
+            except BaseException:
+                if native:
+                    usage = _account_usage(native, state)
+                    if usage and usage['total_tokens'] > 0:
+                        get_tracker().record(UsageRecord.from_openai_usage(usage, self.default_model, 'codex'))
+                    else:
+                        state['compaction_usage_unknown'] = True
+                else:
+                    state['compaction_usage_unknown'] = True
+                state['_save']()
+                if turn_id:
+                    try:
+                        await asyncio.wait_for(client.call('turn/interrupt', {'threadId': thread_id, 'turnId': turn_id}), 5)
+                    except Exception:
+                        pass
+                raise
+            finally:
+                off()
 
-        usage_record = None
-        if usage_holder.get("usage"):
-            usage_record = UsageRecord.from_openai_usage(
-                usage_holder["usage"], model_id=model_id, provider="codex"
-            )
-        return "".join(reply) or "(no agent text returned)", usage_record
+    async def aclose(self):
+        await close_codex_app_server()
+        self._inference_directory.cleanup()
 
     def get_available_models(self) -> list[str]:
         return [self.default_model]
@@ -357,8 +583,75 @@ class CodexProvider(LLMProvider):
 
 
 def _flatten(messages: list[dict]) -> str:
-    """Flatten a chat transcript to the turn input format (one request,
-    one codex turn — the durable history stays in BigBrain)."""
+    """Render the selected message suffix as one attributed turn input."""
     return "\n\n".join(
         f"{m.get('role', 'user').upper()}: {m.get('content', '')}" for m in messages
     )
+
+
+def _account_usage(native, state):
+    """A thread's cumulative counters must be differenced, never recharged."""
+    total = native['total']
+    before = (state or {}).get('native_usage_total', {})
+    keys = ['inputTokens', 'outputTokens', 'cachedInputTokens', 'cacheWriteInputTokens',
+            'reasoningOutputTokens', 'totalTokens']
+    delta = {key: total.get(key, 0) - before.get(key, 0) for key in keys}
+    if state is not None:
+        state['native_usage_total'] = total
+        state['native_usage_last'] = native.get('last')
+        state['model_context_window'] = native.get('modelContextWindow')
+        gap = any(value < 0 for value in delta.values())
+        state['usage_incomplete'] = state.get('usage_incomplete', False) or gap
+        state['usage_checkpoints'] = [*state.get('usage_checkpoints', []),
+            {'before': before, 'after': total, 'delta': delta,
+             'complete': not gap}][-64:]
+    if any(value < 0 for value in delta.values()):
+        return None  # counter reset: retain raw evidence, do not invent usage
+    return {'prompt_tokens': delta['inputTokens'], 'completion_tokens': delta['outputTokens'],
+            'total_tokens': delta['totalTokens'],
+            'prompt_tokens_details': {'cached_tokens': delta['cachedInputTokens'],
+                                     'cache_write_tokens': delta['cacheWriteInputTokens']},
+            'completion_tokens_details': {'reasoning_tokens': delta['reasoningOutputTokens']}}
+
+
+def _strict_schema(value):
+    """Encode optional fields as nullable, as required by Responses strict JSON.
+
+    This changes transport shape only. The original schema is retained to remove
+    those null placeholders before BigBrain dispatches an action.
+    """
+    if isinstance(value, list):
+        return [_strict_schema(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    result = {key: _strict_schema(item) for key, item in value.items()}
+    if result.get('type') == 'object':
+        if result.get('additionalProperties') is not False:
+            raise ValueError('Codex structured output requires closed object schemas')
+        required = set(value.get('required', []))
+        for key, item in list(result.get('properties', {}).items()):
+            if key not in required and not _nullable(item):
+                result['properties'][key] = {'anyOf': [item, {'type': 'null'}]}
+        result['required'] = list(result.get('properties', {}))
+    return result
+
+
+def _nullable(schema):
+    types = schema.get('type', [])
+    return (types == 'null' or isinstance(types, list) and 'null' in types
+            or any(_nullable(branch) for branch in schema.get('anyOf', [])))
+
+
+def _restore_optional_fields(value, schema):
+    if isinstance(value, dict):
+        if 'anyOf' in schema:
+            schema = next((b for b in schema['anyOf'] if b.get('type') == 'object'), {})
+        properties = schema.get('properties', {})
+        required = set(schema.get('required', []))
+        return {key: _restore_optional_fields(item, properties.get(key, {}))
+                for key, item in value.items()
+                if not (item is None and key in properties and key not in required
+                        and not _nullable(properties[key]))}
+    if isinstance(value, list):
+        return [_restore_optional_fields(item, schema.get('items', {})) for item in value]
+    return value
