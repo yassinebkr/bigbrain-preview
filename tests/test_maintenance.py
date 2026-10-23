@@ -53,6 +53,7 @@ class ScriptedProvider:
             return json.dumps(['add(2,3) returns five'])
         if 'independent acceptance reviewer' in messages[0]['content']:
             context = json.loads(messages[1]['content'])
+            self.review_reads.update(context.get('inspected_paths', []))
             for path in ('test_arithmetic.py', 'arithmetic.py'):
                 if path not in self.review_reads:
                     self.review_reads.add(path)
@@ -82,6 +83,208 @@ def approved_payload(target):
             '_execution_target': target.to_payload(), '_transaction': str(transaction.journal),
             '_maintenance_manifest_sha': digest(target.file('.project.json').read_text()),
             'contract_revision': {'design_id': approved.design_id, 'revision': approved.revision}}, transaction
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('status', ['failed', 'passed', 'inconclusive'])
+async def test_preflight_runs_before_model_and_controls_writes(tmp_path, status):
+    target = project(tmp_path)
+    payload, transaction = approved_payload(target)
+    provider = ScriptedProvider([{'type': 'read', 'path': 'arithmetic.py'}, patch(),
+                                 {'type': 'arbitrate', 'reason': 'Environment unavailable'}])
+    bus = MessageBus(tmp_path / 'logs', auth=None)
+    brain = PythonBrain('python', bus, work_dir=Path(target.root), llm_provider=provider)
+    async def diagnose():
+        assert not provider.calls
+        return {'status': status, 'reason': 'Baseline'}
+    verify = AsyncMock(return_value={'success': True, 'verification': {'verdict': 'passed'}})
+    try:
+        with brain.execution_scope(payload):
+            result = await maintain(brain, payload, diagnose=diagnose, verify=verify)
+        first = json.loads(provider.calls[0][1]['content'])['runtime_state']
+        assert first['diagnostics'][0]['status'] == status
+        assert first['phase'] == ('blocked' if status == 'inconclusive' else 'investigating')
+        assert result['success'] is (status != 'inconclusive')
+        assert verify.await_count == (0 if status == 'inconclusive' else 1)
+        assert result['maintenance']['runtime_state']['phase'] == ('blocked' if status == 'inconclusive' else 'validated')
+    finally:
+        transaction.finish()
+        await bus.close()
+
+
+@pytest.mark.asyncio
+async def test_grouped_read_patch_and_automatic_verification(tmp_path):
+    target = project(tmp_path)
+    payload, transaction = approved_payload(target)
+    provider = ScriptedProvider([
+        {'type': 'read_many', 'reads': [{'path': 'arithmetic.py'}, {'path': 'main.py'}]},
+        {'type': 'patch_set', 'patches': [patch(), {'path': 'main.py',
+            'sha256': digest(target.file('main.py').read_text()),
+            'edits': [{'old': 'print(add(2, 3))', 'new': 'print(add(3, 2))'}]}]}])
+    bus = MessageBus(tmp_path / 'logs', auth=None)
+    brain = PythonBrain('python', bus, work_dir=Path(target.root), llm_provider=provider)
+    verify = AsyncMock(return_value={'success': True, 'verification': {'verdict': 'passed'}})
+    try:
+        with brain.execution_scope(payload):
+            result = await maintain(brain, payload, diagnose=AsyncMock(return_value={'status': 'failed'}), verify=verify)
+        assert result['success']
+        assert len(provider.calls) == 2  # no model-directed diagnostic or verify turn
+        context = json.loads(provider.calls[1][1]['content'])
+        pages = json.loads(context['observations'][-1]['result'])['pages']
+        assert [p['path'] for p in pages] == ['arithmetic.py', 'main.py']
+        assert all(r['complete'] for r in context['runtime_state']['reads']['items'])
+        assert verify.await_count == 1
+        assert result['maintenance']['changed_files'] == ['arithmetic.py', 'main.py']
+        assert result['maintenance']['runtime_state']['source_epoch'] == 2
+    finally:
+        assert transaction.finish()['state'] == 'rolled_back'
+        await bus.close()
+    assert 'return a - b' in target.file('arithmetic.py').read_text()
+
+
+@pytest.mark.asyncio
+async def test_ready_environment_automatically_refreshes_diagnostic(tmp_path):
+    target = project(tmp_path)
+    payload, transaction = approved_payload(target)
+    provider = ScriptedProvider([{'type': 'prepare_environment'},
+        {'type': 'read', 'path': 'arithmetic.py'}, patch()])
+    bus = MessageBus(tmp_path / 'logs', auth=None)
+    brain = PythonBrain('python', bus, work_dir=Path(target.root), llm_provider=provider)
+    brain.maintenance_prepare = AsyncMock(return_value={'status': 'ready'})
+    diagnose = AsyncMock(side_effect=[{'status': 'inconclusive', 'reason': 'Environment absent'}, {'status': 'failed'}])
+    try:
+        with brain.execution_scope(payload):
+            result = await maintain(brain, payload, diagnose=diagnose,
+                verify=AsyncMock(return_value={'success': True, 'verification': {'verdict': 'passed'}}))
+        assert result['success']
+        assert diagnose.await_count == 2
+        state = json.loads(provider.calls[1][1]['content'])['runtime_state']
+        assert state['environment']['status'] == 'ready'
+        assert state['patching_allowed']
+        assert state['diagnostic_count'] == 2
+        assert result['maintenance']['runtime_state']['source_epoch'] == 1
+        identifiers = [row['observation_id'] for row in result['maintenance']['actions']]
+        assert len(identifiers) == len(set(identifiers))
+    finally:
+        transaction.finish()
+        await bus.close()
+
+
+@pytest.mark.parametrize('bad', ['stale', 'protected', 'syntax', 'duplicate', 'oversize'])
+def test_patch_set_validates_every_file_before_writes(tmp_path, bad):
+    target = project(tmp_path)
+    tools = ProjectTools(target)
+    tools.read('arithmetic.py')
+    tools.read('main.py')
+    second = {'path': 'main.py', 'sha256': digest(target.file('main.py').read_text()),
+              'edits': [{'old': 'print(add(2, 3))', 'new': 'print(add(3, 2))'}]}
+    if bad == 'stale':
+        second['sha256'] = 'wrong'
+    elif bad == 'protected':
+        second['path'] = 'test_arithmetic.py'
+    elif bad == 'syntax':
+        second['edits'][0]['new'] = 'print('
+    elif bad == 'duplicate':
+        second = patch()
+    elif bad == 'oversize':
+        second['edits'][0]['new'] = 'x' * 128001
+    transaction = ProjectTransaction.begin(target, [])
+    token = active_transaction.set(str(transaction.journal))
+    try:
+        if bad == 'protected':
+            assert tools.patch_set([patch(), second])['status'] == 'requires_arbitration'
+        else:
+            with pytest.raises((ValueError, SyntaxError)):
+                tools.patch_set([patch(), second])
+        assert not tools.changed
+        assert 'return a - b' in target.file('arithmetic.py').read_text()
+    finally:
+        active_transaction.reset(token)
+        transaction.finish()
+
+
+def test_patch_set_apply_failure_aborts_and_owner_restores_previous_writes(tmp_path, monkeypatch):
+    from bigbrain import maintenance
+    target = project(tmp_path)
+    tools = ProjectTools(target)
+    tools.read('arithmetic.py')
+    tools.read('main.py')
+    original = maintenance.write_text
+    def failing_write(target, path, content):
+        if path == 'main.py':
+            raise OSError('Synthetic second write failure')
+        return original(target, path, content)
+    monkeypatch.setattr(maintenance, 'write_text', failing_write)
+    transaction = ProjectTransaction.begin(target, [])
+    token = active_transaction.set(str(transaction.journal))
+    try:
+        with pytest.raises(maintenance.PatchSetFailure):
+            tools.patch_set([patch(), {'path': 'main.py',
+                'sha256': digest(target.file('main.py').read_text()),
+                'edits': [{'old': 'print(add(2, 3))', 'new': 'print(add(3, 2))'}]}])
+    finally:
+        active_transaction.reset(token)
+        assert transaction.finish()['state'] == 'rolled_back'
+    assert 'return a - b' in target.file('arithmetic.py').read_text()
+
+
+@pytest.mark.asyncio
+async def test_grouped_read_over_budget_does_not_grant_read_versions(tmp_path):
+    target = project(tmp_path)
+    target.file('huge.py').write_text(('X = ' + repr('a' * 900) + '\n') * 100)
+    payload, transaction = approved_payload(target)
+    provider = ScriptedProvider([{'type': 'read_many', 'reads': [{'path': 'huge.py'}] * 8},
+        {'type': 'arbitrate', 'reason': 'Inspect smaller pages'}])
+    bus = MessageBus(tmp_path / 'logs', auth=None)
+    brain = PythonBrain('python', bus, work_dir=Path(target.root), llm_provider=provider)
+    try:
+        with brain.execution_scope(payload):
+            result = await maintain(brain, payload, diagnose=AsyncMock(return_value={'status': 'failed'}), verify=AsyncMock())
+        assert result['maintenance']['runtime_state']['reads']['total'] == 0
+        context = json.loads(provider.calls[1][1]['content'])
+        assert 'no pages supplied' in context['observations'][-1]['result']
+    finally:
+        transaction.finish()
+        await bus.close()
+
+
+@pytest.mark.asyncio
+async def test_unchanged_failed_verification_stops_without_budget_loop(tmp_path):
+    target = project(tmp_path)
+    payload, transaction = approved_payload(target)
+    provider = ScriptedProvider([{'type': 'verify'}, {'type': 'verify'}])
+    bus = MessageBus(tmp_path / 'logs', auth=None)
+    brain = PythonBrain('python', bus, work_dir=Path(target.root), llm_provider=provider)
+    try:
+        with brain.execution_scope(payload):
+            result = await maintain(brain, payload, diagnose=AsyncMock(return_value={'status': 'failed'}),
+                verify=AsyncMock(return_value={'success': False, 'verification': {'verdict': 'failed'}}))
+        assert result['maintenance_status'] == 'no_progress'
+        assert len(provider.calls) == 2
+    finally:
+        transaction.finish()
+        await bus.close()
+
+
+@pytest.mark.asyncio
+async def test_small_review_assembles_pinned_sources_without_read_round_trips():
+    calls = []
+    class Reviewing:
+        async def chat_complete(self, **kwargs):
+            calls.append(kwargs)
+            assert kwargs['tool_schema']['name'] == 'acceptance_review_decision'
+            context = json.loads(kwargs['messages'][1]['content'])
+            assert context['observations'][0]['assembled_sources']['main.py'] == 'print(6)'
+            assert set(context['inspected_paths']) == {'main.py', 'test_main.py'}
+            return json.dumps({'decision': 'needs_evidence', 'contradictions': [],
+                'missing_evidence': [{'criterion_id': '0', 'kind': 'executed_assertion',
+                    'path': None, 'source_revision': 'current', 'request': 'CLI assertion absent'}], 'coverage': []})
+    result = await review_semantics(Reviewing(), request='Repair', contracts=['Print six'],
+        sources={'main.py': 'print(6)', 'test_main.py': 'assert True'},
+        tests={'status': 'passed', 'passed_cases': ['test_main.py::test_ok']}, progressive=True)
+    assert len(calls) == 1
+    assert result.status == 'inconclusive'
+    assert result.details['repairable_evidence_gap'] is True
 
 
 def test_progressive_reader_handles_large_projects_without_source_dump(tmp_path):
@@ -214,7 +417,7 @@ async def test_flattened_review_action_is_rejected_then_corrected_not_executed()
                 'criterion_id': '0', 'tests': ['test_main.py::test_ok'], 'runtime': [],
                 'sources': ['main.py', 'test_main.py'], 'reason': 'Observed executed assertion'}]})
     result = await review_semantics(Reviewing(), request='Repair', contracts=['Print six'],
-        sources={'main.py': 'print(6)', 'test_main.py': 'assert True'},
+        sources={'main.py': 'print(6)', 'test_main.py': 'assert True', 'large.py': '# padding\n' * 6000},
         tests={'status': 'passed', 'passed_cases': ['test_main.py::test_ok']}, progressive=True)
     assert result.status == 'passed'
     assert len(calls) == 4
@@ -226,8 +429,7 @@ async def test_flattened_review_action_is_rejected_then_corrected_not_executed()
 async def test_runtime_diagnostic_survives_last_four_observations_and_notebook(tmp_path):
     target = project(tmp_path)
     payload, transaction = approved_payload(target)
-    provider = ScriptedProvider([{'type': 'diagnose'}] +
-        [{'type': 'read', 'path': 'arithmetic.py'} for _ in range(6)] +
+    provider = ScriptedProvider([{'type': 'read', 'path': 'arithmetic.py'} for _ in range(6)] +
         [{'type': 'state_read', 'section': 'diagnostics'},
          {'type': 'arbitrate', 'reason': 'Need project environment'}])
     bus = MessageBus(tmp_path / 'logs', auth=None)
@@ -238,7 +440,7 @@ async def test_runtime_diagnostic_survives_last_four_observations_and_notebook(t
                 'status': 'inconclusive', 'reason': 'Project interpreter absent'}), verify=AsyncMock())
         context = json.loads(provider.calls[-2][1]['content'])
         assert all(item.get('action') != 'diagnose' for item in context['observations'])
-        assert context['runtime_state']['diagnostics'][0]['observation_id'] == 'observation-0'
+        assert context['runtime_state']['diagnostics'][0]['observation_id'] == 'observation-initial'
         assert context['runtime_state']['patching_allowed'] is False
         assert context['runtime_state']['blockers'][0]['reason'] == 'Project interpreter absent'
         assert context['runtime_state']['reads']['items'][0]['complete'] is True
@@ -267,7 +469,7 @@ async def test_unsupported_pass_becomes_actionable_missing_evidence_never_succes
     assert result.status == 'inconclusive'
     assert result.details['repairable_evidence_gap'] is True
     assert result.details['requires_arbitration'] is False
-    assert 'CLI prints six' in result.details['review']['missing_evidence'][0]
+    assert 'CLI prints six' in result.details['review']['missing_evidence'][0]['request']
     assert result.details['review']['rejected_review']['decision'] == 'pass'
 
 
@@ -277,8 +479,6 @@ async def test_reviewer_decision_phase_keeps_executed_evidence_requirements():
     class Reviewing:
         async def chat_complete(self, **kwargs):
             seen.append(kwargs['tool_schema'])
-            if len(seen) <= 2:
-                return json.dumps({'action': {'type': 'read', 'path': ['main.py', 'test_main.py'][len(seen) - 1]}})
             assert seen[-1]['name'] == 'acceptance_review_decision'
             assert 'action' not in seen[-1]['parameters']['properties']
             return json.dumps({'decision': 'pass', 'contradictions': [], 'coverage': [{
@@ -288,7 +488,7 @@ async def test_reviewer_decision_phase_keeps_executed_evidence_requirements():
         sources={'main.py': 'pass', 'test_main.py': 'assert True'},
         tests={'status': 'passed', 'passed_cases': ['test_main.py::test_ok']}, progressive=True)
     assert result.status == 'inconclusive'
-    assert len(seen) == 5  # two reads, then three rejected fabricated verdicts
+    assert len(seen) == 3  # assembled sources, then three rejected fabricated verdicts
     assert 'invalid output' in result.details['reason']
 
 
@@ -300,7 +500,7 @@ async def test_reviewer_stops_repeated_pages_instead_of_spending_whole_budget():
             calls.append(kwargs)
             return json.dumps({'action': {'type': 'read', 'path': 'main.py', 'start': 1, 'count': 120}})
     result = await review_semantics(Repeating(), request='Repair', contracts=['Works'],
-        sources={'main.py': 'pass', 'test_main.py': 'assert True'},
+        sources={'main.py': 'pass', 'test_main.py': 'assert True', 'large.py': '# padding\n' * 6000},
         tests={'status': 'passed', 'passed_cases': ['test_main.py::test_ok']}, progressive=True)
     assert result.status == 'inconclusive'
     assert len(calls) == 6  # one page + two repeats, then at most three final-verdict corrections
@@ -317,7 +517,7 @@ async def test_three_invalid_action_shapes_stop_without_writes(tmp_path):
     brain = PythonBrain('python', bus, work_dir=Path(target.root), llm_provider=provider)
     try:
         with brain.execution_scope(payload):
-            result = await maintain(brain, payload, diagnose=AsyncMock(), verify=AsyncMock())
+            result = await maintain(brain, payload, diagnose=AsyncMock(return_value={'status': 'failed'}), verify=AsyncMock())
         assert result['maintenance_status'] == 'protocol_error'
         assert len(provider.calls) == 3
         assert result['maintenance']['changed_files'] == []
@@ -354,7 +554,8 @@ async def test_loop_cannot_claim_success_or_weaken_tests_and_failure_rolls_back(
     bus = MessageBus(tmp_path / 'logs', auth=None)
     brain = PythonBrain('python', bus, work_dir=Path(target.root), llm_provider=provider)
     with brain.execution_scope(payload):
-        result = await maintain(brain, payload, diagnose=AsyncMock(return_value={'status': 'failed'}), verify=AsyncMock())
+        result = await maintain(brain, payload, diagnose=AsyncMock(return_value={'status': 'failed'}),
+            verify=AsyncMock(return_value={'success': False, 'verification': {'verdict': 'failed'}}))
     assert result['success'] is False
     assert result['maintenance_status'] == 'requires_arbitration'
     assert transaction.finish()['state'] == 'rolled_back'
@@ -383,7 +584,7 @@ async def test_progressive_reviewer_cannot_cite_unread_sources():
         'coverage': [{'criterion_id': '0', 'tests': ['test_a.py::test_a'],
                       'sources': ['a.py'], 'reason': 'Trust me'}]})
     result = await review_semantics(provider, request='Correct arithmetic', contracts=['Correct arithmetic'],
-        sources={'a.py': 'A=1', 'test_a.py': 'assert True'},
+        sources={'a.py': 'A=1', 'test_a.py': 'assert True', 'large.py': '# padding\n' * 6000},
         tests={'status': 'passed', 'passed_cases': ['test_a.py::test_a']}, progressive=True)
     assert result.status == 'inconclusive'
 

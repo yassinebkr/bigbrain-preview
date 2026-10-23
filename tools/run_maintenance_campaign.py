@@ -15,9 +15,23 @@ import sysconfig
 import tempfile
 import time
 import venv
+from dataclasses import asdict
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+
+
+def recorded_tokens(ledger):
+    """Only reported per-call records count; missing usage is explicitly unknown."""
+    return sum(record['total_tokens'] for call in ledger for record in call.get('usage_records', []))
+
+
+def load_frozen_contracts(path):
+    contracts = json.loads(Path(path).read_text())
+    if (not isinstance(contracts, list) or not 1 <= len(contracts) <= 20
+            or not all(isinstance(item, str) and item.strip() for item in contracts)):
+        raise ValueError('Frozen contracts must contain 1..20 nonempty criteria')
+    return contracts
 
 
 def fixture(case):
@@ -36,12 +50,12 @@ def fixture(case):
     return files, request
 
 
-async def run_case(case, workflow, provider, scratch, *, approve_gcode_conflicts=False):
+async def run_case(case, workflow, provider, scratch, *, approve_gcode_conflicts=False, frozen_contracts=None):
     from bigbrain.brains.python_brain import PythonBrain
     from bigbrain.bus.bus import MessageBus
     from bigbrain.bus.message import BusMessage, MessageType
     from bigbrain.execution_target import ExecutionTarget
-    from bigbrain.orchestrator.orchestrator import WorkspaceOrchestrator, TaskPlan
+    from bigbrain.orchestrator.orchestrator import WorkspaceOrchestrator, TaskPlan, SubTask
     from bigbrain.project_inspection import digest
     from bigbrain.project_transaction import ProjectTransaction
     from bigbrain.verification.evidence import default_repository
@@ -121,7 +135,17 @@ async def run_case(case, workflow, provider, scratch, *, approve_gcode_conflicts
                      'test_changes': decisions, 'session_id': 'campaign'})
         orchestrator = WorkspaceOrchestrator('default', bus, llm_provider=provider)
         plan = TaskPlan(f'campaign-{case}-{workflow}', original_task)
-        if workflow == 'maintenance':
+        if frozen_contracts is not None:
+            if workflow != 'maintenance':
+                raise ValueError('Frozen maintenance acceptance is not a creation-DAG contract')
+            # Deliberately isolate maintenance from contract generation. This is
+            # a preapproved fixture, not evidence of live UI/planner approval.
+            contracts = list(frozen_contracts)
+            subtasks = [SubTask(id='frozen-maintenance', description=request, brain_target='python_brain',
+                payload={'type': 'maintain_project', 'project_name': case, 'user_request': request, 'entry_point': 'main.py',
+                    'deliverable_type': 'python', 'executable': True,
+                    '_maintenance_manifest_sha': digest((directory / '.project.json').read_text())})]
+        elif workflow == 'maintenance':
             subtasks = await orchestrator._plan_maintenance(plan, request, 'python')
             contracts = plan.project_spec.acceptance_contracts
         else:
@@ -130,12 +154,14 @@ async def run_case(case, workflow, provider, scratch, *, approve_gcode_conflicts
         spec = build_proposal_spec(request, contracts)
         spec.metadata['business_criteria'] = contracts
         spec.metadata['maintenance'] = {'test_changes': decisions}
+        spec.metadata['execution_target'] = target.public()
         repo.save_spec(spec)
         approved = repo.approve_spec(spec.design_id, plan_id=plan.id, by='synthetic-fixture-harness')
         paths = [s.payload['file_path'] for s in subtasks if s.payload.get('file_path')]
         transaction = ProjectTransaction.begin(target, paths)
         for subtask in subtasks:
             payload = {**subtask.payload, '_execution_target': target.to_payload(), '_transaction': str(transaction.journal),
+                'session_id': original_task.payload['session_id'], '_plan_id': plan.id, '_subtask_id': subtask.id,
                 'contract_revision': {'design_id': approved.design_id, 'revision': approved.revision},
                 'business_contracts': contracts, 'acceptance_contracts': contracts}
             result = await brain.handle_task(BusMessage(type=MessageType.TASK, source='campaign', target='python', payload=payload))
@@ -176,19 +202,30 @@ async def run_case(case, workflow, provider, scratch, *, approve_gcode_conflicts
 
 
 async def main(args):
+    frozen_contracts = load_frozen_contracts(args.contract_file) if getattr(args, 'contract_file', None) else None
+    if frozen_contracts is not None and (args.case == 'all' or args.compare):
+        raise ValueError('A frozen contract requires one maintenance case, no comparison')
     from dotenv import load_dotenv
     load_dotenv(ROOT / '.env')
     load_dotenv(ROOT / 'data/provider_keys.env')
+    if args.model == 'codex-chatgpt':
+        os.environ['CODEX_CHATGPT_MODEL'] = args.native_model
+        os.environ['BIGBRAIN_CODEX_EFFORT'] = args.reasoning
     from bigbrain.auth.registry import build_provider
     from bigbrain.llm.model_registry import DEFAULT_CODE_MODEL_KEY
-    provider = build_provider(args.model or DEFAULT_CODE_MODEL_KEY)
     scratch = Path(tempfile.mkdtemp(prefix='bigbrain-maintenance-campaign-'))
+    # Session stores bind their root during provider construction, before the
+    # per-case directories exist. Isolate them here, not after the first call.
+    for key in ('SESSIONS_DIR', 'MEMORY_DIR', 'ATTACHMENTS_DIR', 'EVIDENCE_ROOT'):
+        os.environ['BIGBRAIN_' + key] = str(scratch / key.lower())
+    os.environ['BIGBRAIN_SOUL_FILE'] = str(scratch / 'soul.json')
+    provider = build_provider(args.model or DEFAULT_CODE_MODEL_KEY)
     print('Evidence directory:', scratch, flush=True)
     entry = getattr(provider, 'entry', None)
     (scratch / 'provider-profile.json').write_text(json.dumps({
         'registry_key': getattr(provider, 'registry_key', None),
         'model': getattr(entry, 'model_id', None),
-        'reasoning_effort': getattr(entry, 'reasoning_effort_default', None),
+        'reasoning_effort': getattr(provider, 'reasoning_effort', getattr(entry, 'reasoning_effort_default', None)),
         'reasoning_timeout_seconds': getattr(provider, 'reasoning_timeout_seconds', 0),
     }, indent=2))
     import hashlib
@@ -199,18 +236,50 @@ async def main(args):
     replies = scratch / 'model-calls'
     replies.mkdir()
     call_number = 0
+    ledger = []
+    from bigbrain.llm.usage import get_tracker
+    from bigbrain.llm.conversation import current_conversation
     async def recorded_chat(messages=None, **kwargs):
         nonlocal call_number
+        if (call_number >= args.max_calls or recorded_tokens(ledger) >= args.max_reported_tokens
+                or any(r.get('usage_state') == 'unknown' for r in ledger)):
+            raise RuntimeError('Campaign budget reached; no automatic retry')
         call_number += 1
         number = call_number
+        schema = kwargs.get('tool_schema') or {}
+        phase = ('review' if schema.get('name', '').startswith('acceptance_review') else
+                 'worker' if schema.get('name') == 'project_maintenance_step' else 'planning')
+        row = {'number': number, 'phase': phase, 'scope': current_conversation.get(), 'state': 'pending'}
+        ledger.append(row)
+        (scratch / 'calls.json').write_text(json.dumps(ledger, indent=2))
+        tracker = get_tracker()
+        before_count, started_call = len(tracker._records), time.monotonic()
+        (replies / f'{number:03}-request.json').write_text(json.dumps({
+            'messages': messages, 'tool_schema': kwargs.get('tool_schema'),
+            'response_format': kwargs.get('response_format')}, ensure_ascii=False))
         try:
             response = await original_chat(messages=messages, **kwargs)
-        except ValueError as exc:
+            row['state'] = 'completed'
+        except BaseException as exc:
+            row.update(state='failed', error_class=type(exc).__name__)
             # Protocol exceptions contain runtime-authored diagnostics only;
             # keep them private to distinguish malformed output from API errors.
             (replies / f'{number:03}-error.json').write_text(json.dumps({
-                'type': 'ValueError', 'reason': str(exc)[:1000]}))
+                'type': type(exc).__name__,
+                'reason': str(exc)[:2000] if isinstance(exc, (ValueError, RuntimeError)) else 'Provider/transport call failed'}))
             raise
+        finally:
+            row['seconds'] = round(time.monotonic() - started_call, 3)
+            row['usage_records'] = [asdict(record) for record in tracker._records[before_count:]]
+            row['usage_state'] = 'reported' if row['usage_records'] else 'unknown'
+            sessions = getattr(provider, '_conversations', None)
+            if sessions is not None:
+                row['bindings'] = [{key: value.get(key) for key in ('thread_id', 'last_request',
+                    'compactions', 'usage_incomplete', 'compaction_usage_unknown')} for value in sessions.loaded.values()]
+            (scratch / 'calls.json').write_text(json.dumps(ledger, indent=2))
+            print(json.dumps({'call': number, 'phase': phase, 'state': row['state'],
+                'seconds': row['seconds'], 'reported_tokens': recorded_tokens(ledger),
+                'usage_state': row['usage_state']}), flush=True)
         # Private local experiment evidence, not provider headers or secrets.
         (replies / f'{number:03}.json').write_text(json.dumps({'messages': messages,
             'response_format': kwargs.get('response_format'), 'tool_schema': kwargs.get('tool_schema'),
@@ -218,13 +287,34 @@ async def main(args):
         return response
     provider.chat_complete = recorded_chat
     cases = ['local', 'cross-module', 'contradiction', 'missing-environment', 'large'] if args.case == 'all' else [args.case]
+    campaign = {'status': 'running', 'results': [], 'limits': {'calls': args.max_calls,
+        'reported_tokens': args.max_reported_tokens, 'seconds': args.timeout,
+        'token_limit_kind': 'soft; checked before next call, unknown usage is not zero'}}
+    started = time.monotonic()
     try:
-        for case in cases:
-            for workflow in (['legacy', 'maintenance'] if args.compare else ['maintenance']):
-                await run_case(case, workflow, provider, scratch, approve_gcode_conflicts=args.approve_gcode_conflicts)
+        async def execute():
+            for case in cases:
+                for workflow in (['legacy', 'maintenance'] if args.compare else ['maintenance']):
+                    campaign['results'].append(await run_case(case, workflow, provider, scratch,
+                        approve_gcode_conflicts=args.approve_gcode_conflicts, frozen_contracts=frozen_contracts))
+        await asyncio.wait_for(execute(), timeout=args.timeout)
+        campaign['status'] = 'completed'
+        campaign['all_delivered'] = bool(campaign['results']) and all(r.get('success') for r in campaign['results'])
+    except Exception as exc:
+        campaign.update(status='interrupted', error_class=type(exc).__name__)
     finally:
-        if getattr(provider, '_client', None):
-            await provider._client.aclose()
+        try:
+            if hasattr(provider, 'aclose'):
+                await asyncio.wait_for(provider.aclose(), timeout=10)
+            if getattr(provider, '_client', None):
+                await asyncio.wait_for(provider._client.aclose(), timeout=10)
+        except Exception as exc:
+            campaign.update(status='shutdown_failed', shutdown_error_class=type(exc).__name__)
+        finally:
+            campaign.update(seconds=round(time.monotonic() - started, 3), reported_tokens=recorded_tokens(ledger),
+                unknown_usage_calls=[r['number'] for r in ledger if r.get('usage_state') == 'unknown'],
+                calls_by_phase={phase: sum(r['phase'] == phase for r in ledger) for phase in ('planning', 'worker', 'review')})
+            (scratch / 'campaign-result.json').write_text(json.dumps(campaign, indent=2))
 
 
 if __name__ == '__main__':
@@ -235,7 +325,15 @@ if __name__ == '__main__':
     parser.add_argument('--approve-gcode-conflicts', action='store_true',
                         help='Requires explicit user approval for the documented test semantics on the copy')
     parser.add_argument('--model')
+    parser.add_argument('--native-model', default='gpt-6.1-sol')
+    parser.add_argument('--reasoning', choices=['low', 'medium', 'high'], default='low')
+    parser.add_argument('--max-calls', type=int, default=24)
+    parser.add_argument('--max-reported-tokens', type=int, default=300000)
+    parser.add_argument('--timeout', type=int, default=620)
+    parser.add_argument('--contract-file', type=Path, help='Frozen criteria JSON; skips model contract drafting for one maintenance fixture')
     args = parser.parse_args()
     if not args.live:
         parser.error('--live is required: this campaign makes paid model calls')
+    if min(args.max_calls, args.max_reported_tokens, args.timeout) <= 0:
+        parser.error('Campaign budgets must be positive')
     asyncio.run(main(args))

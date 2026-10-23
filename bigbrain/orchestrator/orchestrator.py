@@ -15,6 +15,7 @@ from ..bus.bus import MessageBus
 from ..bus.message import BusMessage, MessageType, Priority
 from ..bus.participant import BusParticipant
 from ..bus.results import result_data
+from ..llm.conversation import scoped_conversation
 from .architect import ArchitectPhase, ProjectSpec
 from ..execution_target import ExecutionTarget, FILE_TASKS, resolve_target
 from .execution_modes import BrainExecutionConfig, ExecutionMode
@@ -579,6 +580,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             )
             await self._cancel_task(plan.id, "soft")
     
+    @scoped_conversation('planner', message_argument='message')
     async def _create_task_plan(self, message: BusMessage) -> TaskPlan:
         plan = await self._create_unbound_task_plan(message)
         try:

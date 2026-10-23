@@ -5,6 +5,7 @@ real ChatGPT account, no paid calls. Mirrors shopifast's provider tests.
 """
 
 import asyncio
+import json
 
 import pytest
 
@@ -14,6 +15,47 @@ from bigbrain.llm.codex_provider import (
     codex_auth_status,
     codex_start_login,
 )
+from bigbrain.llm.codex_provider import CodexJsonRpcClient, CodexUnavailable, RPC_FRAME_LIMIT
+
+
+@pytest.mark.asyncio
+async def test_native_large_source_notification_is_not_limited_to_64k(monkeypatch):
+    from types import SimpleNamespace
+    captured = {}
+    async def spawn(*args, **kwargs):
+        captured.update(kwargs)
+        stream = asyncio.StreamReader(limit=kwargs['limit'])
+        return SimpleNamespace(stdout=stream, returncode=0)
+    monkeypatch.setattr(asyncio, 'create_subprocess_exec', spawn)
+    monkeypatch.setenv('BIGBRAIN_CODEX_BINARY', '/synthetic/codex')
+    client = await CodexJsonRpcClient.start()
+    seen = []
+    client.on_notification(seen.append)
+    frame = {'method': 'item/completed', 'params': {'item': {'text': 'source' * 40000}}}
+    client.proc.stdout.feed_data(json.dumps(frame).encode() + b'\n')
+    client.proc.stdout.feed_eof()
+    await asyncio.wait_for(client._reader_task, 1)
+    assert captured['limit'] == RPC_FRAME_LIMIT
+    assert seen[0] == frame
+    assert seen[-1]['method'] == 'bigbrain/transport/error'
+
+
+@pytest.mark.asyncio
+async def test_reader_failure_notifies_active_turns_and_pending_requests():
+    from types import SimpleNamespace
+    stream = asyncio.StreamReader(limit=64)
+    client = CodexJsonRpcClient(SimpleNamespace(stdout=stream))
+    seen = []
+    client.on_notification(seen.append)
+    pending = asyncio.get_running_loop().create_future()
+    client._pending[1] = pending
+    stream.feed_data(b'x' * 1000 + b'\n')
+    stream.feed_eof()
+    await asyncio.wait_for(client._read_loop(), 1)
+    with pytest.raises(CodexUnavailable, match='ValueError'):
+        await pending
+    assert client._closed
+    assert seen[-1]['method'] == 'bigbrain/transport/error'
 from bigbrain.llm.usage import UsageRecord, UsageTracker, set_tracker_for_test
 
 
@@ -40,7 +82,7 @@ class FakeRpc:
             loop = asyncio.get_event_loop()
             for message in self.notifications:
                 loop.call_soon(self._emit, message)
-            return {"ok": True}
+            return {"turn": {"id": "turn-1"}}
         if method == "turn/interrupt":
             return {"ok": True}
         raise RuntimeError(f"unexpected method {method}")
@@ -150,3 +192,94 @@ async def test_ephemeral_thread_per_request(clean_state):
     thread_starts = [p for m, p in clean_state.calls if m == "thread/start"]
     assert len(thread_starts) == 2
     assert all(p.get("ephemeral") is True for p in thread_starts)
+
+
+@pytest.mark.asyncio
+async def test_current_protocol_schema_and_usage(clean_state, monkeypatch):
+    monkeypatch.setenv('CODEX_CHATGPT_MODEL', 'gpt-6.1-sol')
+    clean_state.notifications = [
+        {'method': 'item/completed', 'params': {'threadId': 'another-thread',
+            'item': {'type': 'agentMessage', 'text': 'wrong'}}},
+        {'method': 'item/started', 'params': {'threadId': 'thread-1',
+            'item': {'type': 'agentMessage', 'text': 'duplicate'}}},
+        {'method': 'item/completed', 'params': {'threadId': 'thread-1',
+            'item': {'type': 'agentMessage', 'text': '{"ok":true}'}}},
+        {'method': 'thread/tokenUsage/updated', 'params': {'threadId': 'thread-1',
+            'tokenUsage': {'total': {'inputTokens': 10, 'outputTokens': 4,
+                'cachedInputTokens': 3, 'reasoningOutputTokens': 2, 'totalTokens': 14}}}},
+        {'method': 'turn/completed', 'params': {'threadId': 'thread-1', 'turn': {'status': 'completed'}}},
+    ]
+    provider = CodexProvider()
+    schema = {'type': 'object', 'properties': {'ok': {'type': 'boolean'}}, 'required': ['ok'], 'additionalProperties': False}
+    text = await provider.chat_complete([{'role': 'user', 'content': 'hi'}],
+        tool_schema={'name': 'test', 'parameters': schema})
+    assert json.loads(text) == {'ok': True}
+    start = next(p for m, p in clean_state.calls if m == 'thread/start')
+    turn = next(p for m, p in clean_state.calls if m == 'turn/start')
+    assert start['model'] == 'gpt-6.1-sol'
+    assert start['allowProviderModelFallback'] is False
+    assert turn['outputSchema'] == schema
+    assert turn['input'][0]['type'] == 'text'
+    assert start['permissions'] == 'bigbrain-inference'
+    assert start['config']['default_permissions'] == start['permissions']
+    assert start['config']['permissions.bigbrain-inference']['filesystem'][':root'] == 'deny'
+    from bigbrain.llm.usage import get_tracker
+    assert get_tracker().totals()['total_tokens'] == 14
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('notification', [
+    {'method': 'turn/completed', 'params': {'turn': {'status': 'failed', 'error': {'message': 'denied'}}}},
+    {'method': 'item/started', 'params': {'item': {'type': 'commandExecution'}}},
+])
+async def test_failed_or_autonomous_turn_is_not_success(clean_state, notification):
+    clean_state.notifications = [notification]
+    with pytest.raises(RuntimeError):
+        await CodexProvider().run_turn([{'role': 'user', 'content': 'hi'}])
+
+
+@pytest.mark.asyncio
+async def test_cancel_interrupts_owned_turn(clean_state):
+    task = asyncio.create_task(CodexProvider().run_turn([{'role': 'user', 'content': 'hi'}]))
+    while not any(m == 'turn/start' for m, _ in clean_state.calls):
+        await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert ('turn/interrupt', {'threadId': 'thread-1', 'turnId': 'turn-1'}) in clean_state.calls
+
+
+@pytest.mark.asyncio
+async def test_optional_action_fields_round_trip(clean_state):
+    import copy
+    import json
+    from bigbrain.maintenance import action_schema
+    from bigbrain.llm.codex_provider import _strict_schema
+    schema = action_schema()['parameters']
+    original = copy.deepcopy(schema)
+    strict = _strict_schema(schema)
+    action = {key: None for key in schema['properties']['action']['properties']}
+    action['type'] = 'state_read'
+    clean_state.notifications = [
+        {'method': 'item/completed', 'params': {'item': {'type': 'agentMessage',
+            'text': json.dumps({'action': action, 'notebook': 'inspect'})}}},
+        {'method': 'turn/completed', 'params': {'turn': {'status': 'completed'}}},
+    ]
+    result = await CodexProvider().chat_complete([{'role': 'user', 'content': 'inspect'}],
+        tool_schema=action_schema())
+    assert json.loads(result) == {'action': {'type': 'state_read'}, 'notebook': 'inspect'}
+    assert schema == original
+    encoded = strict['properties']['action']
+    assert set(encoded['required']) == set(encoded['properties'])
+    assert encoded['properties']['count']['anyOf'][0]['maximum'] == 200
+    assert encoded['properties']['type']['enum'] == original['properties']['action']['properties']['type']['enum']
+
+
+def test_strict_schema_preserves_required_null_and_rejects_open_objects():
+    from bigbrain.llm.codex_provider import _strict_schema, _restore_optional_fields
+    schema = {'type': 'object', 'properties': {'value': {'type': ['string', 'null']},
+        'optional': {'type': 'string'}}, 'required': ['value'], 'additionalProperties': False}
+    assert _restore_optional_fields({'value': None, 'optional': None}, schema) == {'value': None}
+    assert _strict_schema(schema)['properties']['value'] == schema['properties']['value']
+    with pytest.raises(ValueError, match='closed object'):
+        _strict_schema({'type': 'object', 'additionalProperties': True})

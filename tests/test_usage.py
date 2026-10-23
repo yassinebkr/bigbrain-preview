@@ -109,3 +109,14 @@ def test_budget_from_env(monkeypatch):
     monkeypatch.setenv("BIGBRAIN_BUDGET_FRONT", "42")
     tracker = UsageTracker()
     assert tracker._role_budgets["front"] == 42
+
+
+def test_subscription_usage_retains_cache_but_does_not_invent_api_cost():
+    register_price('subscription-model', 2, 10)
+    record = UsageRecord.from_openai_usage({'prompt_tokens': 100, 'completion_tokens': 5,
+        'prompt_tokens_details': {'cached_tokens': 80}}, model_id='subscription-model', provider='codex')
+    tracker = UsageTracker()
+    tracker.record(record)
+    total = tracker.totals()
+    assert total['by_model']['subscription-model']['cached_input_tokens'] == 80
+    assert total['cost_usd'] is None

@@ -11,6 +11,7 @@ class MaintenanceState:
         self.source_epoch = 0
         self.reproduced = False
         self.environment = None
+        self.phase = 'diagnosing'
 
     def read(self, result, observation_id):
         path, version = result['path'], result['sha256']
@@ -106,7 +107,7 @@ class MaintenanceState:
         gaps = review.get('missing_evidence')
         gaps = gaps if isinstance(gaps, list) else []
         return {'stage': failure.get('stage'), 'reason': str(details.get('reason', ''))[:400],
-                'missing_evidence': [str(gap)[:400] for gap in gaps[:3]]}
+                'missing_evidence': [gap if isinstance(gap, dict) else str(gap)[:400] for gap in gaps[:3]]}
 
     def _reads(self):
         rows = []
@@ -139,6 +140,7 @@ class MaintenanceState:
             return [{**row, 'current_source_revision': row.get('source_epoch') == self.source_epoch}
                     for row in rows]
         return {'authority': 'runtime tool results, not model notebook', 'source_epoch': self.source_epoch,
+                'phase': self.phase,
                 'patching_allowed': self.reproduced,
                 'patching_rule': 'A real passed/failed diagnostic is required; missing environment is not reproduction',
                 'path_rule': 'All tool paths are relative to the bound project; use inventory paths exactly',

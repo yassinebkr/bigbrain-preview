@@ -63,7 +63,8 @@ class UsageRecord:
             output_tokens=output_tokens,
             reasoning_output_tokens=int(completion_details.get("reasoning_tokens") or 0),
             total_tokens=int(usage.get("total_tokens") or (input_tokens + output_tokens)),
-            cost_usd=estimate_cost_usd(model_id, input_tokens, output_tokens),
+            # Subscription credits are not priced as API-key tokens.
+            cost_usd=None if provider == 'codex' else estimate_cost_usd(model_id, input_tokens, output_tokens),
         )
 
     @property
@@ -172,9 +173,13 @@ class UsageTracker:
         for r in records:
             slot = by_model.setdefault(
                 r.model_id,
-                {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "calls": 0},
+                {"input_tokens": 0, "cached_input_tokens": 0, "cache_write_input_tokens": 0,
+                 "output_tokens": 0, "reasoning_output_tokens": 0, "total_tokens": 0, "calls": 0},
             )
             slot["input_tokens"] += r.input_tokens
+            slot['cached_input_tokens'] += r.cached_input_tokens
+            slot['cache_write_input_tokens'] += r.cache_write_input_tokens
+            slot['reasoning_output_tokens'] += r.reasoning_output_tokens
             slot["output_tokens"] += r.output_tokens
             slot["total_tokens"] += r.total_tokens
             slot["calls"] += 1
@@ -182,7 +187,7 @@ class UsageTracker:
         return {
             "calls": len(records),
             "total_tokens": sum(r.total_tokens for r in records),
-            "cost_usd": cost if records else None,
+            "cost_usd": cost if records and all(r.cost_usd is not None for r in records) else None,
             "by_model": by_model,
         }
 

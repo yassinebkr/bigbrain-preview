@@ -2,6 +2,7 @@
 
 import asyncio
 from contextvars import ContextVar
+from ..llm.conversation import scoped_conversation
 import time
 import uuid
 from typing import Any, Dict, List, Optional
@@ -256,6 +257,7 @@ class FrontBrain:
         import asyncio
         self._soul_task = asyncio.create_task(self._consolidate_soul())
 
+    @scoped_conversation('soul', independent=True)
     async def _consolidate_soul(self) -> None:
         """ONE LLM call distilling recent turns into the updated soul."""
         from ..memory.soul import (SOUL_PROMPT, collect_recent_transcript)
@@ -428,6 +430,7 @@ class FrontBrain:
             self._stream_context.set(False)
             return f"I encountered an error processing your request: {e}"
 
+    @scoped_conversation('front', session_argument='session_id')
     async def _consult_and_respond(self, messages, session_id):
         import asyncio
         import json
@@ -937,6 +940,7 @@ Type 'quit' or 'exit' to stop."""
         
         return None
     
+    @scoped_conversation('result-summary', session_argument='session_id')
     async def _summarize_result(self, raw_outputs: list, session_id: Optional[str] = None) -> str:
         """Use the LLM to turn raw task output into a conversational answer.
         

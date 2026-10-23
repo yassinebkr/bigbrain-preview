@@ -216,6 +216,16 @@ class BaseBrain(BusParticipant, ABC):
         frozen = {p: digest(tools.source(p)) for p in tools.inventory()
                   if protected_test(p) and p not in allowed_tests}
         initial_versions = tools.fingerprints()
+        # Capture before diagnostics or writes; worker-generated baseline literals
+        # never become authoritative preservation evidence.
+        baseline_sources = {p: tools.source(p) for p in initial_versions}
+        if {p: digest(s) for p, s in baseline_sources.items()} != initial_versions:
+            raise ValueError('Project changed while capturing maintenance baseline')
+        import json
+        baseline_artifact = default_repository().put_artifact(
+            json.dumps(baseline_sources, sort_keys=True).encode(),
+            name='maintenance-baseline.json', media_type='application/json')
+        initial_diagnostic = None
 
         def check_tests():
             now = {p: digest(tools.source(p)) for p in tools.inventory()
@@ -224,11 +234,17 @@ class BaseBrain(BusParticipant, ABC):
                 raise ValueError('Unapproved validation source changed during maintenance')
 
         async def diagnose():
+            nonlocal initial_diagnostic
             versions = tools.fingerprints()
             result = await self.maintenance_diagnose(payload)
             if versions != tools.fingerprints():
                 raise ValueError('Project sources changed while diagnostics executed')
             check_tests()
+            if initial_diagnostic is None:
+                artifact = default_repository().put_artifact(json.dumps(result, default=str).encode(),
+                    name='maintenance-initial-diagnostic.json', media_type='application/json')
+                initial_diagnostic = {'artifact_sha256': artifact.sha256,
+                    'status': result.get('status'), 'source_hashes': versions}
             return result
 
         async def verify(selected):
@@ -249,7 +265,13 @@ class BaseBrain(BusParticipant, ABC):
                     'paths': sorted(before)[:100], 'manifest_artifact_sha256': artifact.sha256}
             payload['_maintenance_runtime_evidence'] = {
                 'validation_unchanged': preservation_proof(frozen),
-                'unedited_sources_unchanged': preservation_proof(preserved)}
+                'unedited_sources_unchanged': preservation_proof(preserved),
+                '_baseline': {'sources': baseline_sources,
+                    'source_hashes': initial_versions, 'current_hashes': current,
+                    'artifact_sha256': baseline_artifact.sha256,
+                    'initial_diagnostic': initial_diagnostic,
+                    'revision': digest(json.dumps(initial_versions, sort_keys=True)),
+                    'current_revision': digest(json.dumps(current, sort_keys=True))}}
             result = await self.maintenance_verify(payload, selected)
             check_tests()
             return result
@@ -304,7 +326,9 @@ class BaseBrain(BusParticipant, ABC):
         from ..project_transaction import active_transaction
         transaction_token = active_transaction.set(local.get('_transaction'))
         try:
-            yield local
+            from ..llm.conversation import conversation_scope
+            with conversation_scope(local.get('session_id'), 'worker:' + self.name):
+                yield local
         finally:
             active_transaction.reset(transaction_token)
             self._directory_context.reset(token)

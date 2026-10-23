@@ -218,7 +218,11 @@ raised AttributeError. Transaction rolled back. Evidence:
 shapes now receive bounded schema feedback without executing them or accepting
 their claims; a regression test covers recovery and unread-source protection.
 Final full local gate: 1200 passed / 9 existing warnings (146.33 s).
-The new follow-up is running: `/tmp/bigbrain-maintenance-campaign-6i9ti8lq`.
+The follow-up completed unsuccessfully: `/tmp/bigbrain-maintenance-campaign-6i9ti8lq`.
+It reached the 600 s maintenance budget (627.45 s including planning), with
+18 completed calls / 95072 provider-reported tokens. The patch was rolled back,
+with no transaction conflict or retained source changes. High reasoning did not
+establish delivery on this small case.
 The completed G-code and
 low-reasoning comparisons above predate this runtime-state/high profile; do not
 reuse them as competence evidence for the new configuration.
@@ -227,6 +231,74 @@ Primary contracts: [reasoning](https://docs.mistral.ai/studio/conversations/reas
 [function calling](https://docs.mistral.ai/studio/conversations/function-calling).
 
 ## Completion audit (not a completion claim)
+
+### Codex subscription probe (2026-10-23, not a model competence result)
+
+User requested the same local disposable case with `gpt-6.1-sol` through the
+ChatGPT subscription, then explicitly selected **low**, not high. The installed
+application binary is `/usr/lib/chatgpt/resources/codex` (0.163.0-alpha.10.2);
+it is not on PATH. `login status` and `account/read` confirm ChatGPT authentication;
+`model/list` includes the exact requested model (catalog membership alone is not
+proof of inference access).
+
+The connector needed compatibility work: current text input, structured output
+schemas, named permissions, notification filtering, reported usage, terminal
+failure handling, cancellation and owned-child shutdown. Low is the default;
+no API fallback is allowed. Codex receives an empty inference directory rather
+than the project checkout; BigBrain remains responsible for project tools.
+An autonomous Codex tool-start event invalidates the trial. The corrected
+transport is live-validated on the local case below, not yet on the G-code case
+or all application roles.
+
+The initial campaign `/tmp/bigbrain-maintenance-campaign-ricg2cj5` stopped before
+any completion with a capability-negotiation error hidden by the contract
+drafting fallback (summary: ValueError, zero completed calls). After protocol
+negotiation corrections, both a high probe and low probes failed before model
+output with `failed to load workspace requirements`.
+
+Root cause isolated by comparison with the documented minimal thread: our custom
+permissions profile was declared without `default_permissions`. The standalone
+configuration validator exposes the precise error: `config defines [permissions]
+profiles but does not set default_permissions`; the turn bootstrap masked it as
+a workspace requirements failure. Adding the matching default preserves the
+same restricted profile. A strict `{"ready":true}` live probe then succeeded in
+low reasoning, with no credential reconnection or permission expansion.
+
+The first maintenance retry (`/tmp/bigbrain-maintenance-campaign-gpgb179q`)
+drafted its contract but failed at the action schema: Codex strict output
+requires every property to appear in `required`. The adapter now represents
+originally optional properties with nullable transport slots and removes only
+those absent-value placeholders before dispatch. Original required/nullable
+fields, enums, numeric bounds and closed-object constraints remain intact;
+caller schemas are not mutated. This uses strict structured arguments, not
+native function-call transport, unlike the Mistral/OpenRouter adapters. The
+business runtime and verification gates are unchanged. Private campaign errors
+now retain RuntimeError diagnostics rather than reporting only their class.
+
+The corrected low trial completed successfully in
+`/tmp/bigbrain-maintenance-campaign-b4psdhvh`: **176.98 s / 22 completions /
+219841 reported tokens (216095 input, 3746 output)**. Twelve maintenance actions
+reproduced the defect and minimally patched main.py. The first independent
+review requested missing executable CLI evidence; the worker added a separate
+CLI regression suite and reverified. The project interpreter executed **12
+passing tests**; syntax, compile, run, contracts, tests, source_revision and
+independent semantics all passed. Transaction committed, no conflicts. Only
+main.py, two new regression-test files and the runtime manifest changed; the
+existing test_main.py is byte-for-byte unchanged. No original
+G-code project changed, no API billing fallback used, and no merge performed.
+The fixture approval remains synthetic. This single small case is not broad
+reliability evidence, and does not isolate model quality from transport/profile
+changes. Codex context overhead remains significant; reported tokens are not a
+dollar cost or a measurement of subscription credits. Earlier diagnostic probes
+are not included in this trial's usage count.
+
+Final gate on corrected code: **1206 passed / 9 existing warnings (145.58 s)**;
+13 targeted connector tests included. No UI changes in this follow-up.
+Do not count earlier transport failures as evidence against Sol or claim zero
+subscription consumption from missing usage.
+
+Protocol references: [App Server](https://learn.chatgpt.com/docs/app-server),
+[permission profiles](https://learn.chatgpt.com/docs/permissions).
 
 | Requirement | Authoritative evidence / remaining limit |
 | --- | --- |
@@ -242,6 +314,13 @@ Primary contracts: [reasoning](https://docs.mistral.ai/studio/conversations/reas
 | Automatic recovery of imported legacy metadata | **Not demonstrated by campaign**: fixture metadata supplied explicitly; not interchangeable with the real user workflow |
 
 ## Provider protocol
+
+Codex integration follow-up: stable account/conversation/agent threads, suffix
+inputs, restart/resume, native manual/automatic compaction and usage deltas are
+implemented. Bounded live multi-turn probe passed; final gate 1217 tests passed.
+Details and limits: [Codex conversations](CODEX_CONVERSATIONS.md). The 22-call
+repair campaign above predates this integration. Orchestration redesign remains
+a separate discussion; no new full repair campaign or G-code success claim.
 
 The worker and progressive reviewer use a native single named function call on
 the OpenAI-compatible provider, with no silent text fallback. Exactly one matching
@@ -260,6 +339,17 @@ References: [structured outputs](https://openrouter.ai/docs/guides/features/stru
 
 ## Reproduction
 
+### Orchestration follow-up
+
+See [MAINTENANCE_ORCHESTRATION.md](MAINTENANCE_ORCHESTRATION.md) for automatic
+preflight, explicit states, grouped reads/patches, automatic verification and
+size-bounded independent review. These replace compulsory per-file round trips
+without weakening approval, source integrity, test protection or acceptance.
+The paired tiny-case live result and its cache/latency limits are recorded there.
+The subsequent runtime baseline, structured missing-evidence requests and
+versioned worker event context are implemented and checked offline. They have
+not yet been measured in a new live run or validated on the real G-code copy.
+
 ` .venv/bin/python tools/run_maintenance_campaign.py --live --case all --compare `
 opts into paid model calls on disposable synthetic projects. Without `--live`
 the command refuses to call a provider. `--case gcode` sends a disposable source
@@ -272,3 +362,15 @@ after explicit approval of the two documented test semantic corrections; it does
 not authorize changing the original. That approval was obtained in this thread.
 Missing prices stay unknown; token counts are provider data,
 not estimated from character counts.
+# Validation checkpoint — 23 October 2026
+
+Full offline suite: 1262 passed / 9 existing warnings (170.30 s).
+The pinned disposable candidate passes six executable stages (64 project tests,
+19 subtests), but independent acceptance remains inconclusive. Two bounded
+review-only attempts exhausted their token budget without a verdict. The latest
+attempt used eight Sol 6.1 low calls, 161260 reported tokens (133120 cached).
+Incremental review delivery is confirmed live: only new observations are sent,
+not overlapping snapshots. Original project unchanged; no merge authorized.
+Next: expose remaining review budget and reserve capacity for an explicit final
+evidence-or-gap verdict. Do not weaken criteria or regenerate implementation.
+
