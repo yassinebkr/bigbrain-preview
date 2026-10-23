@@ -14,10 +14,25 @@ guessed number.
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
+from contextvars import ContextVar
 import threading
 import time
 from dataclasses import dataclass, field
 from typing import Optional
+
+_usage_capture = ContextVar('inference_usage_capture', default=None)
+
+
+@contextmanager
+def capture_usage():
+    """Task-local accounting, excluding concurrent conversations' records."""
+    records = []
+    token = _usage_capture.set(records)
+    try:
+        yield records
+    finally:
+        _usage_capture.reset(token)
 
 
 @dataclass
@@ -149,6 +164,9 @@ class UsageTracker:
     def record(self, record: UsageRecord) -> None:
         with self._lock:
             self._records.append(record)
+        captured = _usage_capture.get()
+        if captured is not None:
+            captured.append(record)
 
     def check_budget(self, role: str) -> None:
         """Raise BudgetExceeded if ``role`` is over its daily token budget."""

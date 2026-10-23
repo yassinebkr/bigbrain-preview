@@ -197,6 +197,13 @@ async def review_semantics(provider, *, request, contracts, sources, tests, prog
 
 
 async def _progressive_review(provider, system, context):
+    from ..llm.usage import capture_usage
+    from .review_budget import ReviewBudget
+    with capture_usage() as records:
+        return await _review_with_budget(provider, system, context, ReviewBudget(records))
+
+
+async def _review_with_budget(provider, system, context, budget):
     """Bounded separate acceptance investigation, never a worker completion claim."""
     sources = context['sources']
     names = sorted(sources)
@@ -244,7 +251,9 @@ These baseline pages are runtime-authenticated; worker-authored copies are not a
     event_context = getattr(provider, 'review_event_context', False) is True
     transcript, delivered_observations = [], 0
     for step in range(20):
-        final_only = (decision_errors > 0 or
+        capacity = budget.status(provider)
+        budget_final = capacity['conclude_now']
+        final_only = (budget_final or decision_errors > 0 or
                       (len(fully_read) == len(names) and len(supplied_baselines) == len(baselines))
                       or repeated_pages >= 2 or step == 19)
         schema = _review_format()['json_schema']['schema']
@@ -255,6 +264,7 @@ These baseline pages are runtime-authenticated; worker-authored copies are not a
                       'required': [k for k in schema['required'] if k != 'action']}
             schema['properties']['decision'] = {'type': 'string', 'enum': ['pass', 'needs_evidence', 'needs_arbitration']}
         snapshot = {**compact, 'source_paths': names[:100],
+            'review_budget': capacity,
             'total_sources': len(names), 'notebook': notebook, 'observations': observations[-4:],
             'remaining_actions': 20 - step, 'inspected_paths': sorted(read_paths),
             'next_step_constraint': 'Return the final decision now' if final_only else 'Read only what is missing, then decide'}
@@ -266,6 +276,7 @@ These baseline pages are runtime-authenticated; worker-authored copies are not a
         extra = {}
         if event_context:
             event = snapshot if not transcript else {
+                'review_budget': capacity,
                 'observations': observations[delivered_observations:],
                 'remaining_actions': 20 - step,
                 'next_step_constraint': snapshot['next_step_constraint']}
@@ -279,7 +290,7 @@ These baseline pages are runtime-authenticated; worker-authored copies are not a
             messages = list(transcript)
             delivered_observations = len(observations)
             extra['context_checkpoint'] = snapshot
-        raw = await provider.chat_complete(messages=messages,
+        raw = await budget.call(provider, messages=messages,
             stream=False, max_tokens=4096, temperature=0, tool_schema={
                 'name': 'acceptance_review_decision' if final_only else 'acceptance_review_step',
                 'description': 'Request one source inspection or give the independent acceptance decision',
@@ -313,7 +324,7 @@ These baseline pages are runtime-authenticated; worker-authored copies are not a
             continue
         if parsed.get('action') is None:
             gaps = parsed.get('missing_evidence', [])
-            if (not diagnostic_resolved and context.get('initial_diagnostic') is not None
+            if (not budget_final and not diagnostic_resolved and context.get('initial_diagnostic') is not None
                     and any(isinstance(g, dict) and g.get('kind') == 'diagnostic'
                             and g.get('criterion_id') in {c['id'] for c in context['criteria']}
                             and g.get('source_revision') == (context.get('baseline') or {}).get('current_revision', 'current')
@@ -327,7 +338,7 @@ These baseline pages are runtime-authenticated; worker-authored copies are not a
                          and g.get('criterion_id') in {c['id'] for c in context['criteria']}
                          and g.get('source_revision') == (context.get('baseline') or {}).get('current_revision', 'current')
                          and g['path'] not in supplied_baselines]
-            if available:
+            if available and not budget_final:
                 path = available[0]
                 observations.append({'runtime_baseline': path, 'content': baselines[path][:14000],
                     'truncated': len(baselines[path]) > 14000,
@@ -345,7 +356,8 @@ These baseline pages are runtime-authenticated; worker-authored copies are not a
                 paths = item.get('sources', [])
                 if not isinstance(paths, list) or not paths or not all(isinstance(p, str) and p in read_paths for p in paths):
                     raise ValueError('Reviewer did not inspect cited criterion sources')
-            if not any(_test_path(p) for p in read_paths) or not any(not _test_path(p) for p in read_paths):
+            if parsed.get('decision') == 'pass' and (not any(_test_path(p) for p in read_paths)
+                    or not any(not _test_path(p) for p in read_paths)):
                 raise ValueError('Reviewer must inspect both implementation and actual test assertions')
             if parsed.get('decision') == 'pass':
                 errors, missing = [], []

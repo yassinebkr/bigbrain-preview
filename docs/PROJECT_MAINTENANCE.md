@@ -362,15 +362,30 @@ after explicit approval of the two documented test semantic corrections; it does
 not authorize changing the original. That approval was obtained in this thread.
 Missing prices stay unknown; token counts are provider data,
 not estimated from character counts.
-# Validation checkpoint — 23 October 2026
 
-Full offline suite: 1262 passed / 9 existing warnings (170.30 s).
+## Validation checkpoint — 23 October 2026
+
+Full offline suite after budget reservation: 1269 passed / 9 existing warnings
+(159.08 s); 74 focused maintenance/usage/budget checks passed.
 The pinned disposable candidate passes six executable stages (64 project tests,
 19 subtests), but independent acceptance remains inconclusive. Two bounded
 review-only attempts exhausted their token budget without a verdict. The latest
 attempt used eight Sol 6.1 low calls, 161260 reported tokens (133120 cached).
 Incremental review delivery is confirmed live: only new observations are sent,
 not overlapping snapshots. Original project unchanged; no merge authorized.
-Next: expose remaining review budget and reserve capacity for an explicit final
-evidence-or-gap verdict. Do not weaken criteria or regenerate implementation.
+Review budget reservation is now implemented offline. Each independent review
+captures task-local provider usage, avoiding other conversations' consumption.
+Default local bounds are 20 calls, 150000 reported tokens and 300 seconds;
+an outer campaign can publish tighter remaining limits. Before each call the
+runtime exposes remaining capacity. It forces a decision-only schema when two
+calls remain, 45 seconds remain, usage is unknown, or the remaining tokens are
+below twice a conservative decision allowance (last input + maximum source page
++ output allowance). The allowance is an estimate, not billed usage or a hard
+token ceiling. In-flight calls can overshoot; time is bounded by remaining time.
 
+Budget pressure cannot approve unread tests or weaken criterion coverage. A
+needs-evidence/arbitration verdict can be returned without inspecting every
+source; only a pass requires implementation and actual test assertion inspection.
+Final budget decisions do not trigger automatic baseline/diagnostic fetching.
+Unknown usage triggers conclusion rather than unlimited reads. No paid rerun
+after this change yet; independent candidate acceptance remains unconfirmed.

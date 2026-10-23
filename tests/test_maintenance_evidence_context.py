@@ -27,8 +27,13 @@ async def test_review_transport_does_not_repeat_evidence_in_persistent_history(p
                                       'start': 1, 'count': 1}, 'notebook': 'inspected'})
     replies.append(json.dumps({'decision': 'needs_arbitration', 'contradictions': ['unknown'],
                                'coverage': []}))
+    answers = iter(replies)
+    async def complete(**kwargs):
+        from tests.test_maintenance import recorded_stub_usage
+        recorded_stub_usage()
+        return next(answers)
     provider = SimpleNamespace(review_event_context=persistent,
-                               chat_complete=AsyncMock(side_effect=replies))
+                               chat_complete=AsyncMock(side_effect=complete))
     context = {'sources': {'module.py': ''.join(f'# unique_page_{i}\n' for i in range(1, 4000)),
                            'test_module.py': 'assert "unique_assertion"\n'},
                'baseline_sources': {}, 'request': 'Inspect generic module',
@@ -141,6 +146,8 @@ async def test_available_baseline_is_resolved_inside_review_without_worker_patch
         {'decision': 'needs_evidence', 'coverage': [], 'missing_evidence': [gap('rev')]},
     ])
     async def complete(**kwargs):
+        from tests.test_maintenance import recorded_stub_usage
+        recorded_stub_usage()
         calls.append(json.loads(kwargs['messages'][1]['content']))
         return json.dumps(next(responses))
     context = {'sources': SOURCES, 'baseline_sources': {**SOURCES, 'large.py': '# original\n' * 6000},

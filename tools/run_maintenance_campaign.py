@@ -291,6 +291,10 @@ async def main(args):
         'reported_tokens': args.max_reported_tokens, 'seconds': args.timeout,
         'token_limit_kind': 'soft; checked before next call, unknown usage is not zero'}}
     started = time.monotonic()
+    provider.review_budget_status = lambda: {
+        'calls': args.max_calls - call_number,
+        'tokens': args.max_reported_tokens - recorded_tokens(ledger),
+        'seconds': args.timeout - (time.monotonic() - started)}
     try:
         async def execute():
             for case in cases:

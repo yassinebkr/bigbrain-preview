@@ -39,6 +39,13 @@ def patch(path='arithmetic.py', source='def add(a, b):\n    return a - b\n'):
             'edits': [{'old': 'return a - b', 'new': 'return a + b'}]}
 
 
+def recorded_stub_usage():
+    """Synthetic accounting for deterministic providers, never live evidence."""
+    from bigbrain.llm.usage import UsageRecord, get_tracker
+    get_tracker().record(UsageRecord(model_id='offline-stub', provider='test', input_tokens=100,
+                                    output_tokens=10, total_tokens=110))
+
+
 class ScriptedProvider:
     """Return frozen actions; reviewer separately inspects actual test/source pages."""
     def __init__(self, actions):
@@ -47,6 +54,7 @@ class ScriptedProvider:
         self.review_reads = set()
 
     async def chat_complete(self, **kwargs):
+        recorded_stub_usage()
         messages = kwargs['messages']
         self.calls.append(messages)
         if 'drafting acceptance contracts' in messages[0]['content']:
@@ -271,6 +279,7 @@ async def test_small_review_assembles_pinned_sources_without_read_round_trips():
     calls = []
     class Reviewing:
         async def chat_complete(self, **kwargs):
+            recorded_stub_usage()
             calls.append(kwargs)
             assert kwargs['tool_schema']['name'] == 'acceptance_review_decision'
             context = json.loads(kwargs['messages'][1]['content'])
@@ -408,6 +417,7 @@ async def test_flattened_review_action_is_rejected_then_corrected_not_executed()
     calls = []
     class Reviewing:
         async def chat_complete(self, **kwargs):
+            recorded_stub_usage()
             calls.append(kwargs)
             if len(calls) == 1:
                 return json.dumps({'action': 'read', 'path': 'main.py'})
@@ -497,6 +507,7 @@ async def test_reviewer_stops_repeated_pages_instead_of_spending_whole_budget():
     calls = []
     class Repeating:
         async def chat_complete(self, **kwargs):
+            recorded_stub_usage()
             calls.append(kwargs)
             return json.dumps({'action': {'type': 'read', 'path': 'main.py', 'start': 1, 'count': 120}})
     result = await review_semantics(Repeating(), request='Repair', contracts=['Works'],
@@ -678,6 +689,7 @@ async def test_web_specialist_repairs_actual_browser_behavior(tmp_path):
     transaction = ProjectTransaction.begin(target, [])
     class WebProvider(ScriptedProvider):
         async def chat_complete(self, **kwargs):
+            recorded_stub_usage()
             if 'independent acceptance reviewer' not in kwargs['messages'][0]['content']:
                 return await super().chat_complete(**kwargs)
             context = json.loads(kwargs['messages'][1]['content'])
