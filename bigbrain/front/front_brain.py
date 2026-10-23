@@ -1382,7 +1382,11 @@ Type 'quit' or 'exit' to stop."""
                                if kind == "preview"), None)
         files_output = next((str(content) for kind, content in raw_outputs
                              if kind == "files"), None)
-        if success and preview_output:
+        if result.get('delivery_status') == 'incomplete':
+            notification = f"Projet incomplet — non validé et non livré. {result.get('error', 'La validation reste à terminer.')}"
+        elif success and result.get('delivery_status') == 'ready':
+            notification = '✅ Projet validé. Les contrôles et les critères approuvés sont satisfaits ; consulte le résultat dans l’Atelier.'
+        elif success and preview_output:
             # Project cards own the rich result UI. Keep chat deterministic
             # and compact instead of asking an LLM to retell the application.
             notification = "✅ Projet web terminé. Utilise l’aperçu ou les contrôles du projet ci-dessous."

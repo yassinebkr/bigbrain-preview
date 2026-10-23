@@ -5,6 +5,156 @@ baseline `414df4a`. No authorization to merge this new phase.
 
 ## Why a separate workflow
 
+### Cause and action separation (2026-10-23)
+
+Verification now emits explicit causes and actions. `uninspected_evidence`
+keeps inspection with the independent reviewer; available unread assertion pages
+are supplied within the remaining review budget. Exhaustion returns
+`review_pending` without asking the developer to modify the project.
+`missing_test` explicitly requests additional validation against the unchanged
+approved criteria. The maintenance runtime restricts subsequent patches to
+validation files until a fresh diagnostic or verification reproduces a failure.
+Existing test changes still require their existing approval.
+
+Executable failures carry their stage status and permit repair followed by
+verification. A semantic review waiting for passing checks is `awaiting_checks`,
+not a contradiction. Contradictions, unavailable project interpreters/pytest,
+blocked review and unknown failure states stop explicitly; concurrent failing
+tests cannot override these blockers. No error-message keyword determines the
+action. Legacy ambiguous `executed_assertion` requests remain inspection requests;
+only the explicit `missing_test` kind authorizes validation additions.
+
+Point 1 did not establish G-code acceptance or wire creation into the shared
+repair loop. Point 2 closes the candidate acceptance gate; point 3 below
+integrates creation with the bounded repair engine.
+
+### Shared creation and maintenance repair engine (point 3, 2026-10-24)
+
+`maintenance.repair_project` now runs the same versioned read/diagnostic/patch/
+verification protocol for both project modes. `BaseBrain.repair_project` binds
+the approved contract, transaction, source hashes and frozen validation sources.
+The Python assembly and web assembly endpoints enter it for prepared `new`
+targets. The existing `maintain_project` entry retains its manifest approval
+check, initial diagnostic and behavioral baseline. Creation starts with the
+complete delivery gate against the approved contract, without treating generated
+candidate bytes as an existing behavioral baseline.
+
+The specialist performs one verification pass per request. The shared engine
+then classifies recorded causes: unread evidence goes back to review; missing
+tests permit validation additions; reproduced failures permit inspected patches;
+contradictions and environmental blockers stop. Approved business criteria are
+loaded from the immutable revision. Existing acceptance tests remain protected.
+Each applied patch set is automatically verified. Both modes allow at most two
+patch rounds within the existing 40-action/600-second limits, with cancellation,
+no-progress detection, hash checks and transaction-owner rollback retained.
+
+Python missing-artifact, syntax and interpreter preflight failures now produce
+typed diagnostics and immutable evidence. Verification attempts link to their
+parent run and retain their final diagnostic when stopped. New required files
+stay in the verification plan even if missing on disk. Internal verification
+progress does not prematurely announce that the overall task is completed.
+Web build and browser failures use the same cause routing: skipped browser checks
+await a successful build; missing dependencies block code repair. The old Python
+assembly retry path and web build/browser replacement loops are no longer called.
+Unbound legacy assembly does not authorize automatic edits. This integration is
+for project assembly, not the separate legacy one-shot snippet execution API.
+
+Offline validation includes real Python execution/tests and real Chromium
+interaction with deterministic providers, plus approval, missing-validation,
+blocked-environment, patch-budget and rollback checks. No new paid model probe
+was run and no general model-reliability claim follows from these protocol tests.
+The accepted frozen G-code revision and its point-2 verdict remain unchanged.
+Validation: the broad run passed 1311 tests (9 existing warnings) in 178.39
+seconds. A final browser-validation addition guard was then checked with 43
+passing focused tests, including all 16 shared-repair cases. The broad run
+predates this last guard. New `tests/acceptance.json` files may be added;
+replacing an existing browser acceptance file still requires explicit approval.
+Missing browser validation is classified as `missing_test` before production
+correction is authorized.
+Local validation ledger (outside this repository):
+`/home/kwestog/Documents/code/tests/bigbrain-shared-repair-point3-2026-10-24.md`.
+
+### Mandatory new-project delivery boundary (point 4, 2026-10-24)
+
+File generation no longer suffices for new-project completion. The orchestrator
+starts a transaction before new-project writes. A plan containing only file
+writers gains a dependent assembly/repair gate, using the approved architecture,
+entry point and criteria. Bound `generate_and_execute` also generates once and
+enters the shared assembly/repair engine; it cannot complete through the legacy
+stdout-only Honk path. Its entry point and delivery requirements are included
+in the proposal. The transient unbound snippet API does not publish a verified
+project delivery.
+
+After the shared gate passes, the runtime writes a content-addressed delivery
+receipt binding the approved DesignSpec revision, execution target identity,
+verification manifest and exact source hashes. Declared data/assets are hashed
+too, and compared before/after execution. A delivery needs actual passing tests
+or browser assertions, approved-criteria review, and entry-point execution (or
+the explicitly approved non-executable library contract). React also requires
+dependency, typecheck and build evidence. Evidence artifact hashes are checked.
+
+Immediately before committing the project transaction, the orchestrator checks
+the receipt and current file bytes again. `success`, stdout, a runnable flag or
+an old `.project.json` cannot substitute for this proof. Missing or stale proof
+produces a failed terminal transport event with `delivery_status=incomplete`,
+`verified=false`, `runnable=false`; no `task.complete` is published. Budget
+exhaustion retains its final diagnostics and verification run ID, while the
+transaction owner rolls back recorded writes. The activity/evidence history
+remains available; preserving an on-disk unvalidated candidate is not promised.
+
+The front brain emits a deterministic incomplete-delivery message and skips its
+success summarizer. Chat cards, the Atelier, verification labels and launch
+actions carry the incomplete state. Live file/activity events remain visible.
+Existing tests cannot be replaced without approval, criteria come from the
+immutable approved revision, and the repair loop does not change architecture
+or requirements to obtain a pass.
+
+Validation: 1323 Python tests passed in the broad run (9 warnings); the final
+bound-script path and its two additional cases then passed in a 65-test focused
+run. Tests exercise real Python execution, test discovery and transaction
+completion, plus synthetic malformed evidence for negative policy checks.
+The existing real Chromium and React checks also passed in the broad run.
+UI: 105 tests and production build passed. Details are recorded in the local
+point-4 ledger. No paid model
+probe or new G-code review was launched; no merge was performed.
+
+Validation: 99 focused tests passed, including reviewer continuation and blocked
+production writes. A broad run recorded 1295 passed / 2 failed (worker overlap
+timing threshold and preview-server startup); both failing tests passed in the
+isolated rerun (22 passed with related reader tests). This is not an all-green
+full-suite claim. No paid probe was launched for this phase.
+
+### Frozen G-code candidate accepted (point 2, 2026-10-23)
+
+The existing reviewer thread was continued once with pinned supplemental pages
+for extrusion computation and safety assertions. Its final decision is `pass`:
+criteria 0/1 retain their exact accepted coverage; criteria 2/3 now cite the actual
+mode-dependent E delta logic, passing transition assertions (2 → 7 → 8), and
+unknown-position, empty-input, macro and arc assertions with conservative state
+invalidation and partial/unknown result branches. No defect or contradiction was
+discovered, so no source repair or test change was performed.
+
+Candidate revision remains
+`f808b4549e82e8f5f9cb436f41162eee18ccf2029eaed3e110657e6b4c81f0bb`.
+The six passing executable stages and 64 tests/19 subtests are retained from
+`run-da9fd177a0ba44f69b90223b83c41e32`; they were not rerun. Original evidence is
+immutable. The previous working directory had been restored by its transaction;
+the pinned candidate was the reviewed input. The original user project remains
+unchanged.
+
+Continuation: GPT-6.1 Sol low via Codex subscription, 1 call, 13.325 seconds,
+38,220 input + 512 output = 38,732 tokens; reported cached input 0, cost unknown.
+Together with the preceding targeted review: 149,236 tokens. No second inference
+was used: a local citation validator was corrected to allow `main.py` from the
+retained prior inspection as well as newly supplied pages.
+
+Durable report, original bytes, supplemental pages, answer, usage, same-thread
+bindings and hash-linked final coverage are in
+`../tests/bigbrain-gcode-final-validation-2026-10-23/` (sibling of this repository).
+`../tests/finish_gcode_candidate_review.py OUTPUT --finalize` checks the recorded
+verdict offline. This accepts the frozen candidate against its approved criteria;
+it does not establish creation-time repair competence or authorize a merge.
+
 Creation uses an architect/file DAG. Repair needs an investigation loop: inspect,
 reproduce, hypothesize, patch, measure. Freezing an implementation file list
 before investigation made repair impossible when only tests were approved.
@@ -365,8 +515,8 @@ not estimated from character counts.
 
 ## Validation checkpoint — 23 October 2026
 
-Full offline suite after budget reservation: 1269 passed / 9 existing warnings
-(159.08 s); 74 focused maintenance/usage/budget checks passed.
+Full offline suite after targeted navigation: 1281 passed / 9 existing warnings
+(157.15 s); 51 focused navigation/budget/provenance/provider checks passed.
 The pinned disposable candidate passes six executable stages (64 project tests,
 19 subtests), but independent acceptance remains inconclusive. Two bounded
 review-only attempts exhausted their token budget without a verdict. The latest
@@ -388,4 +538,66 @@ needs-evidence/arbitration verdict can be returned without inspecting every
 source; only a pass requires implementation and actual test assertion inspection.
 Final budget decisions do not trigger automatic baseline/diagnostic fetching.
 Unknown usage triggers conclusion rather than unlimited reads. No paid rerun
-after this change yet; independent candidate acceptance remains unconfirmed.
+with targeted navigation yet; independent candidate acceptance remains unconfirmed.
+
+The reserved-conclusion live check completed on the same pinned candidate:
+five reads then one decision, 101266 tokens (61696 cached), 52.09 s provider
+time. It returned needs_evidence, not acceptance: relevant existing assertions
+and entry-point implementations were not inspected. No contradictions found.
+
+### Criterion-targeted evidence navigation
+
+The next offline implementation provides exact executed Python test-symbol
+locations from ASTs of pinned source bytes. Class/async/parametrized test IDs are
+resolved structurally; unsupported languages or unresolved IDs are not guessed.
+Locations are navigation only, not criterion coverage. This is not domain- or
+keyword-based routing: the reviewer still chooses relevance and its actions.
+
+`search` accepts a model-chosen literal over the pinned current source inventory,
+with bounded excerpts and pagination; it cannot access arbitrary disk paths.
+Hits do not mark paths inspected. `read_many` retrieves up to four model-selected
+pages, each at most 3500 characters and 200 lines, with explicit continuation.
+All selections validate before inspection bookkeeping changes; duplicate or
+already-read pages are rejected. Normal reads, source hashes, revision binding,
+independent review, decision reserves and acceptance requirements stay unchanged.
+
+Generic offline checks cover late-file test assertions, implementation/assertion
+grouping, unsafe paths/cursors, unresolved IDs, literal search, truncation and
+rejection of search-only coverage. No new inference or candidate modification.
+
+## Closure validation — 24 October 2026
+
+Both entry paths are validated for the agreed probes. The frozen G-code
+candidate's final four-criterion acceptance was rechecked, then its exact sources
+passed 64 unittest tests and main.py in a dedicated project venv on a disposable
+copy. Source revision remains
+`f808b4549e82e8f5f9cb436f41162eee18ccf2029eaed3e110657e6b4c81f0bb`.
+The original project was not modified or replaced.
+
+A live new-project probe deliberately seeded a multi-module calculation defect
+at the generation boundary. Sol 6.1 low via Codex corrected the implementation;
+independent review requested a missing entry-point assertion, which the same
+repair engine added before reverification. All seven stages passed and the
+orchestrator validated the runtime receipt before committing the transaction.
+Existing tests and approved criteria remained unchanged. This probes the
+post-generation boundary, not an end-to-end architect/UI generation session.
+
+Five live calls (three worker, two review), 27.906 seconds, 55,741 reported tokens
+(54,655 input, 1,086 output; 11,392 cached input). No unknown-usage calls.
+Final run: `run-007929ba5d1e4bbdbb3efee35b1c6a58`. This result does not establish
+general reliability or optimal token efficiency for arbitrary projects.
+
+The persistent-failure path was separately checked using scripted model actions
+and real execution, failing tests and two source patches: incomplete/unverified,
+no runnable delivery, preserved contract/tests and rollback. The 29 focused
+shared-repair/delivery regressions pass. Restricted-sandbox execution stalled
+on one generation test; the isolated case and full focused rerun passed outside
+that sandbox. The sandbox stall's root cause is not established.
+
+Detailed local evidence is in the sibling tests workspace:
+`bigbrain-delivery-point5-2026-10-24/REPORT.md`, raw live evidence and regression.xml.
+The shared engine remains `maintenance.repair_project`, with new/existing entry
+policies and a separate runtime delivery receipt. Legacy Python web classification
+and launch behavior are deferred to a new branch after this merge. A later
+system-wide refactor covers workers, orchestration, front brain, server and UI
+event projection; it is not limited to PythonBrain.

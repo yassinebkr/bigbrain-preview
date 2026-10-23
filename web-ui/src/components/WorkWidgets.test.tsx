@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, expect, it, vi } from 'vitest';
-import { PythonConsole, WorkOverview } from './WorkWidgets';
+import { PythonConsole, WorkOverview, VerificationWidget } from './WorkWidgets';
 import { useAppStore, type RunState } from '@/store/appStore';
 import { projectRunKey, useProjectRunStore } from '@/store/projectRunStore';
 import { useWorkspaceStore } from '@/store/workspaceStore';
@@ -23,6 +23,12 @@ vi.mock('@/store/workspaceStore', async (importOriginal) => {
 
 const run: RunState = { id: 'python', sessionId: 's', description: 'Build tool', status: 'done', startedAt: 1, files: [{ path: 'sandbox/tool/main.py', ts: 1 }], steps: [], runnable: true, deliverableType: 'python', projectPath: 'sandbox/tool', entryPoint: 'main.py' };
 const overview = (value: RunState) => renderToStaticMarkup(<WorkOverview run={value} select={() => {}} journal={<p>real journal</p>} />);
+it('does not call an incomplete delivery verified even when old checks passed', () => {
+  const html = renderToStaticMarkup(<VerificationWidget run={{ ...run, deliveryStatus: 'incomplete',
+    verification: { runId: 'old', verdict: 'passed', stages: [{ name: 'tests', status: 'passed' }] } }} />);
+  expect(html).toContain('Livraison non validée');
+  expect(html).not.toContain('Vérifications réussies');
+});
 beforeEach(() => {
   useWorkspaceStore.setState({ sessions: {} });
   useProjectRunStore.setState({ launches: {} }); useAppStore.setState({ liveRuns: {}, sessionProposals: {}, contractProposal: null });

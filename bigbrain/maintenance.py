@@ -1,4 +1,4 @@
-"""Bounded maintenance tool loop. Not a creation DAG or an OS sandbox.
+"""Shared bounded project repair tools and lifecycle, not a creation DAG.
 
 The specialist investigates; the runtime owns revisions, writes and verdicts.
 Approval and transaction lifecycle belong to the orchestrator.
@@ -129,7 +129,9 @@ class ProjectTools:
         path = action['path']
         destination = self.path(path)
         existed = destination.exists()
-        new_test = not existed and (Path(path).name.startswith('test_') or Path(path).stem.endswith(('_test', '.test', '.spec')))
+        new_test = not existed and (Path(path).name.startswith('test_')
+            or Path(path).stem.endswith(('_test', '.test', '.spec'))
+            or path == 'tests/acceptance.json')
         if protected_test(path) and not new_test and path not in approved_tests:
             return {'status': 'requires_arbitration', 'path': path,
                     'reason': 'Test/validation changes require explicit approval'}
@@ -229,6 +231,10 @@ New files use sha256 of empty text and one empty old fragment. Preserve interfac
 unrelated behavior, and tests. Never rewrite the project or add parallel implementations.
 Existing test/validation changes need explicit approval, even if a test seems wrong.
 You MAY add new regression test files consistent with the approved requirement.
+Verification next_action=extend_validation authorizes adding relevant tests only;
+preserve production sources until a failing executable check reproduces a defect.
+Unread reviewer evidence never authorizes project edits. Contradictions and blocked
+environments require an explicit stop and diagnostic report.
 {"type":"arbitrate","reason":"specific contradiction","proposal":"proposed change and its authority"}: ask user; stop.
 {"type":"verify"}: request checks without changes; patch and patch_set already trigger these automatically. Only runtime declares success.
 If this legacy project has no declared entry point, use
@@ -263,8 +269,18 @@ def action_schema():
 
 
 async def maintain(brain, payload, *, diagnose, verify):
+    """Existing-project entry: reproduce first, preserve approved behavior."""
+    return await repair_project(brain, payload, diagnose=diagnose, verify=verify, mode='existing')
+
+
+async def repair_project(brain, payload, *, diagnose, verify, mode):
+    """Shared bounded investigate/patch/verify engine with explicit entry policy.
+
+    Creation starts with the complete delivery gate. Existing projects start
+    with their initial diagnostic. Neither path can accept a worker's claim.
+    """
     target = brain._directory_context.get()
-    if not target or target.mode != 'existing' or not payload.get('contract_revision') or not active_transaction.get():
+    if mode not in {'new', 'existing'} or not target or target.mode != mode or not payload.get('contract_revision') or not active_transaction.get():
         raise ValueError('Maintenance requires pinned project, approved contract and scoped transaction')
     from .verification.evidence import default_repository
     ref = payload['contract_revision']
@@ -275,21 +291,33 @@ async def maintain(brain, payload, *, diagnose, verify):
         raise ValueError('Approved contract belongs to another request; no diagnostics or model call executed')
     if approved.metadata.get('execution_target') not in (None, target.public()):
         raise ValueError('Approved maintenance target differs from bound project')
+    if 'business_criteria' in approved.metadata:
+        payload['business_contracts'] = approved.metadata['business_criteria']
     tools = ProjectTools(target)
     runtime_state = MaintenanceState(tools.inventory())
     started, notebook, history, trace = time.monotonic(), '', [], []
     context_log = MaintenanceContext()
     calls, input_chars, output_chars = 0, 0, 0
+    repair_rounds = 0
+    last_verification = {}
     approved_tests = [d['path'] for d in approved.metadata.get('maintenance', {}).get('test_changes', [])]
+    system = SYSTEM if mode == 'existing' else SYSTEM.replace(
+        'Maintain ONE existing project: investigate, reproduce, patch minimally, measure.',
+        'Complete ONE newly generated project against its approved contract: inspect delivery failures, patch, measure.')
+    system += '\nAt most two patch/patch_set rounds are available; each is automatically verified.'
 
     def outcome(status, **extra):
         runtime_state.phase = ('validated' if status == 'verified' else
                                'blocked' if status == 'requires_arbitration' else 'not_delivered')
         record('terminal', 'lifecycle', {}, {'status': runtime_state.phase})
         return {'success': False, 'maintenance_status': status, 'error': extra.pop('error', status),
+                'repair_mode': mode, 'runnable': False,
+                **({'delivery_status': 'incomplete', 'verified': False} if mode == 'new' else {}),
+                'verification': last_verification,
                 'maintenance': {'protocol': PROTOCOL, 'actions': trace, 'changed_files': sorted(tools.changed),
                     'runtime_state': runtime_state.snapshot(),
                     'model_calls': calls, 'input_chars': input_chars, 'output_chars': output_chars,
+                    'repair_rounds': repair_rounds, 'mode': mode,
                     'elapsed_seconds': round(time.monotonic() - started, 3),
                     'usage_note': 'Character counts are not tokens; provider billing remains authoritative'}, **extra}
 
@@ -329,14 +357,38 @@ async def maintain(brain, payload, *, diagnose, verify):
                              event_artifact_sha256=event_artifact.sha256)
 
     async def loop():
-        nonlocal calls, input_chars, output_chars, notebook
+        nonlocal calls, input_chars, output_chars, notebook, repair_rounds, last_verification
         if brain._cancelled:
             raise asyncio.CancelledError
-        runtime_state.phase = 'diagnosing'
-        await brain.send_progress({'stage': 'maintenance_diagnose', 'maintenance_phase': 'diagnosing'})
-        baseline = await diagnose()
-        record('initial', 'diagnose', {}, baseline)
+        validation_only = False
+        if mode == 'new':
+            runtime_state.phase = 'verifying'
+            await brain.send_progress({'stage': 'project_verify', 'repair_mode': mode})
+            baseline = await verify(tools)
+            last_verification = baseline.get('verification')
+            if baseline.get('success') and baseline.get('verification', {}).get('verdict') == 'passed':
+                record('initial', 'verify', {}, baseline)
+                baseline['repair'] = {**outcome('verified')['maintenance'], 'mode': mode}
+                return baseline
+            from .verification.disposition import verification_disposition
+            disposition = verification_disposition(baseline.get('verification', {}).get('failures', []))
+            baseline['verification_disposition'] = disposition
+            record('initial', 'verify', {}, baseline)
+            if disposition['action'] in {'stop', 'inspect'}:
+                return outcome('review_pending' if disposition['action'] == 'inspect' else 'requires_arbitration',
+                    error=baseline.get('error', 'Delivery verification blocked'),
+                    verification=baseline.get('verification'), verification_disposition=disposition)
+            validation_only = disposition['action'] == 'extend_validation'
+            runtime_state.reproduced = disposition['action'] in {'repair', 'extend_validation'}
+        else:
+            runtime_state.phase = 'diagnosing'
+            await brain.send_progress({'stage': 'maintenance_diagnose', 'maintenance_phase': 'diagnosing'})
+            baseline = await diagnose()
+            record('initial', 'diagnose', {}, baseline)
         runtime_state.phase = 'investigating' if runtime_state.reproduced else 'blocked'
+        if brain.llm_provider is None:
+            return outcome('provider_unavailable', error=baseline.get('error') or
+                           'Repair provider unavailable; delivery remains unverified')
         invalid_actions = 0
         failed_verifications = set()
         for step in range(MAX_ACTIONS):
@@ -349,9 +401,10 @@ async def maintain(brain, payload, *, diagnose, verify):
                        'runtime_state': runtime_state.snapshot(),
                        'remaining_actions': MAX_ACTIONS - step, 'observations': history[-4:]}
             text = json.dumps(context, ensure_ascii=False)
-            messages = context_log.messages(SYSTEM, context,
+            context['repair_mode'] = mode
+            messages = context_log.messages(system, context,
                 persistent=getattr(brain.llm_provider, 'maintenance_event_context', False) is True)
-            input_chars += len(SYSTEM) + len(text)
+            input_chars += len(system) + len(text)
             calls += 1
             raw = await asyncio.wait_for(brain.llm_provider.chat_complete(
                 messages=messages, context_checkpoint={**context, 'observations': context_log.events[-4:]},
@@ -415,6 +468,8 @@ async def maintain(brain, payload, *, diagnose, verify):
                     result = tools.search(action['query'], action.get('paths'), action.get('offset', 0))
                 elif kind == 'diagnose':
                     result = await diagnose()
+                    if result.get('status') == 'failed':
+                        validation_only = False
                 elif kind == 'prepare_environment':
                     result = await brain.maintenance_prepare(payload)
                     if result.get('status') == 'ready':
@@ -442,11 +497,17 @@ async def maintain(brain, payload, *, diagnose, verify):
                 elif kind in {'patch', 'patch_set'}:
                     if not runtime_state.reproduced:
                         raise DiagnosticRequired('Run diagnostics before editing; missing environment is not reproduction')
+                    patches = action.get('patches') if kind == 'patch_set' else [action]
+                    if validation_only and any(not protected_test(p.get('path', '')) for p in patches):
+                        raise ValueError('Missing test permits validation changes only; reproduce a defect before editing production sources')
+                    if repair_rounds >= 2:
+                        return outcome('repair_budget_exhausted', error='Two repair rounds exhausted; no verified delivery')
                     runtime_state.phase = 'correcting'
-                    result = tools.patch_set(action.get('patches') if kind == 'patch_set' else [action], approved_tests=approved_tests)
+                    result = tools.patch_set(patches, approved_tests=approved_tests)
                     if result.get('status') == 'requires_arbitration':
                         record(step, kind, action, result)
                         return outcome('requires_arbitration', error=result['reason'], arbitration=result)
+                    repair_rounds += 1
                     for index, file_result in enumerate(result['files']):
                         record(f'{step}-patch-{index}', 'patch', {'path': file_result['path']}, file_result)
                         await brain.send_event('workspace.file_written', {'path': target.path + '/' + file_result['path'],
@@ -461,20 +522,27 @@ async def maintain(brain, payload, *, diagnose, verify):
                     runtime_state.phase = 'verifying'
                     await brain.send_progress({'stage': 'maintenance_verify', 'maintenance_phase': 'verifying'})
                     final = await verify(tools)
+                    last_verification = final.get('verification')
                     if final.get('success') and final.get('verification', {}).get('verdict') == 'passed':
                         record(step, kind, action, final)
                         final['maintenance'] = outcome('verified')['maintenance']
                         runtime_state.phase = 'validated'
                         final['maintenance']['runtime_state'] = runtime_state.snapshot()
+                        final['repair'] = {**final['maintenance'], 'mode': mode}
                         return final
                     failures = final.get('verification', {}).get('failures', [])
-                    blocked = [f for f in failures if f.get('details', {}).get('requires_arbitration')]
-                    failed_tests = any(f.get('stage') == 'tests' for f in failures)
-                    repairable_gap = any(f.get('details', {}).get('repairable_evidence_gap') for f in failures)
-                    if final.get('status') == 'requires_arbitration' or (blocked and not failed_tests and not repairable_gap):
+                    from .verification.disposition import verification_disposition
+                    disposition = verification_disposition(failures)
+                    final['verification_disposition'] = disposition
+                    validation_only = disposition['action'] == 'extend_validation'
+                    if final.get('status') == 'requires_arbitration' or disposition['action'] == 'stop':
                         record(step, kind, action, final)
                         return outcome('requires_arbitration', error=final.get('error', 'Verification requires arbitration'),
-                                       verification=final.get('verification'))
+                                       verification=final.get('verification'), verification_disposition=disposition)
+                    if disposition['action'] == 'inspect':
+                        record(step, kind, action, final)
+                        return outcome('review_pending', error='Independent reviewer requires further inspection; project edits are not authorized by this result',
+                                       verification=final.get('verification'), verification_disposition=disposition)
                     # Evidence artifact IDs and timings change between runs;
                     # compare actionable failures, not incidental run metadata.
                     signature = [MaintenanceState._failure(f) for f in failures] or {

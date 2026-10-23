@@ -221,7 +221,8 @@ async def stage_tests(work_dir: Path, *, timeout: float = 60.0, python: str | Pa
     if not test_files:
         return StageResult(
             name="tests", status="not_applicable", tool="pytest",
-            details={"reason": "no test files in work_dir"},
+            details={"reason": "no test files in work_dir", 'cause': 'missing_test',
+                     'next_action': 'extend_validation'},
         )
     interpreter = str(python) if python is not None else sys.executable
     env = {'PATH': str(Path(interpreter).parent) + os.pathsep + os.environ.get('PATH', ''),
@@ -243,11 +244,13 @@ async def stage_tests(work_dir: Path, *, timeout: float = 60.0, python: str | Pa
     if expected_venv.name == '.venv' and environment and Path(environment.get('prefix', '')).resolve() != expected_venv.resolve():
         return StageResult(name='tests', status='inconclusive', tool='pytest',
             details={'reason': 'Project interpreter is not running in its declared venv; no host fallback',
+                     'cause': 'environment_blocked', 'next_action': 'stop',
                      'interpreter': interpreter, 'environment': environment})
     if not environment.get('pytest'):
         return StageResult(
             name="tests", status="inconclusive", tool="pytest",
             details={"reason": "project Python or pytest unavailable; no host fallback", "interpreter": interpreter,
+                     'cause': 'environment_blocked', 'next_action': 'stop',
                      "environment": environment},
         )
     try:

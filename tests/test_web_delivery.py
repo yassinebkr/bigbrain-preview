@@ -84,16 +84,41 @@ async def test_real_assembly_delivers_truthful_terminal_event(tmp_path, monkeypa
     if failure == "missing_asset":
         (project / "index.html").write_text('<main>Excel</main><script src="missing.js"></script>')
 
+    from bigbrain.project_transaction import ProjectTransaction
+    from bigbrain.verification.gate import RunGate
+    from bigbrain.verification.evidence import default_repository
+    spec = RunGate(default_repository()).build_spec('Display the Excel application', ['index.html'])
+    spec.metadata.update(business_criteria=['The main region is visible'], execution_target=target.public())
+    default_repository().save_spec(spec)
+    spec = default_repository().approve_spec(spec.design_id, plan_id='excel-plan')
+    transaction = ProjectTransaction.begin(target, [])
+
+    async def review(**kwargs):
+        from bigbrain.llm.usage import UsageRecord, get_tracker
+        get_tracker().record(UsageRecord(model_id='offline', provider='test', input_tokens=20,
+                                        output_tokens=20, total_tokens=40))
+        assert 'independent acceptance reviewer' in kwargs['messages'][0]['content']
+        context = json.loads(kwargs['messages'][1]['content'])
+        return json.dumps({'decision': 'pass', 'contradictions': [], 'coverage': [{
+            'criterion_id': '0', 'tests': context['passing_tests'], 'sources': ['index.html', 'tests/acceptance.json'],
+            'reason': 'Real Chromium checks visibility of the main region'}]})
+
+    provider = AsyncMock()
+    provider.chat_complete.side_effect = review
+
     bus = MessageBus(log_dir=tmp_path / "logs", auth=None)
-    brain = WebAppBrain("web_worker", bus, "default", work_dir=tmp_path / "sandbox")
+    brain = WebAppBrain("web_worker", bus, "default", work_dir=tmp_path / "sandbox",
+                        llm_provider=None if failure else provider)
     orch = WorkspaceOrchestrator("default", bus)
     orch._extract_learnings = AsyncMock()
     original = BusMessage(type=MessageType.TASK, source="test_ui", target=orch.name,
                           payload={"session_id": "excel-session"})
     step = SubTask(id="assembly", description="assemble Excel", brain_target=brain.name,
-                   payload={"type": "assemble_and_preview", "project_name": "excel"})
+                   payload={"type": "assemble_and_preview", "project_name": "excel", 'user_request': spec.user_request,
+                            'contract_revision': {'design_id': spec.design_id, 'revision': spec.revision}})
     plan = TaskPlan(id="excel-plan", original_task=original, subtasks=[step], status=TaskStatus.RUNNING)
     plan.execution_target = target
+    plan.transaction = str(transaction.journal)
     orch.task_plans[plan.id] = plan
     events = []
     finished = asyncio.Event()
@@ -138,3 +163,5 @@ async def test_real_assembly_delivers_truthful_terminal_event(tmp_path, monkeypa
         await brain.cleanup()
         await brain.stop()
         await orch.stop()
+        if json.loads(transaction.journal.read_text())['state'] == 'open':
+            transaction.finish()

@@ -64,7 +64,7 @@ async def test_real_browser_persistence_and_png_evidence(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_browser_failure_repaired_without_changing_tests(tmp_path):
+async def test_unbound_browser_failure_does_not_authorize_source_edits(tmp_path):
     target = project(tmp_path, "throw new Error('broken handler');")
     frozen = (target / "tests/acceptance.json").read_bytes()
     provider = AsyncMock()
@@ -74,12 +74,13 @@ async def test_browser_failure_repaired_without_changing_tests(tmp_path):
     brain = WebAppBrain("web", MessageBus(auth=None), work_dir=tmp_path, llm_provider=provider)
     try:
         result = await brain._assemble_and_preview({"project_name": "tracker"})
-        assert result["success"], result.get("error")
+        assert result["success"] is False
         assert (target / "tests/acceptance.json").read_bytes() == frozen
+        assert (target / 'app.js').read_text() == "throw new Error('broken handler');"
         manifest = default_repository().load_manifest(result["verification"]["run_id"])
-        assert manifest.metadata["attempt"] == 2
-        assert default_repository().load_manifest(manifest.parent_run_id).verdict == "failed"
-        assert provider.chat_complete.await_count == 1
+        assert manifest.metadata["attempt"] == 1
+        assert manifest.verdict == 'failed'
+        provider.chat_complete.assert_not_awaited()
     finally:
         await brain.cleanup()
 

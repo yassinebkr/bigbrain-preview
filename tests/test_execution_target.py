@@ -182,7 +182,7 @@ async def test_target_is_in_immutable_contract_and_no_directory_created_before_a
 
 
 @pytest.mark.asyncio
-async def test_real_approval_dispatch_writes_only_to_the_bound_target(tmp_path):
+async def test_real_approval_dispatch_writes_bound_target_but_requires_delivery_validation(tmp_path):
     root = fs_api.workspace_root()
     blender = existing(root, "blender")
     bus = MessageBus(tmp_path / "logs", auth=None)
@@ -191,7 +191,7 @@ async def test_real_approval_dispatch_writes_only_to_the_bound_target(tmp_path):
     orch.register_brain("python_brain")
     completed = asyncio.Event()
     async def observe(frame):
-        if frame.payload.get("event") == "task.complete":
+        if frame.payload.get("event") == "task.failed":
             completed.set()
     bus.subscribe("*", observe)
     await orch.start()
@@ -209,9 +209,11 @@ async def test_real_approval_dispatch_writes_only_to_the_bound_target(tmp_path):
         fs_api.set_current_project("sandbox/blender")
         await orch._handle_contracts_approval({"plan_id": plan.id, "design_id": proposed.design_id, "approve": True})
         await asyncio.wait_for(completed.wait(), 5)
-        assert (root / "sandbox/running/marker.txt").read_text() == "approved target only"
+        assert not (root / "sandbox/running/marker.txt").exists()  # failed delivery rolled back
         assert not (blender / "marker.txt").exists()
-        assert plan.status == TaskStatus.COMPLETE
+        assert plan.status == TaskStatus.FAILED
+        assert plan.result['delivery_status'] == 'incomplete'
+        assert plan.subtasks[-1].payload['type'] == 'assemble_and_run'
         recorded = default_repository().load_latest_spec(proposed.design_id)
         assert recorded.metadata["execution_target"]["path"] == "sandbox/running"
         assert recorded.metadata["approval"]["decision"] == "approved"

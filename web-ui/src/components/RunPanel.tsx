@@ -52,16 +52,16 @@ const STAGE_COLORS: Record<string, string> = {
   running: 'var(--text-tertiary)',
 };
 
-function VerificationChip({ verification }: { verification: RunVerification }) {
+function VerificationChip({ verification, incomplete }: { verification: RunVerification; incomplete?: boolean }) {
   const label =
-    verification.verdict === 'passed' ? 'verified'
+    incomplete ? 'non validé' : verification.verdict === 'passed' ? 'verified'
     : verification.verdict === 'failed' ? 'gate failed'
     : 'unverified';
   const color =
-    verification.verdict === 'passed' ? 'var(--success, #34c759)'
+    incomplete ? 'var(--warning, #ff9500)' : verification.verdict === 'passed' ? 'var(--success, #34c759)'
     : verification.verdict === 'failed' ? 'var(--warning, #ff9500)'
     : 'var(--text-tertiary)';
-  const Icon = verification.verdict === 'passed' ? CheckCircle2 : XCircle;
+  const Icon = verification.verdict === 'passed' && !incomplete ? CheckCircle2 : XCircle;
   return (
     <span className="flex items-center gap-1 flex-shrink-0" style={{ color }}>
       <Icon size={11} />
@@ -164,7 +164,7 @@ export function RunPanel() {
   const preparationWait = running?.brain === 'planner' && running.durationMs != null
     ? ` · ${(running.durationMs / 1000).toFixed(0)} s` : '';
   const summary =
-    run.status === 'running'
+    run.deliveryStatus === 'incomplete' ? 'Projet incomplet · non validé' : run.status === 'running'
       ? run.awaitingApproval
         ? 'Awaiting contract approval'
         : running
@@ -230,7 +230,7 @@ export function RunPanel() {
                 <FileEdit size={11} /> {run.files.length}
               </span>
             )}
-            {run.verification && <VerificationChip verification={run.verification} />}
+            {run.verification && <VerificationChip verification={run.verification} incomplete={run.deliveryStatus === 'incomplete'} />}
             {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
             <button
               onClick={(e) => {

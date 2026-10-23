@@ -67,6 +67,7 @@ export interface RunState {
   deliverableType?: string;
   previewUrl?: string;
   runnable?: boolean;
+  deliveryStatus?: 'ready' | 'incomplete';
   awaitingApproval?: boolean;
   resultKind?: string;
 }
@@ -663,7 +664,7 @@ export const useAppStore = create<AppState>()(
           case 'task.cancelled': {
             if (!run) return {};
             const status: RunState['status'] =
-              activity.type === 'task.complete' ? 'done'
+              d.delivery_status === 'incomplete' ? 'failed' : activity.type === 'task.complete' ? 'done'
               : activity.type === 'task.cancelled' ? 'cancelled'
               : 'failed';
             return {
@@ -681,7 +682,8 @@ export const useAppStore = create<AppState>()(
                 entryPoint: d.entry_point ? String(d.entry_point) : run.entryPoint,
                 deliverableType: d.deliverable_type ? String(d.deliverable_type) : run.deliverableType,
                 previewUrl: d.preview_url ? String(d.preview_url) : run.previewUrl,
-                runnable: typeof d.runnable === 'boolean' ? d.runnable : run.runnable,
+                runnable: d.delivery_status === 'incomplete' ? false : typeof d.runnable === 'boolean' ? d.runnable : run.runnable,
+                deliveryStatus: d.delivery_status === 'ready' || d.delivery_status === 'incomplete' ? d.delivery_status : run.deliveryStatus,
                 resultKind: d.result_kind || run.resultKind,
               }].slice(-100),
             };

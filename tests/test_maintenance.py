@@ -46,6 +46,55 @@ def recorded_stub_usage():
                                     output_tokens=10, total_tokens=110))
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize('cause,expected', [
+    ('uninspected_evidence', 'review_pending'), ('contradiction', 'requires_arbitration'),
+    ('environment_blocked', 'requires_arbitration')])
+async def test_verification_routing_stops_worker_before_any_blind_edit(tmp_path, cause, expected):
+    target = project(tmp_path)
+    payload, transaction = approved_payload(target)
+    provider = ScriptedProvider([{'type': 'verify'}, patch()])
+    bus = MessageBus(tmp_path / 'logs', auth=None)
+    brain = PythonBrain('python', bus, work_dir=Path(target.root), llm_provider=provider)
+    before = target.file('arithmetic.py').read_text()
+    try:
+        with brain.execution_scope(payload):
+            result = await maintain(brain, payload, diagnose=AsyncMock(return_value={'status': 'failed'}),
+                verify=AsyncMock(return_value={'success': False, 'verification': {'verdict': 'inconclusive',
+                    'failures': [{'stage': 'tests', 'status': 'failed'},
+                                 {'stage': 'semantics', 'details': {'cause': cause}}]}}))
+        assert result['maintenance_status'] == expected
+        assert len(provider.calls) == 1
+        assert target.file('arithmetic.py').read_text() == before
+        assert result['maintenance']['changed_files'] == []
+    finally:
+        transaction.finish()
+        await bus.close()
+
+
+@pytest.mark.asyncio
+async def test_missing_test_does_not_authorize_production_patch(tmp_path):
+    target = project(tmp_path)
+    payload, transaction = approved_payload(target)
+    provider = ScriptedProvider([{'type': 'read', 'path': 'arithmetic.py'}, {'type': 'verify'},
+        patch(), {'type': 'arbitrate', 'reason': 'Need a regression test first'}])
+    bus = MessageBus(tmp_path / 'logs', auth=None)
+    brain = PythonBrain('python', bus, work_dir=Path(target.root), llm_provider=provider)
+    before = target.file('arithmetic.py').read_text()
+    verify = AsyncMock(return_value={'success': False, 'verification': {'verdict': 'inconclusive',
+        'failures': [{'stage': 'semantics', 'details': {'cause': 'missing_test'}}]}})
+    try:
+        with brain.execution_scope(payload):
+            result = await maintain(brain, payload, diagnose=AsyncMock(return_value={'status': 'passed'}), verify=verify)
+        assert result['maintenance_status'] == 'requires_arbitration'
+        assert target.file('arithmetic.py').read_text() == before
+        assert verify.await_count == 1
+        assert any(a['status'] == 'tool_error' for a in result['maintenance']['actions'])
+    finally:
+        transaction.finish()
+        await bus.close()
+
+
 class ScriptedProvider:
     """Return frozen actions; reviewer separately inspects actual test/source pages."""
     def __init__(self, actions):
@@ -266,7 +315,8 @@ async def test_unchanged_failed_verification_stops_without_budget_loop(tmp_path)
     try:
         with brain.execution_scope(payload):
             result = await maintain(brain, payload, diagnose=AsyncMock(return_value={'status': 'failed'}),
-                verify=AsyncMock(return_value={'success': False, 'verification': {'verdict': 'failed'}}))
+                verify=AsyncMock(return_value={'success': False, 'verification': {'verdict': 'failed',
+                    'failures': [{'stage': 'tests', 'status': 'failed', 'details': {}}]}}))
         assert result['maintenance_status'] == 'no_progress'
         assert len(provider.calls) == 2
     finally:
@@ -286,7 +336,7 @@ async def test_small_review_assembles_pinned_sources_without_read_round_trips():
             assert context['observations'][0]['assembled_sources']['main.py'] == 'print(6)'
             assert set(context['inspected_paths']) == {'main.py', 'test_main.py'}
             return json.dumps({'decision': 'needs_evidence', 'contradictions': [],
-                'missing_evidence': [{'criterion_id': '0', 'kind': 'executed_assertion',
+                'missing_evidence': [{'criterion_id': '0', 'kind': 'missing_test',
                     'path': None, 'source_revision': 'current', 'request': 'CLI assertion absent'}], 'coverage': []})
     result = await review_semantics(Reviewing(), request='Repair', contracts=['Print six'],
         sources={'main.py': 'print(6)', 'test_main.py': 'assert True'},
@@ -477,7 +527,8 @@ async def test_unsupported_pass_becomes_actionable_missing_evidence_never_succes
         sources={'main.py': 'print(6)', 'test_main.py': 'assert True'},
         tests={'status': 'passed', 'passed_cases': ['test_main.py::test_ok']}, progressive=True)
     assert result.status == 'inconclusive'
-    assert result.details['repairable_evidence_gap'] is True
+    assert result.details['repairable_evidence_gap'] is False
+    assert result.details['next_action'] == 'inspect'
     assert result.details['requires_arbitration'] is False
     assert 'CLI prints six' in result.details['review']['missing_evidence'][0]['request']
     assert result.details['review']['rejected_review']['decision'] == 'pass'
@@ -666,7 +717,8 @@ async def test_bus_approval_dispatch_live_progress_and_terminal_commit(tmp_path)
 
 
 @pytest.mark.asyncio
-async def test_web_specialist_repairs_actual_browser_behavior(tmp_path):
+@pytest.mark.parametrize('mode', ['new', 'existing'])
+async def test_web_specialist_repairs_actual_browser_behavior(tmp_path, mode):
     from bigbrain.brains.web_app_brain import WebAppBrain
     root = tmp_path / 'workspace'
     directory = root / 'sandbox/widget'
@@ -681,6 +733,9 @@ async def test_web_specialist_repairs_actual_browser_behavior(tmp_path):
     (directory / 'tests/acceptance.json').write_text(json.dumps(acceptance))
     (directory / '.project.json').write_text('{"entry_point":"index.html","deliverable_type":"web_app"}')
     target = ExecutionTarget('existing', 'sandbox/widget', str(root)).prepare()
+    if mode == 'new':
+        from dataclasses import replace
+        target = replace(target, mode='new')  # already reserved generated candidate
     repo = default_repository()
     spec = RunGate(repo).build_spec('Clicking Calculer must show five', ['index.html'])
     spec.metadata['business_criteria'] = ['Clicking Calculer shows five']
@@ -700,7 +755,7 @@ async def test_web_specialist_repairs_actual_browser_behavior(tmp_path):
             return json.dumps({'decision': 'pass', 'contradictions': [], 'coverage': [{
                 'criterion_id': '0', 'tests': context['passing_tests'], 'sources': ['tests/acceptance.json', 'app.js'],
                 'reason': 'Real browser clicks the button and asserts output five'}]})
-    provider = WebProvider([{'type': 'diagnose'}, {'type': 'read', 'path': 'app.js'},
+    provider = WebProvider(([{'type': 'diagnose'}] if mode == 'existing' else []) + [{'type': 'read', 'path': 'app.js'},
         {'type': 'patch', 'path': 'app.js', 'sha256': digest(source), 'edits': [{'old': '"4"', 'new': '"5"'}]},
         {'type': 'verify'}])
     bus = MessageBus(tmp_path / 'logs', auth=None)
@@ -711,6 +766,8 @@ async def test_web_specialist_repairs_actual_browser_behavior(tmp_path):
         '_execution_target': target.to_payload(), '_transaction': str(transaction.journal),
         '_maintenance_manifest_sha': digest(target.file('.project.json').read_text()),
         'contract_revision': {'design_id': approved.design_id, 'revision': approved.revision}}
+    if mode == 'new':
+        payload['type'] = 'assemble_and_preview'
     try:
         result = await brain.handle_task(BusMessage(type=MessageType.TASK, source='orchestrator', target=brain.name, payload=payload))
         assert result['success'], result

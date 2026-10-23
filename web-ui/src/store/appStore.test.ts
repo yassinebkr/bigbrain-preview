@@ -41,6 +41,16 @@ const ev = (type: string, detail: any) => ({ type, detail });
 
 describe('multiple independent runs in the same conversation', () => {
   beforeEach(reset);
+  it('keeps incomplete delivery unlaunchable even if a terminal frame contains stale success flags', () => {
+    const store = useAppStore.getState();
+    store.applyRunEvent(ev('task.received', { task_id: 'delivery', session_id: 'sess-live' }));
+    store.applyRunEvent(ev('task.complete', { task_id: 'delivery', session_id: 'sess-live',
+      delivery_status: 'incomplete', runnable: true, project_path: 'sandbox/tool', entry_point: 'main.py' }));
+    const run = useAppStore.getState().completedRuns.find((r) => r.id === 'delivery');
+    expect(run?.status).toBe('failed');
+    expect(run?.deliveryStatus).toBe('incomplete');
+    expect(run?.runnable).toBe(false);
+  });
   it('restores the authoritative project association of a cached failed run without reactivating it', () => {
     const s = useAppStore.getState();
     s.applyRunEvent(ev('task.routing', { task_id: 'old', session_id: 'sess-live' }));

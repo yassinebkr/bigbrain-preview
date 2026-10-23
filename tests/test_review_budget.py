@@ -34,7 +34,8 @@ async def test_outer_capacity_forces_explicit_missing_evidence_decision(limit):
         tests={'status': 'passed', 'passed_cases': ['test_main.py::test_output']}, progressive=True)
     assert len(calls) == 2
     assert result.status == 'inconclusive'
-    assert result.details['repairable_evidence_gap']
+    assert result.details['next_action'] == 'inspect'
+    assert not result.details['repairable_evidence_gap']
     assert calls[-1]['tool_schema']['name'] == 'acceptance_review_decision'
     assert 'action' not in calls[-1]['tool_schema']['parameters']['properties']
 

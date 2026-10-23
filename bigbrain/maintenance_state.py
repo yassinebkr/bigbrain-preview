@@ -12,6 +12,7 @@ class MaintenanceState:
         self.reproduced = False
         self.environment = None
         self.phase = 'diagnosing'
+        self.verification_disposition = None
 
     def read(self, result, observation_id):
         path, version = result['path'], result['sha256']
@@ -59,6 +60,8 @@ class MaintenanceState:
         elif kind == 'patch' and status == 'patched':
             self.changed(path)
         elif kind in {'diagnose', 'verify'}:
+            if kind == 'verify':
+                self.verification_disposition = result.get('verification_disposition')
             if kind == 'diagnose':
                 self.reproduced = status in {'passed', 'failed'}
                 if self.reproduced:
@@ -106,7 +109,9 @@ class MaintenanceState:
         review = review if isinstance(review, dict) else {}
         gaps = review.get('missing_evidence')
         gaps = gaps if isinstance(gaps, list) else []
-        return {'stage': failure.get('stage'), 'reason': str(details.get('reason', ''))[:400],
+        return {'stage': failure.get('stage'), 'status': failure.get('status'),
+                'cause': details.get('cause'), 'next_action': details.get('next_action'),
+                'reason': str(details.get('reason', ''))[:400],
                 'missing_evidence': [gap if isinstance(gap, dict) else str(gap)[:400] for gap in gaps[:3]]}
 
     def _reads(self):
@@ -141,6 +146,7 @@ class MaintenanceState:
                     for row in rows]
         return {'authority': 'runtime tool results, not model notebook', 'source_epoch': self.source_epoch,
                 'phase': self.phase,
+                'verification_disposition': self.verification_disposition,
                 'patching_allowed': self.reproduced,
                 'patching_rule': 'A real passed/failed diagnostic is required; missing environment is not reproduction',
                 'path_rule': 'All tool paths are relative to the bound project; use inventory paths exactly',

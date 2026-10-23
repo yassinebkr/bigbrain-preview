@@ -117,8 +117,14 @@ async def build_react(project: Path) -> list[dict]:
         else:
             destination.write_text(content, encoding="utf-8")
     stages = []
+    # Verification must not create or rewrite source lockfiles. Honor an
+    # existing lock with ci; a new project's install leaves source bytes fixed.
+    locked = (project / 'package-lock.json').is_file()
+    install = ['npm', 'ci' if locked else 'install', '--ignore-scripts', '--no-audit', '--no-fund']
+    if not locked:
+        install.append('--package-lock=false')
     for name, argv in (
-        ("dependencies", ["npm", "install", "--ignore-scripts", "--no-audit", "--no-fund"]),
+        ("dependencies", install),
         ("typecheck", ["node", "node_modules/typescript/bin/tsc", "--noEmit"]),
         ("build", ["node", "node_modules/vite/bin/vite.js", "build"]),
     ):

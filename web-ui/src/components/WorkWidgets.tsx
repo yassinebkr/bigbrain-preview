@@ -17,7 +17,7 @@ export function VerificationWidget({ run }: { run: RunState }) {
   const failed = verification.stages.filter((stage) => stage.status === 'failed').length;
   return <section className="work-widget" aria-label="Vérifications du livrable">
     <div className="work-eyebrow"><ShieldCheck size={14} /> Vérifications</div>
-    <h3 className="work-heading">{verification.verdict === 'passed' ? 'Vérifications réussies' : verification.verdict === 'failed' ? 'Des points restent à corriger' : 'Vérifications non concluantes'}</h3>
+    <h3 className="work-heading">{run.deliveryStatus === 'incomplete' ? 'Livraison non validée' : verification.verdict === 'passed' ? 'Vérifications réussies' : verification.verdict === 'failed' ? 'Des points restent à corriger' : 'Vérifications non concluantes'}</h3>
     <p className="text-[12px] mt-3 work-muted">{passed} contrôle{passed > 1 ? 's' : ''} réussi{passed > 1 ? 's' : ''}{failed ? ` · ${failed} en échec` : ''}{verification.attempt ? ` · tentative ${verification.attempt}` : ''}</p>
     <div className="work-checks" aria-hidden="true">{verification.stages.map((stage) => <span key={stage.name} data-status={stage.status} />)}</div>
     <details className="mt-4"><summary className="work-link">Détails des vérifications</summary><div className="mt-3 space-y-2.5">{verification.stages.map((stage) => <div key={stage.name} className="flex items-center gap-2 text-[12px]">
@@ -107,7 +107,7 @@ export function WorkOverview({ run, select, journal }: { run: RunState; select: 
   return <div className="work-overview">
     {run.awaitingApproval ? <ProposalWidget run={run} /> : <section className="work-widget" aria-label="Objet du travail">
       <div className="work-eyebrow">{running && <span className="work-pulse" aria-hidden="true" />}{board ? 'Organisation' : running ? 'En construction' : 'Livrable'}</div>
-      <h3 className="work-heading">{running ? 'Le travail prend forme' : run.status === 'done' ? 'Le résultat est disponible' : run.status === 'failed' ? 'Le travail a rencontré un obstacle' : 'Travail arrêté'}</h3>
+      <h3 className="work-heading">{run.deliveryStatus === 'incomplete' ? 'Projet incomplet · non validé' : running ? 'Le travail prend forme' : run.status === 'done' ? 'Le résultat est disponible' : run.status === 'failed' ? 'Le travail a rencontré un obstacle' : 'Travail arrêté'}</h3>
       {run.error && <p role="alert" className="mt-3 text-[12px] leading-relaxed break-words" style={{ color: 'var(--warning)' }}>{run.error}</p>}
       {running && <div className="mt-5 space-y-4">{current.length ? current.map((step) => <div key={`${step.id}:${step.description}`} className="work-live-step flex gap-3"><span className="work-pulse mt-1" /><div className="min-w-0"><p className="text-[13px] leading-relaxed break-words">{step.description}</p><p className="work-muted text-[11px] mt-1">{step.brain}{step.durationMs != null ? ` · ${(step.durationMs / 1000).toFixed(0)} s écoulées` : ''}</p></div></div>) : <p className="work-muted text-[12px]">{run.steps.length ? 'Préparation de la prochaine étape…' : 'Préparation du plan…'}</p>}</div>}
       {running && !!run.steps.length && <p className="work-muted text-[11px] mt-4" aria-label="Avancement observé">{run.steps.filter((step) => step.status === 'done').length} étapes terminées · {current.length} actives{run.files.length ? ` · ${run.files.length} fichiers enregistrés` : ''}</p>}

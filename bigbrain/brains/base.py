@@ -199,14 +199,18 @@ class BaseBrain(BusParticipant, ABC):
 
     async def maintain_project(self, payload):
         """The specialist owns the loop; runtime scope owns Stop and identity."""
-        from ..maintenance import maintain, ProjectTools, protected_test
+        return await self.repair_project(payload, mode='existing')
+
+    async def repair_project(self, payload, *, mode):
+        """Bind shared repair tools to either preservation or delivery evidence."""
+        from ..maintenance import repair_project, ProjectTools, protected_test
         from ..project_inspection import digest
         target = self._directory_context.get()
-        if not target:
-            raise ValueError('Maintenance needs a bound execution target')
+        if not target or target.mode != mode:
+            raise ValueError('Repair needs a matching bound execution target')
         manifest = target.file('.project.json')
         raw = manifest.read_text() if manifest.is_file() else '{}'
-        if digest(raw) != payload.get('_maintenance_manifest_sha'):
+        if mode == 'existing' and digest(raw) != payload.get('_maintenance_manifest_sha'):
             raise ValueError('Project metadata changed since approval; approve again')
         tools = ProjectTools(target)
         from ..verification.evidence import default_repository
@@ -218,14 +222,15 @@ class BaseBrain(BusParticipant, ABC):
         initial_versions = tools.fingerprints()
         # Capture before diagnostics or writes; worker-generated baseline literals
         # never become authoritative preservation evidence.
-        baseline_sources = {p: tools.source(p) for p in initial_versions}
-        if {p: digest(s) for p, s in baseline_sources.items()} != initial_versions:
+        baseline_sources = {p: tools.source(p) for p in initial_versions} if mode == 'existing' else {}
+        if mode == 'existing' and {p: digest(s) for p, s in baseline_sources.items()} != initial_versions:
             raise ValueError('Project changed while capturing maintenance baseline')
         import json
         baseline_artifact = default_repository().put_artifact(
             json.dumps(baseline_sources, sort_keys=True).encode(),
-            name='maintenance-baseline.json', media_type='application/json')
+            name='maintenance-baseline.json', media_type='application/json') if mode == 'existing' else None
         initial_diagnostic = None
+        verification_attempt = 0
 
         def check_tests():
             now = {p: digest(tools.source(p)) for p in tools.inventory()
@@ -236,7 +241,16 @@ class BaseBrain(BusParticipant, ABC):
         async def diagnose():
             nonlocal initial_diagnostic
             versions = tools.fingerprints()
-            result = await self.maintenance_diagnose(payload)
+            if mode == 'existing':
+                result = await self.maintenance_diagnose(payload)
+            else:
+                # Refresh the complete gate after a new validation test. A
+                # missing test alone cannot authorize production changes.
+                result = await verify(selected_tools)
+                from ..verification.disposition import verification_disposition
+                action = verification_disposition(result.get('verification', {}).get('failures', []))['action']
+                result = {**result, 'status': 'failed' if action == 'repair' else
+                          'passed' if result.get('success') else 'inconclusive'}
             if versions != tools.fingerprints():
                 raise ValueError('Project sources changed while diagnostics executed')
             check_tests()
@@ -248,8 +262,14 @@ class BaseBrain(BusParticipant, ABC):
             return result
 
         async def verify(selected):
+            nonlocal selected_tools, verification_attempt
+            selected_tools = selected
+            verification_attempt += 1
+            payload['_verification_attempt'] = verification_attempt
             check_tests()
             current = tools.fingerprints()
+            from ..verification.delivery import file_snapshot
+            declared = file_snapshot(target, {f['path'] for f in payload.get('all_files', [])})
             if set(current) - set(initial_versions) - selected.changed:
                 raise ValueError('Source appeared outside maintenance tools')
             preserved = {p: version for p, version in initial_versions.items() if p not in selected.changed}
@@ -265,18 +285,33 @@ class BaseBrain(BusParticipant, ABC):
                     'paths': sorted(before)[:100], 'manifest_artifact_sha256': artifact.sha256}
             payload['_maintenance_runtime_evidence'] = {
                 'validation_unchanged': preservation_proof(frozen),
-                'unedited_sources_unchanged': preservation_proof(preserved),
-                '_baseline': {'sources': baseline_sources,
+                'unedited_sources_unchanged': preservation_proof(preserved)}
+            if mode == 'existing':
+                payload['_maintenance_runtime_evidence']['_baseline'] = {'sources': baseline_sources,
                     'source_hashes': initial_versions, 'current_hashes': current,
                     'artifact_sha256': baseline_artifact.sha256,
                     'initial_diagnostic': initial_diagnostic,
                     'revision': digest(json.dumps(initial_versions, sort_keys=True)),
-                    'current_revision': digest(json.dumps(current, sort_keys=True))}}
+                    'current_revision': digest(json.dumps(current, sort_keys=True))}
             result = await self.maintenance_verify(payload, selected)
+            payload['_verification_parent_run_id'] = result.get('verification', {}).get('run_id')
             check_tests()
+            if tools.fingerprints() != current:
+                raise ValueError('Project sources changed while delivery verification executed')
+            if file_snapshot(target, declared) != declared:
+                raise ValueError('Project artifacts changed while delivery verification executed')
             return result
 
-        return await maintain(self, payload, diagnose=diagnose, verify=verify)
+        selected_tools = tools
+        result = await repair_project(self, payload, diagnose=diagnose, verify=verify, mode=mode)
+        if mode == 'new' and result.get('success'):
+            from ..verification.delivery import issue
+            try:
+                return issue(target, payload, result, self.project_kind, tools.fingerprints())
+            except (ValueError, OSError, KeyError, TypeError) as exc:
+                return {**result, 'success': False, 'runnable': False, 'verified': False,
+                        'delivery_status': 'incomplete', 'error': str(exc)}
+        return result
 
     @work_dir.setter
     def work_dir(self, value) -> None:

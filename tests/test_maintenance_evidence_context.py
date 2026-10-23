@@ -104,7 +104,7 @@ async def test_reviewer_receives_runtime_original_and_diff():
     assert context['observations'][0]['runtime_baseline_sources']['main.py'] == evidence['sources']['main.py']
     assert '-    return n + 2' in context['baseline']['changes'][0]['diff']
     assert result.details['evidence_requests'][0]['criterion_id'] == '0'
-    assert result.details['repairable_evidence_gap']
+    assert result.details['next_action'] == 'inspect'
 
 
 @pytest.mark.asyncio
@@ -273,7 +273,7 @@ async def test_original_diagnostic_is_authenticated_and_shown_to_reviewer():
     provider.chat_complete.return_value = json.dumps({'decision': 'needs_evidence', 'contradictions': [],
         'coverage': [], 'missing_evidence': [gap(evidence['current_revision'])]})
     result = await review(provider, evidence)
-    assert result.details['repairable_evidence_gap']
+    assert result.details['next_action'] == 'inspect'
     sent = json.loads(provider.chat_complete.call_args.kwargs['messages'][1]['content'])
     assert sent['initial_diagnostic'] == {'status': 'failed', 'diagnostic_output': 'assert 5 == 6'}
 
