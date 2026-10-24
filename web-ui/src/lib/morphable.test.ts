@@ -5,6 +5,15 @@ import type { RunState } from '@/store/appStore';
 const run: RunState = { id: 'web', sessionId: 's1', description: 'Actual web run', status: 'running', startedAt: 1, steps: [], files: [] };
 
 describe('deterministic workspace reconciler', () => {
+  it('follows a new projectless research after a closed run, without switching concurrent work', () => {
+    const old = { ...run, status: 'failed' as const, startedAt: 1, finishedAt: 4 };
+    const retry = { ...run, id: 'research-retry', startedAt: 5 };
+    expect(nextProjectAttempt(old, surfaceRegistry('s1', [old, retry]))?.run.id).toBe('research-retry');
+    expect(nextProjectAttempt({ ...old, status: 'running' }, surfaceRegistry('s1', [old, retry]))).toBeUndefined();
+    expect(nextProjectAttempt(old, surfaceRegistry('s1', [old, { ...retry, startedAt: 3 }]))).toBeUndefined();
+    expect(nextProjectAttempt(old, surfaceRegistry('s1', [old, { ...retry, resultKind: 'taskboard' }]))).toBeUndefined();
+    expect(nextProjectAttempt(old, surfaceRegistry('s1', [old, retry]), 6)).toBeUndefined();
+  });
   it('follows a repair of the same project through planning and failure, not unrelated work', () => {
     const old = { ...run, projectPath: 'sandbox/gcode', status: 'failed' as const };
     const repair = { ...old, id: 'repair', startedAt: 2 };

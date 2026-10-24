@@ -1,0 +1,17 @@
+<!doctype html><html><head><title>Atlas SDK v3 reference</title></head><body>
+<nav>Navigation entry: introduction, installation, account, licensing, changelog, API index, tutorials, integrations, pricing, support, migration, legacy releases.</nav>
+<h1>Atlas SDK version 3 reference manual</h1>
+<section><h2>Installation</h2><p>Install the SDK into an isolated environment. This chapter describes packaging, wheel selection, platform compatibility, dependency resolution and optional extras. Installation instructions do not establish runtime behavior.</p></section>
+<section><h2>Configuration</h2><p>A client receives configuration at construction. Configuration may include paths, connection options and logging preferences. Configuration examples are illustrative and do not change the method contracts below.</p></section>
+<section><h2>Object lifecycle</h2><p>Create a client, open a collection and close resources after use. Exceptions raised during cleanup must be handled according to the application's policy. Closing a collection does not delete its contents.</p></section>
+<aside>Subscribe to the newsletter</aside>
+<section><h2>Legacy migration</h2><p>Legacy version 1 removed every error in its demonstration wrapper. That wrapper is obsolete and is not the current method contract.</p></section>
+<section><h2>Collections</h2><p>A collection stores keyed items. Keys must be valid strings. Listing returns an iterator. Iteration order is unspecified. Enumeration is unrelated to deletion and does not imply permissions.</p></section>
+<section><h2>Reading</h2><p>Read an item using its key. Reading may fail if the collection is unavailable or permissions are insufficient. Cached responses have separate lifetime constraints. These instructions apply to retrieval rather than mutation.</p></section>
+<section><h2>Writing</h2><p>Writes replace values atomically for a single key. Multi-key transactions require an explicit transaction object. Retrying a write may produce application-specific effects. Consult the transaction chapter before retrying operations.</p></section>
+<section><h2>Observability</h2><p>Logs record operation identifiers. A log message is not a durable receipt. Monitoring metrics aggregate requests by method and outcome. Metrics may be sampled and should not be used to infer the result of a particular request.</p></section>
+<section><h2>Removal</h2><pre>remove_item(key, *, missing_ok=False)</pre><p>missing_ok=True suppresses MissingItemError only; permission errors still propagate.</p><p>The missing_ok parameter was introduced in version 3.</p><p>The default raises MissingItemError for a missing key. Successful removal returns None. This method does not recursively remove collections.</p></section>
+<section><h2>Transport</h2><p>The transport supports explicit connection deadlines. Deadlines apply separately to connection establishment and data transfer. An expired deadline does not necessarily establish whether a remote mutation occurred. Reconcile state before retrying non-idempotent operations.</p></section>
+<section><h2>Deployment</h2><p>Deployment examples describe service startup and shutdown. Production configuration depends on workload and resource limits. These examples do not override the reference semantics for individual collection methods.</p></section>
+<footer>Navigation entry: contact, legal, status, partners. Subscribe to the newsletter</footer>
+</body></html>

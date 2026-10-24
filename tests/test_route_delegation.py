@@ -19,6 +19,41 @@ ROUTE_JSON = (
 )
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize('chunks', [["Je relance.\n", ROUTE_JSON], list("Je relance.\n```json\n" + ROUTE_JSON + "\n```")])
+async def test_streamed_preamble_never_leaks_a_later_route_or_duplicates_reply(chunks):
+    class Provider:
+        async def chat_complete(self, **kwargs):
+            async def stream():
+                for chunk in chunks:
+                    yield chunk
+            return stream()
+    front, bus = _make_front(Provider())
+    await front._handle_ui_message(BusMessage(type=MessageType.TASK, source='morphable_ui', target='front_brain',
+        payload={'text': 'Réessaie', 'session_id': 's1'}))
+    deltas = ''.join(p['delta'] for kind, p in bus.events if kind == 'chat.delta')
+    assert 'Je relance.' in deltas and 'route' not in deltas and '```' not in deltas
+    assert len(bus.tasks) == 1
+    replies = [(kind, p) for kind, p in bus.events if kind in {'chat.message', 'chat.done'}]
+    assert len(replies) == 1 and replies[0][0] == 'chat.done'
+    assert replies[0][1]['text'] == 'Ajouté à ta taskboard.'
+
+
+@pytest.mark.asyncio
+async def test_ordinary_braces_and_code_are_released_without_routing():
+    class Provider:
+        async def chat_complete(self, **kwargs):
+            async def stream():
+                for chunk in ['Voici ', '`dict`', ' : {', '"value": 1}']:
+                    yield chunk
+            return stream()
+    front, bus = _make_front(Provider())
+    await front._handle_ui_message(BusMessage(type=MessageType.TASK, source='morphable_ui', target='front_brain',
+        payload={'text': 'Explique dict', 'session_id': 's1'}))
+    assert ''.join(p['delta'] for kind, p in bus.events if kind == 'chat.delta') == 'Voici `dict` : {"value": 1}'
+    assert not bus.tasks
+
+
 class TestRouteParsing:
     def _parse(self, response):
         from bigbrain.front.front_brain import FrontBrain
@@ -89,6 +124,42 @@ def _make_front(provider):
 
 
 class TestFrontBrainRouteDispatch:
+    @pytest.mark.parametrize("followup", ["réessaie", "continue la demande précédente"])
+    async def test_research_followup_keeps_resolved_objective_through_dispatch(self, followup):
+        from unittest.mock import AsyncMock
+        from bigbrain.brains.researcher import ResearcherBrain
+        from bigbrain.orchestrator.orchestrator import WorkspaceOrchestrator
+        objective = "Compare Python 3.13 and 3.7 Path.unlink missing_ok using official documentation."
+        provider = RecordingProvider(json.dumps({"reply":"Je relance la recherche.",
+            "route":{"brain":"researcher","payload":{"type":"research","query":objective}}}))
+        front, bus = _make_front(provider)
+        front.register_brain("researcher", "research official documentation")
+        await front._handle_ui_message(BusMessage(type=MessageType.TASK, source="morphable_ui", target="front_brain",
+            payload={"text":followup,"session_id":"retry-session"}))
+        dispatched = bus.tasks[0][1]
+        assert dispatched["user_request"] == objective
+        assert dispatched["user_message"] == followup
+        assert dispatched["session_id"] == "retry-session"
+        assert next(p for kind,p in bus.events if kind == "task.routing")["description"] == objective
+        orch = WorkspaceOrchestrator("default", MessageBus(auth=None))
+        orch.register_brain("researcher", {"description":"research"})
+        plan = await orch._create_task_plan(BusMessage(type=MessageType.TASK, source="front_brain",
+            target="orchestrator_default", payload=dispatched))
+        brain = ResearcherBrain("researcher", MessageBus(auth=None), search_provider=AsyncMock())
+        brain._full_research = AsyncMock(return_value={"success":True})
+        await brain.handle_task(BusMessage(type=MessageType.TASK, source="orchestrator_default", target="researcher",
+            payload=plan.subtasks[0].payload))
+        assert brain._full_research.call_args.args[0] == objective
+
+    async def test_research_query_precedes_legacy_raw_user_request(self):
+        from unittest.mock import AsyncMock
+        from bigbrain.brains.researcher import ResearcherBrain
+        brain = ResearcherBrain("researcher", MessageBus(auth=None), search_provider=AsyncMock())
+        brain._full_research = AsyncMock(return_value={"success":True})
+        await brain.handle_task(BusMessage(type=MessageType.TASK, source="orchestrator_default", target="researcher",
+            payload={"type":"research","query":"Resolved research objective","user_request":"réessaie"}))
+        assert brain._full_research.call_args.args[0] == "Resolved research objective"
+
     async def test_validation_change_proposal_is_forwarded_not_granted_as_permission(self):
         decision = {'path': 'tests/test_old.py', 'reason': 'Conflicting expected result',
                     'expected_behavior': 'Return the requested sum', 'authority': 'Explicit user requirement'}

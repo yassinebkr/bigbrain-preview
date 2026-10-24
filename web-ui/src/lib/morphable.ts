@@ -1,7 +1,7 @@
 import type { RunState } from '@/store/appStore';
 import type { WidgetKind } from './widgetPolicy';
 
-export type SurfaceKind = 'preview' | 'activity' | 'files' | 'verification';
+export type SurfaceKind = 'preview' | 'activity' | 'files' | 'verification' | 'research';
 export type WorkspaceMode = 'focus' | 'peek' | 'workspace' | 'expanded';
 export interface WorkspacePreference {
   mode?: WorkspaceMode;
@@ -22,8 +22,10 @@ export const surfaceId = (run: RunState, kind: SurfaceKind) =>
 export const isBoardRun = (run: RunState) => run.resultKind === 'taskboard' || run.steps.some((step) => step.brain === 'taskboard');
 export function nextProjectAttempt(selected: RunState | undefined, surfaces: WorkSurface[], inspectedAt = 0) {
   if (!selected) return undefined;
-  return surfaces.filter((s) => s.kind === 'activity' && !!s.run.projectPath
-    && (s.run.projectPath === selected.projectPath || !selected.projectPath && selected.status !== 'running')
+  return surfaces.filter((s) => s.kind === 'activity' && !isBoardRun(s.run)
+    && (s.run.projectPath && (s.run.projectPath === selected.projectPath || !selected.projectPath && selected.status !== 'running')
+      || !selected.projectPath && selected.status !== 'running'
+         && s.run.startedAt > (selected.finishedAt || selected.startedAt))
     && s.run.sessionId === selected.sessionId && s.run.startedAt > Math.max(selected.startedAt, inspectedAt))
     .sort((a, b) => b.run.startedAt - a.run.startedAt)[0];
 }
@@ -48,6 +50,7 @@ export function surfaceRegistry(sessionId: string | null, runs: RunState[]): Wor
     .flatMap((run): WorkSurface[] => [
       ...(webEntryPath(run) ? [{ id: surfaceId(run, 'preview'), kind: 'preview' as const, run }] : []),
       { id: surfaceId(run, 'activity'), kind: 'activity', run },
+      ...(Object.keys(run.researches || {}).length ? [{ id: surfaceId(run, 'research'), kind: 'research' as const, run }] : []),
       ...(run.files.length ? [{ id: surfaceId(run, 'files'), kind: 'files' as const, run }] : []),
       ...(run.verification ? [{ id: surfaceId(run, 'verification'), kind: 'verification' as const, run }] : []),
     ]);

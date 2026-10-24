@@ -200,16 +200,27 @@ async def _get_session() -> CodexJsonRpcClient:
     if _rpc_override is not None:
         return await _initialize(_rpc_override)
     if _session is not None:
-        client = await _session
+        pending = _session
+        try:
+            client = await asyncio.shield(pending)
+        except Exception:
+            if _session is pending:
+                _session = None
+            raise
         if not client._closed:
             return client
         _session = None
     async def start_initialized():
-        return await _initialize(await CodexJsonRpcClient.start())
+        client = await CodexJsonRpcClient.start()
+        try:
+            return await asyncio.wait_for(_initialize(client), timeout=15)
+        except BaseException:
+            client.kill()
+            raise
     task = asyncio.get_event_loop().create_task(start_initialized())
     _session = task
     try:
-        client = await task
+        client = await asyncio.shield(task)
     except Exception:
         _session = None
         raise
@@ -222,7 +233,7 @@ async def codex_auth_status() -> dict:
     """Who is signed in right now (settings sheet + connect polling)."""
     try:
         client = await _get_session()
-        result = await client.call("account/read", {})
+        result = await asyncio.wait_for(client.call("account/read", {}), timeout=10)
         account = result.get("account") if isinstance(result, dict) else None
         if not account:
             return {"authenticated": False}
@@ -232,6 +243,8 @@ async def codex_auth_status() -> dict:
             "planType": account.get("planType"),
             "type": account.get("type"),
         }
+    except asyncio.TimeoutError:
+        return {"authenticated": False, "error": "Codex authentication status timed out"}
     except Exception as exc:
         return {"authenticated": False, "error": str(exc)}
 
@@ -244,7 +257,7 @@ async def codex_start_login(open_browser: bool = True) -> dict:
     appears.
     """
     client = await _get_session()
-    result = await client.call("account/login/start", {"type": "chatgpt"})
+    result = await asyncio.wait_for(client.call("account/login/start", {"type": "chatgpt"}), timeout=15)
     if not isinstance(result, dict) or not result.get("authUrl"):
         raise RuntimeError(f"unexpected login/start response: {result!r}")
     if open_browser:

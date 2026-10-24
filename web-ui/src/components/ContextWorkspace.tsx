@@ -7,8 +7,9 @@ import { useWorkspaceStore } from '@/store/workspaceStore';
 import { isBoardRun, nextProjectAttempt, reconcileWorkspace, runTitle, surfaceRegistry, webEntryPath, type WorkSurface } from '@/lib/morphable';
 import { usePreview } from '@/lib/usePreview';
 import { WorkOverview } from './WorkWidgets';
+import { ResearchPanel } from './ResearchPanel';
 
-const labels = { preview: 'Aperçu', activity: 'Vue d’ensemble', files: 'Fichiers', verification: 'Tests' };
+const labels = { preview: 'Aperçu', activity: 'Vue d’ensemble', files: 'Fichiers', verification: 'Tests', research: 'Recherche' };
 const statuses = { running: 'En cours', done: 'Terminé', failed: 'Échec', cancelled: 'Annulé' };
 
 const wideQuery = '(min-width: 1440px)';
@@ -38,6 +39,8 @@ export function SurfaceContent({ surface, select = () => {} }: { surface: WorkSu
   const done = run.steps.filter((step) => step.status === 'done');
   const agents = [...new Set(run.steps.map((step) => step.brain).filter(Boolean))];
   if (kind === 'preview') return <PreviewSurface surface={surface} />;
+  if (kind === 'research') return <ResearchPanel run={run} />;
+  if (kind === 'activity' && Object.keys(run.researches || {}).length > 0 && !run.projectPath && !run.files.length) return <ResearchPanel run={run} compact inspect={() => select('research')} />;
   const content = <div className={`${kind === 'activity' ? 'work-journal-content' : 'space-y-5 p-5'} text-[12px]`}>
     {run.error && <p role="alert" className="whitespace-pre-wrap break-words" style={{ color: 'var(--warning)' }}>{run.error}</p>}
     {kind === 'activity' && <>
@@ -138,14 +141,14 @@ export function ContextWorkspace({ children }: { children: (ownsActivity: boolea
               {runs.length > 1 ? <select aria-label="Travail consulté" className="w-full text-[14px] font-medium bg-transparent" style={{ color: 'var(--text-primary)' }} value={state.selected?.run.id || ''} onChange={(event) => { const surface = runs.find((s) => s.run.id === event.target.value); if (surface) inspect(surface.run); }}>
                 {!state.selected && <option value="">Autres travaux…</option>}
                 {runs.map(({ run }) => <option key={run.id} value={run.id} style={{ backgroundColor: 'var(--bg-surface)' }}>{runTitle(run)}</option>)}
-              </select> : <h2 className="text-[14px] font-medium line-clamp-2" title={state.selected?.run.description}>{state.selected ? (state.selected.run.projectName || state.selected.run.projectPath ? runTitle(state.selected.run) : 'Travail de la conversation') : 'Résultat indisponible'}</h2>}
+              </select> : <h2 className="text-[14px] font-medium line-clamp-2" title={state.selected?.run.description}>{state.selected ? (state.selected.run.projectName || state.selected.run.projectPath ? runTitle(state.selected.run) : Object.keys(state.selected.run.researches || {}).length ? 'Recherche documentaire' : 'Travail de la conversation') : 'Résultat indisponible'}</h2>}
               {state.selected && <p className="context-status text-[11px] mt-1 flex items-center gap-2" data-status={state.selected.run.status}>{state.selected.run.status === 'running' && !state.selected.run.awaitingApproval && <span className="work-pulse" aria-hidden="true" />}{state.selected.run.deliveryStatus === 'incomplete' ? 'Incomplet · non validé' : state.selected.run.awaitingApproval ? 'Ton accord est nécessaire' : statuses[state.selected.run.status]}</p>}
             </div>
             <button className="p-1" aria-label={expanded ? 'Redonner la place principale au chat' : 'Donner la place principale à cette activité'} onClick={() => change({ mode: expanded ? 'workspace' : 'expanded' })}>{expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
             <button className="p-1" aria-label="Fermer la surface" onClick={close}><X size={16} /></button>
           </header>
           <nav className="context-tabs flex shrink-0 overflow-x-auto" aria-label="Contenu de la surface">
-            {surfaces.filter((s) => s.run.id === state.selected?.run.id).sort((a, b) => ['activity', 'preview', 'files', 'verification'].indexOf(a.kind) - ['activity', 'preview', 'files', 'verification'].indexOf(b.kind)).map((surface) => <button key={surface.id} aria-pressed={state.selected?.id === surface.id} className="text-[11px] shrink-0" onClick={() => change({ selectedId: surface.id })}>{labels[surface.kind]}</button>)}
+            {surfaces.filter((s) => s.run.id === state.selected?.run.id).sort((a, b) => ['activity', 'research', 'preview', 'files', 'verification'].indexOf(a.kind) - ['activity', 'research', 'preview', 'files', 'verification'].indexOf(b.kind)).map((surface) => <button key={surface.id} aria-pressed={state.selected?.id === surface.id} className="text-[11px] shrink-0" onClick={() => change({ selectedId: surface.id })}>{labels[surface.kind]}</button>)}
           </nav>
           <div className="flex-1 overflow-y-auto min-h-0" ref={contentRef} onScroll={(event) => { if (state.selected) positions.current[state.selected.id] = event.currentTarget.scrollTop; }}>
             {visible && (state.selected ? <SurfaceContent key={state.selected.id} surface={state.selected} select={(kind) => { const surface = surfaces.find((item) => item.run.id === state.selected?.run.id && item.kind === kind); if (surface) change({ selectedId: surface.id }); }} /> : <p className="p-5 text-[12px]" role="status">Historique en cours de restauration ou résultat indisponible. Les autres travaux restent accessibles.</p>)}

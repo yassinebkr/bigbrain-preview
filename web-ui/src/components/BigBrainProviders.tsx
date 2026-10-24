@@ -2,8 +2,9 @@
 // Talks to the BigBrain server REST endpoints (Phase 3/4 of the models
 // plan): GET /api/models, GET/POST /api/auth/codex/*, /api/auth/mistral/*.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
+import { startCodexLogin } from '@/lib/codexLogin';
 
 interface ModelEntry {
   key: string;
@@ -16,7 +17,8 @@ interface ModelEntry {
 const POLL_MS = 3000;
 
 async function api(path: string, opts?: RequestInit) {
-  const response = await fetch(path, opts);
+  const response = await fetch(path, { ...opts, signal: opts?.signal
+    ? AbortSignal.any([opts.signal, AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000) });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     throw new Error((body as any).error || `HTTP ${response.status}`);
@@ -33,6 +35,10 @@ export function BigBrainProviders() {
   const [mistralStudioKey, setMistralStudioKey] = useState('');
   const [mistralStudioStatus, setMistralStudioStatus] = useState<string>('');
   const [busy, setBusy] = useState(false);
+  const [codexPending, setCodexPending] = useState(false);
+  const [codexUrl, setCodexUrl] = useState('');
+  const codexFlow = useRef<ReturnType<typeof startCodexLogin> | null>(null);
+  useEffect(() => () => { codexFlow.current?.stop(); codexFlow.current = null; }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -58,28 +64,16 @@ export function BigBrainProviders() {
   }, [refresh]);
 
   const connectCodex = async () => {
-    setBusy(true);
+    if (codexFlow.current) return;
+    setCodexPending(true);
+    const flow = startCodexLogin({ request: api,
+      open: () => window.open('about:blank', '_blank'), status: setCodexStatus,
+      link: setCodexUrl, connected: () => { void refresh(); } });
+    codexFlow.current = flow;
     try {
-      // The server opens the authUrl in a browser; codex owns the OAuth
-      // callback and writes ~/.codex. Poll status until signed in.
-      await api('/api/auth/codex/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ open_browser: true }),
-      });
-      setCodexStatus('Waiting for sign-in…');
-      const poll = setInterval(async () => {
-        const status = await api('/api/auth/codex/status');
-        if (status.authenticated) {
-          clearInterval(poll);
-          setCodexStatus(`Signed in: ${status.email || status.type}`);
-          refresh();
-        }
-      }, POLL_MS);
-    } catch (e: any) {
-      setCodexStatus(e.message);
+      await flow.done;
     } finally {
-      setBusy(false);
+      if (codexFlow.current === flow) { codexFlow.current = null; setCodexPending(false); }
     }
   };
 
@@ -295,18 +289,20 @@ export function BigBrainProviders() {
 
         <button
           onClick={connectCodex}
-          disabled={busy}
+          disabled={busy || codexPending}
           className="px-3 py-2 rounded-lg text-[13px] font-medium transition-colors duration-150 cursor-pointer"
           style={{
             backgroundColor: 'var(--accent-blue, #0071e3)',
             color: '#fff',
           }}
         >
-          Connect with ChatGPT
+          {codexPending ? 'Connexion ChatGPT en cours…' : 'Connect with ChatGPT'}
         </button>
         <span className="text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
           {codexStatus}
         </span>
+
+        {codexUrl && <a href={codexUrl} target="_blank" rel="noreferrer" className="text-[12px] underline" style={{ color: 'var(--accent-blue)' }}>Ouvrir la connexion ChatGPT</a>}
 
         <button
           onClick={connectMistral}

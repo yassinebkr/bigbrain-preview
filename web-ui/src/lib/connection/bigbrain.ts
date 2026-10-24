@@ -330,6 +330,9 @@ export class BigBrainConnection implements ConnectionLike {
     }
 
     if (event === 'chat.message') {
+      // A terminal reply can be empty after a provider error. End the wait
+      // before the transcript callback intentionally filters empty messages.
+      this.callbacks.onRunEnd?.();
       const role = payload.role === 'system' ? 'system' : 'assistant';
       this.callbacks.onMessage?.({
         text: payload.text || '',

@@ -520,7 +520,7 @@ class BigBrainSystem:
             if brave_key:
                 print("🔍 Researcher brain: Brave Search + LLM")
             else:
-                print("🔍 Researcher brain: mock search (set BRAVE_API_KEY for real web search)")
+                print("🔍 Researcher brain: unavailable (set BRAVE_API_KEY for real web search)")
             self.brains["researcher"] = research_brain
         except Exception as e:
             print(f"⚠️  Research brain unavailable: {e}")

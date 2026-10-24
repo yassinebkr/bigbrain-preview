@@ -2,8 +2,17 @@
 
 import asyncio
 import math
+from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
 from typing import AsyncIterator, Union
+
+
+@dataclass(frozen=True)
+class MemoryToolCall:
+    """A provider-native tool request, never visible assistant text."""
+    id: str
+    arguments: dict
+    assistant_message: dict | None = field(default=None, repr=False)
 
 
 def reasoning_timeout(provider, default, *, multiplier=1):

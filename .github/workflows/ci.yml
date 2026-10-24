@@ -13,6 +13,9 @@ jobs:
         python-version: ["3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Offline comparison tests load the frozen pre-change implementation.
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -22,7 +25,7 @@ jobs:
       - name: Install core + test deps
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[test,web,memory]"
+          pip install -e ".[test,web,memory,research]"
           python -m playwright install --with-deps chromium
       - name: Lint (ruff, non-blocking on docs)
         run: |

@@ -1,20 +1,6 @@
-"""Researcher Brain — Web search + LLM analysis via ReWOO pattern.
-
-All communication goes through the message bus:
-- Search results → bus progress events
-- LLM requests → bus task messages (or shared provider)
-- Final results → bus result messages
-
-Architecture: ReWOO + Source Triangulation
-- Planner generates search queries from user request
-- Parallel search execution (asyncio.gather)
-- Source triangulation: cross-reference results, score confidence
-- LLM summarization of findings
-"""
+"""Research worker: bounded actions and actual page evidence over the bus."""
 
 import asyncio
-import hashlib
-import json
 import logging
 import time
 from typing import Any, Dict, List, Optional
@@ -24,6 +10,8 @@ import httpx
 
 from .base import BaseBrain
 from ..bus.message import BusMessage, MessageType, Priority
+from ..research import DiscoveryPolicy, Limits, ModelPolicy, PageReader, ResearchRuntime
+from ..research_assessment import ModelReviewer
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +53,7 @@ class BraveSearch:
             data = resp.json()
         except Exception as e:
             logger.warning("Brave search failed for '%s': %s", query, e)
-            return []
+            raise
 
         results = []
         for item in data.get("web", {}).get("results", [])[:count]:
@@ -116,26 +104,20 @@ class UnavailableSearch:
 
 
 class ResearcherBrain(BaseBrain):
-    """Researcher brain — web search + LLM analysis via message bus.
-
-    ReWOO pattern:
-    1. Plan: LLM generates search queries from user request
-    2. Search: parallel Brave API calls (LLMCompiler-style speedup)
-    3. Triangulate: cross-reference sources, score confidence
-    4. Summarize: LLM synthesizes findings into coherent answer
-
-    All LLM calls use the shared llm_provider (same OAuth as other brains).
-    All progress/results go through the message bus.
-    """
+    """Collect evidence using replaceable policies and runtime-owned observations."""
 
     def __init__(self, name: str, bus, workspace: str = "default",
                  llm_provider=None, search_provider=None,
                  brave_api_key: str = None,
-                 max_searches: int = 5, max_results_per_search: int = 5):
+                 max_searches: int = 5, max_results_per_search: int = 5,
+                 page_reader=None, research_policy=None, research_reviewer=None):
         super().__init__(name, bus, workspace)
         self.llm_provider = llm_provider
         self.max_searches = max_searches
         self.max_results_per_search = max_results_per_search
+        self.page_reader = page_reader or PageReader()
+        self.research_policy = research_policy
+        self.research_reviewer = research_reviewer
 
         # Never expose synthetic sources as evidence in a live run.
         if search_provider:
@@ -155,8 +137,10 @@ class ResearcherBrain(BaseBrain):
         """
         payload = message.payload
         task_type = payload.get("type", "research")
-        query = (payload.get("user_request")
-                 or payload.get("query")
+        # Explicit specialist input carries the resolved objective. Legacy
+        # envelopes may still contain the raw conversational turn in user_request.
+        query = (payload.get("query")
+                 or payload.get("user_request")
                  or str(payload))
 
         if task_type == "search_only":
@@ -164,265 +148,58 @@ class ResearcherBrain(BaseBrain):
         else:
             return await self._full_research(query, payload)
 
-    # ── Step 1: Plan search queries ──────────────────────────────────
-
-    async def _plan_queries(self, user_request: str) -> List[str]:
-        """Use LLM to generate targeted search queries from user request."""
-        await self.send_progress({
-            "stage": "planning",
-            "request": user_request[:80],
-        })
-
-        if not self.llm_provider:
-            # No LLM — extract keywords manually
-            return self._fallback_queries(user_request)
-
-        prompt = f"""Generate 3-5 specific web search queries to research this topic:
-
-"{user_request}"
-
-Rules:
-- Each query should target a different angle (facts, data, expert opinions, recent news, technical details)
-- Queries should be concise and search-engine optimized
-- Output ONLY the queries, one per line, no numbering or bullets
-- No explanations"""
-
-        try:
-            raw = await self.llm_provider.complete(prompt, stream=False, max_tokens=200)
-            queries = [q.strip() for q in raw.strip().split("\n") if q.strip()]
-            # Filter out empty or too-short queries
-            queries = [q for q in queries if len(q) > 5][:self.max_searches]
-            if queries:
-                return queries
-        except Exception as e:
-            logger.warning("LLM query planning failed: %s", e)
-
-        return self._fallback_queries(user_request)
-
-    def _fallback_queries(self, user_request: str) -> List[str]:
-        """Generate basic search queries without LLM."""
-        base = user_request[:100]
-        return [
-            base,
-            f"{base} latest research",
-            f"{base} analysis data",
-        ]
-
-    # ── Step 2: Parallel search execution ────────────────────────────
-
-    async def _execute_searches(self, queries: List[str]) -> Dict[str, List[Dict]]:
-        """Run all searches in parallel via Brave API."""
-        await self.send_progress({
-            "stage": "searching",
-            "query_count": len(queries),
-            "queries": queries,
-        })
-
-        results = await self.search.parallel_search(queries, self.max_results_per_search)
-
-        total_results = sum(len(r) for r in results.values())
-        await self.send_progress({
-            "stage": "search_complete",
-            "total_results": total_results,
-            "queries_with_results": sum(1 for r in results.values() if r),
-        })
-
-        return results
-
-    # ── Step 3: Source triangulation ─────────────────────────────────
-
-    def _triangulate(self, search_results: Dict[str, List[Dict]]) -> Dict[str, Any]:
-        """Cross-reference sources and score confidence.
-
-        Deterministic — no LLM needed.
-        Checks: domain diversity, snippet overlap, source count.
-        """
-        all_results = []
-        for query_results in search_results.values():
-            all_results.extend(query_results)
-
-        if not all_results:
-            return {
-                "confidence": 0.0,
-                "unique_sources": 0,
-                "domain_diversity": 0.0,
-                "top_sources": [],
-                "deduplicated": [],
-            }
-
-        # Deduplicate by URL
-        seen_urls = set()
-        deduped = []
-        for r in all_results:
-            url = r.get("url", "")
-            if url and url not in seen_urls:
-                seen_urls.add(url)
-                deduped.append(r)
-
-        # Domain diversity
-        domains = set(r.get("domain", "") for r in deduped if r.get("domain"))
-        domain_diversity = len(domains) / max(len(deduped), 1)
-
-        # Snippet similarity — check for repeated key phrases across sources
-        snippets = [r.get("snippet", "").lower() for r in deduped if r.get("snippet")]
-        # Simple overlap: count how many snippet pairs share 3+ word sequences
-        overlap_count = 0
-        for i, s1 in enumerate(snippets):
-            words1 = set(s1.split())
-            for s2 in snippets[i + 1:]:
-                words2 = set(s2.split())
-                shared = words1 & words2
-                if len(shared) >= 5:
-                    overlap_count += 1
-
-        # Confidence: more sources + more diversity + more agreement = higher
-        source_score = min(len(deduped) / 10, 1.0)  # caps at 10 sources
-        agreement_score = min(overlap_count / max(len(snippets), 1), 1.0)
-        confidence = (source_score * 0.4 + domain_diversity * 0.3 + agreement_score * 0.3)
-
-        # Rank by appearance frequency across queries
-        url_freq: Dict[str, int] = {}
-        for query_results in search_results.values():
-            for r in query_results:
-                url = r.get("url", "")
-                if url:
-                    url_freq[url] = url_freq.get(url, 0) + 1
-
-        top_sources = sorted(deduped, key=lambda r: url_freq.get(r.get("url", ""), 0), reverse=True)
-
-        return {
-            "confidence": round(confidence, 3),
-            "unique_sources": len(deduped),
-            "unique_domains": len(domains),
-            "domain_diversity": round(domain_diversity, 3),
-            "agreement_score": round(agreement_score, 3),
-            "top_sources": top_sources[:10],
-            "deduplicated": deduped,
-        }
-
-    # ── Step 4: LLM summarization ───────────────────────────────────
-
-    async def _summarize(self, user_request: str,
-                          triangulation: Dict[str, Any]) -> str:
-        """Use LLM to synthesize research findings into a coherent answer."""
-        await self.send_progress({
-            "stage": "summarizing",
-            "source_count": triangulation["unique_sources"],
-            "confidence": triangulation["confidence"],
-        })
-
-        if not self.llm_provider:
-            # No LLM — return structured data instead
-            sources = triangulation.get("top_sources", [])
-            lines = [f"Found {triangulation['unique_sources']} sources "
-                     f"(confidence: {triangulation['confidence']:.0%}):\n"]
-            for s in sources[:5]:
-                lines.append(f"- {s.get('title', 'Untitled')}: {s.get('snippet', '')[:100]}")
-            return "\n".join(lines)
-
-        # Build source context for LLM
-        sources = triangulation.get("top_sources", [])[:8]
-        source_text = ""
-        for i, s in enumerate(sources, 1):
-            source_text += (
-                f"\n[Source {i}] {s.get('title', 'Untitled')}\n"
-                f"URL: {s.get('url', '')}\n"
-                f"Snippet: {s.get('snippet', '')}\n"
-            )
-
-        confidence = triangulation["confidence"]
-        prompt = f"""Analyze these web search results and provide a comprehensive answer.
-
-User's question: {user_request}
-
-Search results ({triangulation['unique_sources']} sources, {triangulation['unique_domains']} domains, confidence: {confidence:.0%}):
-{source_text}
-
-Instructions:
-- Synthesize the information into a clear, well-structured answer
-- Cite sources by number [1], [2], etc. when making claims
-- Note where sources agree or disagree
-- If confidence is low (<50%), explicitly state what's uncertain
-- Highlight the most important findings first
-- Keep under 300 words — dense and useful"""
-
-        try:
-            summary = await self.llm_provider.complete(prompt, stream=False, max_tokens=600)
-            return summary.strip()
-        except Exception as e:
-            logger.warning("LLM summarization failed: %s", e)
-            # Fallback to raw sources
-            lines = [f"Research found {len(sources)} sources (LLM summary unavailable):"]
-            for s in sources[:5]:
-                lines.append(f"- [{s.get('domain', '')}] {s.get('title', '')}: {s.get('snippet', '')[:120]}")
-            return "\n".join(lines)
-
-    # ── Full research workflow ───────────────────────────────────────
-
     async def _full_research(self, query: str, payload: Dict) -> Dict[str, Any]:
-        """Complete ReWOO research pipeline: plan → search → triangulate → summarize."""
-        start = time.time()
-
-        # Step 1: Plan queries
-        queries = await self._plan_queries(query)
-
-        # Step 2: Parallel search
-        search_results = await self._execute_searches(queries)
-
-        # Step 3: Triangulate sources
-        triangulation = self._triangulate(search_results)
-
-        if not triangulation["unique_sources"]:
-            return {
-                "success": True,
-                "summary": (
-                    "Web research was unavailable because no real search "
-                    "provider is configured; no sources were used."
-                ),
-                "research_unavailable": True,
-                "confidence": 0.0,
-                "unique_sources": 0,
-                "unique_domains": 0,
-                "domain_diversity": 0.0,
-                "queries_used": queries,
-                "top_sources": [],
-                "execution_time": round(time.time() - start, 2),
-            }
-
-        await self.send_progress({
-            "stage": "triangulated",
-            "confidence": triangulation["confidence"],
-            "unique_sources": triangulation["unique_sources"],
-        })
-
-        # Step 4: Summarize with LLM
-        summary = await self._summarize(query, triangulation)
-
-        elapsed = time.time() - start
-
-        return {
-            "success": True,
-            "summary": summary,
-            "confidence": triangulation["confidence"],
-            "unique_sources": triangulation["unique_sources"],
-            "unique_domains": triangulation["unique_domains"],
-            "domain_diversity": triangulation["domain_diversity"],
-            "queries_used": queries,
-            "top_sources": [
-                {"title": s["title"], "url": s["url"], "domain": s["domain"]}
-                for s in triangulation["top_sources"][:5]
-            ],
-            "execution_time": round(elapsed, 2),
-        }
+        """Collect observations, then assess claims using inspected evidence."""
+        start = time.monotonic()
+        if isinstance(self.search, UnavailableSearch):
+            state = await ResearchRuntime(self.search, self.page_reader, DiscoveryPolicy(), self.send_progress).run(
+                query, unavailable_reason="No real search provider is configured; no sources were used.")
+            return {"success": True, "research_unavailable": True, "research_status": "unavailable",
+                    "query": query, "sources": [],
+                    "summary": "Web research unavailable: no real search provider is configured; no sources were used.",
+                    "top_sources": [], "unique_sources": 0, "unique_domains": 0,
+                    "queries_used": [], "claims_verified": False, "evidence": state.model_dump(mode="json")}
+        policy = self.research_policy or (ModelPolicy(self.llm_provider) if self.llm_provider else DiscoveryPolicy())
+        runtime = ResearchRuntime(self.search, self.page_reader, policy, self.send_progress,
+                                  cancelled=lambda: self._cancelled,
+                                  limits=Limits(searches=max(1, min(self.max_searches, 5))),
+                                  reviewer=self.research_reviewer or (ModelReviewer(self.llm_provider) if self.llm_provider else None))
+        state = await runtime.run(query)
+        sources = [s.model_dump(mode="json") for s in state.sources]
+        read = [s for s in sources if s["status"] == "read"]
+        lines = [state.reason or "Research incomplete."]
+        for claim in state.claims:
+            refs = ", ".join(link.passage_id for link in claim.evidence)
+            lines.append(f"[{claim.status}] {claim.text} [{refs}] — {claim.basis}")
+            lines.extend(f"Limit: {item}" for item in claim.limitations)
+        lines.extend(f"Read: {s['url']}" for s in read)
+        return {"success": state.status == "completed", "research_status": state.status,
+                "query": query, "sources": sources,
+                "error": state.reason if state.status == "partial" else None,
+                "summary": "\n".join(lines), "claims_verified": False,
+                "unique_sources": len(sources), "unique_domains": len({urlparse(s['url']).netloc for s in sources}),
+                "top_sources": sources, "pages_read": len(read),
+                "queries_used": [o.action.query for o in state.observations if o.action.tool == "search"],
+                "evidence": state.model_dump(mode="json"),
+                "execution_time": round(time.monotonic()-start, 2)}
 
     async def _search_only(self, query: str) -> Dict[str, Any]:
         """Just search, return raw results."""
-        results = await self.search.search(query, self.max_results_per_search)
+        if isinstance(self.search, UnavailableSearch):
+            return {"success": False, "research_unavailable": True, "query": query,
+                    "results": [], "result_count": 0, "error": "No search provider configured"}
+        try:
+            results = await self.search.search(query, self.max_results_per_search)
+        except Exception as exc:
+            return {"success": False, "query": query, "results": [], "result_count": 0,
+                    "error": str(exc)[:300], "pages_read": 0, "claims_verified": False}
         return {
             "success": True,
             "results": results,
             "query": query,
             "result_count": len(results),
+            "pages_read": 0,
+            "claims_verified": False,
         }
 
     # ── Bus message handling ─────────────────────────────────────────
@@ -440,9 +217,9 @@ Instructions:
                 "features": [
                     "brave_web_search",
                     "parallel_search",
-                    "source_triangulation",
-                    "llm_summarization",
-                    "rewoo_pattern",
+                    "typed_actions",
+                    "page_evidence",
+                    "bounded_research",
                 ],
             }, message.id)
         else:

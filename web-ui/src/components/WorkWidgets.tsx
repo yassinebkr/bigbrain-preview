@@ -6,6 +6,7 @@ import { isBoardRun, webEntryPath, type SurfaceKind } from '@/lib/morphable';
 import { ContractCriteria, StackSummary } from './ContractCard';
 import { composeWidgets, parseWidgetProposal } from '@/lib/widgetPolicy';
 import { useWorkspaceStore } from '@/store/workspaceStore';
+import { ResearchActivity } from './ResearchPanel';
 
 const stageLabels: Record<string, string> = { syntax: 'Syntaxe', compile: 'Compilation', run: 'Exécution', contracts: 'Fichiers attendus', tests: 'Tests' };
 
@@ -123,6 +124,7 @@ export function WorkOverview({ run, select, journal }: { run: RunState; select: 
       </div>
       {openError && <p role="alert" className="text-[12px] mt-3" style={{ color: 'var(--warning)' }}>{openError}</p>}
     </section>}
+    {Object.entries(run.researches || {}).map(([id, research]) => <ResearchActivity key={id} research={research} live={running} inspect={() => select('research')} />)}
     {widgets.map((kind) => kind === 'console' ? <PythonConsole key={kind} run={run} />
       : kind === 'verification' ? <VerificationWidget key={kind} run={run} />
       : kind === 'preview' ? <section key={kind} className="work-widget" aria-label="Widget aperçu"><div className="work-eyebrow">Application disponible</div><p className="text-[12px] mt-3 work-muted">L’aperçu ne démarre que si tu l’ouvres.</p><button className="work-secondary mt-3" onClick={() => select('preview')}>Afficher l’application</button></section>

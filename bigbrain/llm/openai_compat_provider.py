@@ -23,7 +23,7 @@ from typing import AsyncIterator, Optional
 import httpx
 
 from .model_registry import ModelEntry, get_model
-from .provider import LLMProvider
+from .provider import LLMProvider, MemoryToolCall
 from .usage import UsageRecord, get_tracker
 
 # Thinking shares the completion-token budget on reasoning models
@@ -56,6 +56,7 @@ def image_content_block(data: bytes, media_type: str) -> dict:
 
 class OpenAICompatProvider(LLMProvider):
     """Provider for any OpenAI-compatible endpoint described by the registry."""
+    native_memory_tools = True
 
     def __init__(self, registry_key: str, api_key: Optional[str] = None):
         self.registry_key = registry_key
@@ -150,6 +151,15 @@ class OpenAICompatProvider(LLMProvider):
                 # a structured protocol to an endpoint that drops its schema.
                 body['provider'] = {'require_parameters': True}
         tool_schema = kwargs.get('tool_schema')
+        if kwargs.get('memory_tools'):
+            if tool_schema is not None or kwargs.get('response_format') is not None:
+                raise ValueError('Native memory tools cannot combine with a forced action schema')
+            from ..memory.shared import MEMORY_TOOL_SCHEMA
+            body['tools'] = [{'type': 'function', 'function': MEMORY_TOOL_SCHEMA}]
+            body['tool_choice'] = 'auto'
+            body['parallel_tool_calls'] = False
+            if self.registry_key.startswith('openrouter-'):
+                body['provider'] = {'require_parameters': True}
         if tool_schema is not None:
             if stream or kwargs.get('response_format') is not None:
                 raise ValueError('Single-action tool protocol is non-streaming and cannot combine response formats')
@@ -177,11 +187,35 @@ class OpenAICompatProvider(LLMProvider):
             if not isinstance(arguments, str) or not isinstance(json.loads(arguments), dict):
                 raise ValueError('Native tool arguments must be a JSON object')
             return arguments
+        if kwargs.get('memory_tools') and (choices[0].get('message') or {}).get('tool_calls'):
+            return self._memory_call((choices[0]['message'])['tool_calls'], choices[0]['message'])
         return visible_content((choices[0].get("message") or {}).get("content"))
+
+    @staticmethod
+    def _memory_call(calls, message=None):
+        if len(calls) != 1 or calls[0].get('function', {}).get('name') != 'bigbrain_memory' or not calls[0].get('id'):
+            raise ValueError('Expected exactly one identified memory tool call')
+        arguments = json.loads(calls[0]['function'].get('arguments', ''))
+        if not isinstance(arguments, dict):
+            raise ValueError('Memory tool arguments must be an object')
+        normalized = [{'id': calls[0]['id'], 'type': 'function', 'function': {
+            'name': 'bigbrain_memory', 'arguments': calls[0]['function']['arguments']}}]
+        assistant = {'role': 'assistant', 'tool_calls': normalized, 'content': visible_content((message or {}).get('content')) or None}
+        # Some reasoning providers require their private continuation metadata
+        # alongside tool results. It is returned to that provider only, never
+        # streamed to the UI or persisted as a chat/memory observation.
+        for key in ('reasoning_content', 'reasoning_details'):
+            if (message or {}).get(key):
+                assistant[key] = message[key]
+        return MemoryToolCall(calls[0]['id'], arguments, assistant)
 
     async def _stream_chat(self, body: dict) -> AsyncIterator[str]:
         """Yield text deltas from an SSE stream; record usage at stream end."""
         collected_usage: dict | None = None
+        memory_calls = {}
+        private_reasoning = []
+        private_details = {}
+        visible_parts = []
         async with self.client.stream(
             "POST", "/chat/completions", json={**body, "stream": True}
         ) as response:
@@ -202,10 +236,27 @@ class OpenAICompatProvider(LLMProvider):
                     if choice.get('finish_reason') == 'length':
                         raise ValueError('Provider truncated generation at its token/context limit')
                     delta = choice.get("delta") or {}
+                    if body.get('tools'):
+                        if isinstance(delta.get('reasoning_content'), str):
+                            private_reasoning.append(delta['reasoning_content'])
+                        for detail in delta.get('reasoning_details') or []:
+                            identity = (detail.get('index', len(private_details)), detail.get('type'))
+                            target = private_details.setdefault(identity, {})
+                            for key, value in detail.items():
+                                target[key] = target.get(key, '') + value if key in {'text', 'data', 'signature'} and isinstance(value, str) else value
+                        for call in delta.get('tool_calls') or []:
+                            index = call.get('index', 0)
+                            accumulated = memory_calls.setdefault(index, {'id': '', 'function': {'name': '', 'arguments': ''}})
+                            accumulated['id'] += call.get('id') or ''
+                            function = call.get('function') or {}
+                            accumulated['function']['name'] += function.get('name') or ''
+                            accumulated['function']['arguments'] += function.get('arguments') or ''
                     # reasoning_content deltas are thinking; only the visible
                     # content field is surfaced to the caller.
                     text = visible_content(delta.get("content"))
                     if text:
+                        if body.get('tools'):
+                            visible_parts.append(text)
                         yield text
         if collected_usage:
             get_tracker().record(
@@ -215,6 +266,10 @@ class OpenAICompatProvider(LLMProvider):
                     provider=self.entry.provider,
                 )
             )
+        if memory_calls:
+            yield self._memory_call(list(memory_calls.values()), {
+                'content': ''.join(visible_parts), 'reasoning_content': ''.join(private_reasoning),
+                'reasoning_details': list(private_details.values())})
 
     def _record_usage(self, data: dict, model: str) -> None:
         usage = data.get("usage")

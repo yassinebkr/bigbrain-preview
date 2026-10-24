@@ -13,6 +13,20 @@ import time
 from pathlib import Path, PurePosixPath
 
 
+MEMORY_TOOL_SCHEMA = {
+    'name': 'bigbrain_memory',
+    'description': 'Consult shared memory for facts or previous projects, or record an explicitly sourced user fact. Call this tool now when a lookup is needed; do not end with a promise to check later.',
+    'parameters': {'type': 'object', 'required': ['tool', 'arguments'], 'additionalProperties': False,
+        'properties': {
+            'tool': {'type': 'string', 'enum': ['projects.list', 'projects.read', 'facts.search', 'facts.read', 'facts.write', 'memory.search']},
+            'arguments': {'type': 'object', 'additionalProperties': False, 'properties': {
+                'query': {'type': 'string'}, 'id': {'type': 'string'}, 'key': {'type': 'string'},
+                'value': {'type': 'string'}, 'quote': {'type': 'string'},
+                'source_message_id': {'type': 'string'}, 'expected_revision': {'type': 'integer'}}},
+        }},
+}
+
+
 def _path(value):
     if not isinstance(value, str) or not value or len(value) > 500:
         return None

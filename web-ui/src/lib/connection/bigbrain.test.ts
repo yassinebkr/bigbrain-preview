@@ -2,6 +2,14 @@ import { describe, expect, it, vi } from 'vitest';
 import { BigBrainConnection } from './bigbrain';
 
 describe('session-scoped websocket replies', () => {
+  it('ends waiting even when a terminal assistant message is empty', () => {
+    const conn = new BigBrainConnection({ wsUrl: 'ws://localhost/ws' });
+    conn.switchSession('s');
+    const end = vi.fn();
+    conn.on('onRunEnd', end);
+    (conn as any)._handleFrame({ type: 'event', payload: { event: 'chat.message', session_id: 's', text: '' } });
+    expect(end).toHaveBeenCalledOnce();
+  });
   it('reports a missing socket instead of pretending to send', () => {
     const conn = new BigBrainConnection({ wsUrl: 'ws://localhost/ws' });
     const error = vi.fn();
