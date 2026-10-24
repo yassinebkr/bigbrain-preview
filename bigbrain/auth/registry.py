@@ -48,7 +48,8 @@ def codex_available() -> bool:
     (``llm.codex_provider.codex_auth_status``) — this is only the cheap
     gate for provider selection.
     """
-    return shutil.which("codex") is not None and _CODEX_CREDS.exists()
+    executable = os.environ.get("BIGBRAIN_CODEX_BINARY") or "codex"
+    return shutil.which(executable) is not None and _CODEX_CREDS.exists()
 
 
 def select_registry_key() -> Optional[str]:

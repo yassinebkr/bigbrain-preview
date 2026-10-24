@@ -4,6 +4,8 @@ import pytest
 
 from bigbrain.auth import registry
 
+_codex_available = registry.codex_available
+
 
 @pytest.fixture(autouse=True)
 def clean_env(monkeypatch):
@@ -77,3 +79,18 @@ def test_build_provider_codex():
     provider = registry.build_provider("codex-chatgpt")
     assert isinstance(provider, CodexProvider)
     assert provider.default_model == "gpt-5.6-luna"
+
+
+def test_codex_availability_honors_explicit_executable(tmp_path, monkeypatch):
+    from bigbrain.auth import registry
+    credentials = tmp_path / 'auth.json'
+    credentials.write_text('{}')
+    monkeypatch.setattr(registry, '_CODEX_CREDS', credentials)
+    monkeypatch.setenv('BIGBRAIN_CODEX_BINARY', '/configured/codex')
+    checked = []
+    def which(binary):
+        checked.append(binary)
+        return binary if binary == '/configured/codex' else None
+    monkeypatch.setattr(registry.shutil, 'which', which)
+    assert _codex_available()
+    assert checked == ['/configured/codex']
