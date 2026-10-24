@@ -1,5 +1,5 @@
 
-  it('contracts.proposal restores a session-scoped active run', () => {
+  it('contracts.proposal restores its run without activating another conversation', () => {
     useAppStore.setState({
       activeRun: null,
       activeSessionKey: 'sess-other',
@@ -10,10 +10,12 @@
       session_id: 'sess-origin',
       user_request: 'build fitness project',
     }));
-    const run = useAppStore.getState().activeRun;
+    const run = useAppStore.getState().sessionRuns['sess-origin'];
     expect(run?.id).toBe('plan-approval');
     expect(run?.sessionId).toBe('sess-origin');
     expect(run?.awaitingApproval).toBe(true);
+    expect(useAppStore.getState().activeRun).toBeNull();
+    expect(useAppStore.getState().contractProposal).toBeNull();
     expect(useAppStore.getState().runPanelDismissed).toBe(false);
   });
 // Store edge cases — the run state machine (applyRunEvent) and the
@@ -140,7 +142,7 @@ describe('applyRunEvent — run state machine', () => {
 
   it('presents maintenance progress on the existing conversation work', () => {
     const s = useAppStore.getState();
-    s.applyRunEvent(ev('task.received', { task_id: 'maintenance', session_id: 's1' }));
+    s.applyRunEvent(ev('task.received', { task_id: 'maintenance', session_id: 'sess-live' }));
     s.applyRunEvent(ev('subtask.started', { task_id: 'maintenance', subtask_id: 'repair', brain: 'python_brain', description: 'Maintenance' }));
     s.applyRunEvent(ev('task.progress', { task_id: 'maintenance', subtask_id: 'repair', stage: 'maintenance_read', file_path: 'helper.py' }));
     expect(useAppStore.getState().activeRun!.steps[0].description).toBe('Lecture du fichier · helper.py');
@@ -661,6 +663,7 @@ describe('run record is scoped to its conversation', () => {
   });
 
   it('task.routing immediately opens a run for the named session', () => {
+    useAppStore.setState({ activeSessionKey: 'sess-origin' });
     useAppStore.getState().applyRunEvent(
       ev('task.routing', { session_id: 'sess-origin', description: 'préparation' }));
     expect(useAppStore.getState().activeRun?.sessionId).toBe('sess-origin');

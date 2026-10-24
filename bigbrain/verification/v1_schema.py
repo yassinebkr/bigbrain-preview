@@ -40,9 +40,9 @@ class ResearchResultSchema(BaseModel):
     query: str
     sources: list[Dict[str, Any]] = []
     summary: str = ""
-    confidence: float = 0.0
+    confidence: float | None = None
     search_time: float = 0.0
-    error: str = None
+    error: str | None = None
     
     class Config:
         extra = "allow"

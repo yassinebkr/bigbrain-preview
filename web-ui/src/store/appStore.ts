@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware';
 import type { Message, Attachment, Session, Settings, Theme, View, ConnectionStatus, SidebarPanel, User, CanvasOp, Task } from '@/types';
 import type { ConnectionLike } from '@/lib/connection';
 import { parseWidgetProposal, type WidgetProposal } from '@/lib/widgetPolicy';
+import { researchUpdate, type ResearchView } from '@/lib/research';
 
 // A first message can arrive before sessions.create answers. Never send it
 // with the previous conversation's id (or the server's implicit fallback).
@@ -50,6 +51,7 @@ export interface RunVerification {
 }
 
 export interface RunState {
+  researches?: Record<string, ResearchView>;
   widgetProposal?: WidgetProposal;
   sessionId: string;
   id: string;
@@ -460,6 +462,13 @@ export const useAppStore = create<AppState>()(
           !taskId ? sessionRuns[sessionId] : null) || null;
         // Replays/snapshots are idempotent. A finished run never becomes live again.
         if (finished && activity.type === 'task.progress') {
+          if (d.research && d.subtask_id && d.session_id === finished.sessionId && d.task_id === finished.id) {
+            const key = `${d.subtask_id}:${d.research.research_id}`;
+            const research = researchUpdate(d.research, finished.researches?.[key], d.observation, d);
+            if (!research) return {};
+            return { completedRuns: state.completedRuns.map((item) => item.id === finished.id
+              ? { ...item, researches: { ...item.researches, [key]: research } } : item) };
+          }
           const path = typeof d.path === 'string' ? d.path : typeof d.file_path === 'string' ? d.file_path : '';
           const label = fileProgressLabels[d.stage];
           if (path && label) return { completedRuns: state.completedRuns.map((item) => item.id === finished.id
@@ -593,6 +602,12 @@ export const useAppStore = create<AppState>()(
           }
           case 'task.progress': {
             if (!run) return {};
+            if (d.research) {
+              if (!d.subtask_id || d.session_id !== run.sessionId || d.task_id !== run.id) return {};
+              const key = `${d.subtask_id}:${d.research.research_id}`;
+              const research = researchUpdate(d.research, run.researches?.[key], d.observation, d);
+              return research ? { activeRun: { ...run, researches: { ...run.researches, [key]: research } } } : {};
+            }
             const labels: Record<string, string> = {
               ...fileProgressLabels,
               creating_venv: 'Préparation de l’environnement Python', installing_deps: 'Installation des dépendances',
@@ -703,9 +718,9 @@ export const useAppStore = create<AppState>()(
           const preferred = selected && runsById[selected.id] || remaining[0];
           if (preferred) sessionRuns[sessionId] = preferred;
           else delete sessionRuns[sessionId];
-          update.activeRun = sessionRuns[state.activeSessionKey]
-            || (state.activeRun?.sessionId !== sessionId ? state.activeRun : null)
-            || update.activeRun;
+          // A background conversation updates its record, never the visible
+          // conversation's active run (including when that conversation is empty).
+          update.activeRun = sessionRuns[state.activeSessionKey] || null;
         }
         const sessionProposals = { ...state.sessionProposals };
         if (activity.type === 'contracts.proposal' && d.design_id && d.plan_id) {

@@ -65,6 +65,12 @@ An unfinished plan from a previous process is interrupted, not live work.
                 # exist when restoring file progress, then applies the terminal.
                 key = ("subtask" if event in ("subtask.complete", "subtask.failed") else event,
                        data.get("subtask_id"), data.get("path"), data.get("stage"))
+                if event == 'task.progress' and isinstance(data.get('research'), dict):
+                    key = (*key, data['research'].get('research_id'))
+                if event == 'task.progress' and data.get('stage') in {'research_observation', 'research_review_evidence'}:
+                    # Each observed read is evidence, not an overwritable status
+                    # pulse. Preserve it until the terminal research checkpoint.
+                    key = (*key, (data.get('observation') or {}).get('index', data.get('index')))
                 records = runs.setdefault(run_id, {})
                 old = records.get(key)
                 if event in ('subtask.complete', 'subtask.failed'):

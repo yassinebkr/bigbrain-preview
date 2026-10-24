@@ -1,6 +1,73 @@
 # ResearchBrain — cadrage décidé le 21 octobre 2026
 
-Prochain jalon après validation utilisateur de la mémoire partagée et de la
+## Acquisition/context sub-plan — phase 5 implemented, 24 October 2026
+
+The integration milestone is tracked in [`RESEARCH_ATELIER.md`](RESEARCH_ATELIER.md):
+observed acquisition/selection phases, source restrictions and omitted sections,
+live review supplements, durable replay, cancellation and conversation isolation.
+The document also records the exact lexical selection behavior and its limits.
+After complete validation and explicit user merge approval, start a fresh branch
+from merged main to improve this sub-brain and evaluate real-web quality. The
+current phase does not add a semantic reranker or paid campaign.
+Validation: 1,467 Python tests passed, 8 optional benchmarks skipped; 125 UI
+tests and the build passed. Seven real Chromium component/replay checks passed
+on isolated synthetic observations; real-web semantic quality remains unvalidated.
+
+## Acquisition/context sub-plan — phase 4 implemented, 24 October 2026
+
+Question-based section retrieval, compact decision context and independent review
+of the retained original source index are implemented. Omitted sections remain
+addressable by observation-bound IDs; insufficient context/review budget is
+explicit. Details and reproducible measurements: [`RESEARCH_CONTEXT.md`](RESEARCH_CONTEXT.md).
+The frozen static comparison retains 16/16 accessible gold passages while
+reducing decision evidence JSON by 30.8%; this is not a billed-token measurement.
+Validation: 1,464 regression tests passed, 8 optional benchmarks skipped; all
+106 final research controls passed, including real offline Chromium.
+No reranking-model call was added. Next: phase 5 Atelier/runtime integration,
+then phase 6 authorized real-web evaluation.
+
+## Acquisition/context sub-plan — phase 3 implemented, 24 October 2026
+
+Controlled HTTP/browser acquisition, source-aligned extraction, retained raw
+observations and cache are implemented. Browser mode requires a prior HTTP
+observation and its own budget; all allowed browser resources use the public
+DNS-pinned transport. Details and measured validation:
+[`RESEARCH_ACQUISITION.md`](RESEARCH_ACQUISITION.md).
+The following phase-4 implementation is recorded above. No ranking-model choice
+or paid LLM comparison was introduced in phase 3.
+Validation: 1,445 regression tests passed, 8 optional benchmark tests skipped;
+the final acquisition suite passed 21 tests, including real offline Chromium.
+
+## Acquisition/context sub-plan — phases 1/2 complete, 24 October 2026
+
+The frozen extraction corpus and phase-2 component comparison are in
+[`tests/fixtures/research_corpus/PHASE2_RESULTS.md`](../tests/fixtures/research_corpus/PHASE2_RESULTS.md).
+At equal character windows, static reference coverage improves from 11/16 with
+the current reader to 16/16 with the source-aligned Trafilatura recall prototype.
+The report preserves source/structure limitations and raw evidence. Nineteen
+offline controls passed with pinned experimental dependencies; the production
+reader/dependencies are unchanged. Crawlee was assessed through documentation
+as an acquisition framework, not benchmarked as an extractor.
+
+Sequence of this sub-plan: controlled HTTP/browser acquisition (3), contextual
+selection (4), runtime/Atelier integration (5), real-web evaluation (6).
+This numbering is distinct from the earlier runtime phases below.
+
+## Avancement du 24 octobre 2026
+
+Phases 1 et 2 autorisées : contrats versionnés, corpus hors ligne et boucle
+observation/action avec lecture réelle des pages. Implémentation sur
+`feat/research-evidence` ; détails et limites : `RESEARCH_EVIDENCE.md`.
+Phases 3 et 4 autorisées puis reprises après les correctifs de démo poussés dans
+`3f458b3` : revue séparée des sources/affirmations, citations observées,
+contradictions et origines communes ; suivi et preuves conservés dans l'Atelier.
+Implémentation sous validation hors ligne (64 tests recherche ciblés réussis),
+pas encore validation de qualité par campagne réelle. Full-stack reporté.
+
+Le plan phasé validé pour ces deux phases est conservé dans le dossier de travail
+`../tests/bigbrain-research-plan-2026-10-24.md` à côté du document d'état.
+
+Historique du cadrage initial : prochain jalon après validation utilisateur de la mémoire partagée et de la
 réparation de projets existants, puis merge explicitement autorisé. Document de
 cadrage, pas autorisation de démarrer l'implémentation. Aucun changement de code
 ni recherche externe effectué pour rédiger ces notes.

@@ -455,6 +455,9 @@ class FrontBrain:
             if hasattr(result, "__aiter__"):
                 parts: list[str] = []
                 emitting = False
+                held = ''
+                holding = False
+                leading = ''
                 async for delta in result:
                     if self._is_stopped(session_id):
                         break
@@ -464,19 +467,28 @@ class FrontBrain:
                         call = delta
                         continue
                     parts.append(delta)
-                    if not emitting:
-                        # Decide once, from the first non-space content.
-                        head = "".join(parts).lstrip()[:8]
-                        if not head:
-                            continue
-                        looks_like_json = head.startswith("{") or head.startswith("```json") or '```json'.startswith(head)
-                        if looks_like_json:
-                            emitting = False
-                            continue
+                    # Structured output can follow a natural-language preamble,
+                    # including a fence/brace split across stream chunks. Hold
+                    # that suffix until its complete protocol can be parsed.
+                    if holding:
+                        held += delta
+                        continue
+                    marker = min((i for i, char in enumerate(delta) if char in '{`'), default=-1)
+                    plain = delta if marker < 0 else delta[:marker]
+                    if not emitting and not plain.strip():
+                        leading += plain
+                        plain = ''
+                    elif plain:
+                        plain, leading = leading + plain, ''
+                    if plain:
+                        await self._emit_chat_delta(plain, session_id=session_id)
                         emitting = True
-                    if emitting:
-                        await self._emit_chat_delta(delta, session_id=session_id)
+                    if marker >= 0:
+                        holding, held = True, delta[marker:]
                 response = "".join(parts)
+                if held and not self._is_stopped(session_id) and call is None and self._try_parse_delegation(response) is None and memory_request(response) is None:
+                    await self._emit_chat_delta(leading + held, session_id=session_id)
+                    emitting = True
                 self._last_response_streamed = emitting
                 self._stream_context.set(emitting)
             else:
@@ -582,6 +594,11 @@ Routable brains and payloads:
 - web_app_brain — run an existing verified web project. Payload: {{"type": "run_web_project", "project_name": "<project path>"}}
 
 Use "route" ONLY for these direct single actions. For code generation, multi-step work, or anything combining several actions, use the generic "task" format.
+
+Resolve references and follow-up instructions from this conversation before delegating.
+For a retry, preserve the intended earlier objective and its constraints in the new task or query.
+The researcher receives a self-contained objective; the latest conversational message alone may not describe that objective.
+If several earlier tasks could be intended, ask which one rather than choosing an unrelated task.
 
 IMPORTANT: Send the ENTIRE request as ONE task. Do NOT break it into subtasks yourself.
 The orchestrator will decompose it into subtasks with proper dependencies.
@@ -762,15 +779,21 @@ Type 'quit' or 'exit' to stop."""
             
             if parsed and route_valid:
                 reply_text = parsed.get("reply", "Working on it...")
-                await self._emit_chat_message("assistant", reply_text)
-                run_id = await self._emit_task_routing(text, parsed.get("project_target", route_payload.get("project_target")))
+                await self._emit_delegation_reply(reply_text)
+                # Preserve the model's resolved task. The conversational turn
+                # can be a reference such as a retry rather than an objective.
+                resolved_request = next((value for value in (
+                    route_payload.get("query"), route_payload.get("user_request"), text)
+                    if isinstance(value, str) and value.strip()), text)
+                run_id = await self._emit_task_routing(resolved_request, parsed.get("project_target", route_payload.get("project_target")))
                 
                 ws = "default"  # Always route to the single orchestrator
                 task_data = {
                     **route_payload,
                     "brain": route_brain,
                     "reply_to_ui": True,
-                    "user_request": text,
+                    "user_request": resolved_request,
+                    "user_message": text,
                     "session_id": session_id,
                     "project_target": parsed.get("project_target", route_payload.get("project_target")),
                     "_ui_run_id": run_id,
@@ -784,7 +807,7 @@ Type 'quit' or 'exit' to stop."""
             elif parsed and "task" in parsed:
                 # Front Brain wants to delegate — send the reply part to chat
                 reply_text = parsed.get("reply", "Working on it...")
-                await self._emit_chat_message("assistant", reply_text)
+                await self._emit_delegation_reply(reply_text)
                 run_id = await self._emit_task_routing(str(parsed["task"]), parsed.get("project_target"))
                 
                 # Send ONE compound task to the orchestrator.
@@ -814,7 +837,7 @@ Type 'quit' or 'exit' to stop."""
             elif parsed and "tasks" in parsed:
                 # Legacy multi-task format — merge into single compound request
                 reply_text = parsed.get("reply", "Working on it...")
-                await self._emit_chat_message("assistant", reply_text)
+                await self._emit_delegation_reply(reply_text)
                 run_id = await self._emit_task_routing(text, parsed.get("project_target"))
                 
                 tasks = parsed.get("tasks", [])
@@ -951,21 +974,14 @@ Type 'quit' or 'exit' to stop."""
         # 2. Scan for balanced {...} candidates anywhere in the text
         #    (covers markdown fences, prose, and nested route payloads —
         #    a lazy regex stops at the first '}' and misses them).
+        decoder = json.JSONDecoder()
         for start in (i for i, c in enumerate(response) if c == "{"):
-            depth = 0
-            for i in range(start, len(response)):
-                if response[i] == "{":
-                    depth += 1
-                elif response[i] == "}":
-                    depth -= 1
-                    if depth == 0:
-                        try:
-                            parsed = json.loads(response[start:i + 1])
-                            if _valid(parsed):
-                                return parsed
-                        except (json.JSONDecodeError, TypeError):
-                            pass
-                        break
+            try:
+                parsed, _ = decoder.raw_decode(response, start)
+                if _valid(parsed):
+                    return parsed
+            except (json.JSONDecodeError, TypeError):
+                pass
         
         return None
     
@@ -1063,6 +1079,13 @@ Type 'quit' or 'exit' to stop."""
             else:
                 return "✅ Done — check the workspace tab for details."
         return "✅ Done."
+
+    async def _emit_delegation_reply(self, text: str) -> None:
+        """Finalize the streamed preamble once with the clean routing reply."""
+        if self._stream_context.get():
+            await self._emit_chat_done(text)
+        else:
+            await self._emit_chat_message("assistant", text)
 
     async def _emit_chat_delta(self, delta: str, session_id: Optional[str] = None) -> None:
         """Stream one text chunk to the UI (chat.delta events)."""
