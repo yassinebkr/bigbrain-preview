@@ -51,7 +51,7 @@ class MessageBus:
             "delivery_errors": 0
         }
     
-    async def send(self, message: BusMessage) -> None:
+    async def send(self, message: BusMessage, *, require_target=False, on_accepted=None) -> None:
         """
         Send a message on the bus.
         
@@ -76,6 +76,9 @@ class MessageBus:
         
         # Collect all handlers that should receive this message
         handlers = set()
+
+        if require_target and not self._subscribers.get(message.target):
+            raise RuntimeError(f"No subscriber for task target {message.target}")
         
         # Always include wildcard subscribers
         handlers.update(self._wildcard_subscribers)
@@ -92,17 +95,26 @@ class MessageBus:
         # Verify signature if auth is configured
         if self.auth is not None:
             if message.signature is None:
+                if require_target:
+                    raise PermissionError("Task source has no registered bus identity")
                 logger.warning(
                     "MessageBus: Dropping unsigned message %s from %s (auth enabled)",
                     message.id, message.source,
                 )
                 return
             if not self.auth.verify_message(message.source, message, message.signature):
+                if require_target:
+                    raise PermissionError("Task signature was rejected")
                 logger.warning(
                     "MessageBus: Dropping message %s from %s — invalid signature",
                     message.id, message.source,
                 )
                 return
+
+        # Acceptance acknowledges authenticated transport to a registered target;
+        # only the target's later events establish execution state.
+        if on_accepted:
+            await on_accepted()
 
         # Deliver to all collected handlers concurrently
         if handlers:
@@ -201,7 +213,8 @@ class MessageBus:
     
     async def send_task(self, source: str, target: str, task_data: Dict,
                        workspace: str = None, project: str = None,
-                       priority: Priority = Priority.NORMAL) -> BusMessage:
+                       priority: Priority = Priority.NORMAL, *,
+                       require_target=False, on_accepted=None) -> BusMessage:
         """
         Convenience method for sending task messages.
         
@@ -216,7 +229,10 @@ class MessageBus:
             payload=task_data,
             priority=priority
         )
-        await self.send(message)
+        if require_target or on_accepted:
+            await self.send(message, require_target=require_target, on_accepted=on_accepted)
+        else:
+            await self.send(message)
         return message
     
     async def send_result(self, source: str, result_data: Dict, 

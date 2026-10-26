@@ -38,6 +38,217 @@ def page(text):
 
 
 @pytest.mark.asyncio
+async def test_invalid_contract_returns_diagnostic_and_preserves_read_evidence():
+    from bigbrain.research import parse_model_contract
+    calls = []
+    class Policy:
+        async def choose(self, state, remaining):
+            calls.append(state)
+            if len(calls) == 1:
+                return action('visit', url='https://source.test/article')
+            if len(calls) == 2:
+                return parse_model_contract(Action, '{"tool":"open","question_id":"q1",'
+                    '"rationale":"Read exact text","source_id":"s1","focus":"example",'
+                    '"observation_sha256":"' + 'a' * 64 + '"}')
+            assert state.diagnostic['code'] == 'schema_invalid'
+            assert state.passages
+            return action('clarify', clarification='Which version should be compared?')
+    reader = AsyncMock()
+    reader.read.return_value = page('Observed example text')
+    state = await runtime(Policy(), reader=reader).run('Compare versions')
+    assert len(calls) == 3
+    assert state.status == 'clarification'
+    assert state.diagnostic is None
+    assert len(state.decision_rejections) == 1
+    reader.read.assert_awaited_once()
+    assert len(state.observations) == 2
+
+
+@pytest.mark.asyncio
+async def test_repeated_invalid_contract_stops_within_existing_decision_budget():
+    from bigbrain.research import parse_model_contract
+    calls = []
+    class Policy:
+        async def choose(self, state, remaining):
+            calls.append(remaining['actions'])
+            return parse_model_contract(Action, '{"tool":"search","question_id":"q1","rationale":"Missing query"}')
+    reader, search = AsyncMock(), AsyncMock()
+    state = await runtime(Policy(), reader=reader, search=search).run('Question')
+    assert len(calls) == 2 and calls[1] == calls[0] - 1
+    assert state.status == 'partial'
+    assert len(state.decision_rejections) == 2
+    assert not state.observations
+    reader.read.assert_not_awaited()
+    search.search.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_insufficient_collection_envelope_stops_without_paid_clarification():
+    from types import SimpleNamespace
+    provider = AsyncMock()
+    reviewer = SimpleNamespace(required_allowance=lambda state: 16000)
+    engine = runtime(ModelPolicy(provider), reviewer=reviewer, limits=Limits(tokens=17000))
+    state = await engine.run('A precise question')
+    assert state.status == 'partial'
+    assert state.diagnostic['code'] == 'budget_exhausted'
+    assert 'réserve de revue' in state.reason
+    provider.complete.assert_not_awaited()
+    assert not state.sources and not state.passages
+
+
+def test_reservation_retains_observed_provider_context_overhead():
+    policy = ModelPolicy(AsyncMock())
+    policy.observed_call_tokens = 23000
+    assert policy.allowance('Short next prompt', 2500, Action) >= 23000
+
+
+@pytest.mark.asyncio
+async def test_worker_preserves_clarification_reason_in_result(tmp_path):
+    bus = MessageBus(tmp_path / 'logs', auth=None)
+    brain = ResearcherBrain(name='researcher', bus=bus, search_provider=AsyncMock(),
+        research_policy=ScriptedPolicy(action('clarify', clarification='Which library version?')))
+    result = await brain._full_research('An ambiguous question', {})
+    await bus.close()
+    assert result['research_status'] == 'clarification'
+    assert result['error'] == 'Which library version?'
+
+
+@pytest.mark.asyncio
+async def test_repeated_plan_is_rejected_without_losing_accepted_questions():
+    original = Question(id="q1", text="Accepted question", evidence_needed="Direct passage")
+    replacement = Question(id="q1", text="Replacement", evidence_needed="Different evidence")
+    engine = runtime(ScriptedPolicy(action("plan", questions=[original]),
+        action("plan", questions=[replacement]),
+        action("clarify", clarification="Which version?")))
+    state = await engine.run("Objective")
+    assert state.questions == [original]
+    assert [o.status for o in state.observations] == ["ok", "error", "ok"]
+    assert state.observations[1].data["code"] == "action_not_allowed"
+    assert state.status != "partial"
+    engine.search.search.assert_not_called()
+    engine.reader.read.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_persistently_repeated_plan_exhausts_existing_action_limit():
+    plan = action("plan", questions=[Question(id="q1", text="Question", evidence_needed="Passage")])
+    engine = runtime(ScriptedPolicy(plan, plan, plan), limits=Limits(actions=3))
+    state = await engine.run("Objective")
+    assert len(state.observations) == 3
+    assert state.status == "partial"
+    assert "Action budget exhausted" in state.reason or "deux décisions consécutives" in state.reason
+
+
+def test_duplicate_plan_question_ids_fail_schema_validation():
+    question = Question(id="q1", text="Question", evidence_needed="Passage")
+    with pytest.raises(ValidationError, match="question ids must be unique"):
+        action("plan", questions=[question, question])
+
+
+@pytest.mark.asyncio
+async def test_invalid_source_recovers_through_real_discovery_without_inventing_evidence():
+    search, reader = AsyncMock(), AsyncMock()
+    search.search.return_value = [{"url": "https://source.test/a"}]
+    reader.read.return_value = page("Relevant observation")
+    engine = runtime(ScriptedPolicy(action("open", source_id="https://source.test/a"),
+        action("search", query="actual question"), action("open", source_id="s1"),
+        action("conclude")), search, reader)
+    state = await engine.run("Objective")
+    assert state.status == "completed"
+    assert [o.status for o in state.observations] == ["error", "ok", "ok", "ok"]
+    assert state.observations[0].data["code"] == "action_not_allowed"
+    search.search.assert_awaited_once()
+    reader.read.assert_awaited_once_with("https://source.test/a")
+    assert len(state.sources) == len(state.passages) == 1
+
+
+@pytest.mark.asyncio
+async def test_repeated_invalid_source_stops_early_without_tool_execution():
+    invalid = action("open", source_id="invented")
+    engine = runtime(ScriptedPolicy(invalid, invalid, invalid))
+    state = await engine.run("Objective")
+    assert len(state.observations) == 2
+    assert state.status == "partial"
+    engine.reader.read.assert_not_called()
+    engine.search.search.assert_not_called()
+
+
+@pytest.mark.parametrize("proposal", [
+    action("open", source_id="unknown"),
+    Action(tool="search", question_id="unknown", rationale="Invalid reference", query="query"),
+    action("assess", claims=[Claim(id="c1", question_id="q1", text="Invented", basis="Unobserved",
+        evidence=[EvidenceLink(passage_id="made-up", relation="supports")])]),
+])
+@pytest.mark.asyncio
+async def test_preflight_rejections_leave_state_and_resource_counters_untouched(proposal):
+    engine = runtime(ScriptedPolicy(proposal, action("clarify", clarification="Need a narrower scope")))
+    state = await engine.run("Objective")
+    assert state.status == "clarification"
+    assert state.observations[0].status == "error"
+    assert engine.counts == {"searches": 0, "pages": 0, "reviews": 0, "browsers": 0}
+    assert not state.sources and not state.passages and not state.claims
+
+
+@pytest.mark.asyncio
+async def test_native_action_schema_exposes_only_available_tools_and_real_ids():
+    import json
+    provider = AsyncMock()
+    provider.complete.return_value = action("search", query="relevant question").model_dump_json()
+    state = ResearchState(objective="Question", questions=[Question(id="q1", text="Question", evidence_needed="Passage")])
+    await ModelPolicy(provider).choose(state, {"tokens": 60000, "actions": 10, "searches": 2, "pages": 2})
+    params = provider.complete.call_args.kwargs["tool_schema"]["parameters"]["properties"]
+    assert "open" not in params["tool"]["enum"]
+    assert params["question_id"]["enum"] == ["q1"]
+    assert params["source_id"]["enum"] == [None]
+    claim_schema = provider.complete.call_args.kwargs["tool_schema"]["parameters"]["$defs"]["Claim"]
+    assert claim_schema["properties"]["status"]["enum"] == ["unverified"]
+    payload = json.loads(provider.complete.call_args.args[0].split("\n")[-1])
+    assert payload["state"]["action_constraints"]["source_ids"] == []
+
+    provider.complete.reset_mock()
+    provider.complete.return_value = action("conclude").model_dump_json()
+    await ModelPolicy(provider).choose(state, {"tokens": 60000, "actions": 1, "searches": 0, "pages": 0})
+    params = provider.complete.call_args.kwargs["tool_schema"]["parameters"]["properties"]
+    assert params["questions"]["maxItems"] == 0
+    assert params["tool"]["enum"] == ["conclude", "clarify"]
+
+
+@pytest.mark.parametrize("access_status", [None, "blocked", "authentication_required", "rate_limited"])
+@pytest.mark.asyncio
+async def test_browser_preflight_preserves_access_restrictions_and_counters(access_status):
+    from bigbrain.research import ResearchActionRejected, Source
+    engine = runtime(ScriptedPolicy())
+    state = ResearchState(objective="Question", questions=[Question(id="q1", text="Question", evidence_needed="Passage")],
+        sources=[Source(id="s1", url="https://source.test/a", discovered_by="search",
+                        acquisition={"status": access_status} if access_status else {})])
+    before = state.model_dump()
+    attempted = set()
+    with pytest.raises(ResearchActionRejected):
+        await engine.execute(state, action("open", source_id="s1", mode="browser"), engine.counts, attempted, 0)
+    assert state.model_dump() == before
+    assert not attempted
+    assert all(value == 0 for value in engine.counts.values())
+    engine.reader.read.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_model_deadline_has_explicit_diagnostic_and_preserves_plan():
+    class SlowPolicy:
+        async def choose(self, state, remaining):
+            if not state.observations:
+                return action("plan", questions=[Question(id="q1", text="Question", evidence_needed="Passage")])
+            await asyncio.sleep(1)
+    engine = runtime(SlowPolicy(), limits=Limits(seconds=0.03))
+    state = await engine.run("Objective")
+    assert state.status == "partial"
+    assert state.diagnostic["code"] == "time_budget_exhausted"
+    assert state.diagnostic["errors"][0]["field"] == "decision"
+    assert "décision du modèle" in state.reason
+    assert len(state.observations) == 1
+    engine.search.search.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_research_action_uses_actual_native_single_tool_provider_contract():
     import json
     from bigbrain.llm.openai_compat_provider import OpenAICompatProvider
@@ -76,7 +287,7 @@ async def test_complete_json_action_accepts_only_optional_presentation_fence(fen
 @pytest.mark.asyncio
 @pytest.mark.parametrize("raw", ['```json\n{"tool":\n```', 'Here is JSON: {"tool":"search"}',
                                   '{"tool":"not_a_tool"}', '{}\n{}'])
-async def test_invalid_model_contract_stops_without_tool_execution_or_raw_error_dump(raw):
+async def test_invalid_model_contract_stops_after_bounded_feedback_without_tool_execution(raw):
     provider, search, reader, progress = AsyncMock(), AsyncMock(), AsyncMock(), AsyncMock()
     provider.complete.return_value = raw
     state = await ResearchRuntime(search, reader, ModelPolicy(provider), progress).run("API")
@@ -86,7 +297,8 @@ async def test_invalid_model_contract_stops_without_tool_execution_or_raw_error_
     assert "input_value" not in state.reason and "errors.pydantic" not in state.reason
     search.search.assert_not_awaited()
     reader.read.assert_not_awaited()
-    provider.complete.assert_awaited_once()
+    assert provider.complete.await_count == 2
+    assert len(state.decision_rejections) == 2
     terminal = progress.call_args.args[0]["research"]
     assert terminal["diagnostic"] == state.diagnostic
 
@@ -166,7 +378,7 @@ async def test_search_empty_and_provider_failure_are_distinct():
 async def test_fabricated_citation_blocks_conclusion():
     claim = Claim(id="c1", question_id="q1", text="Invented", basis="Pretend proof",
                   evidence=[EvidenceLink(passage_id="invented", relation="supports")])
-    state = await runtime(ScriptedPolicy(action("conclude", claims=[claim]))).run("question")
+    state = await runtime(ScriptedPolicy(action("conclude", claims=[claim])), limits=Limits(actions=1)).run("question")
     assert state.status == "partial"
     assert not state.claims
     assert "actually read" in state.reason
@@ -188,12 +400,12 @@ async def test_claims_with_real_passages_remain_unverified():
 
 @pytest.mark.asyncio
 async def test_no_source_invention_and_no_repeat_loop():
-    state = await runtime(ScriptedPolicy(action("open", source_id="made-up"))).run("question")
+    state = await runtime(ScriptedPolicy(action("open", source_id="made-up")), limits=Limits(actions=1)).run("question")
     assert "discovered" in state.reason
     search = AsyncMock()
     search.search.return_value = []
     policy = ScriptedPolicy(action("search", query="same"), action("search", query="same"))
-    state = await runtime(policy, search).run("question")
+    state = await runtime(policy, search, limits=Limits(actions=2)).run("question")
     assert "Repeated" in state.reason
     search.search.assert_awaited_once()
 
@@ -210,7 +422,8 @@ async def test_action_and_time_budgets_and_cancellation():
     policy = AsyncMock()
     policy.choose.side_effect = slow
     state = await runtime(policy, limits=Limits(seconds=.01)).run("question")
-    assert "TimeoutError" in state.reason
+    assert state.diagnostic["code"] == "time_budget_exhausted"
+    assert "décision du modèle" in state.reason
     with pytest.raises(asyncio.CancelledError):
         await runtime(DiscoveryPolicy(), cancelled=lambda: True).run("question")
 
@@ -278,7 +491,7 @@ async def test_separate_tool_budgets_prevent_extra_execution(budget):
     actions += ([action("search", query="second")] if budget == "searches" else
                 [action("open", source_id="s1"), action("open", source_id="s2")])
     state = await runtime(ScriptedPolicy(*actions), search, reader,
-                          limits=Limits(**{budget: 1})).run("question")
+                          limits=Limits(actions=len(actions), **{budget: 1})).run("question")
     assert state.status == "partial"
     assert "budget exhausted" in state.reason
     assert search.search.await_count == 1

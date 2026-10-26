@@ -263,8 +263,16 @@ class PageReader:
         self.cache_seconds, self.cache_entries = cache_seconds, cache_entries
         self.cache = OrderedDict()
 
+    def cached_snapshot(self, url, mode='http'):
+        """Return a fresh observation identity eligible for local consultation."""
+        entry = self.cache.get((url, mode))
+        if not entry or time.monotonic()-entry[0] >= self.cache_seconds:
+            return None
+        observed = entry[1]
+        return (observed.get('rendered_artifact') or observed['raw_artifact'])['sha256']
+
     async def read(self, url, focus=None, *, mode="http", refresh=False, progress=None,
-                   question=None, group_ids=(), observation_sha256=None):
+                   question=None, group_ids=(), observation_sha256=None, cached_snapshot=None):
         if mode not in {"http", "browser"}:
             raise ReadFailure("invalid_mode", "Unknown acquisition mode")
         async def emit(data):
@@ -272,6 +280,10 @@ class PageReader:
                 await progress(data)
         try:
             async with asyncio.timeout(25 if mode == "browser" else 18):
+                # A local consultation cannot silently become a network request
+                # when its capture expires or is evicted before execution.
+                if cached_snapshot and (refresh or self.cached_snapshot(url, mode) != cached_snapshot):
+                    raise ReadFailure('cache_expired', 'Retained observation expired; a new acquisition requires budget')
                 return await self._read(url, focus, mode, refresh, emit, question, group_ids, observation_sha256)
         except asyncio.CancelledError:
             raise
@@ -346,6 +358,15 @@ class PageReader:
             state = "requires_browser" if prepared["has_scripts"] and mode == "http" else "empty"
             raise ReadFailure(state, "No readable page text; rendered observation needed" if state == "requires_browser" else "No readable page text", record=observed)
         digest = (observed.get("rendered_artifact") or observed["raw_artifact"])["sha256"]
+        # Keep a question-ranked route back into the immutable original page.
+        # Source-order prefixes often contain the site's global navigation.
+        from .research_context import groups, rank
+        sections = groups(prepared["original_blocks"] or blocks, digest)
+        ordered = rank(question or focus or "", sections)
+        catalog = [{"id":sections[i]["id"], "context":[label[:160] for label in sections[i]["context"][-2:]],
+                    "characters":sections[i]["characters"]} for i, _ in ordered[:96]]
+        observed = {**observed, "navigation":{"observation_sha256":digest, "catalog":catalog,
+                    "omitted_groups":max(0,len(sections)-len(catalog)), "order":"question-relevance"}}
         if group_ids and observation_sha256 != digest:
             raise ReadFailure("snapshot_changed", "Requested sections belong to another observation", record=observed)
         try:

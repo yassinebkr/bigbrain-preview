@@ -101,19 +101,19 @@ async def test_front_consults_project_then_delegates_without_initial_injection(t
             self.calls.append(messages)
             if len(self.calls) == 1:
                 assert 'sandbox/klipper-gcode-offline' not in json.dumps(messages)
-                return '{"memory":{"tool":"projects.list","arguments":{}}}'
+                return '{"decision":{"operation":"consult_memory","tool":"projects.list","arguments":{}}}'
             if len(self.calls) == 2:
                 assert 'sandbox/klipper-gcode-offline' in json.dumps(messages)
-                return '{"memory":{"tool":"projects.read","arguments":{"id":"run-a"}}}'
+                return '{"decision":{"operation":"consult_memory","tool":"projects.read","arguments":{"id":"run-a"}}}'
             assert 'tests/test_parser.py' in json.dumps(messages)
-            return json.dumps({'reply': 'Je corrige le projet existant.', 'task': 'Fix tests',
-                'project_target': {'mode': 'existing', 'path': 'sandbox/klipper-gcode-offline'}})
+            return json.dumps({'decision':{'operation':'delegate','reply': 'Je corrige le projet existant.', 'objective': 'Fix tests',
+                'project_target': {'mode': 'existing', 'path': 'sandbox/klipper-gcode-offline'}}})
 
     provider = Provider()
     front = FrontBrain(bus, llm_provider=provider)
     front._history_for('sess-a').append({'role': 'user', 'content': 'Modifie le projet pour passer les tests'})
-    result = json.loads(await front._llm_respond('Modifie le projet', session_id='sess-a'))
-    assert result['project_target']['path'] == 'sandbox/klipper-gcode-offline'
+    assert await front._llm_respond('Modifie le projet', session_id='sess-a') == 'Je corrige le projet existant.'
+    assert front._decision_context.get().project_target.path == 'sandbox/klipper-gcode-offline'
     assert len(provider.calls) == 3
     assert not any('Memory tool result' in m['content'] for m in front._history_for('sess-a'))
     await bus.close()
@@ -128,7 +128,7 @@ async def test_memory_read_loop_is_bounded(tmp_path):
         calls = 0
         async def chat_complete(self, **kwargs):
             self.calls += 1
-            return '{"memory":{"tool":"projects.list","arguments":{}}}'
+            return '{"decision":{"operation":"consult_memory","tool":"projects.list","arguments":{}}}'
 
     provider = Provider()
     front = FrontBrain(bus, llm_provider=provider)
@@ -139,22 +139,19 @@ async def test_memory_read_loop_is_bounded(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_streamed_tool_json_is_private_even_with_leading_whitespace(tmp_path):
+async def test_v1_memory_decisions_are_private_even_with_leading_whitespace(tmp_path):
     from bigbrain.front.front_brain import FrontBrain
     bus = MessageBus(tmp_path / 'logs', auth=None)
     class Provider:
         calls = 0
         async def chat_complete(self, **kwargs):
             self.calls += 1
-            async def stream():
-                chunks = ['\n', '{"memory":', '{"tool":"projects.list","arguments":{}}}'] if self.calls == 1 else ['Je ', 'retrouve le projet.']
-                for chunk in chunks:
-                    yield chunk
-            return stream()
+            assert kwargs['stream'] is False
+            return '\n'+json.dumps({'decision':{'operation':'consult_memory','tool':'projects.list','arguments':{}}}) if self.calls == 1 else json.dumps({'decision':{'operation':'respond','reply':'Je retrouve le projet.'}})
     front = FrontBrain(bus, llm_provider=Provider())
     from unittest.mock import AsyncMock
     front._emit_chat_delta = AsyncMock()
     answer = await front._llm_respond('Projet ?', session_id='sess-a')
     assert answer == 'Je retrouve le projet.'
-    assert ''.join(call.args[0] for call in front._emit_chat_delta.call_args_list) == answer
+    front._emit_chat_delta.assert_not_awaited()
     await bus.close()

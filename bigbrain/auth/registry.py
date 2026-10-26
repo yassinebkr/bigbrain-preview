@@ -23,6 +23,7 @@ from typing import Optional
 
 # Registry keys selectable through BIGBRAIN_PROVIDER.
 KNOWN_PROVIDER_KEYS = {
+    "codex-sol-6.1", "codex-luna-6",
     "anthropic-oauth", "codex-chatgpt", "mistral-vibe", "mistral-studio-large-4", "kimi-k3",
     "openrouter-gpt-6.1-sol", "openrouter-gpt-sol", "openrouter-kimi-k3",
     "openrouter-opus-5.5", "openrouter-luna",

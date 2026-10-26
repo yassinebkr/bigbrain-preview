@@ -224,6 +224,18 @@ _REGISTRY: dict[str, ModelEntry] = {
         reasoning_effort_default="low",
     ),
     # -- Subscription-backed (no API key; local credential store) --------------
+    "codex-sol-6.1": ModelEntry(
+        key="codex-sol-6.1", display_name="GPT-6.1 Sol (Codex)",
+        provider="codex", model_id="gpt-6.1-sol", api_key_env="",
+        reasoning=True, reasoning_efforts=["low", "medium", "high", "xhigh", "max"],
+        reasoning_effort_default="low", vision=True, context_window=1_050_000,
+    ),
+    "codex-luna-6": ModelEntry(
+        key="codex-luna-6", display_name="GPT-6 Luna (Codex)",
+        provider="codex", model_id="gpt-6-luna", api_key_env="",
+        reasoning=True, reasoning_efforts=["none", "low", "medium", "high", "xhigh", "max"],
+        reasoning_effort_default="low", vision=True, context_window=1_050_000,
+    ),
     "codex-chatgpt": ModelEntry(
         key="codex-chatgpt",
         display_name="Codex (ChatGPT subscription)",
@@ -292,6 +304,7 @@ def role_default_key(role: str) -> str:
         "code": DEFAULT_CODE_MODEL_KEY,
         "planner": DEFAULT_PLANNER_MODEL_KEY,
         "subagent": DEFAULT_SUBAGENT_MODEL_KEY,
+        "research": DEFAULT_SUBAGENT_MODEL_KEY,
     }
     return mapping.get(role, DEFAULT_FRONT_MODEL_KEY)
 

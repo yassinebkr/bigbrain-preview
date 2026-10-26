@@ -171,7 +171,14 @@ class OpenAICompatProvider(LLMProvider):
         if stream:
             body['stream_options'] = {'include_usage': True}
             return self._stream_chat(body)
+        from .call_trace import trace_stage
+        # httpx's default transport has no automatic retries. Upstream routing
+        # retries are not observable here and must not be reported as zero.
+        trace_stage("http.started", automatic_retries=0, attempt=1,
+                    request_bytes=len(json.dumps(body).encode()))
         response = await self.client.post("/chat/completions", json=body)
+        trace_stage("http.response", status_code=response.status_code,
+                    request_id=response.headers.get("x-request-id"), response_bytes=len(response.content))
         response.raise_for_status()
         data = response.json()
         self._record_usage(data, model)

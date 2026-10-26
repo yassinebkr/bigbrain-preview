@@ -162,11 +162,11 @@ class AnthropicOAuthProvider(LLMProvider):
         model = _normalize_model(model or self.default_model)
 
         # Extract system message if present
-        system_text = None
+        system_parts = []
         api_messages = []
         for msg in messages:
             if msg["role"] == "system":
-                system_text = msg["content"]
+                system_parts.append(msg["content"])
             else:
                 api_messages.append(msg)
 
@@ -174,11 +174,19 @@ class AnthropicOAuthProvider(LLMProvider):
         body = {
             "model": model,
             "max_tokens": max_tokens,
-            "system": _build_system(system_text),
+            "system": _build_system("\n\n".join(system_parts) or None),
             "messages": api_messages,
         }
         if temperature is not None:
             body["temperature"] = temperature
+
+        tool_schema = kwargs.get("tool_schema")
+        if tool_schema:
+            if stream:
+                raise ValueError("Single-action decisions require non-streaming completion")
+            body["tools"] = [{"name":tool_schema["name"],"description":tool_schema["description"],
+                              "input_schema":tool_schema["parameters"]}]
+            body["tool_choice"] = {"type":"tool","name":tool_schema["name"],"disable_parallel_tool_use":True}
 
         if stream:
             return self._stream_chat(body)
@@ -207,6 +215,13 @@ class AnthropicOAuthProvider(LLMProvider):
             raise RuntimeError(f"Anthropic API error ({resp.status_code}): {msg}")
 
         data = resp.json()
+        if body.get("tool_choice", {}).get("type") == "tool":
+            calls = [block for block in data.get("content", []) if block.get("type") == "tool_use"]
+            if data.get("stop_reason") == "max_tokens" or len(calls) != 1 or calls[0].get("name") != body["tool_choice"]["name"]:
+                raise ValueError("Provider must return exactly the requested complete decision")
+            if not isinstance(calls[0].get("input"), dict):
+                raise ValueError("Decision arguments must be a JSON object")
+            return json.dumps(calls[0]["input"])
         # Extract text from content blocks
         texts = [b["text"] for b in data.get("content", []) if b.get("type") == "text"]
         return "\n".join(texts)

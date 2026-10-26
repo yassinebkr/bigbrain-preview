@@ -359,6 +359,10 @@ export class BigBrainConnection implements ConnectionLike {
       'task.progress',
     ];
     if (event && taskEvents.includes(event)) {
+      // A session-wide user Stop also owns the pending front reply. A worker's
+      // individual cancellation must not close an unrelated conversation turn.
+      if (event === 'task.cancelled' && payload.session_id === this.sessionKey &&
+          payload.mode === 'user' && !payload.task_id) this.callbacks.onRunEnd?.();
       this.callbacks.onAgentActivity?.({ type: event, detail: payload });
       // Worker completion does not end an unrelated front-brain reply.
       return;

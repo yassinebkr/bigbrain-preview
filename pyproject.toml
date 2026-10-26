@@ -39,6 +39,7 @@ memory = [
 test = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21",
+    "jsonschema>=4.23,<5",
 ]
 
 [build-system]

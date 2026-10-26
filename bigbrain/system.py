@@ -165,6 +165,28 @@ class BigBrainSystem:
         print("    Or set OPENAI_API_KEY / ANTHROPIC_API_KEY in .env")
         return MockLLMProvider(token_delay_ms=50, realistic_responses=True)
 
+    def _provider_for_role(self, role):
+        """Build an explicit role without changing the legacy global fallback."""
+        from .web.model_roles import configured_key
+        from .auth.registry import build_provider
+        key = configured_key(role)
+        if not key:
+            return self.llm_provider
+        cache = getattr(self, "_role_providers", None)
+        if cache is None:
+            self._role_providers = cache = {}
+        if role not in cache or cache[role][0] != key:
+            cache[role] = (key, build_provider(key))
+        return cache[role][1]
+
+    def apply_model_role(self, role, registry_key):
+        """Apply front/research assignments to the actual runtime holders."""
+        self._role_providers = {k: v for k, v in getattr(self, "_role_providers", {}).items() if k != role}
+        if role == "front" and self.front_brain is not None:
+            self.front_brain.llm_provider = self._provider_for_role("front")
+        if role == "research" and "researcher" in self.brains:
+            self.brains["researcher"].llm_provider = self._provider_for_role("research")
+
     def reload_llm_provider(self) -> dict:
         """Rebuild the LLM provider at runtime and rewire every holder.
 
@@ -175,8 +197,8 @@ class BigBrainSystem:
         new_provider = self._create_llm_provider()
         self.llm_provider = new_provider
 
-        holders = [self.front_brain, self.orchestrator, self.voice_brain,
-                   *self.brains.values()]
+        holders = [self.orchestrator, self.voice_brain,
+                   *[brain for name, brain in self.brains.items() if name != "researcher"]]
         # Verification pipeline: V3 cross-check holds the provider too.
         if self.verification is not None:
             holders.extend(getattr(self.verification, "verifiers", []) or [])
@@ -185,6 +207,11 @@ class BigBrainSystem:
             if holder is not None and hasattr(holder, "llm_provider"):
                 holder.llm_provider = new_provider
                 rewired += 1
+        self._role_providers = {}
+        if self.front_brain is not None:
+            self.front_brain.llm_provider = self._provider_for_role("front")
+        if "researcher" in self.brains:
+            self.brains["researcher"].llm_provider = self._provider_for_role("research")
 
         print(f"🔁 LLM provider reloaded: {type(new_provider).__name__} "
               f"({rewired} holders rewired)")
@@ -247,7 +274,7 @@ class BigBrainSystem:
                     name="researcher",
                     bus=self.bus,
                     workspace=self.workspace,
-                    llm_provider=self.llm_provider,
+                    llm_provider=self._provider_for_role("research"),
                     brave_api_key=os.environ.get("BRAVE_API_KEY"),
                 )
                 self.brains["researcher"] = brain
@@ -336,7 +363,7 @@ class BigBrainSystem:
         self.apply_current_project()
         
         # 10. Front brain — register available brains so it knows how to delegate
-        self.front_brain = FrontBrain(self.bus, llm_provider=self.llm_provider)
+        self.front_brain = FrontBrain(self.bus, llm_provider=self._provider_for_role("front"))
         brain_descriptions = {
             "researcher": "Web search via Brave API, parallel queries, source triangulation, LLM-powered summarization. Use for fact-finding, research, data gathering, current events",
             "taskboard": "Adds tasks to the user's persistent task board. Use when the user asks to add/create a task or todo (\"ajoute une tâche\", \"add a task to my board\"). The task lands on the board as a to-do by default and survives restarts",
@@ -364,6 +391,7 @@ class BigBrainSystem:
         if self.web_server is not None:
             from .web import server as web_server_module
             web_server_module.PROVIDER_RELOAD_HOOK = self.reload_llm_provider
+            web_server_module.MODEL_ROLE_CHANGE_HOOK = self.apply_model_role
             web_server_module.PROJECT_CHANGE_HOOK = self.apply_current_project
             web_server_module.PLUGINS_CHANGE_HOOK = self.apply_plugin_change
             web_server_module.CANCEL_HOOK = self.cancel_current
@@ -514,7 +542,7 @@ class BigBrainSystem:
                 name="researcher",
                 bus=self.bus,
                 workspace=self.workspace,
-                llm_provider=self.llm_provider,
+                llm_provider=self._provider_for_role("research"),
                 brave_api_key=brave_key,
             )
             if brave_key:

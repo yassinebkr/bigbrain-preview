@@ -21,7 +21,7 @@ ROUTE_JSON = (
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('chunks', [["Je relance.\n", ROUTE_JSON], list("Je relance.\n```json\n" + ROUTE_JSON + "\n```")])
-async def test_streamed_preamble_never_leaks_a_later_route_or_duplicates_reply(chunks):
+async def test_v1_rejects_unexpected_stream_without_leaking_action(chunks):
     class Provider:
         async def chat_complete(self, **kwargs):
             async def stream():
@@ -32,25 +32,24 @@ async def test_streamed_preamble_never_leaks_a_later_route_or_duplicates_reply(c
     await front._handle_ui_message(BusMessage(type=MessageType.TASK, source='morphable_ui', target='front_brain',
         payload={'text': 'Réessaie', 'session_id': 's1'}))
     deltas = ''.join(p['delta'] for kind, p in bus.events if kind == 'chat.delta')
-    assert 'Je relance.' in deltas and 'route' not in deltas and '```' not in deltas
-    assert len(bus.tasks) == 1
+    assert deltas == ''
+    assert len(bus.tasks) == 0
     replies = [(kind, p) for kind, p in bus.events if kind in {'chat.message', 'chat.done'}]
-    assert len(replies) == 1 and replies[0][0] == 'chat.done'
-    assert replies[0][1]['text'] == 'Ajouté à ta taskboard.'
+    assert len(replies) == 1 and replies[0][0] == 'chat.message'
+    assert 'Aucune nouvelle tâche' in replies[0][1]['text']
 
 
 @pytest.mark.asyncio
 async def test_ordinary_braces_and_code_are_released_without_routing():
     class Provider:
         async def chat_complete(self, **kwargs):
-            async def stream():
-                for chunk in ['Voici ', '`dict`', ' : {', '"value": 1}']:
-                    yield chunk
-            return stream()
+            assert kwargs['stream'] is False
+            return json.dumps({'decision':{'operation':'respond','reply':'Voici `dict` : {"value": 1}'}})
     front, bus = _make_front(Provider())
     await front._handle_ui_message(BusMessage(type=MessageType.TASK, source='morphable_ui', target='front_brain',
         payload={'text': 'Explique dict', 'session_id': 's1'}))
-    assert ''.join(p['delta'] for kind, p in bus.events if kind == 'chat.delta') == 'Voici `dict` : {"value": 1}'
+    assert not any(kind == 'chat.delta' for kind, _ in bus.events)
+    assert next(p['text'] for kind,p in bus.events if kind == 'chat.message') == 'Voici `dict` : {"value": 1}'
     assert not bus.tasks
 
 
@@ -90,7 +89,22 @@ class RecordingProvider:
     """LLM mock returning a fixed response, recording planning calls."""
 
     def __init__(self, response: str):
-        self.response = response
+        # Adapt the frozen legacy routing fixtures to the new provider contract;
+        # the production front never accepts these legacy shapes directly.
+        try:
+            old = json.loads(response)
+        except (ValueError,TypeError):
+            old = None
+        if isinstance(old,dict) and ('route' in old or 'task' in old):
+            route = old.get('route',{})
+            payload = route.get('payload',{})
+            objective = payload.get('query') or old.get('task') or payload.get('title') or 'Requested action'
+            fields = {k:v for k,v in old.items() if k not in {'task'}}
+            if route.get('brain') == 'researcher':
+                fields['route'] = {**route,'payload':{k:v for k,v in payload.items() if k != 'query'}}
+            self.response = json.dumps({'decision':{'operation':'delegate','objective':objective,**fields}})
+        else:
+            self.response = response
         self.calls = 0
 
     async def chat_complete(self, messages=None, **kwargs):
@@ -105,8 +119,10 @@ class RecordingBus:
         self.tasks = []      # (target, task_data)
         self.events = []     # (event_type, payload)
 
-    async def send_task(self, source, target, task_data, priority=None):
+    async def send_task(self, source, target, task_data, priority=None, require_target=False, on_accepted=None):
         self.tasks.append((target, task_data))
+        if on_accepted:
+            await on_accepted()
 
     async def broadcast_event(self, source, event_type, payload,
                               priority=None, **kwargs):
@@ -208,13 +224,14 @@ class TestFrontBrainRouteDispatch:
         assert task_data["reply_to_ui"] is True
         assert "project_path" not in task_data
         assert task_data.get("project_target") is None
-        assert "taskboard" in task_data["user_request"]
+        assert task_data["user_request"] == "Mettre à jour le README"
+        assert "taskboard" in task_data["user_message"]
 
         # The acknowledgment reached the chat first
-        assert bus.events[0][0] == "chat.message"
-        assert bus.events[0][1]["text"] == "Ajouté à ta taskboard."
+        assert next(p['text'] for kind,p in bus.events if kind == 'chat.message') == "Ajouté à ta taskboard."
+        assert next(i for i,(kind,_) in enumerate(bus.events) if kind == 'task.routing') < next(i for i,(kind,_) in enumerate(bus.events) if kind == 'chat.message')
 
-    async def test_invalid_route_falls_back_to_plain_text(self):
+    async def test_invalid_route_produces_protocol_error_without_dispatch(self):
         # Malformed route (no payload type) must NOT be sent as a task —
         # the raw reply is shown to the user instead of being lost.
         provider = RecordingProvider(
@@ -229,7 +246,8 @@ class TestFrontBrainRouteDispatch:
         ))
 
         assert bus.tasks == []  # nothing delegated
-        assert bus.events[0][0] == "chat.message"
+        assert any(kind == 'front.decision_failed' for kind,_ in bus.events)
+        assert 'Aucune nouvelle tâche' in next(p['text'] for kind,p in bus.events if kind == 'chat.message')
 
 
 class TestOrchestratorHonorsRoute:

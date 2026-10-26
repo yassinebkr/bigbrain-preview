@@ -1,6 +1,7 @@
 """Real LLM Provider using litellm — supports OpenAI, Anthropic, Google, and 100+ models."""
 
 import asyncio
+import json
 from typing import AsyncIterator, Union
 
 from .provider import LLMProvider
@@ -73,6 +74,14 @@ class LiteLLMProvider(LLMProvider):
         """Generate chat completion."""
         model = model or self.default_model
 
+        tool_schema = kwargs.pop("tool_schema", None)
+        if tool_schema:
+            if stream:
+                raise ValueError("Single-action decisions require non-streaming completion")
+            kwargs.update(tools=[{"type":"function","function":tool_schema}],
+                          tool_choice={"type":"function","function":{"name":tool_schema["name"]}},
+                          parallel_tool_calls=False)
+
         if stream:
             return self._stream_chat(messages, model, max_tokens, temperature, **kwargs)
         else:
@@ -84,6 +93,15 @@ class LiteLLMProvider(LLMProvider):
                 stream=False,
                 **kwargs,
             )
+            if tool_schema:
+                choice = response.choices[0]
+                calls = choice.message.tool_calls or []
+                if choice.finish_reason == "length" or len(calls) != 1 or calls[0].function.name != tool_schema["name"]:
+                    raise ValueError("Provider must return exactly the requested complete decision")
+                arguments = calls[0].function.arguments
+                if not isinstance(json.loads(arguments), dict):
+                    raise ValueError("Decision arguments must be a JSON object")
+                return arguments
             return response.choices[0].message.content
 
     async def _stream_chat(

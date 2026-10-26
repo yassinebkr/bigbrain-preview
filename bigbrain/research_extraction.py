@@ -79,7 +79,17 @@ def extract_html(html: str, url: str) -> dict:
                 if description is not None:
                     definition = description.find_previous_sibling("dt")
             if definition is not None:
-                context.append(definition.get_text(" ", strip=True))
+                # Consecutive terms in a definition list share the following
+                # description. Assign aliases one context so a focused term
+                # retains that description and its qualifications.
+                first = definition
+                while (previous := first.find_previous_sibling()) is not None and previous.name == 'dt':
+                    first = previous
+                terms, current = [], first
+                while current is not None and current.name == 'dt':
+                    terms.append(current.get_text(' ', strip=True))
+                    current = current.find_next_sibling()
+                context.append(' | '.join(terms))
             originals.append({"id": f"b{len(originals)+1}", "text": text, "kind": kind,
                               "locator": f"observed-dom:block[{len(originals)}]",
                               "context": context})
@@ -142,7 +152,12 @@ def window(blocks: list[dict], focus: str | None = None, limit: int = 12000) -> 
         for block in blocks:
             pattern = re.escape(focus).replace(r"\.", r"\s*\.\s*")
             for match in re.finditer(pattern, block["text"], re.IGNORECASE):
-                priority = 2 if block["kind"] == "dt" else 1 if re.fullmatch(r"h[1-6]", block["kind"]) else 0
+                definition = block["kind"] == "dt"
+                heading = bool(re.fullmatch(r"h[1-6]", block["kind"]))
+                exact = bool(re.fullmatch(pattern, block["text"].strip(), re.IGNORECASE))
+                # A dedicated entry outranks an occurrence inside a longer
+                # signature or synopsis. Preserve source order for equal ranks.
+                priority = 4 if exact and definition else 3 if exact and heading else 2 if definition else 1 if heading else 0
                 candidates.append((priority, -(offset + match.start()), offset + match.start()))
             offset += len(block["text"]) + 1
         if not candidates:
@@ -151,14 +166,31 @@ def window(blocks: list[dict], focus: str | None = None, limit: int = 12000) -> 
         start = max(0, position - 500)
         offset = 0
         for i, block in enumerate(blocks):
-            if offset <= position < offset + len(block["text"]) and block["kind"] == "dt":
+            if offset <= position < offset + len(block["text"]):
+                # A match inside a definition's prose needs its complete local
+                # conditions and label. Recover the enclosing contiguous entry.
+                first = i
+                while first > 0 and blocks[first-1].get("context") == block.get("context"):
+                    first -= 1
+                definition = any(b["kind"] == "dt" for b in blocks[first:i+1])
+                heading = bool(re.fullmatch(r"h[1-6]", blocks[first]["kind"]))
+                if not definition and not heading:
+                    break
                 # A definition's conditions and version notes share its context.
                 # Keep the complete entry up to the next definition/section.
-                start, section_end = offset, offset + len(block["text"])
+                start = offset - sum(len(b["text"]) + 1 for b in blocks[first:i])
+                section_end = offset + len(block["text"])
                 for following in blocks[i+1:]:
-                    if following.get("context") != block.get("context"):
+                    context = block.get("context", [])
+                    following_context = following.get("context", [])
+                    if (following_context != context if definition else
+                            following_context[:len(context)] != context):
                         break
                     section_end += 1 + len(following["text"])
+                # Oversized sections still center the observed literal match;
+                # clipping remains explicit on the returned source blocks.
+                if position >= start + limit:
+                    start = max(start, position - 500)
                 break
             offset += len(block["text"]) + 1
     end, offset, selected = min(start + limit, section_end), 0, []

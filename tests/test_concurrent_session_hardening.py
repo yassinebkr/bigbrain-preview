@@ -15,8 +15,8 @@ from bigbrain.web.server import WebServer
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('streaming', [False, True])
-async def test_concurrent_front_replies_keep_their_session_context(tmp_path, streaming):
+@pytest.mark.parametrize('operation', ['respond', 'clarify'])
+async def test_concurrent_front_replies_keep_their_session_context(tmp_path, operation):
     waiting, release = asyncio.Event(), asyncio.Event()
     class Provider:
         async def chat_complete(self, messages, **kwargs):
@@ -24,11 +24,8 @@ async def test_concurrent_front_replies_keep_their_session_context(tmp_path, str
             if name == 'A':
                 waiting.set()
                 await release.wait()
-            if streaming:
-                async def chunks():
-                    yield 'reply ' + name
-                return chunks()
-            return 'reply ' + name
+            assert kwargs['stream'] is False
+            return json.dumps({'decision':{'operation':operation,'reply':'reply '+name}})
     bus = MessageBus(tmp_path / 'logs', auth=None)
     events = []
     async def observe(message):
@@ -44,14 +41,11 @@ async def test_concurrent_front_replies_keep_their_session_context(tmp_path, str
         await front._handle_ui_message(message('B'))
         release.set()
         await asyncio.wait_for(first, timeout=2)
-        kind = 'chat.done' if streaming else 'chat.message'
+        kind = 'chat.message'
         replies = [event.payload for event in events if event.payload.get('event') == kind]
         assert {(reply['session_id'], reply['text']) for reply in replies} == {
             ('sess-A', 'reply A'), ('sess-B', 'reply B')}
-        if streaming:
-            deltas = [e.payload for e in events if e.payload.get('event') == 'chat.delta']
-            assert {(d['session_id'], d['delta']) for d in deltas} == {
-                ('sess-A', 'reply A'), ('sess-B', 'reply B')}
+        assert not any(e.payload.get('event') == 'chat.delta' for e in events)
     finally:
         first.cancel()
         await asyncio.gather(first, return_exceptions=True)

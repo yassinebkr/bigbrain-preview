@@ -1,6 +1,7 @@
 """Vision attachment dispatch tests."""
 
 from types import SimpleNamespace
+import json
 
 import pytest
 
@@ -17,7 +18,7 @@ class RecordingProvider:
 
     async def chat_complete(self, messages=None, **kwargs):
         self.calls.append({"messages": messages, **kwargs})
-        return "I can see the image."
+        return json.dumps({"decision":{"operation":"respond","reply":"I can see the image."}})
 
 
 def message_for(record, text="What is in this photo?"):

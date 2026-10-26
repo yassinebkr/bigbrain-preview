@@ -93,6 +93,61 @@
 .work-step-status[data-status=running] { color: var(--accent-blue-light); }
 @container (min-width: 1000px) { .work-journal-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .work-pulse { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--accent-blue); animation: work-pulse 1.8s ease-in-out infinite; }
+
+/* Research uses the Atelier's existing surfaces, typography and theme tokens. */
+.research-hero { background: linear-gradient(145deg, color-mix(in srgb, var(--accent-blue) 7%, var(--bg-surface)), var(--bg-surface) 65%); }
+.research-hero-identity { display: flex; align-items: center; gap: 10px; }
+.research-icon { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 12px; flex-shrink: 0; background: color-mix(in srgb, var(--accent-blue) 12%, transparent); color: var(--accent-blue-light); }
+.research-objective { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; margin-top: 12px; color: var(--text-secondary); font-size: 12px; line-height: 1.7; }
+.research-stats { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 7px; margin-top: 18px; }
+.research-stats > div { padding: 10px 8px; border-radius: 12px; background: color-mix(in srgb, var(--bg-primary) 70%, transparent); }
+.research-stats strong { display: block; color: var(--text-primary); font-size: 21px; font-weight: 500; letter-spacing: -.04em; }
+.research-stats small { font-size: 11px; color: var(--text-secondary); }
+.research-stats span { display: block; margin-top: 3px; color: var(--text-secondary); font-size: 11px; }
+.research-disclosure-trigger { width: 100%; padding: 10px 0; border-radius: 8px; color: var(--text-secondary); font-size: 12px; line-height: 1.6; align-items: center; gap: 12px; text-decoration: none !important; }
+.research-disclosure-trigger:hover { color: var(--text-primary); }
+.research-disclosure-trigger > svg { width: 13px; height: 13px; color: var(--text-tertiary); transform: none; }
+.research-disclosure-trigger[data-state=open] > svg { transform: rotate(180deg); }
+.research-disclosure [data-slot=accordion-content] { animation: none !important; }
+.research-disclosure-body { padding: 0 !important; font-size: 12px; line-height: 1.7; }
+.research-disclosure-trigger > span { min-width: 0; flex: 1; }
+.research-disclosure-body > div { padding: 0; }
+.research-disclosure-content { padding: 2px 0 12px; overflow-wrap: anywhere; }
+.research-request { margin-top: 4px; }
+.research-diagnostic { border-top: 1px solid var(--border-subtle); margin-top: 16px; padding-top: 3px; }
+.research-diagnostic pre { margin-top: 12px; padding: 12px; border-radius: 10px; background: var(--bg-primary); overflow-wrap: anywhere; white-space: pre-wrap; }
+.research-source { margin-top: 10px; border: 1px solid var(--border-subtle); border-radius: 14px; background: var(--bg-primary); overflow: hidden; }
+.research-source > div > h3 > button { padding: 12px; }
+.research-source .research-disclosure-content { padding-right: 12px; padding-left: 12px; }
+.research-source .research-disclosure .research-disclosure-content { padding-right: 0; padding-left: 0; }
+.research-source-heading { display: block; min-width: 0; }
+.research-source-domain { display: block; margin-bottom: 4px; color: var(--accent-blue-light); font-size: 10px; letter-spacing: .02em; }
+.research-source-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: var(--text-primary); font-size: 12px; line-height: 1.6; }
+.research-source-meta { display: block; margin-top: 5px; color: var(--text-secondary); font-size: 11px; }
+.research-passage { margin-top: 14px; padding: 12px; border-radius: 12px; background: var(--bg-surface); color: var(--text-primary); font-size: 12px; line-height: 1.75; }
+.research-passage blockquote { border-left: 2px solid color-mix(in srgb, var(--accent-blue) 45%, transparent); padding-left: 10px; }
+.research-reference { color: var(--text-tertiary); font-size: 9px; overflow-wrap: anywhere; }
+.research-timeline { padding-left: 8px; }
+.research-timeline-item { position: relative; margin-top: 0; padding: 0 0 17px 17px; border-left: 1px solid var(--border-subtle); line-height: 1.65; }
+.research-timeline-item::before { content: ''; position: absolute; left: -4px; top: 5px; width: 7px; height: 7px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 3px var(--bg-surface); }
+.research-timeline-item[data-status=error]::before { background: var(--warning); }
+.research-inspect { justify-content: space-between; width: 100%; grid-column: 1 / -1; }
+@container (min-width: 760px) {
+  .context-island[data-expanded=true] .research-overview > .research-hero { grid-column: 1; grid-row: 1 / span 4; align-self: start; position: sticky; top: 0; }
+  .context-island[data-expanded=true] .research-overview > .research-inspect { grid-column: 2; }
+}
+.atelier-work-trigger { display: flex; align-items: center; gap: 10px; width: 100%; padding: 3px 0; text-align: left; font-size: 14px; font-weight: 500; color: var(--text-primary); }
+.atelier-work-trigger > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.atelier-work-trigger > svg { color: var(--text-tertiary); flex-shrink: 0; transition: transform 160ms; }
+.atelier-work-trigger[data-state=open] > svg { transform: rotate(180deg); }
+.atelier-work-menu { width: min(360px,calc(100vw - 32px)); max-height: 340px; padding: 7px; border-radius: 16px; border: 1px solid var(--border-subtle); background: var(--bg-surface); color: var(--text-primary); box-shadow: 0 14px 44px #0005; }
+.atelier-work-menu-label { color: var(--text-secondary); padding: 8px 10px 10px; font-size: 10px; font-weight: 400; letter-spacing: .04em; }
+.atelier-work-option { padding-top: 11px; padding-bottom: 11px; border-radius: 11px; cursor: pointer; color: var(--text-primary); }
+.atelier-work-option[data-highlighted], .atelier-work-option[data-state=checked] { background: var(--bg-button); color: var(--text-primary); }
+.atelier-work-option-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 12px; line-height: 1.55; }
+.atelier-work-option-status { display: block; margin-top: 4px; color: var(--text-secondary); font-size: 11px; }
+.atelier-work-option-status[data-status=failed] { color: var(--warning); }
+.atelier-work-option-status[data-status=running] { color: var(--accent-blue-light); }
 .work-live-step { animation: work-live-in 220ms ease-out; }
 @keyframes work-live-in { from { opacity: .3; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 @media (prefers-reduced-motion: reduce) { .work-live-step { animation: none; } }

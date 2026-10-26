@@ -200,7 +200,10 @@ async def test_runtime_time_budget_limits_active_page_read():
     reader.read.side_effect = hang
     search.search.return_value = [{"url":"https://public.test/"}]
     state = await ResearchRuntime(search,reader,DiscoveryPolicy(),AsyncMock(),limits=Limits(seconds=.05)).run("API")
-    assert state.status == "partial" and "TimeoutError" in state.reason
+    assert state.status == "partial"
+    assert state.diagnostic["code"] == "time_budget_exhausted"
+    assert state.diagnostic["errors"][0]["field"] == "open"
+    assert "preuves déjà recueillies" in state.reason
 
 
 @pytest.mark.asyncio

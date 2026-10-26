@@ -19,7 +19,7 @@ from ..llm.model_registry import get_model, role_default_key
 
 logger = logging.getLogger(__name__)
 
-ROLES = ("front", "planner", "code", "web", "subagent")
+ROLES = ("front", "planner", "code", "web", "research", "subagent")
 
 _ENV_VAR_BY_ROLE = {
     "front": "BIGBRAIN_FRONT_MODEL",
@@ -27,6 +27,7 @@ _ENV_VAR_BY_ROLE = {
     "code": "BIGBRAIN_CODE_MODEL",
     "web": "BIGBRAIN_WEB_MODEL",
     "subagent": "BIGBRAIN_SUBAGENT_MODEL",
+    "research": "BIGBRAIN_RESEARCH_MODEL",
 }
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -65,8 +66,14 @@ def current_lineup() -> Dict[str, Any]:
             "key": key,
             "model_id": model_id,
             "display_name": display,
+            "reasoning_effort": entry.reasoning_effort_default if model_id else None,
         }
     return lineup
+
+
+def configured_key(role: str) -> str | None:
+    """Explicit registry assignment; absent roles keep legacy provider selection."""
+    return _persisted().get(role) or os.environ.get(f"BIGBRAIN_{role.upper()}_MODEL_KEY") or None
 
 
 def set_role(role: str, registry_key: str) -> Dict[str, Any]:

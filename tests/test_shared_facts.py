@@ -73,9 +73,9 @@ async def test_front_records_current_user_source_without_tool_json_in_chat(tmp_p
             self.calls += 1
             if self.calls == 1:
                 assert source['id'] in json.dumps(messages)
-                return json.dumps({'memory': {'tool': 'facts.write', 'arguments': write_args(source)}})
+                return json.dumps({'decision': {'operation':'consult_memory','tool': 'facts.write', 'arguments': write_args(source)}})
             assert '"revision": 1' in json.dumps(messages, ensure_ascii=False).replace('\\"', '"')
-            return 'Je retiens Chichi.'
+            return json.dumps({'decision':{'operation':'respond','reply':'Je retiens Chichi.'}})
     bus = MessageBus(tmp_path / 'logs', auth=None)
     front = FrontBrain(bus, llm_provider=Provider())
     front._emit_chat_message = AsyncMock()

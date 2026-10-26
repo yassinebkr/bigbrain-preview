@@ -128,8 +128,10 @@ class TestServerSessionRouting:
     async def test_chat_send_routes_to_session(self, server, bus, tmp_path):
         sent = []
 
-        async def fake_send(msg):
+        async def fake_send(msg, *, on_accepted=None):
             sent.append(msg)
+            if on_accepted:
+                await on_accepted()
 
         bus.send = fake_send
 

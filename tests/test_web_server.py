@@ -293,6 +293,26 @@ class TestClientCount:
 
 
 class TestAplotProtocol:
+    @pytest.mark.asyncio
+    async def test_sent_ack_precedes_slow_front_brain_completion(self, server, bus):
+        accepted, release = asyncio.Event(), asyncio.Event()
+        async def slow_front(message):
+            accepted.set()
+            await release.wait()
+        bus.subscribe("front_brain", slow_front)
+        ws = AsyncMock()
+        delivery = asyncio.create_task(server._deliver_chat_send(ws, {
+            "payload": {"text": "hello", "messageId": "slow-turn"}}))
+        try:
+            await asyncio.wait_for(accepted.wait(), 2)
+            statuses = [call.args[0]["payload"]["status"] for call in ws.send_json.call_args_list
+                        if call.args[0].get("type") == "message.status"]
+            assert statuses == ["queued", "sent"]
+            assert not delivery.done()
+        finally:
+            release.set()
+            await asyncio.wait_for(delivery, 2)
+
     """Control frames answered by the server without reaching the bus."""
 
     @pytest.mark.asyncio
@@ -579,7 +599,7 @@ class TestModelRoles:
     def test_default_lineup_covers_all_roles(self):
         from bigbrain.web import model_roles
         lineup = model_roles.current_lineup()
-        assert set(lineup) == {"front", "planner", "code", "web", "subagent"}
+        assert set(lineup) == {"front", "planner", "code", "web", "research", "subagent"}
         assert lineup["front"]["key"]
         assert lineup["subagent"]["key"]
 

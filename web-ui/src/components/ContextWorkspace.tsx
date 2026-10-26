@@ -1,13 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useSyncExternalStore } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
-import { ArrowLeft, ExternalLink, Loader2, Maximize2, Minimize2, PanelRight, Layers, X } from 'lucide-react';
+import { ArrowLeft, ChevronDown, ExternalLink, Loader2, Maximize2, Minimize2, PanelRight, Layers, X } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 import { useWorkspaceStore } from '@/store/workspaceStore';
 import { isBoardRun, nextProjectAttempt, reconcileWorkspace, runTitle, surfaceRegistry, webEntryPath, type WorkSurface } from '@/lib/morphable';
 import { usePreview } from '@/lib/usePreview';
 import { WorkOverview } from './WorkWidgets';
 import { ResearchPanel } from './ResearchPanel';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from './ui/dropdown-menu';
 
 const labels = { preview: 'Aperçu', activity: 'Vue d’ensemble', files: 'Fichiers', verification: 'Tests', research: 'Recherche' };
 const statuses = { running: 'En cours', done: 'Terminé', failed: 'Échec', cancelled: 'Annulé' };
@@ -138,10 +139,15 @@ export function ContextWorkspace({ children }: { children: (ownsActivity: boolea
             <div className="context-identity" aria-hidden="true"><Layers size={19} /></div>
             <div className="flex-1 min-w-0">
               <p className="text-[10px] uppercase tracking-[0.14em] work-muted mb-1">Atelier</p>
-              {runs.length > 1 ? <select aria-label="Travail consulté" className="w-full text-[14px] font-medium bg-transparent" style={{ color: 'var(--text-primary)' }} value={state.selected?.run.id || ''} onChange={(event) => { const surface = runs.find((s) => s.run.id === event.target.value); if (surface) inspect(surface.run); }}>
-                {!state.selected && <option value="">Autres travaux…</option>}
-                {runs.map(({ run }) => <option key={run.id} value={run.id} style={{ backgroundColor: 'var(--bg-surface)' }}>{runTitle(run)}</option>)}
-              </select> : <h2 className="text-[14px] font-medium line-clamp-2" title={state.selected?.run.description}>{state.selected ? (state.selected.run.projectName || state.selected.run.projectPath ? runTitle(state.selected.run) : Object.keys(state.selected.run.researches || {}).length ? 'Recherche documentaire' : 'Travail de la conversation') : 'Résultat indisponible'}</h2>}
+              {runs.length > 1 ? <DropdownMenu>
+                <DropdownMenuTrigger asChild><button className="atelier-work-trigger" aria-label="Travail consulté"><span>{state.selected ? runTitle(state.selected.run) : 'Choisir un travail'}</span><ChevronDown size={14} /></button></DropdownMenuTrigger>
+                <DropdownMenuContent align="start" sideOffset={10} className="atelier-work-menu">
+                  <DropdownMenuLabel className="atelier-work-menu-label">Travaux de cette conversation</DropdownMenuLabel>
+                  <DropdownMenuRadioGroup value={state.selected?.run.id || ''} onValueChange={(id) => { const surface = runs.find((s) => s.run.id === id); if (surface) inspect(surface.run); }}>
+                    {runs.map(({ run }) => <DropdownMenuRadioItem key={run.id} value={run.id} className="atelier-work-option"><span className="min-w-0"><span className="atelier-work-option-title">{runTitle(run)}</span><span className="atelier-work-option-status" data-status={run.status}>{statuses[run.status]}</span></span></DropdownMenuRadioItem>)}
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </DropdownMenu> : <h2 className="text-[14px] font-medium line-clamp-2" title={state.selected?.run.description}>{state.selected ? (state.selected.run.projectName || state.selected.run.projectPath ? runTitle(state.selected.run) : Object.keys(state.selected.run.researches || {}).length ? 'Recherche documentaire' : 'Travail de la conversation') : 'Résultat indisponible'}</h2>}
               {state.selected && <p className="context-status text-[11px] mt-1 flex items-center gap-2" data-status={state.selected.run.status}>{state.selected.run.status === 'running' && !state.selected.run.awaitingApproval && <span className="work-pulse" aria-hidden="true" />}{state.selected.run.deliveryStatus === 'incomplete' ? 'Incomplet · non validé' : state.selected.run.awaitingApproval ? 'Ton accord est nécessaire' : statuses[state.selected.run.status]}</p>}
             </div>
             <button className="p-1" aria-label={expanded ? 'Redonner la place principale au chat' : 'Donner la place principale à cette activité'} onClick={() => change({ mode: expanded ? 'workspace' : 'expanded' })}>{expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
