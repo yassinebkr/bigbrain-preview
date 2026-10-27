@@ -19,6 +19,9 @@ with a direct research loop: scoped acquisition, compact passages, synthesis and
 mechanical citation validation. Additional semantic review will be selected by
 explicit risk or request. Source acquisition and orchestration remain owned by
 BigBrain. The detailed replacement contract will precede implementation.
+The current replacement contract is
+[RESEARCH_DIRECT_LOOP_PLAN.md](RESEARCH_DIRECT_LOOP_PLAN.md), on
+`feat/research-direct-loop` from merged checkpoint `3829317`.
 
 The approved architecture and closure gates are documented in
 [RESEARCH_CLOSURE_PLAN.md](RESEARCH_CLOSURE_PLAN.md). Gates 1–3 implementation
