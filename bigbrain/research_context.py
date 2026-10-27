@@ -13,6 +13,10 @@ import math
 import re
 
 
+class InspectionBudgetExceeded(ValueError):
+    """Required evidence exceeds the requested serialized inspection size."""
+
+
 def words(text):
     """Tokenize Unicode words, identifiers and camel-case names for local ranking."""
     # CLI options are case-sensitive symbols: -u and -U differ, and -a
@@ -35,7 +39,7 @@ def groups(blocks, observation):
         sections[-1]["blocks"].append(block)
     result, seen = [], {}
     for section in sections:
-        fingerprint = json.dumps([section["context"], [(b.get("kind"), b["text"]) for b in section["blocks"]]],ensure_ascii=False)
+        fingerprint = json.dumps([section["context"], [(b.get("id"), b.get("kind"), b["text"]) for b in section["blocks"]]],ensure_ascii=False)
         if fingerprint in seen:
             seen[fingerprint]["duplicate_sections"] += 1
             continue
@@ -240,7 +244,7 @@ def policy_view(state, *, byte_limit=18000):
     view.update(passage_view(chosen))
     view["context_scope"]["decision_omitted_passage_ids"] = [p.id for p in passages if p.id not in selected_ids]
     if size() > byte_limit:
-        raise ValueError("Decision context cannot fit required citations/metadata; refine research scope")
+        raise InspectionBudgetExceeded("Decision context cannot fit required citations/metadata; refine research scope")
     candidates = [(key, packet) for key, packet in packets.items() if not any(p.id in selected_ids for p in packet)]
     sections = [{"blocks": [{"text": p.text} for p in packet]} for _, packet in candidates]
     objective = " ".join(q.text + " " + q.evidence_needed for q in state.questions)
@@ -290,6 +294,16 @@ def review_view(state, *, byte_limit=None):
     byte_limit = 12000 if adaptive else byte_limit
     from .research import Passage
     from .research_acquisition import repository
+    def matches(passage, block):
+        # Capture identity is checked by the caller. Modern observations retain
+        # exact block coordinates; legacy observations require heading identity.
+        if passage.block_id is not None:
+            end = passage.block_end if passage.block_end is not None else passage.block_start + len(passage.text)
+            return (passage.block_id == block['id']
+                    and 0 <= passage.block_start <= end <= len(block['text'])
+                    and block['text'][passage.block_start:end] == passage.text)
+        return (tuple(passage.context) == tuple(block.get('context', []))
+                and passage.text in block['text'])
     cited = {e.passage_id for c in state.claims for e in c.evidence}
     # Preserve the consulted evidence, including qualifications outside the
     # draft's citation links. The original section index supplies independent
@@ -325,7 +339,7 @@ def review_view(state, *, byte_limit=None):
     known_sources = {source['id'] for source in sources}
     packets = [p for p in packets if p.id in cited or p.source_id in known_sources and (
         p.source_id not in indexes or p.observation_sha256 == indexes[p.source_id][0].content_sha256
-        and any(p.text in block['text'] for section in indexes[p.source_id][1] for block in section['blocks']))]
+        and any(matches(p, block) for section in indexes[p.source_id][1] for block in section['blocks']))]
     base = {"objective":state.objective,"questions":[q.model_dump(mode="json") for q in state.questions],
             "sources":sources,
             "claims":[c.model_dump(mode="json") for c in state.claims],
@@ -342,7 +356,7 @@ def review_view(state, *, byte_limit=None):
         return needed <= byte_limit
 
     if not fits(packets, required=True):
-        raise ValueError("Independent inspection limit exceeded by required citations or source metadata; refine the research scope")
+        raise InspectionBudgetExceeded("Independent inspection limit exceeded by required citations or source metadata; refine the research scope")
     selected = set()
 
     def add(sid, index, *, required=False):
@@ -358,7 +372,8 @@ def review_view(state, *, byte_limit=None):
             if key not in signatures:
                 additions.append(Passage(id=f"{sid}:review:{source.content_sha256[:12]}:{block['id']}",
                     source_id=sid,text=block["text"],kind=block["kind"],locator=block["locator"],
-                    context=block.get("context",[]),observation_sha256=source.content_sha256,review_only=True))
+                    context=block.get("context",[]),observation_sha256=source.content_sha256,review_only=True,
+                    block_id=block['id'],block_start=0,block_end=len(block['text'])))
                 signatures.add(key)
         entry = ledger[sid]
         entry["selected_groups"].append(section["id"])
@@ -367,7 +382,7 @@ def review_view(state, *, byte_limit=None):
             entry["selected_groups"].pop()
             entry["omitted_groups"] += 1
             if required:
-                raise ValueError("Independent inspection limit exceeded by a required original section; refine the research scope")
+                raise InspectionBudgetExceeded("Independent inspection limit exceeded by a required original section; refine the research scope")
             return False
         packets += additions
         selected.add((sid,index))
@@ -384,10 +399,10 @@ def review_view(state, *, byte_limit=None):
         ranking = rank(" ".join(question_queries) or state.objective, sections)
         mandatory = set()
         for passage in (p for p in packets if p.id in cited and p.source_id == sid):
-            if not any(passage.text in b["text"] for section in sections for b in section["blocks"]):
+            if not any(matches(passage, b) for section in sections for b in section["blocks"]):
                 raise ValueError("Cited passage cannot be restored from its original observation")
         for i, section in enumerate(sections):
-            if any(p.source_id == sid and any(p.text in b["text"] for b in section["blocks"])
+            if any(p.source_id == sid and any(matches(p, b) for b in section["blocks"])
                    for p in packets):
                 mandatory.add(i)
         if not mandatory:
@@ -418,6 +433,6 @@ def review_view(state, *, byte_limit=None):
     for _ in range(3):
         result["inspection"]["serialized_bytes"] = len(json.dumps(result,ensure_ascii=False,separators=(",", ":")).encode())
     if result["inspection"]["serialized_bytes"] > byte_limit:
-        raise ValueError("Independent inspection metadata exceeds the inspection limit")
+        raise InspectionBudgetExceeded("Independent inspection metadata exceeds the inspection limit")
     known = {p.id for p in state.passages}
     return result, [p for p in packets if p.id not in known]

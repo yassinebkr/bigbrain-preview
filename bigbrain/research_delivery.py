@@ -12,6 +12,10 @@ def research_message(state):
     documentary = state.delivery_mode == "documentary" and not state.review_reason
     lines = (["Synthèse documentaire sourcée · sans revue indépendante." if documentary
               else "Recherche terminée."] if completed else ["Recherche incomplète."])
+    if state.execution_outcome == 'blocked':
+        lines = ["Recherche bloquée."]
+        if (state.diagnostic or {}).get('code') == 'transport_context_unbounded':
+            lines.append("Le transport sélectionné doit être adapté aux limites de recherche avant de poursuivre.")
     passages = {p.id:p for p in state.passages}
     sources = {s.id:s for s in state.sources if s.status == "read"}
     for claim in state.claims:
@@ -31,6 +35,7 @@ def research_message(state):
         lines.append(line)
     gaps = [str(g) for q in state.question_coverage if q.get("status") != "covered"
             for g in q.get("missing_evidence", [])]
+    gaps.extend(state.original_request_coverage.get("gaps", []))
     if state.observations and state.observations[-1].action.tool == 'conclude':
         gaps.extend(state.observations[-1].action.remaining_gaps)
     for gap in list(dict.fromkeys(gaps))[:2]:

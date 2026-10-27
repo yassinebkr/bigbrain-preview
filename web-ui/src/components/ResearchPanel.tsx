@@ -28,6 +28,10 @@ const phases: Record<string, string> = { http_loading: 'Chargement de la page HT
   http_cache_for_browser: 'Réutilisation de la page HTTP pour le navigateur', extracting: 'Extraction des passages',
   selecting_context: 'Sélection des sections selon la question', browser_loading: 'Lecture dans le navigateur',
   browser_request: 'Chargement des ressources de la page', browser_closed: 'Navigateur fermé · traitement du résultat' };
+const workflowStages: Record<string, string> = { scope: 'Préparation de la demande', collect: 'Collecte des preuves',
+  freeze: 'Préparation du dossier de preuves', draft: 'Rédaction à partir des passages lus',
+  control: 'Vérification des conclusions et des réserves', collect_complement: 'Lecture complémentaire ciblée',
+  freeze_new_revision: 'Mise à jour du dossier de preuves', revise: 'Révision des conclusions', settle: 'Recherche finalisée' };
 const access: Record<string, string> = { needs_context: 'Sélection insuffisante · lecture à préciser', requires_browser: 'Contenu JavaScript · navigateur nécessaire',
   blocked: 'Accès bloqué', authentication_required: 'Authentification nécessaire', rate_limited: 'Accès limité par le site',
   browser_unavailable: 'Navigateur indisponible', snapshot_changed: 'Observation différente · sections à sélectionner à nouveau',
@@ -39,9 +43,21 @@ export function researchActivity(research: ResearchView) {
   if (activity?.stage === 'research_assessing') return 'Revue indépendante des observations originales';
   if (activity?.stage === 'research_review_evidence') return 'Passages complémentaires consultés par la revue';
   if (activity?.stage === 'research_deciding') return 'Choix de la prochaine action';
+  if (activity?.stage === 'research_stage' && activity.phase) return workflowStages[activity.phase] || 'Analyse en cours';
   if (research.current_action?.tool === 'batch') return 'Lectures et recherches groupées';
   if (research.current_action?.tool === 'open' && (research.current_action.focus || research.current_action.group_ids?.length)) return 'Lecture ciblée des sections';
-  return research.current_action ? tools[research.current_action.tool] || 'Analyse en cours' : 'Choix de la prochaine action';
+  return research.current_action ? tools[research.current_action.tool] || 'Analyse en cours'
+    : workflowStages[research.workflow?.stage || ''] || 'Choix de la prochaine action';
+}
+
+function failureMessage(research: ResearchView) {
+  const code = research.diagnostic?.code;
+  if (code === 'json_invalid' || code === 'schema_invalid') return 'Le modèle a renvoyé un format de réponse invalide.';
+  if (code === 'transport_context_unbounded') return 'Le transport sélectionné doit être adapté aux limites de recherche.';
+  if (code === 'deadline' || code === 'time_budget_exhausted') return 'Le délai disponible pour cette recherche est épuisé.';
+  if (code === 'budget' || code === 'budget_exhausted') return 'Le budget disponible pour cette recherche est épuisé.';
+  return !research.sources.some((s) => s.status === 'read') ? 'La recherche s’est arrêtée avant de lire une source.'
+    : 'La recherche n’a pas pu établir toutes les conclusions.';
 }
 
 // This compact widget also appears in the default overview; detailed evidence
@@ -98,7 +114,7 @@ function ResearchWork({ research, live, compact, inspect }: { research: Research
         {research.activity.request_index != null ? ` · ressource navigateur ${research.activity.request_index}` : ''}</p>}
       <div className="research-stats" aria-label="Bilan de recherche"><div><strong>{read.length}</strong><span>Sources lues</span></div><div><strong>{research.claims.length}</strong><span>Conclusions</span></div><div><strong><ResearchClock research={research} live={live} /></strong><span>Temps écoulé</span></div></div>
       {(research.status === 'partial' || research.status === 'unavailable' || research.assessment_error) && <div role="alert" className="rounded-xl p-3 mt-4 text-[12px] leading-relaxed" style={{ background: 'var(--bg-primary)', color: 'var(--warning)' }}>
-        <p>{research.diagnostic ? 'Le modèle a renvoyé un format de réponse invalide.' : !read.length ? 'La recherche s’est arrêtée avant de lire une source.' : 'La recherche n’a pas pu établir toutes les conclusions.'}</p>
+        <p>{failureMessage(research)}</p>
         <p className="mt-1 work-muted">{read.length ? 'Les passages déjà consultés restent disponibles.' : 'Aucune conclusion n’a été vérifiée.'}</p>
       </div>}
       <ResearchDisclosure className="research-diagnostic text-[11px] work-muted"><ResearchSummary>Usage et diagnostic</ResearchSummary>
@@ -108,6 +124,10 @@ function ResearchWork({ research, live, compact, inspect }: { research: Research
         {research.usage.unknown_usage_calls ? ` · usage inconnu pour ${research.usage.unknown_usage_calls} appel(s)` : ''}
         {` · coût ${research.usage.cost_usd == null ? 'inconnu' : `${research.usage.cost_usd.toFixed(4)} $`}`}</p>
       {!!research.usage.allowance_used && <p className="mt-1 text-[11px] work-muted">Enveloppe consommée : {research.usage.allowance_used}/{research.limits.tokens} · inclut une réserve estimée si l’usage manque</p>}
+      {research.usage.stage_budget && <p className="mt-1 text-[11px] work-muted">Entrée : {research.usage.stage_budget.input_units}/{research.usage.stage_budget.input_limit} unités · sortie : {research.usage.stage_budget.output_units}/{research.usage.stage_budget.output_limit} · {research.usage.stage_budget.logical_calls}/{research.usage.stage_budget.call_limit} appels. Les usages absents sont réservés par estimation.</p>}
+      {research.usage.stage_budget?.policy === 'monitored' && <p className="mt-1 text-[11px] work-muted">Seuils surveillés · un appel en cours peut les dépasser ; tout appel suivant est alors arrêté.</p>}
+      {research.usage.stage_budget?.threshold_exceeded && <p className="mt-1 text-[11px]" style={{ color: 'var(--warning)' }}>Seuil dépassé · aucun appel supplémentaire.</p>}
+      {research.usage.api_reference && <p className="mt-1 text-[11px] work-muted">Référence API : {research.usage.api_reference.measured_subtotal_usd.toFixed(6)} $ · {research.usage.api_reference.priced_records}/{research.usage.api_reference.logical_calls} appels chiffrés{research.usage.api_reference.complete ? '' : ' · mesure partielle'}. La consommation de l’abonnement est distincte.</p>}
       {research.reason && research.status !== 'running' && <pre className="mt-3 text-[11px] whitespace-pre-wrap break-words">{research.reason}</pre>}
       {research.assessment_error && <pre className="mt-3 text-[11px] whitespace-pre-wrap break-words">{research.assessment_error}</pre>}
       {research.diagnostic && <pre className="mt-3 text-[11px] whitespace-pre-wrap break-words">{JSON.stringify(research.diagnostic, null, 2)}</pre>}

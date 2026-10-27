@@ -165,15 +165,21 @@ class ResearcherBrain(BaseBrain):
                     "top_sources": [], "unique_sources": 0, "unique_domains": 0,
                     "queries_used": [], "claims_verified": False, "evidence": state.model_dump(mode="json")}
         policy = self.research_policy or (ModelPolicy(self.llm_provider) if self.llm_provider else DiscoveryPolicy())
-        documentary = self.research_reviewer is None and isinstance(policy, ModelPolicy)
+        staged = isinstance(policy, ModelPolicy) and self.research_reviewer is None
+        input_units = int(os.environ.get('BIGBRAIN_RESEARCH_INPUT_UNITS', '64000'))
+        dossier_bytes = int(os.environ.get('BIGBRAIN_RESEARCH_DOSSIER_BYTES', '48000'))
+        documentary = False
         runtime = ResearchRuntime(self.search, self.page_reader, policy, self.send_progress,
                                   documentary=documentary,
+                                  staged=staged,
                                   cancelled=lambda: self._cancelled,
-                                  limits=Limits(actions=6 if documentary else 12,
-                                                pages=4 if documentary else 6,
-                                                reviews=1 if documentary else 2,
-                                                searches=max(1, min(self.max_searches, 3 if documentary else 5)),
-                                                tokens=int(os.environ.get("BIGBRAIN_RESEARCH_TOKENS", "120000"))),
+                                  limits=Limits(workflow_input_units=input_units, dossier_bytes=dossier_bytes,
+                                                actions=7 if staged else 12,
+                                                pages=4 if staged else 6,
+                                                reviews=2,
+                                                seconds=120 if staged else 90,
+                                                searches=max(1, min(self.max_searches, 3 if staged else 5)),
+                                                tokens=input_units + 4000 if staged else int(os.environ.get("BIGBRAIN_RESEARCH_TOKENS", "120000"))),
                                   reviewer=self.research_reviewer or (ModelReviewer(self.llm_provider) if self.llm_provider else None))
         runtime.correlation = self._event_context()
         session_id = runtime.correlation.get("session_id")
@@ -186,11 +192,12 @@ class ResearcherBrain(BaseBrain):
             with checkpoints.lease(runtime.research_id):
                 continuation = checkpoints.load(resume_id) if resume_id else None
                 runtime.checkpoints = checkpoints
-                state = await runtime.run(query, continuation=continuation, obligations=payload.get('obligations'))
+                state = await runtime.run(query, continuation=continuation, obligations=payload.get('obligations'),
+                                          original_request=payload.get('user_message'))
         elif resume_id:
             raise ValueError("Research continuation requires its owning conversation")
         else:
-            state = await runtime.run(query, obligations=payload.get('obligations'))
+            state = await runtime.run(query, obligations=payload.get('obligations'), original_request=payload.get('user_message'))
         query = state.objective
         sources = [s.model_dump(mode="json") for s in state.sources]
         read = [s for s in sources if s["status"] == "read"]
@@ -210,6 +217,8 @@ class ResearcherBrain(BaseBrain):
                 "top_sources": sources, "pages_read": len(read),
                 "research_id": state.research_id, "attempt_id": state.attempt_id,
                 "answer_status": state.answer_status, "question_coverage": state.question_coverage,
+                "execution_outcome": state.execution_outcome,
+                "original_request_coverage": state.original_request_coverage,
                 "queries_used": [item["action"]["query"] for o in state.observations for item in
                     (o.data.get("items", []) if o.action.tool == "batch" else [o.model_dump(mode="json")])
                     if item["action"]["tool"] == "search"],

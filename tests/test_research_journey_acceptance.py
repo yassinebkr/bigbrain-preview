@@ -38,9 +38,14 @@ class FixtureInference:
     def __init__(self, url, *, incomplete=False, invented=False):
         self.url, self.incomplete, self.invented = url, incomplete, invented
         self.calls = 0
+        from tests.test_research_workflow import StageInference
+        self.stages = StageInference(fact=FACT, url=url, invented=invented)
 
     async def complete(self, prompt, **kwargs):
         self.calls += 1
+        if kwargs.get('tool_schema', {}).get('name') in {
+                'research_collectiondecision', 'research_draft', 'research_control'}:
+            return await self.stages.complete(prompt, **kwargs)
         state = json.loads(prompt.split('\n', 1)[1])['state']
         if not state['sources']:
             return act('visit', url=self.url).model_dump_json()
@@ -100,12 +105,12 @@ async def test_authenticated_documentary_journey(monkeypatch, tmp_path, case):
         assert len(results) == len(finished) == 1
         data = results[0].get('data', results[0])
         evidence = data['evidence']
-        assert evidence['delivery_mode'] == 'documentary'
+        assert evidence['delivery_mode'] == 'reviewed'
         assert finished[0]['counts']['pages'] == 1
         if case in {'static', 'javascript', 'chromium'}:
             assert data['success'] and evidence['claims'][0]['text'] == FACT
-            assert evidence['claims'][0]['status'] == 'unverified'
-            assert inference.calls == 2
+            assert evidence['claims'][0]['status'] == 'supported'
+            assert inference.calls == 4
             assert finished[0]['counts']['browsers'] == int(dynamic)
             passage = next(p for p in evidence['passages'] if FACT in p['text'])
             assert passage['observation_sha256'] == evidence['sources'][0]['content_sha256']
@@ -113,8 +118,9 @@ async def test_authenticated_documentary_journey(monkeypatch, tmp_path, case):
                 assert evidence['sources'][0]['acquisition']['upgrade']['reason'] == 'requires_browser'
         else:
             assert not data['success'] and evidence['status'] == 'partial'
-            assert not evidence['claims']
-            assert inference.calls <= 3
+            assert not evidence['assessments'] or not evidence['claims']
+            assert all(claim['status'] == 'unverified' for claim in evidence['claims'])
+            assert inference.calls <= 4
         if case in {'blocked', 'authentication', 'rate_limit', 'private'}:
             assert renderer.calls == 0
         if case == 'private':

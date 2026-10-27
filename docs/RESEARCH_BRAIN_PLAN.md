@@ -1,25 +1,39 @@
 # ResearchBrain roadmap and implementation history
 
-## Current checkpoint — 26 October 2026
+## Current checkpoint — 27 October 2026
 
-The current branch is `feat/front-decision-v1`. Its pending work includes native
+27 October follow-up: Gate 4 live acceptance remains open. The first waves exposed
+integration blockers; consolidated corrections and their exact evidence boundary
+are recorded in [RESEARCH_LIVE_BLOCKERS_20261027.md](RESEARCH_LIVE_BLOCKERS_20261027.md).
+The final six-case wave has completed. Both MDN cases failed their dossier or
+closing budgets. Conflicting-source answers retained the expected limits;
+blocked-report cases left the intended 403 acquisition unexercised.
+
+The implementation checkpoint is `feat/front-decision-v1`. Its work includes native
 front decisions, Codex research transport, bounded research collection, source
 selection, evidence assessment, usage tracing and Atelier delivery. Real journeys
 have produced successful and partial outcomes. General research reliability
-remains open. This checkpoint preserves the implementation for continued work.
+remains open. This checkpoint preserves the implementation and experiment history.
+The next development branch will replace the default multi-role dossier journey
+with a direct research loop: scoped acquisition, compact passages, synthesis and
+mechanical citation validation. Additional semantic review will be selected by
+explicit risk or request. Source acquisition and orchestration remain owned by
+BigBrain. The detailed replacement contract will precede implementation.
 
-The proposed next architecture and closure gates are documented in
-[RESEARCH_CLOSURE_PLAN.md](RESEARCH_CLOSURE_PLAN.md). Implementation awaits user
-approval. It specifies a shared versioned evidence dossier, explicit stages,
+The approved architecture and closure gates are documented in
+[RESEARCH_CLOSURE_PLAN.md](RESEARCH_CLOSURE_PLAN.md). Gates 1–3 implementation
+and Gate 4 preparation are authorized. It specifies a shared versioned evidence dossier, explicit stages,
 separate final control, one targeted complement cycle and a frozen acceptance
 campaign. Official API pricing will serve as the reference cost; measured tokens,
 unknown usage, conservative reservations and subscription quota remain distinct.
 
 Current evidence and unresolved issues are recorded in
-[RESEARCH_CHECKPOINT_20261026.md](RESEARCH_CHECKPOINT_20261026.md).
+[RESEARCH_GATES_20261026.md](RESEARCH_GATES_20261026.md); the pre-implementation
+checkpoint remains in [RESEARCH_CHECKPOINT_20261026.md](RESEARCH_CHECKPOINT_20261026.md).
 Earlier test counts and phase reports below describe their own source revisions.
-The latest review-context regression and incomplete live repeatability prevent a
-release-readiness claim. Further live probes are paused pending authorization.
+Gates 1–3 are closed offline under the approved monitored Codex subscription
+policy. The twelve-case Gate 4 campaign has live follow-up evidence with unresolved
+failures. General reliability remains unestablished.
 
 Local user memory, local `AGENTS.md` and the unrelated local lockfile remain
 outside this checkpoint. Merge requires explicit user authorization.

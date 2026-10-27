@@ -37,14 +37,23 @@ def extract_html(html: str, url: str) -> dict:
     root = soup.body or soup
     links = [a["href"] for a in root.select("a[href]")]
     originals, outline, headings = [], [], []
+    entry_anchor = None
+    section_id = None
     consumed = set()
-    block_tags = {"p", "pre", "li", "tr", "caption", "dt", "h1", "h2", "h3", "h4", "h5", "h6"}
+    block_tags = {"p", "pre", "li", "tr", "caption", "dt", "h", "h1", "h2", "h3", "h4", "h5", "h6"}
     # Walk source order so plain aside/footer text also enters the original
     # evidence index. Such text can contain a qualification outside a paragraph.
     for element in root.descendants:
         if isinstance(element,(Comment,Doctype,Declaration,ProcessingInstruction)):
             continue
         if any(id(parent) in consumed for parent in element.parents):
+            continue
+        if (getattr(element, 'name', None) == 'a' and element.get('name')
+                and not element.get('href') and not element.get_text(strip=True)):
+            # Dedicated named anchors mark reference entries even when the
+            # publisher uses plain paragraphs instead of semantic headings.
+            entry_anchor = '#' + element['name']
+            section_id = element['name']
             continue
         if isinstance(element,NavigableString):
             text,kind = str(element).strip(),"text"
@@ -57,13 +66,17 @@ def extract_html(html: str, url: str) -> dict:
             # and tables rather than flattening their containing list item.
             continue
         else:
-            kind = element.name
+            # Some reference generators emit <h> entry headings. Preserve
+            # their labels and boundaries using the ordinary heading path.
+            kind = 'h3' if element.name == 'h' else element.name
             consumed.add(id(element))
         if kind.startswith("h") and len(kind) == 2 and kind[1].isdigit():
             level = int(kind[1])
             headings = [(l, t) for l, t in headings if l < level]
             headings.append((level, element.get_text(" ", strip=True)))
             outline.append({"level": level, "text": headings[-1][1]})
+            section_id = element.get('id') or element.get('_id') or (entry_anchor[1:] if entry_anchor else None)
+            entry_anchor = None
         if kind == "tr":
             text = " | ".join(c.get_text(" ", strip=True) for c in element.find_all(["td", "th"], recursive=False))
             kind = "table_row"
@@ -73,6 +86,8 @@ def extract_html(html: str, url: str) -> dict:
             text = element.get_text(" ", strip=True)
         if text.strip():
             context = [t for _, t in headings]
+            if entry_anchor:
+                context.append(entry_anchor)
             definition = element if kind == "dt" else None
             if definition is None:
                 description = element.find_parent("dd")
@@ -92,7 +107,7 @@ def extract_html(html: str, url: str) -> dict:
                 context.append(' | '.join(terms))
             originals.append({"id": f"b{len(originals)+1}", "text": text, "kind": kind,
                               "locator": f"observed-dom:block[{len(originals)}]",
-                              "context": context})
+                              "context": context, "section_id": section_id})
     if not originals:
         text = root.get_text(" ", strip=True)
         if text:

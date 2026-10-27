@@ -23,6 +23,27 @@ beforeEach(() => useAppStore.setState({ activeSessionKey: 's', activeRun: null, 
   runsById: {}, completedRuns: [], sessionProposals: {} }));
 
 describe('durable research view', () => {
+  it('shows the controlled workflow stage and distinguishes transport from model errors', () => {
+    const running = researchUpdate(snapshot({ workflow: { version: '1.0', stage: 'control' },
+      activity: { stage: 'research_stage', phase: 'control' } }))!;
+    expect(renderToStaticMarkup(<ResearchActivity research={running} live />)).toContain('Vérification des conclusions et des réserves');
+    const blocked = researchUpdate(snapshot({ status: 'partial', execution_outcome: 'blocked',
+      diagnostic: { contract: 'ResearchWorkflow', code: 'transport_context_unbounded', errors: [] } }))!;
+    const html = renderToStaticMarkup(<ResearchPanel run={{ ...run, status: 'failed', researches: { step: blocked } }} />);
+    expect(html).toContain('Le transport sélectionné doit être adapté aux limites de recherche.');
+    expect(html).not.toContain('Le modèle a renvoyé un format de réponse invalide.');
+  });
+  it('shows monitored subscription thresholds and a recorded overrun', () => {
+    const data = researchUpdate(snapshot({ status: 'partial', usage: { stage_budget: {
+      input_units: 35000, output_units: 150, logical_calls: 1, input_limit: 32000,
+      output_limit: 4000, call_limit: 7, policy: 'monitored', threshold_exceeded: true,
+      excess_input_units: 3000, excess_output_units: 0,
+    } } }))!;
+    const html = renderToStaticMarkup(<ResearchPanel run={{ ...run, status: 'failed', researches: { step: data } }} />);
+    expect(html).toContain('Seuils surveillés');
+    expect(html).toContain('Seuil dépassé · aucun appel supplémentaire.');
+    expect(data.usage.stage_budget?.excess_input_units).toBe(3000);
+  });
   it('shows documentary delivery with its independent-review level', () => {
     const data = researchUpdate(snapshot({ status: 'completed', delivery_mode: 'documentary', review_reason: null,
       claims: [{ id: 'c1', question_id: 'q', text: 'Documentary finding.', status: 'unverified',

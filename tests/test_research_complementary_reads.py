@@ -51,7 +51,7 @@ async def test_unsafe_or_duplicate_group_rejected_before_io(monkeypatch, first, 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('locked_scope', [False, True])
 @pytest.mark.parametrize('correction', ['none', 'uncited_gap', 'context_only', 'bad_type'])
-async def test_authenticated_same_page_batch_delivers_and_corrects_gap(monkeypatch, tmp_path, correction, locked_scope):
+async def test_authenticated_same_page_batch_has_bounded_stage_outcomes(monkeypatch, tmp_path, correction, locked_scope):
     uncited_gap = correction == 'uncited_gap'
     calls = network(monkeypatch, lambda request: html_response(HTML))
     class Inference:
@@ -59,39 +59,38 @@ async def test_authenticated_same_page_batch_delivers_and_corrects_gap(monkeypat
 
         async def complete(self, prompt, **kwargs):
             self.calls += 1
-            view = json.loads(prompt.split('\n', 1)[1])['state']
+            from bigbrain.llm.usage import UsageRecord, get_tracker
+            get_tracker().record(UsageRecord(model_id='gpt-6-luna', provider='fixture',
+                input_tokens=600, output_tokens=150, total_tokens=750))
+            packet = json.loads(prompt.split('\n', 1)[1])
             if self.calls == 1:
-                assert view['planning']['plan_allowed'] is (not locked_scope)
-                return act('search', query='Definitions').model_dump_json()
+                assert packet['state']['scope_locked']
+                return json.dumps({'requests':[{'tool':'search','question_id':'q1',
+                    'query':'Definitions','rationale':'Discover the reference'}]})
             if self.calls == 2:
+                decision = {'requests':[r.model_dump() for r in grouped().requests]}
                 if correction == 'bad_type':
-                    invalid = grouped().model_dump()
-                    invalid['requests'][0]['rationale'] = None
-                    return json.dumps(invalid)
-                return grouped().model_dump_json()
-            if correction == 'bad_type' and self.calls == 3:
-                assert view['action_constraints']['last_contract_rejection']['errors'][0]['field'] == 'requests.0.rationale'
-                assert not view['passages']
-                return grouped().model_dump_json()
-            schema = kwargs['tool_schema']['parameters']['$defs']
-            assert schema['Claim']['properties']['evidence']['minItems'] == 1
-            assert schema['EvidenceLink']['properties']['passage_id']['enum']
-            claims = [{'id':f'c{i}', 'question_id':f'q{i+1}' if locked_scope else 'q1', 'text':text,
-                       'basis':'Observed definition', 'evidence':[{
-                           'passage_id':next(p['id'] for p in view['passages'] if p['text'] == text),
-                           'relation':'supports'}]} for i, text in enumerate(FACTS)]
-            if uncited_gap and self.calls == 3:
-                claims.append({'id':'gap', 'question_id':'q1', 'text':'The older version remains unread.',
-                               'basis':'Missing evidence', 'evidence':[]})
-            if uncited_gap and self.calls == 4:
-                assert 'Claim gap' in view['action_constraints']['last_rejection']
-                assert 'remaining_gaps' in view['action_constraints']['last_rejection']
-            if correction == 'context_only' and self.calls == 3:
-                claims[0]['evidence'][0]['relation'] = 'context'
-            if correction == 'context_only' and self.calls == 4:
-                assert 'contextual citations' in view['action_constraints']['last_rejection']
-            return act('conclude', claims=claims,
-                       remaining_gaps=['The older version remains unread.'] if uncited_gap else []).model_dump_json()
+                    decision['requests'][0]['rationale'] = None
+                return json.dumps(decision)
+            dossier = packet['dossier']
+            if self.calls == 3:
+                claims = [{'id':f'c{i}', 'question_id':f'q{i+1}' if locked_scope else 'q1', 'text':text,
+                    'basis':'Observed definition', 'evidence':[{
+                        'passage_id':next(p['id'] for p in dossier['passages'] if p['text'] == text),
+                        'relation':'supports'}]} for i, text in enumerate(FACTS)]
+                return json.dumps({'dossier_sha256':packet['dossier_sha256'], 'claims':claims,
+                    'remaining_gaps':['The older version remains unread.'] if uncited_gap else []})
+            claims = packet['draft']['claims']
+            return json.dumps({'dossier_sha256':packet['dossier_sha256'], 'original_request_complete':not uncited_gap,
+                'sources':[{'source_id':'s1','kind':'primary','nature':'documentation','suitability':'suitable',
+                    'basis':'Observed reference definitions','provenance_passage_id':claims[0]['evidence'][0]['passage_id']}],
+                'claims':[{'claim_id':c['id'],'relevant':True,'rationale':'Definition in the reference',
+                    'considered_source_ids':['s1'],'citations':[{'passage_id':c['evidence'][0]['passage_id'],
+                        'relation':'context' if correction == 'context_only' else 'supports','direct':correction != 'context_only',
+                        'explanation':'Inspected definition'}]} for c in claims],
+                'questions':[{'question_id':q['id'],'complete':not uncited_gap,
+                    'claim_ids':[c['id'] for c in claims if c['question_id']==q['id']], 'rationale':'Definitions inspected'}
+                    for q in dossier['questions']]})
 
     inference = Inference()
     search = AsyncMock()
@@ -119,14 +118,17 @@ async def test_authenticated_same_page_batch_delivers_and_corrects_gap(monkeypat
         assert len(results) == len(finished) == 1
         data = results[0].get('data', results[0])
         evidence = data['evidence']
-        assert data['success'] is (not uncited_gap), data.get('error')
-        assert evidence['status'] == ('partial' if uncited_gap else 'completed')
-        assert [c['text'] for c in evidence['claims']] == FACTS
-        assert evidence['scope_locked'] is locked_scope
+        assert data['success'] is (correction == 'none'), data.get('error')
+        assert evidence['status'] == ('completed' if correction == 'none' else 'partial')
+        assert [c['text'] for c in evidence['claims']] == ([] if correction == 'bad_type' else FACTS)
+        assert evidence['scope_locked']
         assert len(evidence['questions']) == (2 if locked_scope else 1)
-        assert len(calls) == 1  # Both windows consult the same cached capture.
-        assert inference.calls == (3 if correction == 'none' else 4)
-        assert finished[0]['counts']['pages'] == 1
+        assert len(calls) == (0 if correction == 'bad_type' else 1)
+        assert inference.calls == (2 if correction == 'bad_type' else 4)
+        assert finished[0]['counts']['pages'] == (0 if correction == 'bad_type' else 1)
+        if correction == 'bad_type':
+            assert evidence['diagnostic']['code'] == 'schema_invalid'
+            return
         assert len({p['observation_sha256'] for p in evidence['passages']}) == 1
         batch = next(o for o in evidence['observations'] if o['action']['tool'] == 'batch')
         assert all(item['status'] == 'ok' for item in batch['data']['items'])

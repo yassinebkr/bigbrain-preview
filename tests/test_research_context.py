@@ -246,6 +246,15 @@ def test_duplicate_sections_are_collapsed_with_their_scope():
     assert unit[0]["blocks"]==b
 
 
+def test_identical_prose_in_distinct_original_blocks_keeps_both_identities():
+    first = blocks()[14:16]
+    second = [{**block, "id": block["id"] + "-distinct"} for block in first]
+    sections = groups(first + second, "a" * 64)
+    assert len(sections) == 2
+    assert sections[0]["id"] != sections[1]["id"]
+    assert sections[0]["blocks"][1]["text"] == sections[1]["blocks"][1]["text"]
+
+
 def test_ids_change_with_the_observation_but_not_the_question():
     a=groups(blocks(),"a"*64)
     b=groups(blocks(),"b"*64)

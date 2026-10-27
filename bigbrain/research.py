@@ -100,6 +100,8 @@ class Passage(Contract):
     observation_sha256: str | None = None
     clipped: bool = False
     block_start: int = 0
+    block_id: str | None = None
+    block_end: int | None = None
     review_only: bool = False
 
 
@@ -203,6 +205,7 @@ class Observation(Contract):
 
 class ResearchState(Contract):
     objective: str
+    original_request: str | None = None
     delivery_mode: Literal["reviewed", "documentary"] = "reviewed"
     review_reason: str | None = None
     questions: list[Question]
@@ -225,6 +228,10 @@ class ResearchState(Contract):
     question_coverage: list[dict[str, Any]] = Field(default_factory=list)
     answer_status: Literal["unassessed", "partial", "complete"] = "unassessed"
     phase: Literal["collecting", "closing", "reviewing", "settled"] = "collecting"
+    workflow: dict[str, Any] = Field(default_factory=dict)
+    dossier: dict[str, Any] | None = None
+    execution_outcome: Literal["running", "complete", "partial", "blocked", "cancelled", "interrupted"] = "running"
+    original_request_coverage: dict[str, Any] = Field(default_factory=dict)
 
 
 class Limits(Contract):
@@ -235,6 +242,8 @@ class Limits(Contract):
     reviews: int = Field(default=2, ge=1, le=3)
     seconds: float = Field(default=90, gt=0, le=180)
     tokens: int = Field(default=60000, ge=1000, le=200000)
+    workflow_input_units: int = Field(default=32000, ge=8000, le=128000)
+    dossier_bytes: int = Field(default=24000, ge=6000, le=72000)
     cost_usd: float | None = Field(default=None, gt=0)
     parallelism: int = Field(default=3, ge=1, le=4)
 
@@ -551,12 +560,13 @@ class DiscoveryPolicy:
 
 
 class ResearchRuntime:
-    def __init__(self, search, reader, policy, progress, cancelled=lambda: False, limits=None, reviewer=None, documentary=False):
+    def __init__(self, search, reader, policy, progress, cancelled=lambda: False, limits=None, reviewer=None, documentary=False, staged=False):
         self.search, self.reader, self.policy = search, reader, policy
         self.progress, self.cancelled = progress, cancelled
         self.limits = limits or Limits()
         self.reviewer = reviewer
         self.documentary = documentary
+        self.staged = staged
         self.state = None
         self.current_action = None
         self.revision = 0
@@ -610,7 +620,7 @@ class ResearchRuntime:
         from .llm.call_trace import trace_call
         started = time.monotonic()
         outcome = "failed"
-        with (actor.inference_scope(self.state) if isinstance(actor, ModelPolicy) else nullcontext()), capture_usage() as records, (trace_call(actor.provider, getattr(method, "__name__", type(actor).__name__),
+        with (actor.inference_scope(self.state) if isinstance(actor, ModelPolicy) else nullcontext()), capture_usage() as records, (trace_call(actor.provider, getattr(actor, "call_phase", getattr(method, "__name__", type(actor).__name__)),
                 correlation={"research_id": self.research_id, **getattr(self, "correlation", {})},
                 deadline_seconds=self.remaining()["seconds"], records=records) if is_model else nullcontext()):
             try:
@@ -668,7 +678,9 @@ class ResearchRuntime:
         self.revision += 1
         if self.checkpoints:
             self.checkpoints.save(self)
-        view = self.state.model_dump(mode="json", exclude={"observations", "pending_observations", "passages", "assessments", "previous_attempts"})
+        view = self.state.model_dump(mode="json", exclude={"observations", "pending_observations", "passages", "assessments", "previous_attempts", "dossier"})
+        if self.state.dossier:
+            view["dossier_identity"] = {k: self.state.dossier[k] for k in ("revision", "sha256")}
         view["attempt_number"] = len(self.state.previous_attempts) + 1
         # Complete passages are journaled once per observation and once in the
         # terminal checkpoint; UI snapshots don't repeatedly copy page contents.
@@ -690,14 +702,14 @@ class ResearchRuntime:
         await self.progress({**event, "research": view})
 
     async def run(self, objective: str, unavailable_reason: str | None = None,
-                  *, continuation=None, obligations=None) -> ResearchState:
+                  *, continuation=None, obligations=None, original_request=None) -> ResearchState:
         """Run one research request and emit its terminal evidence checkpoint."""
         if continuation is None:
             if obligations is not None and (not isinstance(obligations, list) or not 1 <= len(obligations) <= 6
                     or any(not isinstance(item, str) or not 5 <= len(item.strip()) <= 500 for item in obligations)
                     or len({item.strip().casefold() for item in obligations}) != len(obligations)):
                 raise ValueError('Research scope requires one to six distinct bounded questions')
-            self.state = ResearchState(objective=objective, questions=[Question(
+            self.state = ResearchState(objective=objective, original_request=original_request or objective, questions=[Question(
                 id=f"q{i+1}", text=text.strip(), evidence_needed="Directly relevant passages; provenance and limitations")
                 for i, text in enumerate(obligations or [objective])], scope_locked=bool(obligations),
                 research_id=self.research_id, delivery_mode="documentary" if self.documentary else "reviewed")
@@ -754,7 +766,11 @@ class ResearchRuntime:
             await self.emit({"stage": "research_started"})
             if unavailable_reason:
                 self.state.status, self.state.reason = "unavailable", unavailable_reason
+                self.state.execution_outcome = "blocked"
                 return self.state
+            if self.staged:
+                from .research_workflow import run_workflow
+                return await run_workflow(self)
             return await self._run()
         except asyncio.CancelledError:
             self.state.status, self.state.reason = "cancelled", "Research cancelled; collected evidence retained"
@@ -1028,11 +1044,12 @@ class ResearchRuntime:
     @staticmethod
     def action_key(action):
         if action.tool == "visit":
-            return ("visit", urldefrag(action.url)[0], action.focus)
+            url, fragment = urldefrag(action.url)
+            return ("visit", url, fragment, action.focus)
         return (action.tool, action.query) if action.tool == "search" else (
             action.tool, action.source_id, action.mode, action.focus, action.refresh, tuple(action.group_ids))
 
-    async def execute(self, state, action, counts, attempted, index, *, prevalidated=False):
+    async def execute(self, state, action, counts, attempted, index, *, prevalidated=False, entry_fragment=None):
         """Execute a typed action and attach observed data to its journal entry."""
         data = {}
         status = "ok"
@@ -1043,14 +1060,15 @@ class ResearchRuntime:
             state.review_reason = state.review_reason or action.review_reason
         if action.tool == "visit":
             attempted.add(self.action_key(action))
-            url = urldefrag(action.url)[0]
+            url, fragment = urldefrag(action.url)
             source = next((s for s in state.sources if s.url == url), None)
             if source is None:
                 source = Source(id=f"s{len(state.sources)+1}",url=url,
                                 discovered_by="policy-proposed URL; pending actual read")
                 state.sources.append(source)
             observed = await self.execute(state, Action(tool="open", question_id=action.question_id,
-                source_id=source.id, focus=action.focus, rationale=action.rationale), counts, attempted, index)
+                source_id=source.id, focus=action.focus, rationale=action.rationale), counts, attempted, index,
+                entry_fragment=fragment or None)
             observed.action = action
             return observed
         if action.tool == "batch":
@@ -1128,6 +1146,8 @@ class ResearchRuntime:
                 if action.refresh:
                     kwargs["refresh"] = True
                 if isinstance(self.reader, PageReader):
+                    if entry_fragment:
+                        kwargs['fragment'] = entry_fragment
                     if snapshot:
                         kwargs['cached_snapshot'] = snapshot
                     async def progress(info):
@@ -1185,7 +1205,9 @@ class ResearchRuntime:
                     passages = [Passage(id=f"{source.id}:p{offset+i+1}", source_id=source.id, text=b["text"],
                                         kind=b["kind"], locator=b["locator"], context=b.get("context", []),
                                         observation_sha256=page["sha256"], clipped=b.get("clipped", False),
-                                        block_start=b.get("block_start", 0)) for i, b in enumerate(page["blocks"])]
+                                        block_start=b.get("block_start", 0), block_id=b.get("id"),
+                                        block_end=b.get("block_end", b.get("block_start", 0) + len(b["text"])))
+                                for i, b in enumerate(page["blocks"])]
                 else:
                     passages = [Passage(id=f"{source.id}:p{offset+i//2000+1}", source_id=source.id,
                                         text=page["text"][i:i+2000], observation_sha256=page["sha256"])

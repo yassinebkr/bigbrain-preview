@@ -66,38 +66,33 @@ async def test_explicit_review_requirement_is_retained_and_runs_review():
 
 
 @pytest.mark.asyncio
-async def test_default_worker_delivers_cited_documentary_result_in_two_decisions(tmp_path):
+async def test_default_worker_delivers_a_cited_result_after_independent_control(tmp_path, monkeypatch):
+    monkeypatch.delenv('BIGBRAIN_RESEARCH_INPUT_UNITS', raising=False)
+    monkeypatch.delenv('BIGBRAIN_RESEARCH_DOSSIER_BYTES', raising=False)
     import json
     from types import SimpleNamespace
     from bigbrain.brains.researcher import ResearcherBrain
     from bigbrain.bus.bus import MessageBus
 
-    calls = []
-    async def infer(prompt, **kwargs):
-        calls.append(kwargs['tool_schema']['name'])
-        view = json.loads(prompt.split('\n', 1)[1])['state']
-        if not view['passages']:
-            return Action(tool='visit', question_id='q1', url='https://docs.test/api',
-                rationale='Read the exact requested reference').model_dump_json()
-        return Action(tool='conclude', question_id='q1', rationale='Deliver the cited definition',
-            claims=[{'id':'c1', 'question_id':'q1', 'text':'The documented API returns an integer.',
-                'basis':'Documented reference', 'evidence':[{'passage_id':view['passages'][0]['id'],
-                    'relation':'supports'}]}]).model_dump_json()
+    from tests.test_research_workflow import StageInference
+    inference = StageInference(fact='The documented API returns an integer.', url='https://docs.test/api')
     reader = AsyncMock()
     reader.read.return_value = {'url':'https://docs.test/api', 'sha256':'a'*64,
         'text':'The documented API returns an integer.'}
     bus = MessageBus(tmp_path/'bus')
-    worker = ResearcherBrain('researcher', bus, llm_provider=SimpleNamespace(complete=infer),
+    worker = ResearcherBrain('researcher', bus, llm_provider=inference,
         search_provider=AsyncMock(), page_reader=reader)
     worker.send_progress = AsyncMock()
     try:
         result = await worker._full_research('What does the documented API return?', {})
-        assert result['success'] and result['answer_status'] == 'unassessed', result.get('error')
-        assert result['evidence']['delivery_mode'] == 'documentary'
-        assert calls == ['research_action', 'research_action']
-        assert result['evidence']['usage']['model_calls'] == 2
-        assert result['evidence']['claims'][0]['status'] == 'unverified'
-        assert worker.send_progress.call_args.args[0]['research']['counts']['reviews'] == 0
+        assert result['success'] and result['answer_status'] == 'complete', result.get('error')
+        assert result['evidence']['delivery_mode'] == 'reviewed'
+        assert [c[0] for c in inference.calls] == ['research_collectiondecision', 'research_collectiondecision',
+                                                 'research_draft', 'research_control']
+        assert result['evidence']['usage']['model_calls'] == 4
+        assert result['evidence']['workflow']['budget']['input_limit'] == 64000
+        assert result['evidence']['claims'][0]['status'] == 'supported'
+        assert worker.send_progress.call_args.args[0]['research']['counts']['reviews'] == 1
     finally:
         await bus.close()
 

@@ -1,8 +1,31 @@
 # ResearchBrain architecture and closure plan
 
-Date: 26 October 2026. Status: proposed; implementation awaits user approval.
+Checkpoint, 27 October 2026: live acceptance remains open after the final-six
+wave. The user selected an architecture reduction with owned acquisition and a
+direct evidence loop. This document records the preceding staged experiment;
+the replacement plan will specify its own acceptance contract before coding.
+
+Date: 26 October 2026. Status: Gates 1–3 authorized and implementation in progress;
+Gate 4 preparation authorized. Live execution requires separate authorization.
+Current gate evidence and the transport decision are recorded in
+[RESEARCH_GATES_20261026.md](RESEARCH_GATES_20261026.md).
+
+Approved subscription amendment, 26 October 2026: use Codex with monitored input
+and output thresholds. An in-flight call may exceed a threshold; the measured
+overrun is retained and prevents every subsequent call in that attempt. Missing
+usage consumes the conservative reservation. The seven logical-call allowance,
+acquisition limits and work deadline remain enforced. API reference amounts are
+reported against observed usage and the dated price snapshot. Values at the
+token thresholds provide a reference amount; actual subscription consumption
+remains provider-owned. This amendment supersedes strict native-context admission.
 
 ## 1. Outcome and boundaries
+
+Approved envelope amendment, 27 October 2026: the model-backed worker uses a
+48,000-byte maximum frozen dossier and a 64,000-unit monitored input threshold.
+Freezing selects the smallest fitting envelope. Seven calls, 120 seconds and
+4,000 output units remain unchanged. The authorized follow-up uses Terra medium
+for SQLite base. The final six cases remain conditional on the preceding wave.
 
 Deliver a bounded documentary researcher that answers a concrete question from
 read public sources, preserves material qualifications, and terminates with an
@@ -155,9 +178,10 @@ instructions must not be repeatedly appended to an unbounded native history.
 Retain one user-facing research identity. Use fixed role-scoped inference lanes
 and provider-supported bounded context where available. An existing conversation
 binding alone does not prove context compaction. Before live acceptance, inspect
-actual request/history behavior. If bounded context cannot be demonstrated with
-the selected Codex transport, report a transport blocker and obtain approval for
-an alternative; do not silently reset sessions, change providers or exceed caps.
+actual request/history behavior. For the selected Codex transport, apply the
+approved monitored subscription amendment above: preserve stable role lanes,
+record native usage and overruns, and stop subsequent calls after a threshold
+is exceeded.
 
 Tradeoff: these are conservative starting caps, not established performance
 claims. Offline packet sizing must show the nominal and recovery envelopes fit.

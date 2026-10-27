@@ -303,6 +303,10 @@ class CodexProvider(LLMProvider):
     maintenance_event_context = True
     review_event_context = True
     retains_conversation_context = True
+    # The approved subscription policy monitors cumulative usage after each
+    # turn. An in-flight turn may exceed the forecast; further turns then stop.
+    supports_bounded_research_context = False
+    research_budget_policy = "monitored"
     supports_research_action_bridge = True
 
     def __init__(self, registry_key: str = CODEX_MODEL_KEY):
