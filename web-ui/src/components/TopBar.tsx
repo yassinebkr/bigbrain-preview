@@ -26,7 +26,8 @@ const ROLE_LABELS: Record<string, string> = {
   front: 'Front Brain',
   planner: 'Planner',
   code: 'Code',
-  web: 'Web Brain',
+  web: 'Web App Brain',
+  research: 'Web Search Brain',
   subagent: 'Sub-agents',
 };
 

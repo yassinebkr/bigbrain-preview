@@ -23,3 +23,5 @@ def _isolate_evidence(tmp_path, monkeypatch):
     monkeypatch.setenv("BIGBRAIN_TASKS_FILE", str(tmp_path / "tasks.json"))
     from bigbrain.web import fs_api
     monkeypatch.setattr(fs_api, "_CURRENT_PROJECT_FILE", tmp_path / "navigation.json")
+    from bigbrain.web import model_roles
+    monkeypatch.setattr(model_roles, "_ROLES_FILE", tmp_path / "model_roles.json")

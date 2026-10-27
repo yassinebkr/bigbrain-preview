@@ -67,8 +67,8 @@ class TestRecall:
                 self.messages = messages
                 self.calls.append(messages)
                 if len(self.calls) == 1:
-                    return '{"memory":{"tool":"memory.search","arguments":{"query":"nom de mon chien"}}}'
-                return "Bonjour !"
+                    return '{"decision":{"operation":"consult_memory","tool":"memory.search","arguments":{"query":"nom de mon chien"}}}'
+                return '{"decision":{"operation":"respond","reply":"Bonjour !"}}'
 
         provider = RecordingProvider()
         front = _front(tmp_path, monkeypatch, provider)

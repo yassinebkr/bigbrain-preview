@@ -67,10 +67,10 @@ An unfinished plan from a previous process is interrupted, not live work.
                        data.get("subtask_id"), data.get("path"), data.get("stage"))
                 if event == 'task.progress' and isinstance(data.get('research'), dict):
                     key = (*key, data['research'].get('research_id'))
-                if event == 'task.progress' and data.get('stage') in {'research_observation', 'research_review_evidence'}:
+                if event == 'task.progress' and data.get('stage') in {'research_observation', 'research_review_evidence', 'research_batch_observation'}:
                     # Each observed read is evidence, not an overwritable status
                     # pulse. Preserve it until the terminal research checkpoint.
-                    key = (*key, (data.get('observation') or {}).get('index', data.get('index')))
+                    key = (*key, (data.get('observation') or {}).get('index', data.get('index')), data.get('position'))
                 records = runs.setdefault(run_id, {})
                 old = records.get(key)
                 if event in ('subtask.complete', 'subtask.failed'):

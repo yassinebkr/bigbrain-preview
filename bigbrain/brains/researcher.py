@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 import time
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
@@ -12,6 +13,7 @@ from .base import BaseBrain
 from ..bus.message import BusMessage, MessageType, Priority
 from ..research import DiscoveryPolicy, Limits, ModelPolicy, PageReader, ResearchRuntime
 from ..research_assessment import ModelReviewer
+from ..llm.conversation import scoped_conversation
 
 logger = logging.getLogger(__name__)
 
@@ -128,15 +130,18 @@ class ResearcherBrain(BaseBrain):
             self.search = UnavailableSearch()
             logger.warning("No Brave API key — web research is unavailable")
 
+    @scoped_conversation("research", message_argument="message")
     async def handle_task(self, message: BusMessage) -> Dict[str, Any]:
-        """Handle research tasks using ReWOO pattern.
+        """Dispatch search-only work or evidence research with explicit continuation.
 
         Supported task types:
-        - research: Full end-to-end research (plan → search → triangulate → summarize)
+        - research: Documentary collection with explicit independent-review escalation
         - search_only: Just web search, return raw results
         """
         payload = message.payload
         task_type = payload.get("type", "research")
+        if payload.get("resume_research_id") and task_type != "research":
+            raise ValueError("Research continuation cannot be dispatched as search_only")
         # Explicit specialist input carries the resolved objective. Legacy
         # envelopes may still contain the raw conversational turn in user_request.
         query = (payload.get("query")
@@ -160,11 +165,40 @@ class ResearcherBrain(BaseBrain):
                     "top_sources": [], "unique_sources": 0, "unique_domains": 0,
                     "queries_used": [], "claims_verified": False, "evidence": state.model_dump(mode="json")}
         policy = self.research_policy or (ModelPolicy(self.llm_provider) if self.llm_provider else DiscoveryPolicy())
+        staged = isinstance(policy, ModelPolicy) and self.research_reviewer is None
+        input_units = int(os.environ.get('BIGBRAIN_RESEARCH_INPUT_UNITS', '64000'))
+        dossier_bytes = int(os.environ.get('BIGBRAIN_RESEARCH_DOSSIER_BYTES', '48000'))
+        documentary = False
         runtime = ResearchRuntime(self.search, self.page_reader, policy, self.send_progress,
+                                  documentary=documentary,
+                                  staged=staged,
                                   cancelled=lambda: self._cancelled,
-                                  limits=Limits(searches=max(1, min(self.max_searches, 5))),
+                                  limits=Limits(workflow_input_units=input_units, dossier_bytes=dossier_bytes,
+                                                actions=7 if staged else 12,
+                                                pages=4 if staged else 6,
+                                                reviews=2,
+                                                seconds=120 if staged else 90,
+                                                searches=max(1, min(self.max_searches, 3 if staged else 5)),
+                                                tokens=input_units + 4000 if staged else int(os.environ.get("BIGBRAIN_RESEARCH_TOKENS", "120000"))),
                                   reviewer=self.research_reviewer or (ModelReviewer(self.llm_provider) if self.llm_provider else None))
-        state = await runtime.run(query)
+        runtime.correlation = self._event_context()
+        session_id = runtime.correlation.get("session_id")
+        resume_id = payload.get("resume_research_id")
+        if session_id:
+            from ..research_sessions import ResearchSessions
+            checkpoints = ResearchSessions(self.workspace, session_id)
+            if resume_id:
+                runtime.research_id = resume_id
+            with checkpoints.lease(runtime.research_id):
+                continuation = checkpoints.load(resume_id) if resume_id else None
+                runtime.checkpoints = checkpoints
+                state = await runtime.run(query, continuation=continuation, obligations=payload.get('obligations'),
+                                          original_request=payload.get('user_message'))
+        elif resume_id:
+            raise ValueError("Research continuation requires its owning conversation")
+        else:
+            state = await runtime.run(query, obligations=payload.get('obligations'), original_request=payload.get('user_message'))
+        query = state.objective
         sources = [s.model_dump(mode="json") for s in state.sources]
         read = [s for s in sources if s["status"] == "read"]
         lines = [state.reason or "Research incomplete."]
@@ -173,13 +207,21 @@ class ResearcherBrain(BaseBrain):
             lines.append(f"[{claim.status}] {claim.text} [{refs}] — {claim.basis}")
             lines.extend(f"Limit: {item}" for item in claim.limitations)
         lines.extend(f"Read: {s['url']}" for s in read)
+        from ..research_delivery import research_message
         return {"success": state.status == "completed", "research_status": state.status,
+                "public_message": research_message(state) if state.status in {"partial", "completed"} else None,
                 "query": query, "sources": sources,
-                "error": state.reason if state.status == "partial" else None,
+                "error": state.reason if state.status != "completed" else None,
                 "summary": "\n".join(lines), "claims_verified": False,
                 "unique_sources": len(sources), "unique_domains": len({urlparse(s['url']).netloc for s in sources}),
                 "top_sources": sources, "pages_read": len(read),
-                "queries_used": [o.action.query for o in state.observations if o.action.tool == "search"],
+                "research_id": state.research_id, "attempt_id": state.attempt_id,
+                "answer_status": state.answer_status, "question_coverage": state.question_coverage,
+                "execution_outcome": state.execution_outcome,
+                "original_request_coverage": state.original_request_coverage,
+                "queries_used": [item["action"]["query"] for o in state.observations for item in
+                    (o.data.get("items", []) if o.action.tool == "batch" else [o.model_dump(mode="json")])
+                    if item["action"]["tool"] == "search"],
                 "evidence": state.model_dump(mode="json"),
                 "execution_time": round(time.monotonic()-start, 2)}
 

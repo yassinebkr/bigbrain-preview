@@ -13,6 +13,17 @@ from bigbrain.research_context import groups, policy_view, review_view, select
 from bigbrain.research_extraction import extract_html
 
 
+def test_option_retrieval_preserves_dashes_and_case():
+    from bigbrain.research_context import rank, words
+    sections = [{'blocks':[{'text':text}]} for text in (
+        'a ' * 100 + 'ordinary text', '-U --unified: Show context lines.',
+        '-a --all: Include ignored items.', '-u --include-extra: Include extra items.')]
+    assert 'option:-u' in words('compare -u and -a')
+    assert rank('compare -a', sections)[0][0] == 2
+    assert rank('compare -u', sections)[0][0] == 3
+    assert rank('compare -U', sections)[0][0] == 1
+
+
 def test_focus_prefers_definition_over_earlier_index_and_keeps_conditions():
     from bigbrain.research_extraction import window
     html = ("<main><table><tr><td>os.unlink()</td><td>Path.unlink()</td></tr></table>"
@@ -39,6 +50,68 @@ def test_compact_passages_share_provenance_without_losing_text_or_ids():
         assert item["id"] == original.id and item["text"] == original.text
         assert compact["passage_contexts"][item["context_ref"]]["observation_sha256"] == original.observation_sha256
     assert len(json.dumps(compact)) < len(json.dumps([p.model_dump() for p in passages])) / 2
+
+
+def test_bounded_multilingual_decision_preserves_each_read_source():
+    from bigbrain.research import Observation
+    state = ResearchState(objective='Comparer les limites et les garanties',
+        questions=[Question(id='q1', text='Comparer les limites et les garanties', evidence_needed='Preuves directes')])
+    for i in range(3):
+        sid = f's{i+1}'
+        state.sources.append(Source(id=sid, url=f'https://source{i}.test/', status='read', discovered_by='question'))
+        focus = 'Concurrency' if i == 0 else 'Garanties'
+        state.observations.append(Observation(index=i, action=Action(tool='open', question_id='q1',
+            source_id=sid, focus=focus, rationale='Read requested scope'), status='ok', data={}))
+        for section in range(4):
+            text = ('Concurrency: readers coexist with a writer. One writer only. ' if i == 0 and section == 0
+                    else 'Concurrency, comparer les limites et les garanties. ' if i == 0
+                    else 'Garanties et limites. ')*90
+            state.passages.append(Passage(id=f'{sid}:p{section}', source_id=sid, text=text,
+                context=[focus if section == 0 else f'Other {section}'], observation_sha256='a'*64))
+    view = policy_view(state, byte_limit=16000)
+    assert {c['source_id'] for c in view['passage_contexts']} == {'s1', 's2', 's3'}
+    assert any('One writer only.' in p['text'] for p in view['passages'])
+    assert len(json.dumps(view, ensure_ascii=False, separators=(',', ':')).encode()) <= 16000
+    originals = {p.id:p.text for p in state.passages}
+    assert all(p['text'] == originals[p['id']] for p in view['passages'])
+
+
+@pytest.mark.asyncio
+async def test_read_navigation_surfaces_late_sections_and_survives_literal_focus(monkeypatch):
+    from tests.test_research_acquisition import network, html_response
+    html = '<main>' + ''.join(f'<h2>Site menu {i}</h2><p>Global links and navigation.</p>' for i in range(40))
+    html += '<h2>Calibration tolerance</h2><p>Calibration tolerance: 0.25 mm at 20 C.</p>'
+    html += '<h2>Calibration limits</h2><p>Other temperatures were never tested.</p></main>'
+    calls = network(monkeypatch, lambda request: html_response(html))
+    reader = PageReader()
+    for focus in (None, 'Calibration tolerance'):
+        result = await reader.read('https://public.test/manual', focus=focus, question='calibration tolerance limits')
+        navigation = result['acquisition']['navigation']
+        assert any('Calibration limits' in item['context'] for item in navigation['catalog'][:3])
+        assert navigation['observation_sha256'] == result['sha256']
+        assert navigation['omitted_groups'] == 0
+        assert len(navigation['catalog']) > 24
+    assert len(calls) == 1
+    state = ResearchState(objective='Calibration', questions=[], sources=[Source(id='s1', url='https://public.test/manual',
+        discovered_by='question', status='read', acquisition=result['acquisition'])])
+    compact = policy_view(state)['sources'][0]['navigation']
+    assert any(item[1] == 'Calibration limits' for item in compact['sections'])
+
+
+@pytest.mark.asyncio
+async def test_compact_index_preserves_foreign_language_headings_beyond_shortlist(monkeypatch):
+    from tests.test_research_acquisition import network, html_response
+    html = '<main>' + ''.join(f'<h2>Other topic {i}</h2><p>Background.</p>' for i in range(30))
+    html += '<h2>Concurrency</h2><p>Only one writer at a time.</p></main>'
+    network(monkeypatch, lambda request: html_response(html))
+    result = await PageReader().read('https://public.test/manual', focus='Concurrency',
+        question='Combien de rédacteurs peuvent intervenir simultanément ?')
+    state = ResearchState(objective='Concurrence', questions=[], sources=[Source(id='s1',
+        url='https://public.test/manual', discovered_by='question', status='read', acquisition=result['acquisition'])])
+    navigation = policy_view(state)['sources'][0]['navigation']
+    assert any(heading == 'Concurrency' for _, heading in navigation['sections'])
+    assert navigation['omitted_groups'] == 0
+    assert navigation['observation_sha256'] == result['sha256']
 
 
 @pytest.mark.asyncio
@@ -122,6 +195,41 @@ def test_review_requires_a_section_from_every_read_source():
     assert {c["source_id"] for c in view["passage_contexts"]} == {"s1","s2"}
 
 
+def test_review_keeps_evidence_capacity_when_collection_has_a_large_navigation_index():
+    state = state_with_artifact()
+    state.sources[0].links = ['https://source.test/navigation/' + 'x'*100 + str(i) for i in range(96)]
+    state.sources[0].acquisition['navigation'] = {'observation_sha256':'a'*64,
+        'catalog':[{'id':f'g{i}', 'context':['UNREAD_NAVIGATION_MARKER '*8], 'characters':500} for i in range(96)]}
+    view, _ = review_view(state)
+    assert 'UNREAD_NAVIGATION_MARKER' not in json.dumps(view)
+    assert 'navigation' not in view['sources'][0]
+    assert any('0.25 mm' in passage['text'] for passage in view['passages'])
+    assert view['inspection']['sources']['s1']['selected_groups']
+    assert len(view['sources'][0]['links']) == 8
+    assert view['sources'][0]['links_omitted'] == 88
+    assert view['sources'][0]['observed_link_count'] == 96
+
+
+def test_review_envelope_scales_with_required_evidence_and_retains_every_citation():
+    state = ResearchState(objective='Compare the three observed measurements',
+        questions=[Question(id='q1', text='Compare measurements', evidence_needed='Values and conditions')])
+    for i in range(3):
+        sid = f's{i+1}'
+        text = f'Measurement {i}: ' + 'Complete experimental conditions. '*125
+        original = {'id':'b1', 'text':text, 'kind':'p', 'locator':'p[1]', 'context':['Measurement']}
+        ref = artifact(json.dumps({'blocks':[original], 'original_blocks':[original]}).encode(), name='measurement.json')
+        state.sources.append(Source(id=sid, url=f'https://source{i}.test/', discovered_by='question',
+            status='read', content_sha256='a'*64, acquisition={'blocks_artifact':ref}))
+        state.passages.append(Passage(id=sid+':p1', source_id=sid, text=text, kind='p',
+            locator='p[1]', context=['Measurement'], observation_sha256='a'*64))
+        state.claims.append(Claim(id=f'c{i}', question_id='q1', text=f'Measurement {i} has documented conditions.',
+            basis='Observed report', evidence=[EvidenceLink(passage_id=sid+':p1', relation='supports')]))
+    view, _ = review_view(state)
+    assert 12000 < view['inspection']['byte_limit'] <= 24000
+    assert {p['id'] for p in view['passages']} == {p.id for p in state.passages}
+    assert all(any(p['text'] == original.text for p in view['passages']) for original in state.passages)
+
+
 def test_matching_section_keeps_conditions_and_source_order():
     selected,meta=select("sprocket calibration tolerance",blocks(),"a"*64)
     text="\n".join(b["text"] for b in selected)
@@ -136,6 +244,15 @@ def test_duplicate_sections_are_collapsed_with_their_scope():
     unit=groups(b+b,"a"*64)
     assert len(unit)==1 and unit[0]["duplicate_sections"]==1
     assert unit[0]["blocks"]==b
+
+
+def test_identical_prose_in_distinct_original_blocks_keeps_both_identities():
+    first = blocks()[14:16]
+    second = [{**block, "id": block["id"] + "-distinct"} for block in first]
+    sections = groups(first + second, "a" * 64)
+    assert len(sections) == 2
+    assert sections[0]["id"] != sections[1]["id"]
+    assert sections[0]["blocks"][1]["text"] == sections[1]["blocks"][1]["text"]
 
 
 def test_ids_change_with_the_observation_but_not_the_question():
@@ -333,7 +450,10 @@ async def test_runtime_registers_supplementary_review_quotes_and_reuses_the_verd
         return report.model_dump_json()
     provider.complete.side_effect=complete
     state=await ResearchRuntime(search,reader,Steps(),progress,reviewer=ModelReviewer(provider)).run(fixture.objective)
-    assert state.status=="completed",state.assessment_error
+    # A valid contested claim review is retained, but is not a declaration that
+    # the complete question has been answered (the legacy report has no coverage).
+    assert state.status=="partial",state.assessment_error
+    assert state.answer_status == "partial"
     assert state.claims[0].status=="contested"
     assert "s1" in state.assessments[0]["inspection"]["sources"]
     registered={p.id for p in state.passages}

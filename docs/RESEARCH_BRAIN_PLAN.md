@@ -1,4 +1,116 @@
-# ResearchBrain — cadrage décidé le 21 octobre 2026
+# ResearchBrain roadmap and implementation history
+
+## Current checkpoint — 27 October 2026
+
+27 October follow-up: Gate 4 live acceptance remains open. The first waves exposed
+integration blockers; consolidated corrections and their exact evidence boundary
+are recorded in [RESEARCH_LIVE_BLOCKERS_20261027.md](RESEARCH_LIVE_BLOCKERS_20261027.md).
+The final six-case wave has completed. Both MDN cases failed their dossier or
+closing budgets. Conflicting-source answers retained the expected limits;
+blocked-report cases left the intended 403 acquisition unexercised.
+
+The implementation checkpoint is `feat/front-decision-v1`. Its work includes native
+front decisions, Codex research transport, bounded research collection, source
+selection, evidence assessment, usage tracing and Atelier delivery. Real journeys
+have produced successful and partial outcomes. General research reliability
+remains open. This checkpoint preserves the implementation and experiment history.
+The next development branch will replace the default multi-role dossier journey
+with a direct research loop: scoped acquisition, compact passages, synthesis and
+mechanical citation validation. Additional semantic review will be selected by
+explicit risk or request. Source acquisition and orchestration remain owned by
+BigBrain. The detailed replacement contract will precede implementation.
+
+The approved architecture and closure gates are documented in
+[RESEARCH_CLOSURE_PLAN.md](RESEARCH_CLOSURE_PLAN.md). Gates 1–3 implementation
+and Gate 4 preparation are authorized. It specifies a shared versioned evidence dossier, explicit stages,
+separate final control, one targeted complement cycle and a frozen acceptance
+campaign. Official API pricing will serve as the reference cost; measured tokens,
+unknown usage, conservative reservations and subscription quota remain distinct.
+
+Current evidence and unresolved issues are recorded in
+[RESEARCH_GATES_20261026.md](RESEARCH_GATES_20261026.md); the pre-implementation
+checkpoint remains in [RESEARCH_CHECKPOINT_20261026.md](RESEARCH_CHECKPOINT_20261026.md).
+Earlier test counts and phase reports below describe their own source revisions.
+Gates 1–3 are closed offline under the approved monitored Codex subscription
+policy. The twelve-case Gate 4 campaign has live follow-up evidence with unresolved
+failures. General reliability remains unestablished.
+
+Local user memory, local `AGENTS.md` and the unrelated local lockfile remain
+outside this checkpoint. Merge requires explicit user authorization.
+
+## Efficiency follow-up — phases 1–4, 25 October 2026
+
+Implementation and bounded offline evidence: [RESEARCH_EFFICIENCY.md](RESEARCH_EFFICIENCY.md).
+Grouped independent collection, compact decision packets, conversation-owned
+checkpoints/explicit continuations and question-coverage review are implemented.
+The seven-case mechanical comparison uses 24 → 21 scripted decisions and
+216,835 → 191,512 serialized prompt/schema bytes; these are not billed tokens.
+The compared local reranker adds no measured coverage benefit and is not enabled
+by default. Fresh live semantic/browser acceptance is still open. No new scraper
+dependency, paid run, push or merge belongs to this step.
+
+## Observability — mandatory follow-up, 25 October 2026
+
+Latest integrated incident: reserve arithmetic closed collection before a read,
+then clarification lost its reason and surfaced as `Worker validation failed`.
+Budget admission and error propagation are corrected; research envelope is now
+explicit/configurable (120k default) with observed-usage reserve floors. Integrated
+checks additionally found Codex intermediate/final JSON concatenation and external
+runtime/native-tool ambiguity. Native phases are respected and action instructions
+are explicit. Rejected literal-quotation reports get bounded correction within
+existing review/time/token limits, without relaxing validation.
+Full findings and all failures: `../../tests/research-budget-admission/REPORT.md`.
+The retained Python-3.13 evidence passes review, but the Python-3.7 comparison is
+not established; fresh full-request and actual browser acceptance remain open.
+
+User-authorized follow-up live continuation now passes decision + evidence review
+in 15.503 s with two Luna-low Codex calls, 27,984 reported tokens. Three claims are
+supported and a synthetic example remains unverified; coverage limits persist.
+Live testing exposed generic Codex `$ref` optional-field restoration and an action
+schema that still allowed question lists after planning; both are corrected without
+loosening local validation. Five calls across four retained follow-up attempts;
+no web acquisition and no change to the configured application model. See the
+follow-up section of `../../tests/research-call-observability/REPORT.md` for failures,
+budgets and remaining fresh-research/UI acceptance limits.
+
+Initial implementation on `feat/front-decision-v1`: correlated per-call inference
+JSONL, front/research lifecycle, HTTP and Codex transport milestones, explicit
+unknown usage and exception type chains. 185 targeted offline tests pass. A single
+authorized Luna-low replay returned in 7.294 s (11,240 input/689 output tokens),
+but its self-assigned claim verdicts fail execution preflight. Native proposal
+status is now restricted to `unverified`; no second live call. Full findings and
+limits: `../../tests/research-call-observability/REPORT.md`. This does not complete
+the broader observability acceptance below or validate full research delivery.
+
+User requirement: diagnose failures across the complete request lifecycle, rather
+than infer causes from a final exception. Cover intake, context/memory preparation,
+provider admission and calls, research decisions, acquisition, review, bus delivery,
+frontend receipt and terminal settlement. This is planned, not implemented here.
+
+- Propagate session/turn/run/subtask/call IDs and parent relationships across all
+  boundaries. Record structured start/end/outcome events with monotonic durations,
+  active phase, deadlines, cancellation origin and chained exceptions.
+- Record provider/model/effort, attempt, transport outcome, usage including unknown
+  usage, and budget/reserve decisions. Distinguish local validation rejection,
+  remote failure, deadline, missing evidence, delivery failure and disconnection.
+- Separate bus, provider, tool/runtime and client lifecycle logs if useful, while
+  retaining shared correlation and bounded rotation. Redact credentials, headers
+  and personal data; full prompts/responses require explicit controlled capture.
+- Detect missing terminal events and correlate late responses. Logging must not
+  authorize execution or turn unknown causes into guessed diagnoses.
+- Acceptance: fault injection for blocked provider, memory/tool failure, invalid
+  decision, bus rejection, cancellation, disconnected client and missing terminal
+  event; reconstruct each path from logs without exposing private content.
+
+Latest observed live attempt: `839e09a7-ef59-4dba-b292-31fa137b654c`.
+Plan completed at 7.79 s; search at 12.52 s; official pathlib page read at
+17.71 s with five passages (signature, unlink behavior, absent file, ignored
+FileNotFoundError and version-3.8 addition). A further decision began at 17.74 s
+and the run reached its 90 s deadline without a decision outcome. No independent
+review/conclusion was observed. The source URL was `/3/library/pathlib.html`, not
+the requested pinned `/3.13/library/pathlib.html`. Collection succeeded partially;
+version-specific acceptance and final assessment remain incomplete. The available
+logs do not establish why the last provider decision did not return.
 
 ## Acquisition/context sub-plan — phase 5 implemented, 24 October 2026
 

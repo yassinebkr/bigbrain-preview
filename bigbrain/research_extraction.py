@@ -37,14 +37,23 @@ def extract_html(html: str, url: str) -> dict:
     root = soup.body or soup
     links = [a["href"] for a in root.select("a[href]")]
     originals, outline, headings = [], [], []
+    entry_anchor = None
+    section_id = None
     consumed = set()
-    block_tags = {"p", "pre", "li", "tr", "caption", "dt", "h1", "h2", "h3", "h4", "h5", "h6"}
+    block_tags = {"p", "pre", "li", "tr", "caption", "dt", "h", "h1", "h2", "h3", "h4", "h5", "h6"}
     # Walk source order so plain aside/footer text also enters the original
     # evidence index. Such text can contain a qualification outside a paragraph.
     for element in root.descendants:
         if isinstance(element,(Comment,Doctype,Declaration,ProcessingInstruction)):
             continue
         if any(id(parent) in consumed for parent in element.parents):
+            continue
+        if (getattr(element, 'name', None) == 'a' and element.get('name')
+                and not element.get('href') and not element.get_text(strip=True)):
+            # Dedicated named anchors mark reference entries even when the
+            # publisher uses plain paragraphs instead of semantic headings.
+            entry_anchor = '#' + element['name']
+            section_id = element['name']
             continue
         if isinstance(element,NavigableString):
             text,kind = str(element).strip(),"text"
@@ -57,13 +66,17 @@ def extract_html(html: str, url: str) -> dict:
             # and tables rather than flattening their containing list item.
             continue
         else:
-            kind = element.name
+            # Some reference generators emit <h> entry headings. Preserve
+            # their labels and boundaries using the ordinary heading path.
+            kind = 'h3' if element.name == 'h' else element.name
             consumed.add(id(element))
         if kind.startswith("h") and len(kind) == 2 and kind[1].isdigit():
             level = int(kind[1])
             headings = [(l, t) for l, t in headings if l < level]
             headings.append((level, element.get_text(" ", strip=True)))
             outline.append({"level": level, "text": headings[-1][1]})
+            section_id = element.get('id') or element.get('_id') or (entry_anchor[1:] if entry_anchor else None)
+            entry_anchor = None
         if kind == "tr":
             text = " | ".join(c.get_text(" ", strip=True) for c in element.find_all(["td", "th"], recursive=False))
             kind = "table_row"
@@ -73,16 +86,28 @@ def extract_html(html: str, url: str) -> dict:
             text = element.get_text(" ", strip=True)
         if text.strip():
             context = [t for _, t in headings]
+            if entry_anchor:
+                context.append(entry_anchor)
             definition = element if kind == "dt" else None
             if definition is None:
                 description = element.find_parent("dd")
                 if description is not None:
                     definition = description.find_previous_sibling("dt")
             if definition is not None:
-                context.append(definition.get_text(" ", strip=True))
+                # Consecutive terms in a definition list share the following
+                # description. Assign aliases one context so a focused term
+                # retains that description and its qualifications.
+                first = definition
+                while (previous := first.find_previous_sibling()) is not None and previous.name == 'dt':
+                    first = previous
+                terms, current = [], first
+                while current is not None and current.name == 'dt':
+                    terms.append(current.get_text(' ', strip=True))
+                    current = current.find_next_sibling()
+                context.append(' | '.join(terms))
             originals.append({"id": f"b{len(originals)+1}", "text": text, "kind": kind,
                               "locator": f"observed-dom:block[{len(originals)}]",
-                              "context": context})
+                              "context": context, "section_id": section_id})
     if not originals:
         text = root.get_text(" ", strip=True)
         if text:
@@ -142,7 +167,12 @@ def window(blocks: list[dict], focus: str | None = None, limit: int = 12000) -> 
         for block in blocks:
             pattern = re.escape(focus).replace(r"\.", r"\s*\.\s*")
             for match in re.finditer(pattern, block["text"], re.IGNORECASE):
-                priority = 2 if block["kind"] == "dt" else 1 if re.fullmatch(r"h[1-6]", block["kind"]) else 0
+                definition = block["kind"] == "dt"
+                heading = bool(re.fullmatch(r"h[1-6]", block["kind"]))
+                exact = bool(re.fullmatch(pattern, block["text"].strip(), re.IGNORECASE))
+                # A dedicated entry outranks an occurrence inside a longer
+                # signature or synopsis. Preserve source order for equal ranks.
+                priority = 4 if exact and definition else 3 if exact and heading else 2 if definition else 1 if heading else 0
                 candidates.append((priority, -(offset + match.start()), offset + match.start()))
             offset += len(block["text"]) + 1
         if not candidates:
@@ -151,14 +181,31 @@ def window(blocks: list[dict], focus: str | None = None, limit: int = 12000) -> 
         start = max(0, position - 500)
         offset = 0
         for i, block in enumerate(blocks):
-            if offset <= position < offset + len(block["text"]) and block["kind"] == "dt":
+            if offset <= position < offset + len(block["text"]):
+                # A match inside a definition's prose needs its complete local
+                # conditions and label. Recover the enclosing contiguous entry.
+                first = i
+                while first > 0 and blocks[first-1].get("context") == block.get("context"):
+                    first -= 1
+                definition = any(b["kind"] == "dt" for b in blocks[first:i+1])
+                heading = bool(re.fullmatch(r"h[1-6]", blocks[first]["kind"]))
+                if not definition and not heading:
+                    break
                 # A definition's conditions and version notes share its context.
                 # Keep the complete entry up to the next definition/section.
-                start, section_end = offset, offset + len(block["text"])
+                start = offset - sum(len(b["text"]) + 1 for b in blocks[first:i])
+                section_end = offset + len(block["text"])
                 for following in blocks[i+1:]:
-                    if following.get("context") != block.get("context"):
+                    context = block.get("context", [])
+                    following_context = following.get("context", [])
+                    if (following_context != context if definition else
+                            following_context[:len(context)] != context):
                         break
                     section_end += 1 + len(following["text"])
+                # Oversized sections still center the observed literal match;
+                # clipping remains explicit on the returned source blocks.
+                if position >= start + limit:
+                    start = max(start, position - 500)
                 break
             offset += len(block["text"]) + 1
     end, offset, selected = min(start + limit, section_end), 0, []

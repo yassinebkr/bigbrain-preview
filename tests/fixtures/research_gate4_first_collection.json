@@ -1,0 +1,368 @@
+[
+  {
+    "id": "api-base",
+    "objective": "Using official Python 3.13 and 3.7 documentation, establish the signature and behavior of pathlib.Path.unlink, the errors ignored by missing_ok=True, and when the parameter was introduced. Answer in French and cite read passages.",
+    "sources": [
+      {
+        "id": "s1",
+        "url": "https://docs.python.org/3.13/library/pathlib.html",
+        "title": "pathlib — Object-oriented filesystem paths",
+        "snippet": "Remove this file or symbolic link. If the path points to a directory, use Path.rmdir() instead. If missing_ok is false (the default), FileNotFoundError is raised if the path does not exist.",
+        "discovered_by": "site:docs.python.org/3.13/library/pathlib.html Path.unlink missing_ok FileNotFoundError"
+      },
+      {
+        "id": "s2",
+        "url": "https://docs.python.org/3.7/library/pathlib.html",
+        "title": "pathlib — Object-oriented filesystem paths — Python 3.7.17 documentation",
+        "snippet": "Path.unlink()¶ · <strong>Remove this file or symbolic link</strong>. If the path points to a directory, use Path.rmdir() instead. Path.write_bytes(data)¶ ·",
+        "discovered_by": "site:docs.python.org/3.7/library/pathlib.html Path.unlink"
+      }
+    ],
+    "budget": {
+      "input_units": 4931,
+      "output_units": 191,
+      "logical_calls": 1,
+      "input_limit": 32000,
+      "output_limit": 4000,
+      "call_limit": 7,
+      "policy": "monitored",
+      "in_flight_overrun_allowed": true,
+      "threshold_exceeded": false,
+      "excess_input_units": 0,
+      "excess_output_units": 0,
+      "calls": [
+        {
+          "phase": "collect",
+          "usage_known": true,
+          "outcome": "ok",
+          "admitted_input_units": 3190,
+          "admitted_output_units": 400,
+          "charged_input_units": 4931,
+          "charged_output_units": 191
+        }
+      ],
+      "retained_lane_units": {
+        "collect": 5122
+      }
+    }
+  },
+  {
+    "id": "api-heldout",
+    "objective": "Compare Path.unlink in the versioned Python 3.7 and 3.13 manuals. Could missing_ok=True hide a permission failure, and is this option available in both versions? State its introduction version. Use read official documentation, answering in French.",
+    "sources": [
+      {
+        "id": "s1",
+        "url": "https://docs.python.org/3.7/library/pathlib.html",
+        "title": "pathlib — Object-oriented filesystem paths — Python 3.7.17 documentation",
+        "snippet": "If exist_ok is false (the default), ... POSIX mkdir -p command), but only if the last path component is not an existing non-directory file. Changed in <strong>version 3.5</strong>: The exist_ok parameter was added....",
+        "discovered_by": "site:docs.python.org/3.7/library/pathlib.html Path.unlink missing_ok introduced version"
+      },
+      {
+        "id": "s2",
+        "url": "https://docs.python.org/3.13/library/pathlib.html",
+        "title": "pathlib — Object-oriented filesystem paths",
+        "snippet": "Remove this file or symbolic link. If the path points to a directory, use Path.rmdir() instead. If missing_ok is false (the default), FileNotFoundError is raised if the path does not exist.",
+        "discovered_by": "site:docs.python.org/3.13/library/pathlib.html Path.unlink missing_ok permission"
+      }
+    ],
+    "budget": {
+      "input_units": 4939,
+      "output_units": 175,
+      "logical_calls": 1,
+      "input_limit": 32000,
+      "output_limit": 4000,
+      "call_limit": 7,
+      "policy": "monitored",
+      "in_flight_overrun_allowed": true,
+      "threshold_exceeded": false,
+      "excess_input_units": 0,
+      "excess_output_units": 0,
+      "calls": [
+        {
+          "phase": "collect",
+          "usage_known": true,
+          "outcome": "ok",
+          "admitted_input_units": 3227,
+          "admitted_output_units": 400,
+          "charged_input_units": 4939,
+          "charged_output_units": 175
+        }
+      ],
+      "retained_lane_units": {
+        "collect": 5114
+      }
+    }
+  },
+  {
+    "id": "klipper-base",
+    "objective": "Explain SAVE_CONFIG from official Klipper documentation: its role following calibration, the configuration changes it saves, and its restart effect. Describe commands without connecting to a printer. Answer in French with read citations.",
+    "sources": [
+      {
+        "id": "s1",
+        "url": "https://www.klipper3d.org/Config_checks.html",
+        "title": "Configuration checks - Klipper documentation",
+        "snippet": "In order to use this control mechanism, it is necessary to calibrate the PID settings on each printer (PID settings found in other firmwares or in the example configuration files often work poorly). To calibrate the extruder, navigate to the command console and run the PID_CALIBRATE command. For example: PID_CALIBRATE HEATER=extruder TARGET=170 · At the completion of the tuning test run SAVE_CONFIG to update the printer.cfg file the new PID settings.",
+        "discovered_by": "site:klipper3d.org SAVE_CONFIG calibration restart SAVE_CONFIG command"
+      },
+      {
+        "id": "s2",
+        "url": "https://www.klipper3d.org/Config_Changes.html",
+        "title": "Configuration Changes - Klipper documentation",
+        "snippet": "Note that these changes are also incompatible with previously saved mesh profiles. If an incompatible profile is detected it will be ignored and scheduled for removal. The removal process can be completed by issuing the SAVE_CONFIG command. The user will need to re-calibrate each profile.",
+        "discovered_by": "site:klipper3d.org SAVE_CONFIG calibration restart SAVE_CONFIG command"
+      },
+      {
+        "id": "s3",
+        "url": "https://www.klipper3d.org/Probe_Calibrate.html",
+        "title": "Probe calibration - Klipper documentation",
+        "snippet": "Before starting this test, first calibrate the probe X, Y, and Z offsets as described at the beginning of this document. Then home the printer and navigate to the first XY position. Follow the steps at calibrating probe Z offset to run the PROBE_CALIBRATE command, TESTZ commands, and ACCEPT command, but do not run SAVE_CONFIG.",
+        "discovered_by": "site:klipper3d.org SAVE_CONFIG calibration restart SAVE_CONFIG command"
+      },
+      {
+        "id": "s4",
+        "url": "https://www.klipper3d.org/G-Codes.html?h=tuning",
+        "title": "G-Codes - Klipper documentation",
+        "snippet": "SAVE_CONFIG: <strong>This command will overwrite the main printer config file and restart the host software</strong>. This command is used in conjunction with other calibration commands to store the results of calibration tests.",
+        "discovered_by": "site:klipper3d.org SAVE_CONFIG calibration restart SAVE_CONFIG command"
+      },
+      {
+        "id": "s5",
+        "url": "https://www.klipper3d.org/Delta_Calibrate.html",
+        "title": "Delta calibration - Klipper documentation",
+        "snippet": "The SAVE_CONFIG command will <strong>save both the updated delta parameters and information from the distance measurements</strong>. Future DELTA_CALIBRATE commands will also utilize this distance information.",
+        "discovered_by": "site:klipper3d.org SAVE_CONFIG calibration restart SAVE_CONFIG command"
+      }
+    ],
+    "budget": {
+      "input_units": 3207,
+      "output_units": 400,
+      "logical_calls": 1,
+      "input_limit": 32000,
+      "output_limit": 4000,
+      "call_limit": 7,
+      "policy": "monitored",
+      "in_flight_overrun_allowed": true,
+      "threshold_exceeded": false,
+      "excess_input_units": 0,
+      "excess_output_units": 0,
+      "calls": [
+        {
+          "phase": "collect",
+          "usage_known": false,
+          "outcome": "ok",
+          "admitted_input_units": 3207,
+          "admitted_output_units": 400,
+          "charged_input_units": 3207,
+          "charged_output_units": 400
+        }
+      ],
+      "retained_lane_units": {
+        "collect": 3607
+      }
+    }
+  },
+  {
+    "id": "klipper-heldout",
+    "objective": "After a Klipper calibration, what does SAVE_CONFIG actually persist and what happens to the running host? Establish the documented configuration and restart behavior using official manuals. Answer in French; perform no printer action.",
+    "sources": [
+      {
+        "id": "s1",
+        "url": "https://www.klipper3d.org/Config_checks.html",
+        "title": "Configuration checks - Klipper documentation",
+        "snippet": "In order to use this control mechanism, it is necessary to calibrate the PID settings on each printer (PID settings found in other firmwares or in the example configuration files often work poorly). To calibrate the extruder, navigate to the command console and run the PID_CALIBRATE command. For example: PID_CALIBRATE HEATER=extruder TARGET=170 · At the completion of the tuning test run SAVE_CONFIG to update the printer.cfg file the new PID settings.",
+        "discovered_by": "site:klipper3d.org SAVE_CONFIG calibration configuration restart"
+      },
+      {
+        "id": "s2",
+        "url": "https://www.klipper3d.org/Config_Changes.html",
+        "title": "Configuration Changes - Klipper documentation",
+        "snippet": "Note that these changes are also incompatible with previously saved mesh profiles. If an incompatible profile is detected it will be ignored and scheduled for removal. The removal process can be completed by issuing the SAVE_CONFIG command. The user will need to re-calibrate each profile.",
+        "discovered_by": "site:klipper3d.org SAVE_CONFIG calibration configuration restart"
+      },
+      {
+        "id": "s3",
+        "url": "https://www.klipper3d.org/G-Codes.html?h=tuning",
+        "title": "G-Codes - Klipper documentation",
+        "snippet": "SAVE_CONFIG: <strong>This command will overwrite the main printer config file and restart the host software</strong>. This command is used in conjunction with other calibration commands to store the results of calibration tests.",
+        "discovered_by": "site:klipper3d.org SAVE_CONFIG calibration configuration restart"
+      },
+      {
+        "id": "s4",
+        "url": "https://www.klipper3d.org/Config_Reference.html",
+        "title": "Configuration reference - Klipper documentation",
+        "snippet": "Order of the locations is # important, and should correspond to Z, Z1, Z2, and Z3 location in # order. This parameter must be provided. For maximum accuracy, # ensure your probe offsets are configured. #speed: 50 # The speed (in mm/s) of non-probing moves during the calibration.",
+        "discovered_by": "site:klipper3d.org SAVE_CONFIG calibration configuration restart"
+      },
+      {
+        "id": "s5",
+        "url": "https://www.klipper3d.org/Probe_Calibrate.html",
+        "title": "Probe calibration - Klipper documentation",
+        "snippet": "Before starting this test, first calibrate the probe X, Y, and Z offsets as described at the beginning of this document. Then home the printer and navigate to the first XY position. Follow the steps at calibrating probe Z offset to run the PROBE_CALIBRATE command, TESTZ commands, and ACCEPT command, but do not run SAVE_CONFIG.",
+        "discovered_by": "site:klipper3d.org SAVE_CONFIG calibration configuration restart"
+      }
+    ],
+    "budget": {
+      "input_units": 4917,
+      "output_units": 184,
+      "logical_calls": 1,
+      "input_limit": 32000,
+      "output_limit": 4000,
+      "call_limit": 7,
+      "policy": "monitored",
+      "in_flight_overrun_allowed": true,
+      "threshold_exceeded": false,
+      "excess_input_units": 0,
+      "excess_output_units": 0,
+      "calls": [
+        {
+          "phase": "collect",
+          "usage_known": true,
+          "outcome": "ok",
+          "admitted_input_units": 3201,
+          "admitted_output_units": 400,
+          "charged_input_units": 4917,
+          "charged_output_units": 184
+        }
+      ],
+      "retained_lane_units": {
+        "collect": 5101
+      }
+    }
+  },
+  {
+    "id": "sqlite-base",
+    "objective": "From official SQLite documentation, compare rollback DELETE journaling with WAL for concurrent readers and writers, simultaneous writers, and use across a network filesystem. Answer in French with read citations and qualifications.",
+    "sources": [
+      {
+        "id": "s1",
+        "url": "https://www.sqlite.org/wal.html",
+        "title": "Write-Ahead Logging",
+        "snippet": "There are advantages and disadvantages to using WAL instead of a rollback journal. Advantages include: WAL is significantly faster in most scenarios. <strong>WAL provides more concurrency as readers do not block writers and a writer does not block readers</strong>.",
+        "discovered_by": "site:sqlite.org WAL rollback journal DELETE concurrent readers writers network filesystem"
+      },
+      {
+        "id": "s2",
+        "url": "https://www.sqlite.org/lockingv3.html",
+        "title": "File Locking And Concurrency In SQLite Version 3",
+        "snippet": "The document only describes locking for the older rollback-mode transaction mechanism. Locking for the newer write-ahead log or WAL mode is described separately. SQLite Version 3.0.0 introduced a new locking and journaling mechanism designed to improve concurrency over SQLite version 2 and to reduce the writer starvation problem.",
+        "discovered_by": "site:sqlite.org WAL rollback journal DELETE concurrent readers writers network filesystem"
+      },
+      {
+        "id": "s3",
+        "url": "https://www.sqlite.org/walformat.html",
+        "title": "WAL-mode File Format",
+        "snippet": "The main database may have an arbitrary name allowed by the underlying filesystem. No special file suffixes are required, though &quot;.db&quot;, &quot;.sqlite&quot;, and &quot;.sqlite3&quot; seem to be popular choices. The write-ahead log or &quot;wal&quot; file is a roll-forward journal that records transactions that have been ...",
+        "discovered_by": "site:sqlite.org WAL rollback journal DELETE concurrent readers writers network filesystem"
+      },
+      {
+        "id": "s4",
+        "url": "https://sqlite.org/forum/forumpost/c4dbf6ca17",
+        "title": "SQLite User Forum: Using WAL mode with multiple processes",
+        "snippet": "WAL journal mode supports one writer and many readers at the same time. A second writer will have to wait until the first write transaction is committed or rolled back.",
+        "discovered_by": "site:sqlite.org WAL rollback journal DELETE concurrent readers writers network filesystem"
+      },
+      {
+        "id": "s5",
+        "url": "https://sqlite.org/forum/forumpost/3fec19a873?t=h",
+        "title": "SQLite User Forum: Exclusive write-only lock? (Allow only one process read-write, and multiple read-only)",
+        "snippet": "Note that these are two very different things. In the normal journaling modes, SQLite will &quot;wait&quot; for writers to finish transactions before readers can read. Only in WAL mode can you have readers reading existing data WHILE a writer is writing new data.",
+        "discovered_by": "site:sqlite.org WAL rollback journal DELETE concurrent readers writers network filesystem"
+      }
+    ],
+    "budget": {
+      "input_units": 4911,
+      "output_units": 101,
+      "logical_calls": 1,
+      "input_limit": 32000,
+      "output_limit": 4000,
+      "call_limit": 7,
+      "policy": "monitored",
+      "in_flight_overrun_allowed": true,
+      "threshold_exceeded": false,
+      "excess_input_units": 0,
+      "excess_output_units": 0,
+      "calls": [
+        {
+          "phase": "collect",
+          "usage_known": true,
+          "outcome": "ok",
+          "admitted_input_units": 3195,
+          "admitted_output_units": 400,
+          "charged_input_units": 4911,
+          "charged_output_units": 101
+        }
+      ],
+      "retained_lane_units": {
+        "collect": 5012
+      }
+    }
+  },
+  {
+    "id": "sqlite-heldout",
+    "objective": "Does SQLite WAL allow several writers at once? Explain how reader/writer overlap differs from DELETE rollback journaling and whether WAL is appropriate on a network filesystem. Consult only official SQLite sources and answer in French.",
+    "sources": [
+      {
+        "id": "s1",
+        "url": "https://www.sqlite.org/wal.html",
+        "title": "Write-Ahead Logging",
+        "snippet": "There are advantages and disadvantages to using WAL instead of a rollback journal. Advantages include: WAL is significantly faster in most scenarios. <strong>WAL provides more concurrency as readers do not block writers and a writer does not block readers</strong>.",
+        "discovered_by": "site:sqlite.org WAL multiple writers reader writer concurrency network filesystem DELETE rollback journal"
+      },
+      {
+        "id": "s2",
+        "url": "https://sqlite.org/forum/forumpost/3fec19a873?t=h",
+        "title": "SQLite User Forum: Exclusive write-only lock? (Allow only one process read-write, and multiple read-only)",
+        "snippet": "Note that these are two very different things. In the normal journaling modes, SQLite will &quot;wait&quot; for writers to finish transactions before readers can read. <strong>Only in WAL mode can you have readers reading existing data WHILE a writer is writing new data</strong>.",
+        "discovered_by": "site:sqlite.org WAL multiple writers reader writer concurrency network filesystem DELETE rollback journal"
+      },
+      {
+        "id": "s3",
+        "url": "https://www.sqlite.org/lockingv3.html",
+        "title": "File Locking And Concurrency In SQLite Version 3",
+        "snippet": "The document only describes locking for the older rollback-mode transaction mechanism. Locking for the newer write-ahead log or WAL mode is described separately. SQLite Version 3.0.0 introduced a new locking and journaling mechanism designed to improve concurrency over SQLite version 2 and to reduce the writer starvation problem.",
+        "discovered_by": "site:sqlite.org WAL multiple writers reader writer concurrency network filesystem DELETE rollback journal"
+      },
+      {
+        "id": "s4",
+        "url": "https://www.sqlite.org/walformat.html",
+        "title": "WAL-mode File Format",
+        "snippet": "<strong>The DELETE-mode locks are stored on the lock-byte page of the main database file</strong>. Only SQLITE_LOCK_SHARED and SQLITE_LOCK_EXCLUSIVE are factors for WAL-mode databases. The other locking states are used in rollback-mode, but not in WAL-mode.",
+        "discovered_by": "site:sqlite.org WAL multiple writers reader writer concurrency network filesystem DELETE rollback journal"
+      },
+      {
+        "id": "s5",
+        "url": "https://sqlite.org/forum/info/b4e8b29ae409cd198652c6b7e70b53b702f269e67e1d2573d627feeba37bbf85",
+        "title": "SQLite User Forum: Multiple Writers",
+        "snippet": "Having said that, in SQLite&#x27;s WAL mode readers do use a snapshot; writers block each other. But if you&#x27;re willing to build from a branch you can use BEGIN CONCURRENT.",
+        "discovered_by": "site:sqlite.org WAL multiple writers reader writer concurrency network filesystem DELETE rollback journal"
+      }
+    ],
+    "budget": {
+      "input_units": 3202,
+      "output_units": 400,
+      "logical_calls": 1,
+      "input_limit": 32000,
+      "output_limit": 4000,
+      "call_limit": 7,
+      "policy": "monitored",
+      "in_flight_overrun_allowed": true,
+      "threshold_exceeded": false,
+      "excess_input_units": 0,
+      "excess_output_units": 0,
+      "calls": [
+        {
+          "phase": "collect",
+          "usage_known": false,
+          "outcome": "ok",
+          "admitted_input_units": 3202,
+          "admitted_output_units": 400,
+          "charged_input_units": 3202,
+          "charged_output_units": 400
+        }
+      ],
+      "retained_lane_units": {
+        "collect": 3602
+      }
+    }
+  }
+]

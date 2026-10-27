@@ -6,8 +6,33 @@ import pytest
 
 from bigbrain.research import (Action, Claim, EvidenceLink, Limits, ModelPolicy,
     Passage, Question, ResearchRuntime, ResearchState, Source)
-from bigbrain.research_assessment import (AssessmentReport, CitationAssessment,
+from bigbrain.research_assessment import (AssessmentReport, CitationAssessment, QuestionAssessment,
     ClaimAssessment, SourceAssessment, apply_assessment)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('corrected', [True, False])
+async def test_invalid_review_gets_bounded_evidence_preserving_correction(corrected):
+    import time
+    from bigbrain.research_assessment import ModelReviewer
+    state = evidence()
+    original_passages = [p.model_dump() for p in state.passages]
+    invalid = report(state)
+    invalid.claims[0].citations[0].quote = 'An invented citation.'
+    valid = report(state)
+    provider = AsyncMock()
+    provider.complete.side_effect = [invalid.model_dump_json(), (valid if corrected else invalid).model_dump_json()]
+    engine = ResearchRuntime(AsyncMock(), AsyncMock(), AsyncMock(), AsyncMock(),
+        reviewer=ModelReviewer(provider), limits=Limits(tokens=120000, reviews=2))
+    engine.state, engine.started = state, time.monotonic()
+    await engine.execute(state, Action(tool='conclude', question_id='q', rationale='Assess collected evidence',
+        claims=state.claims), engine.counts, set(), 0)
+    assert provider.complete.await_count == 2
+    assert engine.counts['reviews'] == 2
+    assert [p.model_dump() for p in state.passages] == original_passages
+    assert 'validation_feedback' in provider.complete.call_args.args[0]
+    assert state.status == ('completed' if corrected else 'partial')
+    assert state.claims[0].status == ('supported' if corrected else 'unverified')
 
 
 def evidence(texts=("The documented API returns an integer.",), *, scope="general", standard="direct_or_corroborated"):
@@ -28,7 +53,10 @@ def report(state, *, kind="primary", nature="documentation", suitability="suitab
         claims=[ClaimAssessment(claim_id="c", relevant=relevant, rationale="Evidence in stated scope",
             considered_source_ids=[s.id for s in state.sources], citations=[CitationAssessment(
                 passage_id=p.id, quote=p.text, relation=rel, direct=True, explanation="Establishes this specific behaviour")
-                for p, rel in zip(state.passages, relations)])])
+                for p, rel in zip(state.passages, relations)])],
+        questions=[QuestionAssessment(question_id=q.id, complete=True,
+            claim_ids=[c.id for c in state.claims if c.question_id == q.id], rationale="Fixture covers the requested API behavior")
+            for q in state.questions])
 
 
 @pytest.mark.parametrize("kind,nature,suitability,scope,expected", [

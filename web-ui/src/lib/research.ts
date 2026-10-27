@@ -19,7 +19,17 @@ const passage = z.object({ id: z.string(), source_id: z.string(), text: z.string
 const historyItem = z.object({ index: z.number().int().nonnegative(), tool: z.string(), rationale: z.string(),
   status: z.string(), error: z.string().nullable().optional() });
 const snapshot = z.object({
+  delivery_mode: z.enum(['reviewed', 'documentary']).optional(),
+  review_reason: z.string().nullable().optional(),
   research_id: z.string().min(1).max(80),
+  attempt_id: z.string().nullable().optional(),
+  answer_status: z.enum(['unassessed', 'partial', 'complete']).optional(),
+  execution_outcome: z.enum(['running', 'complete', 'partial', 'blocked', 'cancelled', 'interrupted']).optional(),
+  workflow: z.object({ version: z.string().optional(), stage: z.string().optional(),
+    complement_used: z.boolean().optional(), outcome: z.string().optional() }).optional(),
+  original_request_coverage: z.object({ complete: z.boolean().optional(), gaps: z.array(z.string()).optional() }).optional(),
+  question_coverage: z.array(z.object({ question_id: z.string(), status: z.string(),
+    claim_ids: z.array(z.string()), missing_evidence: z.array(z.string()), rationale: z.string() })).optional(),
   schema_version: z.literal('1.0'), revision: z.number().int().nonnegative(), objective: z.string(),
   status: z.enum(['running', 'completed', 'partial', 'unavailable', 'clarification', 'cancelled']),
   reason: z.string().nullable(), assessment_error: z.string().nullable(),
@@ -41,7 +51,13 @@ const snapshot = z.object({
     citations: z.array(citation), origin_groups: z.record(z.string(), z.string()), source_assessments: z.array(sourceAssessment) })).optional(),
   usage: z.object({ model_calls: z.number().optional(), unknown_usage_calls: z.number().optional(),
     reported_tokens: z.number().optional(), cached_input_tokens: z.number().optional(),
-    allowance_used: z.number().optional(), cost_usd: z.number().nullable().optional() }),
+    allowance_used: z.number().optional(), cost_usd: z.number().nullable().optional(),
+    stage_budget: z.object({ input_units: z.number(), output_units: z.number(), logical_calls: z.number(),
+      input_limit: z.number(), output_limit: z.number(), call_limit: z.number(),
+      policy: z.string().optional(), threshold_exceeded: z.boolean().optional(),
+      excess_input_units: z.number().optional(), excess_output_units: z.number().optional() }).optional(),
+    api_reference: z.object({ measured_subtotal_usd: z.number(), priced_records: z.number(),
+      logical_calls: z.number(), complete: z.boolean() }).optional() }),
   limits: z.object({ actions: z.number(), searches: z.number(), pages: z.number(), browsers: z.number().optional(), reviews: z.number().optional(), seconds: z.number(), tokens: z.number() }),
   counts: z.object({ searches: z.number(), pages: z.number(), browsers: z.number().optional(), reviews: z.number().optional() }), elapsed_seconds: z.number(),
   current_action: z.object({ tool: z.string(), rationale: z.string(), query: z.string().nullable(),
@@ -52,6 +68,7 @@ const observation = z.object({ index: z.number().int().nonnegative(), status: z.
   data: z.object({ passages: snapshot.shape.passages, error: z.string().optional() }) });
 type Snapshot = z.infer<typeof snapshot>;
 export type ResearchView = Omit<Snapshot, 'passages' | 'assessments'> & {
+  received_at_ms?: number;
   passages: NonNullable<Snapshot['passages']>; assessments: NonNullable<Snapshot['assessments']>;
   history: z.infer<typeof historyItem>[];
 };
@@ -63,7 +80,8 @@ export function researchUpdate(raw: unknown, previous?: ResearchView, observed?:
   if (!result.success || previous && result.data.revision <= previous.revision) return previous;
   const data = result.data;
   // A stale checkpoint cannot revive an already terminal research subtask.
-  if (previous && previous.status !== 'running' && data.status === 'running') return previous;
+  const newAttempt = data.attempt_id && previous?.attempt_id && data.attempt_id !== previous.attempt_id;
+  if (previous && previous.status !== 'running' && data.status === 'running' && !newAttempt) return previous;
   let passages = data.passages || previous?.passages || [];
   let history = data.history || previous?.history || [];
   // Review supplements are real observed blocks too. Keep them during the run,
@@ -73,10 +91,21 @@ export function researchUpdate(raw: unknown, previous?: ResearchView, observed?:
   const obs = observation.safeParse(observed);
   if (obs.success) {
     passages = [...new Map([...passages, ...(obs.data.data.passages || [])].map((p) => [p.id, p])).values()];
-    history = [...history.filter((item) => item.index !== obs.data.index), { index: obs.data.index,
-      tool: obs.data.action.tool, rationale: obs.data.action.rationale, status: obs.data.status, error: obs.data.data.error }].slice(-20);
+    // Batch children share a parent decision index; retain their passages as
+    // they arrive, but leave the history row to the enclosing batch operation.
+    if (!(progress && typeof progress === 'object' && 'stage' in progress && progress.stage === 'research_batch_observation')) {
+      history = [...history.filter((item) => item.index !== obs.data.index), { index: obs.data.index,
+        tool: obs.data.action.tool, rationale: obs.data.action.rationale, status: obs.data.status, error: obs.data.data.error }].slice(-20);
+    }
   }
-  return { ...data, passages, assessments: data.assessments || previous?.assessments || [], history };
+  return { ...data, received_at_ms: Date.now(), passages, assessments: data.assessments || previous?.assessments || [], history };
+}
+
+/** Interpolate display time only; terminal snapshots remain authoritative. */
+export function researchElapsed(research: ResearchView, live: boolean, now: number, received: number) {
+  if (!live || research.status !== 'running') return research.elapsed_seconds;
+  return Math.max(research.elapsed_seconds, Math.min(research.limits.seconds,
+    research.elapsed_seconds + Math.max(0, now - received) / 1000));
 }
 
 export function publicLink(url: string) {

@@ -40,6 +40,7 @@ WEBUI_DIST = Path(__file__).resolve().parents[2] / "web-ui" / "dist"
 # web server (keeps WebServer free of a system dependency). Mirrored on the
 # class for convenient access in tests.
 PROVIDER_RELOAD_HOOK = None
+MODEL_ROLE_CHANGE_HOOK = None
 
 # Navigation selection hook — must never retarget active workers.
 PROJECT_CHANGE_HOOK = None
@@ -396,6 +397,8 @@ class WebServer:
         body = await request.json()
         try:
             result = set_role(body.get("role", ""), body.get("key", ""))
+            if MODEL_ROLE_CHANGE_HOOK is not None:
+                MODEL_ROLE_CHANGE_HOOK(body["role"], body["key"])
         except (ValueError, KeyError) as exc:
             return web.json_response({"error": str(exc)}, status=400)
         return web.json_response(result)
@@ -956,9 +959,7 @@ class WebServer:
                      "navigation_project": payload.get("navigationProject") if isinstance(payload.get("navigationProject"), str) else None,
                      "conversation_history": conversation_history},
             priority=Priority.NORMAL,
-        ))
-
-        await ack("sent")
+        ), on_accepted=lambda: ack("sent"))
 
     async def _handle_request(
         self, ws: web.WebSocketResponse, data: dict

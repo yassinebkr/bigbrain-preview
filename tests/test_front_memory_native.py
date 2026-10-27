@@ -1,4 +1,4 @@
-"""Actual SSE tool framing → front brain → sourced memory → final reply.
+"""Native structured decisions → front brain → sourced memory → final reply.
 
 All model responses are frozen HTTP fixtures; no network, paid calls or real
 user memories are used. The lookup itself runs the real shared-memory code.
@@ -25,28 +25,23 @@ def sse(chunks):
 
 
 @pytest.mark.asyncio
-async def test_native_memory_preamble_does_not_end_turn_before_actual_lookup(tmp_path):
+async def test_native_decision_does_not_end_turn_before_actual_memory_lookup(tmp_path):
     calls = []
     def respond(request):
         body = json.loads(request.content)
         calls.append(body)
-        assert body["tool_choice"] == "auto"
+        assert body["tool_choice"] == {"type":"function","function":{"name":"bigbrain_front_decision"}}
+        assert body['stream'] is False
         if len(calls) == 1:
-            return sse([{"reasoning_content": "PRIVATE CONTINUATION", "reasoning_details": [{"index": 0, "type": "reasoning.text", "text": "private"}]},
-                {"content": "Je consulte la mémoire. "},
-                {"tool_calls": [{"index": 0, "id": "call-memory", "type": "function", "function": {
-                    "name": "bigbrain_memory", "arguments": '{"tool":"facts.read","arguments":'}}]},
-                {"tool_calls": [{"index": 0, "function": {"arguments": '{"key":"user.cat.name"}}'}}]}])
-        result = body["messages"][-1]
-        assistant = body["messages"][-2]
-        assert assistant["tool_calls"][0]["type"] == "function"
-        assert assistant["reasoning_content"] == "PRIVATE CONTINUATION"
-        assert assistant["reasoning_details"][0]["text"] == "private"
-        assert result["role"] == "tool" and result["tool_call_id"] == "call-memory"
-        fact = json.loads(result["content"])
-        assert fact["status"] == "ok"
-        assert fact["fact"]["source_session"] == "past"
-        return sse([{"content": f"Ton chat s’appelle {fact['fact']['value']}."}])
+            decision = {'operation':'consult_memory','tool':'facts.read','arguments':{'key':'user.cat.name'}}
+        else:
+            result = body['messages'][-1]
+            fact = json.loads(result['content'].split(': ',1)[1])
+            assert fact['status'] == 'ok' and fact['fact']['source_session'] == 'past'
+            decision = {'operation':'respond','reply':f"Ton chat s’appelle {fact['fact']['value']}."}
+        return httpx.Response(200,json={'choices':[{'message':{'reasoning_content':'PRIVATE CONTINUATION',
+            'tool_calls':[{'id':'decision','type':'function','function':{'name':'bigbrain_front_decision',
+            'arguments':json.dumps({'decision':decision})}}]},'finish_reason':'tool_calls'}]})
     provider = OpenAICompatProvider("openrouter-gpt-6.1-sol", api_key="fixture")
     provider._client = httpx.AsyncClient(base_url=provider.entry.base_url, transport=httpx.MockTransport(respond))
     bus = MessageBus(tmp_path / "logs", auth=None)
@@ -64,7 +59,7 @@ async def test_native_memory_preamble_does_not_end_turn_before_actual_lookup(tmp
     frames = [json.loads(line) for p in (tmp_path / "logs").glob("*.jsonl") for line in p.read_text().splitlines()]
     events = [frame["payload"] for frame in frames]
     consulted = next(i for i, e in enumerate(events) if e.get("event") == "memory.consulted")
-    done = [i for i, e in enumerate(events) if e.get("event") == "chat.done"]
+    done = [i for i, e in enumerate(events) if e.get("event") in {'chat.done','chat.message'}]
     assert len(done) == 1 and done[0] > consulted
     assert events[done[0]]["text"] == "Ton chat s’appelle Moka."
     assert len(calls) == 2
@@ -86,7 +81,7 @@ async def test_empty_model_reply_produces_explicit_terminal_message(tmp_path, st
     front._emit_chat_message = AsyncMock()
     await front._handle_ui_message(BusMessage(type=MessageType.TASK, source="morphable_ui", target="front_brain",
         payload={"text": "Alors ?", "session_id": "s"}))
-    assert "sans fournir de réponse" in front._emit_chat_message.await_args.args[1]
+    assert "Aucune nouvelle tâche" in front._emit_chat_message.await_args.args[1]
     await bus.close()
 
 

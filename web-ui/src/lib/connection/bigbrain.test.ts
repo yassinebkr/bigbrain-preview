@@ -2,6 +2,19 @@ import { describe, expect, it, vi } from 'vitest';
 import { BigBrainConnection } from './bigbrain';
 
 describe('session-scoped websocket replies', () => {
+  it('ends the pending reply on current-session user Stop only', () => {
+    const conn = new BigBrainConnection({ wsUrl: 'ws://localhost/ws' });
+    conn.switchSession('s');
+    const end = vi.fn();
+    conn.on('onRunEnd', end);
+    for (const payload of [
+      { event: 'task.cancelled', session_id: 'other', mode: 'user' },
+      { event: 'task.cancelled', session_id: 's', mode: 'user', task_id: 'worker-run' },
+    ]) (conn as any)._handleFrame({ payload });
+    expect(end).not.toHaveBeenCalled();
+    (conn as any)._handleFrame({ payload: { event: 'task.cancelled', session_id: 's', mode: 'user' } });
+    expect(end).toHaveBeenCalledOnce();
+  });
   it('ends waiting even when a terminal assistant message is empty', () => {
     const conn = new BigBrainConnection({ wsUrl: 'ws://localhost/ws' });
     conn.switchSession('s');

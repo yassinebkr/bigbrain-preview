@@ -16,7 +16,7 @@ import json
 import os
 import socket
 import time
-from urllib.parse import urljoin, urlsplit, urlunsplit
+from urllib.parse import unquote, urljoin, urlsplit, urlunsplit
 
 import httpx
 
@@ -263,8 +263,16 @@ class PageReader:
         self.cache_seconds, self.cache_entries = cache_seconds, cache_entries
         self.cache = OrderedDict()
 
+    def cached_snapshot(self, url, mode='http'):
+        """Return a fresh observation identity eligible for local consultation."""
+        entry = self.cache.get((url, mode))
+        if not entry or time.monotonic()-entry[0] >= self.cache_seconds:
+            return None
+        observed = entry[1]
+        return (observed.get('rendered_artifact') or observed['raw_artifact'])['sha256']
+
     async def read(self, url, focus=None, *, mode="http", refresh=False, progress=None,
-                   question=None, group_ids=(), observation_sha256=None):
+                   question=None, group_ids=(), observation_sha256=None, cached_snapshot=None, fragment=None):
         if mode not in {"http", "browser"}:
             raise ReadFailure("invalid_mode", "Unknown acquisition mode")
         async def emit(data):
@@ -272,7 +280,11 @@ class PageReader:
                 await progress(data)
         try:
             async with asyncio.timeout(25 if mode == "browser" else 18):
-                return await self._read(url, focus, mode, refresh, emit, question, group_ids, observation_sha256)
+                # A local consultation cannot silently become a network request
+                # when its capture expires or is evicted before execution.
+                if cached_snapshot and (refresh or self.cached_snapshot(url, mode) != cached_snapshot):
+                    raise ReadFailure('cache_expired', 'Retained observation expired; a new acquisition requires budget')
+                return await self._read(url, focus, mode, refresh, emit, question, group_ids, observation_sha256, fragment)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -284,7 +296,7 @@ class PageReader:
             failure.record["record_artifact"] = ref
             raise failure from (exc if failure is not exc else None)
 
-    async def _read(self, url, focus, mode, refresh, progress, question, group_ids, observation_sha256):
+    async def _read(self, url, focus, mode, refresh, progress, question, group_ids, observation_sha256, fragment=None):
         key, now = (url, mode), time.monotonic()
         entry = self.cache.get(key)
         hit = bool(entry and not refresh and now-entry[0] < self.cache_seconds)
@@ -346,10 +358,27 @@ class PageReader:
             state = "requires_browser" if prepared["has_scripts"] and mode == "http" else "empty"
             raise ReadFailure(state, "No readable page text; rendered observation needed" if state == "requires_browser" else "No readable page text", record=observed)
         digest = (observed.get("rendered_artifact") or observed["raw_artifact"])["sha256"]
+        # Keep a question-ranked route back into the immutable original page.
+        # Source-order prefixes often contain the site's global navigation.
+        from .research_context import groups, rank
+        sections = groups(prepared["original_blocks"] or blocks, digest)
+        ordered = rank(question or focus or "", sections)
+        catalog = [{"id":sections[i]["id"], "context":[label[:160] for label in sections[i]["context"][-2:]],
+                    "characters":sections[i]["characters"]} for i, _ in ordered[:96]]
+        observed = {**observed, "navigation":{"observation_sha256":digest, "catalog":catalog,
+                    "omitted_groups":max(0,len(sections)-len(catalog)), "order":"question-relevance"}}
         if group_ids and observation_sha256 != digest:
             raise ReadFailure("snapshot_changed", "Requested sections belong to another observation", record=observed)
         try:
-            if (question or group_ids) and not focus:
+            if fragment:
+                # URL fragments select observed DOM entries within the same
+                # captured page. They never create a synthetic evidence span.
+                entry = [b for b in prepared['original_blocks'] if b.get('section_id') == unquote(fragment)]
+                if not entry:
+                    raise ValueError('Requested URL fragment was not observed in the page')
+                selected, truncated = window(entry, focus)
+                observed = {**observed, 'requested_fragment':fragment}
+            elif (question or group_ids) and not focus:
                 await progress({"phase":"selecting_context", "mode":mode})
                 selected, selection = select(question or "",prepared["original_blocks"] or blocks,digest,
                                              requested=group_ids,preferred_ids={b["id"] for b in prepared["blocks"]})

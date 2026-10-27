@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { researchUpdate, publicLink } from '@/lib/research';
+import { researchUpdate, publicLink, researchElapsed } from '@/lib/research';
 import { surfaceRegistry } from '@/lib/morphable';
 import { useAppStore, type RunState } from '@/store/appStore';
 import { ResearchActivity, ResearchPanel } from './ResearchPanel';
@@ -23,6 +23,59 @@ beforeEach(() => useAppStore.setState({ activeSessionKey: 's', activeRun: null, 
   runsById: {}, completedRuns: [], sessionProposals: {} }));
 
 describe('durable research view', () => {
+  it('shows the controlled workflow stage and distinguishes transport from model errors', () => {
+    const running = researchUpdate(snapshot({ workflow: { version: '1.0', stage: 'control' },
+      activity: { stage: 'research_stage', phase: 'control' } }))!;
+    expect(renderToStaticMarkup(<ResearchActivity research={running} live />)).toContain('Vérification des conclusions et des réserves');
+    const blocked = researchUpdate(snapshot({ status: 'partial', execution_outcome: 'blocked',
+      diagnostic: { contract: 'ResearchWorkflow', code: 'transport_context_unbounded', errors: [] } }))!;
+    const html = renderToStaticMarkup(<ResearchPanel run={{ ...run, status: 'failed', researches: { step: blocked } }} />);
+    expect(html).toContain('Le transport sélectionné doit être adapté aux limites de recherche.');
+    expect(html).not.toContain('Le modèle a renvoyé un format de réponse invalide.');
+  });
+  it('shows monitored subscription thresholds and a recorded overrun', () => {
+    const data = researchUpdate(snapshot({ status: 'partial', usage: { stage_budget: {
+      input_units: 35000, output_units: 150, logical_calls: 1, input_limit: 32000,
+      output_limit: 4000, call_limit: 7, policy: 'monitored', threshold_exceeded: true,
+      excess_input_units: 3000, excess_output_units: 0,
+    } } }))!;
+    const html = renderToStaticMarkup(<ResearchPanel run={{ ...run, status: 'failed', researches: { step: data } }} />);
+    expect(html).toContain('Seuils surveillés');
+    expect(html).toContain('Seuil dépassé · aucun appel supplémentaire.');
+    expect(data.usage.stage_budget?.excess_input_units).toBe(3000);
+  });
+  it('shows documentary delivery with its independent-review level', () => {
+    const data = researchUpdate(snapshot({ status: 'completed', delivery_mode: 'documentary', review_reason: null,
+      claims: [{ id: 'c1', question_id: 'q', text: 'Documentary finding.', status: 'unverified',
+        basis: 'Observed passage', evidence: [], limitations: [], scope: 'general' }] }))!;
+    const html = renderToStaticMarkup(<ResearchPanel run={{ ...run, status: 'done', researches: { step: data } }} />);
+    expect(html).toContain('Synthèse documentaire');
+    expect(html).toContain('Sourcé · sans revue indépendante');
+    expect(data.claims[0].status).toBe('unverified');
+  });
+  it('accepts an explicit new attempt but rejects revival of a settled attempt', () => {
+    const previous = researchUpdate(snapshot({ status: 'partial', attempt_id: 'old', revision: 5 }))!;
+    expect(researchUpdate(snapshot({ attempt_id: 'old', revision: 6 }), previous)).toBe(previous);
+    const resumed = researchUpdate(snapshot({ attempt_id: 'new', revision: 6 }), previous)!;
+    expect(resumed.status).toBe('running');
+    expect(resumed.attempt_id).toBe('new');
+  });
+
+  it('retains batch passages immediately without replacing the parent history row', () => {
+    const previous = researchUpdate(snapshot({ history: [{ index: 0, tool: 'search', rationale: 'Find', status: 'ok' }] }))!;
+    const next = researchUpdate(snapshot({ revision: 2 }), previous, observation,
+      { stage: 'research_batch_observation', position: 0 })!;
+    expect(next.passages[0].text).toBe('Texte réellement lu.');
+    expect(next.history.map((item) => item.tool)).toEqual(['search']);
+  });
+  it('interpolates live seconds, caps at the deadline, and freezes retained results', () => {
+    const view = researchUpdate(snapshot())!;
+    expect(researchElapsed(view, true, 6000, 1000)).toBe(17);
+    expect(researchElapsed(view, true, 200000, 1000)).toBe(90);
+    expect(researchElapsed(view, false, 6000, 1000)).toBe(12);
+    expect(researchElapsed({ ...view, status: 'partial' }, true, 6000, 1000)).toBe(12);
+    expect(researchElapsed(view, true, 0, 1000)).toBe(12);
+  });
   it('collects actual passages once and ignores stale or duplicate snapshots', () => {
     const first = researchUpdate(snapshot(), undefined, observation)!;
     expect(first.passages[0].text).toBe('Texte réellement lu.');
@@ -106,7 +159,9 @@ describe('durable research view', () => {
     const data = researchUpdate(snapshot({ objective }))!;
     const overview = renderToStaticMarkup(<ResearchPanel run={{ ...run, researches: { step: data } }} compact inspect={() => {}} />);
     expect(overview).not.toMatch(/<h3[^>]*>[^<]*A long/);
-    expect(overview).toContain('<summary class="work-link">Demande initiale</summary>');
+    expect(overview).toContain('Demande initiale');
+    expect(overview).toContain('aria-expanded="false"');
+    expect(overview).not.toContain('<summary');
     expect(overview).not.toContain('Questions à établir');
     expect(overview).not.toContain('Journal de recherche');
     expect(overview).toContain('Examiner les sources et les preuves');
@@ -121,8 +176,10 @@ describe('durable research view', () => {
     const html = renderToStaticMarkup(<ResearchPanel run={{ ...run, status: 'failed', researches: { step: data } }} compact />);
     expect(html).toContain('Le modèle a renvoyé un format de réponse invalide.');
     expect(html).not.toContain('aria-label="Questions de recherche"');
-    expect(html).toMatch(/<details[^>]*><summary[^>]*>Usage et diagnostic<\/summary>[\s\S]*legacy-private-marker[\s\S]*<\/details>/);
-    expect(html).not.toContain('<details open');
+    const diagnostic = html.slice(html.indexOf('research-diagnostic'));
+    expect(diagnostic).toContain('aria-expanded="false"');
+    expect(diagnostic).toMatch(/aria-hidden="true"[\s\S]*inert=""[\s\S]*legacy-private-marker/);
+    expect(html).not.toContain('<details');
   });
 
   it('shows the actual acquisition phase in the default overview and research panel', () => {

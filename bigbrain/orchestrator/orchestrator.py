@@ -2039,7 +2039,6 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                         return
                     gate = gates[-1]
                     from ..verification.delivery import validate
-                    from ..bus.results import result_data
                     delivery = validate(plan.execution_target, gate.payload, result_data(gate.result or {}))
                 except (ValueError, OSError, KeyError, TypeError) as exc:
                     plan.subtasks[-1].status = TaskStatus.FAILED
@@ -2084,6 +2083,14 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                         "repair_error": (st.result or {}).get('repair_error')}
                         for st in failed_subtasks]
                 }
+                research_messages = []
+                for failed in failed_subtasks:
+                    data = result_data(failed.result or {})
+                    public = data.get('public_message')
+                    if data.get('research_status') == 'partial' and isinstance(public, str) and len(public) <= 3500:
+                        research_messages.append(public)
+                if research_messages:
+                    plan.result['research_messages'] = research_messages[:3]
             else:
                 plan.status = TaskStatus.COMPLETE
                 plan.result = {
