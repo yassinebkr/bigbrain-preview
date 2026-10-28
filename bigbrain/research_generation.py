@@ -26,9 +26,9 @@ def action_variants(schema, allowed_tools):
         if tool == 'search':
             fields += ['query']; required = ['query']
         elif tool == 'visit':
-            fields += ['url', 'focus']; required = ['url']
+            fields += ['url', 'focus', 'reading_question']; required = ['url']
         elif tool == 'open':
-            fields += ['source_id', 'mode', 'refresh']; required = ['source_id']
+            fields += ['source_id', 'mode', 'refresh', 'reading_question']; required = ['source_id']
         elif tool == 'batch':
             fields += ['requests']; required = ['requests']
         elif tool in {'conclude', 'assess'}:

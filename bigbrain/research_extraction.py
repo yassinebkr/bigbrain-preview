@@ -155,7 +155,8 @@ def extract_html(html: str, url: str) -> dict:
             "engine": "trafilatura-recall-source-aligned", "limitations": list(dict.fromkeys(limitations))}
 
 
-def window(blocks: list[dict], focus: str | None = None, limit: int = 12000) -> tuple[list[dict], bool]:
+def window(blocks: list[dict], focus: str | None = None, limit: int = 12000,
+           *, document_title: str | None = None) -> tuple[list[dict], bool]:
     """Literal windows with preserved source-block identities and explicit clipping."""
     full = "\n".join(b["text"] for b in blocks)
     start = 0
@@ -202,6 +203,16 @@ def window(blocks: list[dict], focus: str | None = None, limit: int = 12000) -> 
                             following_context[:len(context)] != context):
                         break
                     section_end += 1 + len(following["text"])
+                first_heading = next((n for n, item in enumerate(blocks)
+                                      if re.fullmatch(r'h[1-6]', item['kind'])), None)
+                label = normalized(blocks[first]['text'])
+                title_match = bool(document_title and re.search(
+                    r'(?<!\w)' + re.escape(label) + r'(?!\w)', normalized(document_title), re.IGNORECASE))
+                if heading and first == first_heading and title_match:
+                    # Reference generators can use sibling h2 elements for the
+                    # page title, synopsis and description. A confirmed document
+                    # heading owns the bounded page body across those siblings.
+                    section_end = len(full)
                 # Oversized sections still center the observed literal match;
                 # clipping remains explicit on the returned source blocks.
                 if position >= start + limit:

@@ -96,8 +96,8 @@ class ResearchSessions:
         return output
 
 
-def prepare_continuation(state, *, max_age_seconds=300):
-    """Invalidate stale evidence without deleting its original observation history."""
+def prepare_continuation(state, *, max_age_seconds=None):
+    """Retain verified archived captures and enforce explicit freshness bounds."""
     now = datetime.now(timezone.utc)
     stale = set()
     from .research_acquisition import repository
@@ -116,7 +116,11 @@ def prepare_continuation(state, *, max_age_seconds=300):
                 body = repository().get_artifact(ref["sha256"])
                 if body is None or hashlib.sha256(body).hexdigest() != ref["sha256"]:
                     missing_artifact = True
-        if age < 0 or age > max_age_seconds or missing_artifact:
+        capture = source.acquisition.get('rendered_artifact') or source.acquisition.get('raw_artifact')
+        archived = bool(capture and source.acquisition.get('blocks_artifact')
+                        and source.content_sha256 == capture['sha256'])
+        age_limit = max_age_seconds if max_age_seconds is not None else (None if archived else 300)
+        if age < 0 or (age_limit is not None and age > age_limit) or missing_artifact:
             stale.add(source.id)
             source.status, source.error = "discovered", "Retained snapshot expired or unavailable; read again before citing"
     if stale:

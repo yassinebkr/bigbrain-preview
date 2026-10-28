@@ -10,7 +10,7 @@ class ContextForecast:
     def observe(self, records, *, context_units=None):
         # Usage is recorded separately by the runtime. The most recent request
         # supplies the forecast base; summing usage would count history twice.
-        if records:
+        if records and all(r.input_tokens_known and r.output_tokens_known for r in records):
             self.retained_units = (context_units if isinstance(context_units, int) and context_units > 0
                                    else sum(r.input_tokens + r.output_tokens for r in records))
 

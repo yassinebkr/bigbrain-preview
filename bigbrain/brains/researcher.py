@@ -112,7 +112,8 @@ class ResearcherBrain(BaseBrain):
                  llm_provider=None, search_provider=None,
                  brave_api_key: str = None,
                  max_searches: int = 5, max_results_per_search: int = 5,
-                 page_reader=None, research_policy=None, research_reviewer=None):
+                 page_reader=None, research_policy=None, research_reviewer=None,
+                 research_workflow="direct"):
         super().__init__(name, bus, workspace)
         self.llm_provider = llm_provider
         self.max_searches = max_searches
@@ -120,6 +121,9 @@ class ResearcherBrain(BaseBrain):
         self.page_reader = page_reader or PageReader()
         self.research_policy = research_policy
         self.research_reviewer = research_reviewer
+        if research_workflow not in {"direct", "staged"}:
+            raise ValueError("Unknown research workflow")
+        self.research_workflow = research_workflow
 
         # Never expose synthetic sources as evidence in a live run.
         if search_provider:
@@ -165,21 +169,27 @@ class ResearcherBrain(BaseBrain):
                     "top_sources": [], "unique_sources": 0, "unique_domains": 0,
                     "queries_used": [], "claims_verified": False, "evidence": state.model_dump(mode="json")}
         policy = self.research_policy or (ModelPolicy(self.llm_provider) if self.llm_provider else DiscoveryPolicy())
-        staged = isinstance(policy, ModelPolicy) and self.research_reviewer is None
-        input_units = int(os.environ.get('BIGBRAIN_RESEARCH_INPUT_UNITS', '64000'))
+        native = isinstance(policy, ModelPolicy) and self.research_reviewer is None
+        direct = native and self.research_workflow == "direct"
+        staged = native and self.research_workflow == "staged"
+        bounded = direct or staged
+        input_units = int(os.environ.get('BIGBRAIN_RESEARCH_INPUT_UNITS', '128000' if direct else '64000'))
+        output_units = int(os.environ.get('BIGBRAIN_RESEARCH_OUTPUT_UNITS', '8000' if direct else '4000'))
         dossier_bytes = int(os.environ.get('BIGBRAIN_RESEARCH_DOSSIER_BYTES', '48000'))
-        documentary = False
+        documentary = direct
         runtime = ResearchRuntime(self.search, self.page_reader, policy, self.send_progress,
                                   documentary=documentary,
                                   staged=staged,
+                                  direct=direct,
                                   cancelled=lambda: self._cancelled,
-                                  limits=Limits(workflow_input_units=input_units, dossier_bytes=dossier_bytes,
-                                                actions=7 if staged else 12,
-                                                pages=4 if staged else 6,
+                                  limits=Limits(workflow_input_units=input_units, workflow_output_units=output_units,
+                                                dossier_bytes=dossier_bytes,
+                                                actions=7 if bounded else 12,
+                                                pages=6 if direct else 4 if staged else 6,
                                                 reviews=2,
-                                                seconds=120 if staged else 90,
-                                                searches=max(1, min(self.max_searches, 3 if staged else 5)),
-                                                tokens=input_units + 4000 if staged else int(os.environ.get("BIGBRAIN_RESEARCH_TOKENS", "120000"))),
+                                                seconds=120 if bounded else 90,
+                                                searches=max(1, min(self.max_searches, 3 if bounded else 5)),
+                                                tokens=input_units + output_units if bounded else int(os.environ.get("BIGBRAIN_RESEARCH_TOKENS", "120000"))),
                                   reviewer=self.research_reviewer or (ModelReviewer(self.llm_provider) if self.llm_provider else None))
         runtime.correlation = self._event_context()
         session_id = runtime.correlation.get("session_id")

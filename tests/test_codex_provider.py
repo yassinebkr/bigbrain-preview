@@ -353,6 +353,26 @@ async def test_bridge_receives_one_proposal_and_interrupts_before_runtime_execut
 
 
 @pytest.mark.asyncio
+async def test_bridge_collects_usage_queued_after_the_submission(clean_state, monkeypatch):
+    clean_state.notifications = [{'id': 100, 'method': 'item/tool/call', 'params': {
+        'threadId': 'thread-1', 'turnId': 'turn-1', 'callId': 'proposal-1',
+        'tool': 'bigbrain_submit_decision', 'arguments': {'decision_json': '{"ok":true}'}}}]
+    respond = clean_state.respond
+    def late_usage(*args, **kwargs):
+        respond(*args, **kwargs)
+        asyncio.get_running_loop().call_later(.01, clean_state._emit, {
+            'method': 'thread/tokenUsage/updated', 'params': {'threadId': 'thread-1',
+                'tokenUsage': {'total': {'inputTokens': 100, 'outputTokens': 1, 'totalTokens': 101},
+                               'last': {'inputTokens': 100, 'outputTokens': 1}}}})
+    monkeypatch.setattr(clean_state, 'respond', late_usage)
+    answer, usage = await CodexProvider().run_turn([{'role': 'user', 'content': 'Propose'}],
+        action_bridge=True, output_schema={'type': 'object'})
+    assert json.loads(answer) == {'ok': True}
+    assert usage.total_tokens == 101
+    assert any(method == 'turn/interrupt' for method, _ in clean_state.calls)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('arguments,tool', [
     ({'decision_json': 'invalid'}, 'bigbrain_submit_decision'),
     ({'decision_json': '[]'}, 'bigbrain_submit_decision'),

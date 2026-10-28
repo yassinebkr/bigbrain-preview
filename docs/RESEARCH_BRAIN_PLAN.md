@@ -1,6 +1,53 @@
 # ResearchBrain roadmap and implementation history
 
-## Current checkpoint — 27 October 2026
+## Current closure — 29 October 2026
+
+The direct-loop iteration closes with a bounded documentary scope. Targeted
+research, traceable citations and explicit partial results are available.
+Complex comparisons remain experimental; PostgreSQL full coverage and the
+Python oracle reservation remain outstanding. See
+[release scope and limits](RESEARCH_CLOSURE_20261029.md).
+
+## Historical decision checkpoint — 28 October 2026
+
+The historical allocation checkpoint below preceded the closure decision.
+It contains execution diagrams, measurement boundaries, current blockers and the
+decisions required before further implementation. BM25 remains active. Latest
+allocation reaches 20/30 requirements on the frozen automatic control, with a Git
+regression; saved final-state visibility remains 25/30. Passing runtime tests
+leaves documentary acceptance open. Further development awaits user direction.
+
+## Earlier integration checkpoint — 28 October 2026
+
+The direct engine is now the default model-driven documentary worker. Real
+frontend journeys validated Git and Python answers, terminal Atelier updates and
+literal citation anchors. PostgreSQL remains partial; its remaining evidence
+work and the subsequent bounded-complement correction are tracked in
+[the frontend cutover report](RESEARCH_FRONTEND_CUTOVER_20261028.md).
+The evidence-transfer follow-up passed 1,909 backend tests with eight skips.
+Its final frontend SQLite case completed in 11 seconds with all three requested
+aspects supported; PostgreSQL settled partial with no technical diagnostic.
+Runtime-bound literal citations, continuity priority and controlled read-refusal
+feedback are recorded in
+[the evidence-transfer report](RESEARCH_EVIDENCE_TRANSFER_20261028.md).
+The latest follow-up preserves workflow state across real provider usage refresh,
+reads confirmed document-title entries across sibling sections, and gives final
+synthesis its own instruction set. Its PostgreSQL probe completed the runtime
+journey with twelve valid literal anchors and explicit gaps; manual coverage and
+claim-to-citation acceptance remain open.
+The frontend passed 137 tests and its build before this backend-only follow-up. Earlier
+entries below describe their own dated checkpoints. General research reliability
+and PostgreSQL full coverage remain open.
+
+## Historical checkpoint — 27 October 2026
+
+Latest checkpoint: the experimental direct-loop corrections and frozen five-case
+campaign are complete. Three runtime outcomes are complete, two partial; manual
+audit retains a Python coverage omission. All attempts settled within 21 seconds,
+with zero technical failures and 28 checked quotation anchors. This bounded
+iteration is closed with explicit limits. Production worker/chat/Atelier cutover
+remains pending. See [the final assessment](RESEARCH_DIRECT_FIVE_PROBES_20261027.md).
+Earlier checkpoints below retain their historical scope.
 
 27 October follow-up: Gate 4 live acceptance remains open. The first waves exposed
 integration blockers; consolidated corrections and their exact evidence boundary
@@ -19,6 +66,12 @@ with a direct research loop: scoped acquisition, compact passages, synthesis and
 mechanical citation validation. Additional semantic review will be selected by
 explicit risk or request. Source acquisition and orchestration remain owned by
 BigBrain. The detailed replacement contract will precede implementation.
+The current replacement contract is
+[RESEARCH_DIRECT_LOOP_PLAN.md](RESEARCH_DIRECT_LOOP_PLAN.md), on
+`feat/research-direct-loop` from merged checkpoint `3829317`.
+The experimental direct controller, bounded context and source-policy reuse now
+have offline journeys and annotated-corpus coverage. Provider/worker selection
+and live chat/Atelier validation remain the next integration gate.
 
 The approved architecture and closure gates are documented in
 [RESEARCH_CLOSURE_PLAN.md](RESEARCH_CLOSURE_PLAN.md). Gates 1–3 implementation

@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   CheckCircle2, XCircle, Ban, ChevronDown, ChevronUp, FileEdit,
-  FolderOpen, Play, Loader2, ListTodo,
+  FolderOpen, Play, Loader2, ListTodo, CircleAlert,
 } from 'lucide-react';
 import { useAppStore, type RunState } from '@/store/appStore';
 import { runTitle, webEntryPath } from '@/lib/morphable';
 import { useWorkspaceStore } from '@/store/workspaceStore';
 import { pythonEntry, useProjectRunStore } from '@/store/projectRunStore';
+import { isPartialResearch } from '@/lib/research';
 
 export function RunTimelineCard({ run }: { run: RunState }) {
+  const partialResearch = isPartialResearch(run);
   const [open, setOpen] = useState(false);
   const inspect = useWorkspaceStore((s) => s.inspect);
   const onInspect = () => inspect(run);
@@ -36,7 +38,7 @@ export function RunTimelineCard({ run }: { run: RunState }) {
   const hasPreview = !!webEntryPath(run);
   const canRun = run.deliveryStatus !== 'incomplete' && run.runnable;
   const Icon = run.status === 'done' && run.deliveryStatus !== 'incomplete'
-    ? CheckCircle2 : run.status === 'cancelled' ? Ban : XCircle;
+    ? CheckCircle2 : run.status === 'cancelled' ? Ban : partialResearch ? CircleAlert : XCircle;
   const color = run.status === 'done' && run.deliveryStatus !== 'incomplete'
     ? 'var(--success, #34c759)' : 'var(--warning, #ff9500)';
 
@@ -91,7 +93,7 @@ export function RunTimelineCard({ run }: { run: RunState }) {
         >
           <Icon size={13} style={{ color }} className="flex-shrink-0" />
           <span className="truncate flex-1 text-left" style={{ color: 'var(--text-secondary)' }}>
-            {run.deliveryStatus === 'incomplete' ? 'Projet incomplet · non validé' : run.status === 'done' ? 'Run complete' : run.status === 'cancelled' ? 'Run cancelled' : 'Run failed'}
+            {run.deliveryStatus === 'incomplete' ? 'Projet incomplet · non validé' : partialResearch ? 'Recherche incomplète' : run.status === 'done' ? 'Run complete' : run.status === 'cancelled' ? 'Run cancelled' : 'Run failed'}
             {' — '}{runTitle(run)}
           </span>
           {run.files.length > 0 && (
@@ -126,7 +128,7 @@ export function RunTimelineCard({ run }: { run: RunState }) {
         </div>
         {run.error && (
           <div className="mt-2 whitespace-pre-wrap break-words" role="alert"
-            style={{ color: 'var(--warning, #ff9500)' }}>{run.error}</div>
+            style={{ color: 'var(--warning, #ff9500)' }}>{partialResearch ? 'Des points restent à établir. Les preuves et les limites sont conservées dans l’Atelier.' : run.error}</div>
         )}
         {!isTaskboard && <button onClick={onInspect} className="mt-2 text-[12px] inline-flex items-center gap-2 py-1" style={{ color: 'var(--accent-blue)' }}>
           {hasPreview ? <><Play size={12} /> Afficher le résultat</> : 'Voir les détails'}

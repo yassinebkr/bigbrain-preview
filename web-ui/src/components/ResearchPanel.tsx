@@ -43,6 +43,8 @@ export function researchActivity(research: ResearchView) {
   if (activity?.stage === 'research_assessing') return 'Revue indépendante des observations originales';
   if (activity?.stage === 'research_review_evidence') return 'Passages complémentaires consultés par la revue';
   if (activity?.stage === 'research_deciding') return 'Choix de la prochaine action';
+  if (activity?.stage === 'research_direct_decision') return activity.phase === 'finish'
+    ? 'Synthèse des passages et des réserves' : 'Analyse des preuves et choix des lectures';
   if (activity?.stage === 'research_stage' && activity.phase) return workflowStages[activity.phase] || 'Analyse en cours';
   if (research.current_action?.tool === 'batch') return 'Lectures et recherches groupées';
   if (research.current_action?.tool === 'open' && (research.current_action.focus || research.current_action.group_ids?.length)) return 'Lecture ciblée des sections';
@@ -123,6 +125,7 @@ function ResearchWork({ research, live, compact, inspect }: { research: Research
       <p className="mt-2 text-[11px] work-muted">{research.usage.reported_tokens ?? 0} tokens rapportés
         {research.usage.unknown_usage_calls ? ` · usage inconnu pour ${research.usage.unknown_usage_calls} appel(s)` : ''}
         {` · coût ${research.usage.cost_usd == null ? 'inconnu' : `${research.usage.cost_usd.toFixed(4)} $`}`}</p>
+      {research.usage.reported_usage && <p className="mt-1 text-[11px] work-muted">Tokens mesurés · entrée : {research.usage.reported_usage.input_tokens ?? 'inconnue'} · sortie : {research.usage.reported_usage.output_tokens ?? 'inconnue'} · cache : {research.usage.reported_usage.cached_input_tokens ?? 'inconnu'}</p>}
       {!!research.usage.allowance_used && <p className="mt-1 text-[11px] work-muted">Enveloppe consommée : {research.usage.allowance_used}/{research.limits.tokens} · inclut une réserve estimée si l’usage manque</p>}
       {research.usage.stage_budget && <p className="mt-1 text-[11px] work-muted">Entrée : {research.usage.stage_budget.input_units}/{research.usage.stage_budget.input_limit} unités · sortie : {research.usage.stage_budget.output_units}/{research.usage.stage_budget.output_limit} · {research.usage.stage_budget.logical_calls}/{research.usage.stage_budget.call_limit} appels. Les usages absents sont réservés par estimation.</p>}
       {research.usage.stage_budget?.policy === 'monitored' && <p className="mt-1 text-[11px] work-muted">Seuils surveillés · un appel en cours peut les dépasser ; tout appel suivant est alors arrêté.</p>}

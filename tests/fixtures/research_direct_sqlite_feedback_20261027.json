@@ -1,0 +1,124 @@
+{
+  "source": {
+    "id": "s3",
+    "url": "https://www.sqlite.org/lockingv3.html",
+    "status": "read",
+    "discovered_by": "policy-proposed URL; pending actual read",
+    "content_sha256": "fa67031159fc0658b6e3fcfa4e446c140838c75cb813ff9fafd47fdae927936f",
+    "error": "Requested literal focus was not found in the page"
+  },
+  "navigation": {
+    "observation_sha256": "fa67031159fc0658b6e3fcfa4e446c140838c75cb813ff9fafd47fdae927936f",
+    "catalog": [
+      {
+        "id": "g8a84607bbfba4aa760cb",
+        "context": [],
+        "characters": 854
+      },
+      {
+        "id": "g068dd2ba39659e10fdf5",
+        "context": [
+          "6.0 How To Corrupt Your Database Files",
+          "#ext3-barrier-problem"
+        ],
+        "characters": 3278
+      },
+      {
+        "id": "gadcd9e4ea9b89541f762",
+        "context": [
+          "6.0 How To Corrupt Your Database Files"
+        ],
+        "characters": 2166
+      },
+      {
+        "id": "g634552b20a4aa5a9a09c",
+        "context": [
+          "5.0 Writing to a database file",
+          "5.1 Writer starvation"
+        ],
+        "characters": 873
+      },
+      {
+        "id": "g588b1077dd9187af2cb8",
+        "context": [
+          "3.0 Locking"
+        ],
+        "characters": 2096
+      },
+      {
+        "id": "g9c4cd1242db6d3ad100a",
+        "context": [
+          "4.0 The Rollback Journal",
+          "4.1 Dealing with hot journals"
+        ],
+        "characters": 2013
+      },
+      {
+        "id": "g75bec763d8e9ecfc9e83",
+        "context": [
+          "5.0 Writing to a database file"
+        ],
+        "characters": 5595
+      },
+      {
+        "id": "g8d27da6218ef1bbecb32",
+        "context": [
+          "4.0 The Rollback Journal"
+        ],
+        "characters": 2572
+      },
+      {
+        "id": "gb041ecb65ef9da6e4a1f",
+        "context": [
+          "7.0 Transaction Control At The SQL Level"
+        ],
+        "characters": 1792
+      },
+      {
+        "id": "g2519bd42767faaf44281",
+        "context": [
+          "1.0 File Locking And Concurrency In SQLite Version 3"
+        ],
+        "characters": 525
+      },
+      {
+        "id": "ga17f898c089619174c42",
+        "context": [
+          "2.0 Overview"
+        ],
+        "characters": 1470
+      },
+      {
+        "id": "gfb7d9fee9809c97da7ef",
+        "context": [
+          "4.0 The Rollback Journal",
+          "4.2 Deleting stale super-journals"
+        ],
+        "characters": 795
+      }
+    ],
+    "omitted_groups": 0,
+    "order": "question-relevance"
+  },
+  "action": {
+    "schema_version": "1.0",
+    "tool": "open",
+    "question_id": "q1",
+    "rationale": "Lire les restrictions de concurrence en rollback.",
+    "review_reason": null,
+    "remaining_gaps": [],
+    "query": null,
+    "source_id": "s3",
+    "url": null,
+    "focus": "Only one process can have a RESERVED lock",
+    "mode": "http",
+    "refresh": false,
+    "group_ids": [],
+    "observation_sha256": null,
+    "claims": [],
+    "questions": [],
+    "clarification": null,
+    "requests": []
+  },
+  "error": "Requested literal focus was not found in the page"
+}
