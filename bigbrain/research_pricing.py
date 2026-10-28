@@ -31,6 +31,8 @@ def reference_cost(records, *, logical_calls):
         model = ALIASES.get(record.model_id, record.model_id)
         rates = SNAPSHOT["rates_per_million"].get(model)
         if (rates is None or record.total_tokens <= 0 or record.cache_write_input_tokens
+                or not record.input_tokens_known or not record.output_tokens_known
+                or not record.cached_input_tokens_known
                 or not 0 <= record.cached_input_tokens <= record.input_tokens):
             unavailable.append(record.model_id)
             continue

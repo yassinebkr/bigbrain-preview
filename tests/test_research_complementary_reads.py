@@ -100,7 +100,7 @@ async def test_authenticated_same_page_batch_has_bounded_stage_outcomes(monkeypa
         auth.generate_token(name)
     bus = MessageBus(tmp_path/'logs', auth=auth)
     worker = ResearcherBrain('researcher', bus, llm_provider=inference,
-        search_provider=search, page_reader=PageReader())
+        search_provider=search, page_reader=PageReader(), research_workflow="staged")
     done, results, finished = asyncio.Event(), [], []
     async def observe(message):
         if message.type == MessageType.RESULT:

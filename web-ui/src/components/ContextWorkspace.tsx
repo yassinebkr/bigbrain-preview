@@ -8,6 +8,7 @@ import { isBoardRun, nextProjectAttempt, reconcileWorkspace, runTitle, surfaceRe
 import { usePreview } from '@/lib/usePreview';
 import { WorkOverview } from './WorkWidgets';
 import { ResearchPanel } from './ResearchPanel';
+import { isPartialResearch } from '@/lib/research';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from './ui/dropdown-menu';
 
 const labels = { preview: 'Aperçu', activity: 'Vue d’ensemble', files: 'Fichiers', verification: 'Tests', research: 'Recherche' };
@@ -144,11 +145,11 @@ export function ContextWorkspace({ children }: { children: (ownsActivity: boolea
                 <DropdownMenuContent align="start" sideOffset={10} className="atelier-work-menu">
                   <DropdownMenuLabel className="atelier-work-menu-label">Travaux de cette conversation</DropdownMenuLabel>
                   <DropdownMenuRadioGroup value={state.selected?.run.id || ''} onValueChange={(id) => { const surface = runs.find((s) => s.run.id === id); if (surface) inspect(surface.run); }}>
-                    {runs.map(({ run }) => <DropdownMenuRadioItem key={run.id} value={run.id} className="atelier-work-option"><span className="min-w-0"><span className="atelier-work-option-title">{runTitle(run)}</span><span className="atelier-work-option-status" data-status={run.status}>{statuses[run.status]}</span></span></DropdownMenuRadioItem>)}
+                    {runs.map(({ run }) => <DropdownMenuRadioItem key={run.id} value={run.id} className="atelier-work-option"><span className="min-w-0"><span className="atelier-work-option-title">{runTitle(run)}</span><span className="atelier-work-option-status" data-status={run.status}>{isPartialResearch(run) ? 'Incomplet' : statuses[run.status]}</span></span></DropdownMenuRadioItem>)}
                   </DropdownMenuRadioGroup>
                 </DropdownMenuContent>
               </DropdownMenu> : <h2 className="text-[14px] font-medium line-clamp-2" title={state.selected?.run.description}>{state.selected ? (state.selected.run.projectName || state.selected.run.projectPath ? runTitle(state.selected.run) : Object.keys(state.selected.run.researches || {}).length ? 'Recherche documentaire' : 'Travail de la conversation') : 'Résultat indisponible'}</h2>}
-              {state.selected && <p className="context-status text-[11px] mt-1 flex items-center gap-2" data-status={state.selected.run.status}>{state.selected.run.status === 'running' && !state.selected.run.awaitingApproval && <span className="work-pulse" aria-hidden="true" />}{state.selected.run.deliveryStatus === 'incomplete' ? 'Incomplet · non validé' : state.selected.run.awaitingApproval ? 'Ton accord est nécessaire' : statuses[state.selected.run.status]}</p>}
+              {state.selected && <p className="context-status text-[11px] mt-1 flex items-center gap-2" data-status={state.selected.run.status}>{state.selected.run.status === 'running' && !state.selected.run.awaitingApproval && <span className="work-pulse" aria-hidden="true" />}{state.selected.run.deliveryStatus === 'incomplete' ? 'Incomplet · non validé' : isPartialResearch(state.selected.run) ? 'Incomplet' : state.selected.run.awaitingApproval ? 'Ton accord est nécessaire' : statuses[state.selected.run.status]}</p>}
             </div>
             <button className="p-1" aria-label={expanded ? 'Redonner la place principale au chat' : 'Donner la place principale à cette activité'} onClick={() => change({ mode: expanded ? 'workspace' : 'expanded' })}>{expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
             <button className="p-1" aria-label="Fermer la surface" onClick={close}><X size={16} /></button>

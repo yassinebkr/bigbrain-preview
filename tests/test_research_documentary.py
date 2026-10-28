@@ -66,7 +66,7 @@ async def test_explicit_review_requirement_is_retained_and_runs_review():
 
 
 @pytest.mark.asyncio
-async def test_default_worker_delivers_a_cited_result_after_independent_control(tmp_path, monkeypatch):
+async def test_staged_worker_delivers_a_cited_result_after_independent_control(tmp_path, monkeypatch):
     monkeypatch.delenv('BIGBRAIN_RESEARCH_INPUT_UNITS', raising=False)
     monkeypatch.delenv('BIGBRAIN_RESEARCH_DOSSIER_BYTES', raising=False)
     import json
@@ -81,7 +81,7 @@ async def test_default_worker_delivers_a_cited_result_after_independent_control(
         'text':'The documented API returns an integer.'}
     bus = MessageBus(tmp_path/'bus')
     worker = ResearcherBrain('researcher', bus, llm_provider=inference,
-        search_provider=AsyncMock(), page_reader=reader)
+        search_provider=AsyncMock(), page_reader=reader, research_workflow="staged")
     worker.send_progress = AsyncMock()
     try:
         result = await worker._full_research('What does the documented API return?', {})

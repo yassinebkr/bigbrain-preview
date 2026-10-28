@@ -55,6 +55,9 @@ class UsageRecord:
     cost_usd: Optional[float] = None
     role: Optional[str] = None
     timestamp: float = field(default_factory=time.time)
+    input_tokens_known: bool = True
+    output_tokens_known: bool = True
+    cached_input_tokens_known: bool = True
 
     @classmethod
     def from_openai_usage(cls, usage: dict, model_id: str, provider: str,
@@ -78,8 +81,12 @@ class UsageRecord:
             output_tokens=output_tokens,
             reasoning_output_tokens=int(completion_details.get("reasoning_tokens") or 0),
             total_tokens=int(usage.get("total_tokens") or (input_tokens + output_tokens)),
+            input_tokens_known=usage.get('prompt_tokens') is not None,
+            output_tokens_known=usage.get('completion_tokens') is not None,
+            cached_input_tokens_known=prompt_details.get('cached_tokens') is not None,
             # Subscription credits are not priced as API-key tokens.
-            cost_usd=None if provider == 'codex' else estimate_cost_usd(model_id, input_tokens, output_tokens),
+            cost_usd=None if provider == 'codex' or usage.get('prompt_tokens') is None
+                or usage.get('completion_tokens') is None else estimate_cost_usd(model_id, input_tokens, output_tokens),
         )
 
     @property

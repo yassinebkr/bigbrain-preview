@@ -87,7 +87,7 @@ async def test_authenticated_documentary_journey(monkeypatch, tmp_path, case):
         auth.generate_token(identity)
     bus = MessageBus(tmp_path/'logs', auth=auth)
     worker = ResearcherBrain('researcher', bus, llm_provider=inference,
-        search_provider=AsyncMock(), page_reader=PageReader(browser=renderer))
+        search_provider=AsyncMock(), page_reader=PageReader(browser=renderer), research_workflow="staged")
     done, results, finished = asyncio.Event(), [], []
     async def observe(frame):
         if frame.type == MessageType.RESULT:

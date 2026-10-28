@@ -1269,6 +1269,14 @@ Type 'quit' or 'exit' to stop."""
         workspace_hint = None
         raw_outputs = []  # (kind, content) tuples
         research_messages = []
+        from ..bus.delivery import public_delivery, DeliveryUnavailable
+
+        def delivery(data):
+            try:
+                return public_delivery(data, session_id=result.get('session_id'))
+            except DeliveryUnavailable as exc:
+                logger.error('Public result delivery failed: %s', exc)
+                return 'La réponse du travail terminé n’a pas pu être chargée. Les références du résultat sont conservées ; une vérification est nécessaire.'
         
         if success:
             if "results" in result and isinstance(result["results"], dict):
@@ -1276,7 +1284,10 @@ Type 'quit' or 'exit' to stop."""
                     if not isinstance(sub_result, dict):
                         continue
                     data = sub_result.get("data", sub_result)
-                    if data.get("summary"):
+                    public = delivery(data)
+                    if public:
+                        raw_outputs.append(('public', public))
+                    elif data.get("summary"):
                         raw_outputs.append(("research", data["summary"]))
                         if data.get('research_status') == 'completed' and data.get('public_message'):
                             research_messages.append(data['public_message'])
@@ -1298,6 +1309,8 @@ Type 'quit' or 'exit' to stop."""
                     elif data.get("files_written"):
                         files = data.get("files_written", [])
                         raw_outputs.append(("files", f"Project files written: {', '.join(files)}"))
+            elif delivery(result):
+                raw_outputs.append(('public', delivery(result)))
             elif "summary" in result:
                 raw_outputs.append(("research", result["summary"]))
                 if result.get('research_status') == 'completed' and result.get('public_message'):
@@ -1330,8 +1343,13 @@ Type 'quit' or 'exit' to stop."""
             # The worker has already assembled cited findings and qualifications.
             # Carry that delivery intact through the chat boundary.
             notification = '\n\n'.join(research_messages)
+        elif success and raw_outputs and all(kind == 'public' for kind, _ in raw_outputs):
+            notification = '\n\n'.join(content for _, content in raw_outputs)
         elif success and raw_outputs:
-            notification = await self._summarize_result(raw_outputs, session_id=result.get("session_id"))
+            public_outputs = [content for kind, content in raw_outputs if kind == 'public']
+            context_outputs = [(kind, content) for kind, content in raw_outputs if kind != 'public']
+            contextual = await self._summarize_result(context_outputs, session_id=result.get("session_id"))
+            notification = '\n\n'.join([*public_outputs, contextual])
         elif success:
             notification = "✅ Done, but no output was produced."
         else:

@@ -18,3 +18,13 @@ def test_unknown_usage_and_aliases_keep_reference_coverage_incomplete():
     assert result["measured_subtotal_usd"] == 0
     assert not result["complete"]
     assert result["unavailable_models"] == ["unmapped"]
+
+
+def test_absent_cache_measurement_leaves_reference_cost_unpriced():
+    record = UsageRecord.from_openai_usage({'prompt_tokens': 100, 'completion_tokens': 10},
+                                          model_id='gpt-6-luna', provider='codex')
+    assert record.input_tokens_known and record.output_tokens_known
+    assert not record.cached_input_tokens_known
+    result = reference_cost([record], logical_calls=1)
+    assert not result['complete']
+    assert result['priced_records'] == 0

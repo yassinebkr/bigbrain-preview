@@ -1,0 +1,17 @@
+{
+  "revision": "2026-10-27-direct-contract-corrections",
+  "model": "gpt-6.1-terra",
+  "effort": "medium",
+  "transport": "codex_subscription",
+  "boundary": "isolated_direct_runtime_native_adapter",
+  "limits": {"seconds": 120, "calls": 7, "pages": 4, "searches": 3, "input_units_monitored": 64000, "output_units": 4000},
+  "attempts_per_case": 1,
+  "automatic_reruns": 0,
+  "cases": [
+    {"id": "mdn-regression", "question": "Using the MDN JavaScript Fetch reference, explain whether fetch rejects its promise for HTTP 404, how Response.ok relates to HTTP status, and how AbortController cancellation is reported. Answer in French with read passages.", "critical": ["HTTP 404 alone does not reject fetch", "ok is true for 200 through 299", "AbortError cancellation with response-body qualification"]},
+    {"id": "sqlite-regression", "question": "From official SQLite documentation, compare rollback DELETE journaling with WAL for concurrent readers and writers, simultaneous writers, and use across a network filesystem. Answer in French with read citations and qualifications.", "critical": ["WAL reader and writer overlap", "one writer", "rollback locking qualification", "WAL shared-memory network constraint and rollback network risks"]},
+    {"id": "python-versioned", "question": "Using official Python 3.13 and 3.7 documentation, establish the signature and behavior of pathlib.Path.unlink, the errors ignored by missing_ok=True, and when the parameter was introduced. Answer in French and cite read passages.", "critical": ["3.7 has no missing_ok parameter", "introduced in 3.8", "FileNotFoundError-only exception", "other errors remain possible"]},
+    {"id": "klipper-save-config", "question": "Explain SAVE_CONFIG from official Klipper documentation: its role following calibration, the configuration changes it saves, and its restart effect. Describe commands without connecting to a printer. Answer in French with read citations.", "critical": ["calibration context", "main configuration persistence", "host restart", "documentary-only activity"]},
+    {"id": "git-stash", "question": "Consult only the official Git documentation to explain git stash push -u: what happens to tracked changes and untracked files, whether ignored files are included, how -a differs, and whether a stash entry is retained if git stash pop encounters conflicts. Answer in French with passages actually read. Execute no Git command and modify no repository.", "critical": ["tracked working tree and index changes", "-u includes untracked files", "ignored files require -a", "pop conflicts retain the stash entry"]}
+  ]
+}

@@ -400,6 +400,23 @@ def test_missing_original_artifact_invalidates_retained_citations():
     assert not state.passages
 
 
+def test_archived_captures_survive_age_and_explicit_freshness_still_expires():
+    from bigbrain.research_acquisition import artifact
+    raw = artifact(b'Captured reference', name='archived-reference.html')
+    blocks = artifact(b'{"blocks": []}', name='archived-blocks.json')
+    state = ResearchState(objective='Documented snapshot',
+        questions=[Question(id='q1', text='Documented behavior', evidence_needed='Captured reference')],
+        sources=[Source(id='s1', url='https://reference.test/versioned', discovered_by='query',
+            status='read', content_sha256=raw['sha256'], consulted_at='2000-01-01T00:00:00+00:00',
+            acquisition={'raw_artifact': raw, 'blocks_artifact': blocks})],
+        passages=[Passage(id='p1', source_id='s1', text='Captured reference', observation_sha256=raw['sha256'])])
+    assert prepare_continuation(state) == set()
+    assert state.passages[0].text == 'Captured reference'
+    assert state.sources[0].consulted_at == '2000-01-01T00:00:00+00:00'
+    assert prepare_continuation(state, max_age_seconds=300) == {'s1'}
+    assert not state.passages
+
+
 @pytest.mark.asyncio
 async def test_continuations_cannot_grow_source_catalogue_beyond_client_contract():
     from bigbrain.research import ResearchActionRejected, research_tools

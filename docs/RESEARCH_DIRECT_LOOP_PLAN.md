@@ -3,6 +3,31 @@
 Date: 27 October 2026. Branch: `feat/research-direct-loop`.
 Baseline: `38293175c03ccece92bab59a5137ebf7ff48b9e8`.
 
+## Current decision boundary
+
+The direct loop is active, and the latest allocation changes have offline
+evidence. Reliable selection remains open. Use
+[the release scope and limits](RESEARCH_CLOSURE_20261029.md) for the
+present status. Later sections preserve the original plan and dated checkpoints.
+The iteration closes with targeted documentary research and explicit partial
+outcomes. Complex comparisons remain experimental. Further architecture work
+starts with task focus and collaboration decisions.
+
+## Implementation checkpoint — 28 October 2026
+
+Follow-up: [evidence transfer](RESEARCH_EVIDENCE_TRANSFER_20261028.md) now includes
+runtime-bound citations, a 1,909-pass backend checkpoint and final frontend
+SQLite/PostgreSQL outcomes. PostgreSQL full coverage remains open.
+
+The production model-driven documentary worker now selects the direct loop.
+Authenticated delivery, continuation and terminal Atelier presentation have real
+frontend evidence. Git and Python completed; PostgreSQL still has coverage gaps.
+Source expiry, native usage ordering and premature partial synthesis corrections
+are documented with their measured limits in
+[the frontend cutover report](RESEARCH_FRONTEND_CUTOVER_20261028.md).
+The deployment and future-tense descriptions below preserve the original design
+decision; this checkpoint records its current implementation boundary.
+
 ## Decision and evidence
 
 The user selected a reduced architecture with acquisition and orchestration owned
@@ -196,9 +221,57 @@ Paid/live probes wait for offline gates and scoped authorization. A failed froze
 campaign produces one consolidated diagnosis against its traces. Further changes
 receive a revised contract when they alter acceptance, budget or guarantees.
 
-Current status: phase 1 started. The contract and migration ownership are written.
-Blocked-report inputs carry an explicit revision and preserve the original live
-failure history. Four offline regressions pass (0.26 seconds), checking visible
-source identity and actual 403 receipts without passages or claims. The next
-implementation batch is the compact working set and deterministic controller.
-Runtime replacement and default cutover are pending.
+## Implementation checkpoint — 27 October 2026
+
+The contract, corrected blocked-report inputs and deterministic experimental
+controller are implemented on `feat/research-direct-loop`. The checkpoint merge
+`3829317` passed GitHub CI for Python 3.12, Python 3.13 and frontend.
+
+The experimental core consists of:
+
+* `research_direct_context.py`: immutable capture-bound passage receipts, lexical
+  candidate ranking, UTF-8-bounded packets, explicit omissions, literal character
+  windows and local archives surviving working-set eviction.
+* `research_direct_controller.py`: separate input/output accounting, independently
+  known usage dimensions, acquisition ceilings, finish-only admission and terminal
+  states. Forecasts include native retained context at the future adapter boundary.
+* `research_direct_result.py`: exact receipt/quote checks and local reuse of
+  `apply_assessment` for source roles, provenance, copied origins and proof standards.
+  Semantic inputs stay attributed to the synthesis model; independent review has
+  a separate runtime-owned status.
+* `research_direct.py`: finite acquire/select/finish/clarify execution over the
+  existing acquisition runtime. It reserves synthesis time, supports local range
+  selection without another network read, and preserves terminal diagnostics for
+  malformed output, cancelled calls, timeouts and unsupported monetary caps.
+
+Scripted offline adapters exercise the actual acquisition/runtime boundary. A
+simple fixture completes with one read and two admitted model calls. These counts
+describe scripted mechanics; live reasoning, native usage and cost measurements
+remain pending. The seven manually annotated corpus cases retain their required
+passages and qualifications within 12,000-byte working sets. Every omitted range
+remains explicitly represented by its passage catalog or window metadata.
+
+Provider integration and production cutover remain pending. The modules have no
+default worker selector yet; the existing researcher continues to use its previous
+workflow. Phase 3 must bind native inference forecasts and usage capture, persist
+the direct outcome through the worker, expose the actual review status in delivery,
+and exercise the complete chat/Atelier path. Additional semantic review currently
+keeps required cases partial until that adapter has genuinely completed.
+
+Source acquisition continues to use the existing extractor and security boundary.
+The compact working set bounds selected observations and reports their omissions.
+Source-wide extraction recall and native-model selection remain live acceptance
+questions. Runtime replacement and default cutover are pending.
+Current implementation evidence and remaining integration work are recorded in
+[RESEARCH_DIRECT_LOOP_OFFLINE.md](RESEARCH_DIRECT_LOOP_OFFLINE.md).
+
+Two authorized native probes now have evidence in
+[RESEARCH_DIRECT_LOOP_LIVE_20261027.md](RESEARCH_DIRECT_LOOP_LIVE_20261027.md).
+MDN base completed; SQLite base failed final source-assessment validation after
+two missing-focus reads. Provider integration is experimental. Subsequent packet
+feedback/navigation and source-assessment corrections passed seven regressions.
+The frozen five-probe assessment closes this experimental iteration with three
+runtime-complete outcomes, two partial outcomes and zero technical failures:
+[RESEARCH_DIRECT_FIVE_PROBES_20261027.md](RESEARCH_DIRECT_FIVE_PROBES_20261027.md).
+Manual coverage qualifications and unknown native usage remain explicit.
+Default worker/chat/Atelier cutover remains pending.

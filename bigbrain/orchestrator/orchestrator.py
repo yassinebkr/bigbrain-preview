@@ -2698,10 +2698,19 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                 if isinstance(result, dict) and result.get('file_content') is not None:
                     continue
                 if isinstance(result, dict):
+                    from ..bus.delivery import archive_delivery
+                    try:
+                        delivery = archive_delivery(result, task_id=plan.id,
+                            subtask_id=subtask.id,
+                            session_id=plan.original_task.payload.get('session_id'))
+                    except (OSError, ValueError, TypeError) as exc:
+                        logger.warning('Compaction retained the worker result because archival failed: %s', exc)
+                        continue
                     summary = {
                         "success": result.get("success", False),
                         "status": "completed",
-                        "type": subtask.payload.get("type", "unknown")
+                        "type": subtask.payload.get("type", "unknown"),
+                        "delivery": delivery,
                     }
                     
                     # Preserve key outputs but truncate verbose content

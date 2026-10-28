@@ -85,7 +85,7 @@ def contextual_rerank(question, sections, shortlist=8):
     return sorted(rescored, key=lambda item: (-item[1], item[0])) + initial[shortlist:]
 
 
-def select(question, blocks, observation, *, limit=6000, requested=(), preferred_ids=None, ranking="bm25"):
+def select(question, blocks, observation, *, limit=6000, requested=(), preferred_ids=None, ranking="bm25", coverage=False):
     """Select curated section blocks or explicitly requested original sections."""
     sections = groups(blocks,observation)
     all_characters = len("\n".join(b["text"] for g in sections for b in g["blocks"]))
@@ -97,21 +97,31 @@ def select(question, blocks, observation, *, limit=6000, requested=(), preferred
     if ranking not in {"bm25", "contextual"}:
         raise ValueError("Unknown section ranking method")
     ranked = contextual_rerank(question,candidates) if ranking == "contextual" else rank(question,candidates)
+    if coverage and ranking == 'bm25':
+        # Acquisition and prompt allocation share requirement queues. Reading
+        # ranks whole sections; prompt allocation scores their substantive blocks.
+        from .research_allocation import candidate_queues
+        queue = candidate_queues([{'text': question}], candidates, granularity='section')[0]
+        ranked = [(i, 1) for i in queue]
     chosen, oversized = set(), []
     method = "local-contextual-shortlist" if ranking == "contextual" else "local-bm25-sections"
+    if coverage and ranking == 'bm25':
+        method = 'local-requirement-sections'
     if requested:
         known = {g["id"]:i for i,g in enumerate(sections)}
         if any(gid not in known for gid in requested):
             raise ValueError("Requested section does not belong to this observation")
         chosen = {known[gid] for gid in requested}
         method = "explicit-section-ids"
-    elif candidate_size <= min(limit,2200):
+    elif candidate_size <= (limit if coverage else min(limit,2200)):
         chosen = {i for i,g in enumerate(candidates) if g["blocks"]}
         method = "complete-small-observation"
     else:
         # Adjacent sections supply local conditions and scope. Complete sections
         # remain atomic even if a shorter excerpt would obtain a higher score.
-        anchors = [i for i,score in ranked if score > 0][:2]
+        anchors = [i for i,score in ranked if score > 0]
+        if not coverage:
+            anchors = anchors[:2]
         for anchor in anchors:
             package = {i for i in range(max(0,anchor-1),min(len(sections),anchor+2)) if candidates[i]["blocks"]}
             tentative = chosen | package

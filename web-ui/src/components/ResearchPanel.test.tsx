@@ -1,9 +1,10 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { researchUpdate, publicLink, researchElapsed } from '@/lib/research';
+import { researchUpdate, publicLink, researchElapsed, isPartialResearch } from '@/lib/research';
 import { surfaceRegistry } from '@/lib/morphable';
 import { useAppStore, type RunState } from '@/store/appStore';
 import { ResearchActivity, ResearchPanel } from './ResearchPanel';
+import { RunTimelineCard } from './RunTimelineCard';
 
 function snapshot(overrides: Record<string, unknown> = {}) {
   return { schema_version: '1.0', research_id: 'research-1', revision: 1, objective: 'Question réelle', status: 'running',
@@ -23,6 +24,40 @@ beforeEach(() => useAppStore.setState({ activeSessionKey: 's', activeRun: null, 
   runsById: {}, completedRuns: [], sessionProposals: {} }));
 
 describe('durable research view', () => {
+  it('keeps unknown usage dimensions and terminal delivery diagnostics through restore', () => {
+    const data = researchUpdate(snapshot({ status: 'completed', execution_outcome: 'complete',
+      diagnostic: { code: 'direct_delivery_failure', delivery_error: {
+        stage: 'research_finished', type: 'ConnectionError', message: 'Disconnected frontend' } },
+      usage: { reported_usage: { input_tokens: null, output_tokens: 0, cached_input_tokens: null } } }))!;
+    const restored = researchUpdate(JSON.parse(JSON.stringify(data)))!;
+    expect(restored.diagnostic?.delivery_error?.type).toBe('ConnectionError');
+    expect(restored.usage.reported_usage?.input_tokens).toBeNull();
+    const html = renderToStaticMarkup(<ResearchPanel run={{ ...run, status: 'done', researches: { step: restored } }} />);
+    expect(html).toContain('entrée : inconnue');
+    expect(html).toContain('sortie : 0');
+    expect(html).toContain('cache : inconnu');
+  });
+  it('labels documentary gaps as incomplete and retains technical failures', () => {
+    const partial = researchUpdate(snapshot({ status: 'partial', execution_outcome: 'partial' }))!;
+    const incomplete: RunState = { ...run, status: 'failed', error: 'Coverage remains incomplete', researches: { step: partial } };
+    expect(isPartialResearch(incomplete)).toBe(true);
+    const html = renderToStaticMarkup(<RunTimelineCard run={incomplete} />);
+    expect(html).toContain('Recherche incomplète');
+    expect(html).not.toContain('Run failed');
+    const failed = researchUpdate(snapshot({ status: 'partial', execution_outcome: 'failed',
+      diagnostic: { code: 'direct_failure', message: 'Invalid citation' } }))!;
+    expect(isPartialResearch({ ...incomplete, researches: { step: failed } })).toBe(false);
+    expect(isPartialResearch({ ...incomplete, projectPath: 'sandbox/application' })).toBe(false);
+  });
+  it('retains direct terminal diagnostics and labels live synthesis', () => {
+    const running = researchUpdate(snapshot({ workflow: { version: 'direct-1', stage: 'finish' },
+      activity: { stage: 'research_direct_decision', phase: 'finish' } }))!;
+    expect(renderToStaticMarkup(<ResearchActivity research={running} live />)).toContain('Synthèse des passages et des réserves');
+    const failed = researchUpdate(snapshot({ revision: 2, status: 'partial', execution_outcome: 'failed',
+      diagnostic: { code: 'direct_failure', type: 'ValueError', message: 'Observed handle rejected' } }), running)!;
+    expect(failed.status).toBe('partial');
+    expect(failed.diagnostic?.message).toBe('Observed handle rejected');
+  });
   it('shows the controlled workflow stage and distinguishes transport from model errors', () => {
     const running = researchUpdate(snapshot({ workflow: { version: '1.0', stage: 'control' },
       activity: { stage: 'research_stage', phase: 'control' } }))!;

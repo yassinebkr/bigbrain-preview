@@ -26,7 +26,9 @@ def research_message(state):
             and passages[e.passage_id].source_id in sources))
         if not urls:
             continue
-        label = "Documenté · sans revue indépendante" if documentary and claim.status == "unverified" else "Établi" if claim.status == "supported" else "Réfuté"
+        label = "Non établi" if claim.status == "unverified" else "Établi" if claim.status == "supported" else "Réfuté"
+        if claim.reasoning == 'qualified_inference':
+            label = 'Inférence qualifiée' if claim.status == 'supported' else 'Inférence non établie'
         line = f"{label} : {claim.text}\n" + " · ".join(f"[Source]({url})" for url in urls[:2])
         if claim.limitations:
             line += '\nRéserves : ' + '; '.join(claim.limitations)

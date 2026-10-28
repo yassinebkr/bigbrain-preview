@@ -774,6 +774,11 @@ class BigBrainSystem:
             # Close message bus
             if self.bus:
                 await self.bus.close()
+
+            # Native inference owns a subprocess shared by role providers. Drain
+            # its pipes while the event loop is still available during shutdown.
+            from .llm.codex_provider import close_codex_app_server
+            await close_codex_app_server()
             
             print("✅ BigBrain system stopped cleanly.")
         

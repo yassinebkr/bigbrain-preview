@@ -24,7 +24,7 @@ const snapshot = z.object({
   research_id: z.string().min(1).max(80),
   attempt_id: z.string().nullable().optional(),
   answer_status: z.enum(['unassessed', 'partial', 'complete']).optional(),
-  execution_outcome: z.enum(['running', 'complete', 'partial', 'blocked', 'cancelled', 'interrupted']).optional(),
+  execution_outcome: z.enum(['running', 'complete', 'partial', 'blocked', 'cancelled', 'interrupted', 'failed', 'clarification']).optional(),
   workflow: z.object({ version: z.string().optional(), stage: z.string().optional(),
     complement_used: z.boolean().optional(), outcome: z.string().optional() }).optional(),
   original_request_coverage: z.object({ complete: z.boolean().optional(), gaps: z.array(z.string()).optional() }).optional(),
@@ -33,7 +33,11 @@ const snapshot = z.object({
   schema_version: z.literal('1.0'), revision: z.number().int().nonnegative(), objective: z.string(),
   status: z.enum(['running', 'completed', 'partial', 'unavailable', 'clarification', 'cancelled']),
   reason: z.string().nullable(), assessment_error: z.string().nullable(),
-  diagnostic: z.object({ contract: z.string(), code: z.string(), errors: z.array(z.object({ type: z.string(), field: z.string() })) }).nullable().optional(),
+  diagnostic: z.object({ contract: z.string().optional(), code: z.string(),
+    type: z.string().optional(), message: z.string().optional(),
+    delivery_error: z.object({ stage: z.string(), type: z.string(), message: z.string() }).optional(),
+    checkpoint_error: z.object({ type: z.string(), message: z.string() }).optional(),
+    errors: z.array(z.object({ type: z.string(), field: z.string() })).optional() }).nullable().optional(),
   questions: z.array(z.object({ id: z.string(), text: z.string(), evidence_needed: z.string(), freshness: z.string() })).max(6),
   sources: z.array(z.object({ id: z.string(), url: z.string(), title: z.string(), status: z.string(),
     final_url: z.string().nullable(), consulted_at: z.string().nullable(), source_kind: z.string(),
@@ -46,12 +50,15 @@ const snapshot = z.object({
     mode: z.string().optional(), request_index: z.number().optional(), resource_type: z.string().optional() }).nullable().optional(),
   claims: z.array(z.object({ id: z.string(), question_id: z.string(), text: z.string(),
     status: z.enum(['supported', 'contested', 'unverified', 'refuted']), basis: z.string(),
-    evidence: z.array(evidence), limitations: z.array(z.string()), scope: z.string() })).max(12),
+    evidence: z.array(evidence), limitations: z.array(z.string()), scope: z.string(),
+    reasoning: z.enum(['direct', 'qualified_inference']).optional() })).max(12),
   assessments: z.array(z.object({ claim_id: z.string(), relevant: z.boolean(), rationale: z.string(),
     citations: z.array(citation), origin_groups: z.record(z.string(), z.string()), source_assessments: z.array(sourceAssessment) })).optional(),
   usage: z.object({ model_calls: z.number().optional(), unknown_usage_calls: z.number().optional(),
     reported_tokens: z.number().optional(), cached_input_tokens: z.number().optional(),
     allowance_used: z.number().optional(), cost_usd: z.number().nullable().optional(),
+    reported_usage: z.object({ input_tokens: z.number().nullable(), output_tokens: z.number().nullable(),
+      cached_input_tokens: z.number().nullable() }).optional(),
     stage_budget: z.object({ input_units: z.number(), output_units: z.number(), logical_calls: z.number(),
       input_limit: z.number(), output_limit: z.number(), call_limit: z.number(),
       policy: z.string().optional(), threshold_exceeded: z.boolean().optional(),
@@ -72,6 +79,17 @@ export type ResearchView = Omit<Snapshot, 'passages' | 'assessments'> & {
   passages: NonNullable<Snapshot['passages']>; assessments: NonNullable<Snapshot['assessments']>;
   history: z.infer<typeof historyItem>[];
 };
+
+/** Distinguish bounded documentary gaps from transport or contract failures. */
+export function isPartialResearch(run: { status: string; projectPath?: string; files: unknown[];
+  researches?: Record<string, Pick<ResearchView, 'status' | 'execution_outcome' | 'diagnostic'>> }) {
+  if (run.status !== 'failed' || run.projectPath || run.files.length) return false;
+  const records = Object.values(run.researches || {});
+  const bounded = new Set(['direct_budget', 'budget', 'budget_exhausted', 'deadline', 'time_budget_exhausted']);
+  return records.some((record) => record.status === 'partial') && records.every((record) =>
+    ['partial', 'completed'].includes(record.status) && record.execution_outcome !== 'failed'
+    && (!record.diagnostic || bounded.has(record.diagnostic.code)));
+}
 
 const reviewEvidence = z.object({ stage: z.literal('research_review_evidence'), passages: z.array(passage) });
 

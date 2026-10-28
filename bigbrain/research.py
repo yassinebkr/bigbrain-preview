@@ -119,6 +119,7 @@ class Claim(Contract):
     evidence: list[EvidenceLink] = Field(default_factory=list)
     scope: Literal["general", "attributed_experience"] = "general"
     limitations: list[str] = Field(default_factory=list)
+    reasoning: Literal['direct', 'qualified_inference'] = 'direct'
 
 
 class CollectionRequest(Contract):
@@ -130,6 +131,8 @@ class CollectionRequest(Contract):
     source_id: str | None = None
     url: str | None = Field(default=None, max_length=2000)
     focus: str | None = Field(default=None, min_length=2, max_length=120)
+    reading_question: str | None = Field(default=None, min_length=5, max_length=500,
+        description="Retrieval question written in the source text's language, including required qualifications; independent of the answer language.")
     mode: Literal["http", "browser"] = "http"
     refresh: bool = False
     group_ids: list[str] = Field(default_factory=list, max_length=8)
@@ -147,6 +150,8 @@ class Action(Contract):
     source_id: str | None = None
     url: str | None = Field(default=None, max_length=2000)
     focus: str | None = Field(default=None, min_length=2, max_length=120)
+    reading_question: str | None = Field(default=None, min_length=5, max_length=500,
+        description="Retrieval question written in the source text's language, including required qualifications; independent of the answer language.")
     mode: Literal["http", "browser"] = "http"
     refresh: bool = False
     group_ids: list[str] = Field(default_factory=list, max_length=8)
@@ -179,6 +184,8 @@ class Action(Contract):
             raise ValueError("Only visit may propose a URL")
         if self.focus and self.tool not in {"open", "visit"}:
             raise ValueError("Only open may specify a literal text focus")
+        if self.reading_question and self.tool not in {"open", "visit"}:
+            raise ValueError("A reading question belongs to a public read")
         if self.tool != "open" and (self.mode != "http" or self.refresh):
             raise ValueError("Only open may request rendering or refresh")
         if self.group_ids and (self.tool != "open" or not self.observation_sha256 or self.focus):
@@ -230,7 +237,7 @@ class ResearchState(Contract):
     phase: Literal["collecting", "closing", "reviewing", "settled"] = "collecting"
     workflow: dict[str, Any] = Field(default_factory=dict)
     dossier: dict[str, Any] | None = None
-    execution_outcome: Literal["running", "complete", "partial", "blocked", "cancelled", "interrupted"] = "running"
+    execution_outcome: Literal["running", "complete", "partial", "blocked", "cancelled", "interrupted", "failed", "clarification"] = "running"
     original_request_coverage: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -243,6 +250,7 @@ class Limits(Contract):
     seconds: float = Field(default=90, gt=0, le=180)
     tokens: int = Field(default=60000, ge=1000, le=200000)
     workflow_input_units: int = Field(default=32000, ge=8000, le=128000)
+    workflow_output_units: int = Field(default=4000, ge=1600, le=8000)
     dossier_bytes: int = Field(default=24000, ge=6000, le=72000)
     cost_usd: float | None = Field(default=None, gt=0)
     parallelism: int = Field(default=3, ge=1, le=4)
@@ -560,13 +568,14 @@ class DiscoveryPolicy:
 
 
 class ResearchRuntime:
-    def __init__(self, search, reader, policy, progress, cancelled=lambda: False, limits=None, reviewer=None, documentary=False, staged=False):
+    def __init__(self, search, reader, policy, progress, cancelled=lambda: False, limits=None, reviewer=None, documentary=False, staged=False, direct=False):
         self.search, self.reader, self.policy = search, reader, policy
         self.progress, self.cancelled = progress, cancelled
         self.limits = limits or Limits()
         self.reviewer = reviewer
         self.documentary = documentary
         self.staged = staged
+        self.direct = direct
         self.state = None
         self.current_action = None
         self.revision = 0
@@ -650,7 +659,7 @@ class ResearchRuntime:
                         "output_tokens": sum(r.output_tokens for r in records),
                         "cached_input_tokens": sum(r.cached_input_tokens for r in records),
                         "reported_tokens": sum(r.total_tokens for r in records),
-                        "usage_known": any(r.total_tokens > 0 for r in records),
+                        "usage_known": bool(records) and all(r.input_tokens_known and r.output_tokens_known for r in records),
                         "cost_usd": sum(r.cost_usd for r in records) if records and all(r.cost_usd is not None for r in records) else None,
                         "reserved_units": getattr(actor, "last_reserved_tokens", 0)})
                     self.call_phases[-1]["request"] = dict(getattr(actor, "last_request_metrics", {}))
@@ -658,11 +667,13 @@ class ResearchRuntime:
                         sum(r.total_tokens for r in records) - getattr(actor, "last_reserved_tokens", 0))
                     if getattr(actor, "last_budget_decision", None):
                         self.call_phases[-1]["admission"] = dict(actor.last_budget_decision)
-                if called and not any(r.total_tokens > 0 for r in records):
+                if called and (not records or not all(r.input_tokens_known and r.output_tokens_known for r in records)):
                     self.unknown_calls += 1
                     self.charged_tokens += getattr(actor, "last_reserved_tokens", 0)
                 self.charged_tokens += sum(r.total_tokens for r in records)
-                self.state.usage = {
+                # Refresh provider counters while retaining workflow evidence,
+                # candidate references and bounded-complement admission state.
+                self.state.usage.update({
                     "calls_by_phase": self.call_phases,
                     "model_calls": self.model_calls, "unknown_usage_calls": self.unknown_calls,
                     "reported_tokens": sum(r.total_tokens for r in self.usage_records),
@@ -672,7 +683,7 @@ class ResearchRuntime:
                     "cached_input_tokens": sum(r.cached_input_tokens for r in self.usage_records),
                     "allowance_used": self.charged_tokens,
                     "cost_usd": sum(r.cost_usd for r in self.usage_records) if self.usage_records
-                        and not self.unknown_calls and all(r.cost_usd is not None for r in self.usage_records) else None}
+                        and not self.unknown_calls and all(r.cost_usd is not None for r in self.usage_records) else None})
 
     async def emit(self, event):
         self.revision += 1
@@ -768,13 +779,32 @@ class ResearchRuntime:
                 self.state.status, self.state.reason = "unavailable", unavailable_reason
                 self.state.execution_outcome = "blocked"
                 return self.state
+            if self.direct:
+                from .research_direct import run_direct
+                from .research_direct_controller import DirectLimits
+                from .research_direct_model import DirectModelAdapter
+                return await run_direct(self, DirectModelAdapter(self, self.policy.provider),
+                    limits=DirectLimits(input_units=self.limits.workflow_input_units,
+                                        output_units=self.limits.workflow_output_units,
+                                        pages=self.limits.pages, seconds=self.limits.seconds))
             if self.staged:
                 from .research_workflow import run_workflow
                 return await run_workflow(self)
             return await self._run()
         except asyncio.CancelledError:
             self.state.status, self.state.reason = "cancelled", "Research cancelled; collected evidence retained"
+            self.state.execution_outcome = 'cancelled'
+            if self.direct:
+                return self.state
             raise
+        except Exception as exc:
+            if not self.direct:
+                raise
+            self.state.status, self.state.execution_outcome = 'partial', 'failed'
+            self.state.reason = 'Research stopped before terminal delivery; evidence retained'
+            self.state.diagnostic = {'code': 'direct_runtime_failure',
+                'type': type(exc).__name__, 'message': str(exc)[:500]}
+            return self.state
         finally:
             stop_watcher.cancel()
             await asyncio.gather(stop_watcher, return_exceptions=True)
@@ -784,7 +814,21 @@ class ResearchRuntime:
                 # Preserve reviewed claims and scope judgments while exposing
                 # the unfinished attempt consistently to every consumer.
                 self.state.answer_status = "partial"
-            await self.emit({"stage": "research_finished"})
+            try:
+                await self.emit({"stage": "research_finished"})
+            except Exception as exc:
+                # The terminal state was saved before publication when storage
+                # is available. Retain delivery failure separately from evidence.
+                self.state.diagnostic = {**(self.state.diagnostic or {}),
+                    'delivery_error': {'stage': 'research_finished',
+                        'type': type(exc).__name__, 'message': str(exc)[:500]}}
+                self.state.diagnostic.setdefault('code', 'direct_delivery_failure')
+                if self.checkpoints:
+                    try:
+                        self.checkpoints.save(self)
+                    except Exception as storage_exc:
+                        self.state.diagnostic['checkpoint_error'] = {
+                            'type': type(storage_exc).__name__, 'message': str(storage_exc)[:500]}
 
     async def _run(self):
         from .research_assessment import ModelReviewer
@@ -1045,9 +1089,10 @@ class ResearchRuntime:
     def action_key(action):
         if action.tool == "visit":
             url, fragment = urldefrag(action.url)
-            return ("visit", url, fragment, action.focus)
+            return ("visit", url, fragment, action.focus, action.reading_question)
         return (action.tool, action.query) if action.tool == "search" else (
-            action.tool, action.source_id, action.mode, action.focus, action.refresh, tuple(action.group_ids))
+            action.tool, action.source_id, action.mode, action.focus, action.refresh, tuple(action.group_ids),
+            action.reading_question)
 
     async def execute(self, state, action, counts, attempted, index, *, prevalidated=False, entry_fragment=None):
         """Execute a typed action and attach observed data to its journal entry."""
@@ -1067,7 +1112,8 @@ class ResearchRuntime:
                                 discovered_by="policy-proposed URL; pending actual read")
                 state.sources.append(source)
             observed = await self.execute(state, Action(tool="open", question_id=action.question_id,
-                source_id=source.id, focus=action.focus, rationale=action.rationale), counts, attempted, index,
+                source_id=source.id, focus=action.focus, reading_question=action.reading_question,
+                mode=action.mode, refresh=action.refresh, rationale=action.rationale), counts, attempted, index,
                 entry_fragment=fragment or None)
             observed.action = action
             return observed
@@ -1146,6 +1192,8 @@ class ResearchRuntime:
                 if action.refresh:
                     kwargs["refresh"] = True
                 if isinstance(self.reader, PageReader):
+                    if self.direct:
+                        kwargs['coverage'] = True
                     if entry_fragment:
                         kwargs['fragment'] = entry_fragment
                     if snapshot:
@@ -1155,6 +1203,8 @@ class ResearchRuntime:
                     kwargs["progress"] = progress
                     question = next(q for q in state.questions if q.id == action.question_id)
                     kwargs["question"] = question.text + " " + question.evidence_needed
+                    if action.reading_question:
+                        kwargs['question'] += ' ' + action.reading_question
                 if action.group_ids:
                     kwargs.update(group_ids=action.group_ids,observation_sha256=action.observation_sha256)
                 try:

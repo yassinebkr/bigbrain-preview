@@ -12,6 +12,7 @@
 // nudge when files landed in sandbox/ with no project selected.
 
 import { useEffect, useRef } from 'react';
+import { isPartialResearch } from '@/lib/research';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Loader2,
@@ -164,7 +165,7 @@ export function RunPanel() {
   const preparationWait = running?.brain === 'planner' && running.durationMs != null
     ? ` · ${(running.durationMs / 1000).toFixed(0)} s` : '';
   const summary =
-    run.deliveryStatus === 'incomplete' ? 'Projet incomplet · non validé' : run.status === 'running'
+    run.deliveryStatus === 'incomplete' ? 'Projet incomplet · non validé' : isPartialResearch(run) ? 'Recherche incomplète' : run.status === 'running'
       ? run.awaitingApproval
         ? 'Awaiting contract approval'
         : running

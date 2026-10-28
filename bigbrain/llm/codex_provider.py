@@ -445,6 +445,7 @@ class CodexProvider(LLMProvider):
         proposals = []
         native_calls = 0
         terminal_event = asyncio.Event()
+        usage_event = asyncio.Event()
         pending_requests = []
 
         def on_request(message):
@@ -475,7 +476,7 @@ class CodexProvider(LLMProvider):
                 if not turn_future.done():
                     turn_future.set_exception(CodexUnavailable('Invalid native decision submission'))
             client.respond(message['id'], result={'success': accepted, 'contentItems': [{
-                'type': 'inputText', 'text': 'Proposal received for runtime validation.' if accepted else 'Proposal rejected.'}]})
+                'type': 'inputText', 'text': 'Proposal received for runtime validation. End this turn; the external runtime owns execution.' if accepted else 'Proposal rejected.'}]})
             if accepted:
                 turn_future.set_result(None)
             return True
@@ -524,6 +525,7 @@ class CodexProvider(LLMProvider):
                 usage_holder["usage"] = usage
             if method == "thread/tokenUsage/updated":
                 usage_holder['native'] = params['tokenUsage']
+                usage_event.set()
                 last = params['tokenUsage'].get('last') or {}
                 self.last_context_tokens = last.get('inputTokens', 0) + last.get('outputTokens', 0)
                 trace_stage('codex.usage_observed', cumulative=params['tokenUsage'].get('total'), last=last)
@@ -569,8 +571,16 @@ class CodexProvider(LLMProvider):
                 _state['_save']()
             await turn_future
             if proposals:
-                await asyncio.wait_for(client.call('turn/interrupt', {'threadId': thread_id, 'turnId': turn_id}), 5)
-                await asyncio.wait_for(terminal_event.wait(), 5)
+                # Let the accepted submission's bookkeeping arrive before
+                # interrupting its enclosing native code-mode cell.
+                if not usage_event.is_set():
+                    try:
+                        await asyncio.wait_for(usage_event.wait(), .2)
+                    except TimeoutError:
+                        pass
+                if not terminal_event.is_set():
+                    await asyncio.wait_for(client.call('turn/interrupt', {'threadId': thread_id, 'turnId': turn_id}), 5)
+                    await asyncio.wait_for(terminal_event.wait(), 5)
             trace_stage("codex.turn.completed", native_thread_id=thread_id, native_turn_id=turn_id)
             completed_ok = True
         except BaseException:
