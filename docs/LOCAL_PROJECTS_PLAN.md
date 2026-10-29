@@ -17,7 +17,7 @@ recorded as deferred work. This documentation update starts no migration.
 | 2 | Registry, descriptor-scoped reads, chooser tickets and native moved-folder reconciliation verified | Complete within the tested matrix |
 | 3 | Shared repair, transactional publication, isolated runtimes and live Python/React repairs verified | Complete within the documented boundaries |
 | 4 | Production UI verifies consent/rejection, recovery, rights, navigation, read-only mode, detach and native reconciliation | Complete within the tested matrix |
-| 5 | Retained publication: 73 targeted tests, 141 frontend tests, build and production inspection journey pass; native primitives: 9 Linux / 9 Windows | Completed full-run report, explicit conflict resolution, retention management and build-tree audit |
+| 5 | Complete split campaign: 2,059 passed / 8 skipped; frontend 141 passed and build; production conflict resolution; native primitives 9 Linux / 9 Windows; attached React preserves existing dist | Retention management |
 
 ### Specialist integration checkpoint
 
@@ -101,12 +101,10 @@ The native chooser currently uses Zenity and requires a local desktop session.
 HTTP access requires a loopback client, an approved Host, a matching Origin and
 the local UI request header. Selection tickets expire after two minutes.
 
-File replacement uses descriptor-relative parent traversal, regular-file checks
-and the shared recovery journal. It rechecks source hashes after journal intent
-and immediately before replacement. Race regressions cover user edits and parent
-symlink substitution during that interval. Atomic coordination with external
-editors and directory relocation during the final system call remain hardening
-limits requiring explicit treatment in the acceptance report.
+Source publication uses native preservation, directory identity anchors and the
+shared recovery journal. It retains the actual displaced file and detects late
+editor writes. Explicit recovery choices bind current and retained versions to
+a journal fingerprint. Changed observations require renewed inspection.
 
 The complete backend suite at `d2c7cd9` passed 1,997 tests with eight skips.
 The subsequent descriptor-publication change passes 70 focused transaction,

@@ -253,7 +253,7 @@ def publication_conflicts(target, operations):
                     operation['status'] = 'conflict'
             if operation['status'] == 'conflict':
                 conflicts.append(operation['path'])
-            elif operation['status'] == 'applied' and operation['preserved']:
+            elif operation['status'] in {'applied', 'acknowledged'} and operation['preserved']:
                 previous = operation['observed']['preserved']
                 if facts['preserved'] != previous:
                     operation['status'] = 'conflict'

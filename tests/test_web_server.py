@@ -341,7 +341,8 @@ class TestAplotProtocol:
             "payload": {"text": "hello bigbrain", "messageId": "m1"},
         })
         await server._handle_ws_message(mock_ws, raw)
-        await asyncio.sleep(0.05)
+        # Synchronize with delivery completion; logging fsync runs on an I/O thread.
+        await asyncio.wait_for(asyncio.gather(*tuple(server._chat_tasks)), 2)
 
         # Exactly one bus task to front_brain with the legacy user_message
         # shape + the session id of the lazily created session.

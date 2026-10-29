@@ -12,6 +12,11 @@ interface LocalProject {
 }
 interface Entry { name: string; path: string; type: 'file' | 'folder' }
 interface Selection { ticket: string; path: string; relink?: { id: string; revision: number } }
+interface Resolution {
+  token: string; transactionId: string;
+  files: { path: string; sha256: string | null;
+    versions: { operationId: string; sha256: string }[] }[];
+}
 
 async function api<T>(action: string, data: object = {}): Promise<T> {
   const response = await fetch(`/api/local-projects${action}`, {
@@ -40,6 +45,8 @@ export function LocalProjects() {
   const [output, setOutput] = useState('');
   const [preview, setPreview] = useState<string | null>(null);
   const [retained, setRetained] = useState<{ path: string; content: string; sha256: string } | null>(null);
+  const [resolution, setResolution] = useState<Resolution | null>(null);
+  const [resolutionChoices, setResolutionChoices] = useState<Record<string, string>>({});
   const generation = useRef(0);
   const streamController = useRef<AbortController | null>(null);
   const project = projects.find((item) => item.id === selectedId);
@@ -65,6 +72,7 @@ export function LocalProjects() {
   useEffect(() => {
     let active = true;
     setRetained(null);
+    setResolution(null); setResolutionChoices({});
     setEntries([]); setDocument(null); setOutput(''); setPreview(null);
     if (project?.state === 'attached' && project.availability === 'available') {
       api<{ entries: Entry[] }>('/list', { projectId: project.id, revision: project.revision, path: directory })
@@ -178,6 +186,14 @@ export function LocalProjects() {
                 });
                 setRetained(result);
               })}>Consulter la version conservée · {version.path}</button>)}
+            {transaction.state === 'conflict' && <button className={`${button} mt-2`}
+              disabled={busy || !project.rights.includes('write') || project.state !== 'attached'}
+              onClick={() => void perform(async () => {
+                const result = await api<Omit<Resolution, 'transactionId'>>('/inspect-resolution', {
+                  projectId: project.id, revision: project.revision, transactionId: transaction.id,
+                });
+                setResolutionChoices({}); setResolution({ ...result, transactionId: transaction.id });
+              })}>Choisir les versions à conserver</button>}
             <button className={`${button} mt-2`} disabled={busy || !project.rights.includes('write')} onClick={() => void perform(async () => {
               const result = await api<{ state: string; conflicts: string[] }>('/recover', { projectId: project.id, revision: project.revision, transactionId: transaction.id });
               await refresh();
@@ -218,6 +234,50 @@ export function LocalProjects() {
         </> : <p className="m-auto text-sm text-[var(--text-secondary)]">Sélectionnez un projet local.</p>}
       </main>
     </div>
+    <Dialog open={Boolean(resolution)} onOpenChange={(open) => { if (!open && !busy) setResolution(null); }}>
+      <DialogContent data-theme={theme} className="rounded-2xl max-w-3xl" style={{ backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)', borderColor: 'var(--border-subtle)' }}>
+        <DialogTitle>Résoudre les versions concurrentes</DialogTitle>
+        <DialogDescription style={{ color: 'var(--text-secondary)' }}>Choisissez une version pour chaque fichier. Les autres versions restent sur disque. La validation du projet reste une étape distincte.</DialogDescription>
+        {error && <p role="alert" className="rounded-xl bg-amber-500/10 p-3 text-sm text-amber-300">{error}</p>}
+        <button className={button} disabled={busy} onClick={() => void perform(async () => {
+          if (!project || !resolution) return;
+          const result = await api<Omit<Resolution, 'transactionId'>>('/inspect-resolution', {
+            projectId: project.id, revision: project.revision, transactionId: resolution.transactionId,
+          });
+          setResolutionChoices({}); setResolution({ ...result, transactionId: resolution.transactionId });
+        })}>Relire les versions</button>
+        <div className="max-h-[55vh] overflow-auto space-y-3">
+          {resolution?.files.map((file) => <fieldset key={file.path} className="rounded-xl border border-[var(--border-subtle)] p-3">
+            <legend className="px-2 text-sm break-all">{file.path}</legend>
+            <div className="flex flex-col gap-2">
+              <button className={`${button} justify-start ${resolutionChoices[file.path] === 'current' ? 'bg-sky-500/20' : ''}`}
+                aria-pressed={resolutionChoices[file.path] === 'current'} disabled={busy}
+                title={file.sha256 || 'Fichier absent'}
+                onClick={() => setResolutionChoices((previous) => ({ ...previous, [file.path]: 'current' }))}>
+                Garder la version actuelle · {file.sha256?.slice(0, 12) || 'fichier absent'}
+              </button>
+              {file.versions.map((version, index) => <button key={version.operationId}
+                className={`${button} justify-start ${resolutionChoices[file.path] === version.operationId ? 'bg-sky-500/20' : ''}`}
+                aria-pressed={resolutionChoices[file.path] === version.operationId} disabled={busy} title={version.sha256}
+                onClick={() => setResolutionChoices((previous) => ({ ...previous, [file.path]: version.operationId }))}>
+                Restaurer la version conservée {index + 1} · {version.sha256.slice(0, 12)}
+              </button>)}
+            </div>
+          </fieldset>)}
+        </div>
+        <button className={`${button} justify-center`} style={{ backgroundColor: 'var(--accent-blue)', color: '#fff' }}
+          disabled={busy || !resolution?.files.length || resolution.files.some((file) => !resolutionChoices[file.path])}
+          onClick={() => void perform(async () => {
+            if (!project || !resolution) return;
+            const result = await api<{ state: string; conflicts: string[] }>('/resolve', {
+              projectId: project.id, revision: project.revision, transactionId: resolution.transactionId,
+              token: resolution.token, choices: resolutionChoices,
+            });
+            setResolution(null); await refresh();
+            if (result.state !== 'committed') setError(`Résolution interrompue. Versions conservées : ${result.conflicts.join(', ')}`);
+          })}>Appliquer les choix</button>
+      </DialogContent>
+    </Dialog>
     <Dialog open={Boolean(retained)} onOpenChange={(open) => { if (!open) setRetained(null); }}>
       <DialogContent data-theme={theme} className="rounded-2xl max-w-3xl" style={{ backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)', borderColor: 'var(--border-subtle)' }}>
         <DialogTitle>Version conservée · {retained?.path}</DialogTitle>

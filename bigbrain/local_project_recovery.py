@@ -91,3 +91,24 @@ def recover_project(registry, project_id, revision, transaction_id):
                 'transactionId': transaction_id}
     finally:
         active_transaction.reset(token)
+
+
+def inspect_resolution(registry, project_id, revision, transaction_id):
+    """Return the versions that must be confirmed together for this conflict."""
+    from .project_resolution import resolution_snapshot
+    journal, _ = _journal_for(registry, project_id, transaction_id)
+    with registry.access(project_id, revision, 'read'):
+        snapshot = ProjectTransaction(journal)._locked(resolution_snapshot)
+    return {'token': snapshot['token'], 'files': snapshot['files']}
+
+
+def resolve_project(registry, project_id, revision, transaction_id, expected, choices):
+    """Apply explicit source choices while retaining every displaced version."""
+    from .project_resolution import apply_resolution
+    journal, _ = _journal_for(registry, project_id, transaction_id)
+    context = active_transaction.set(str(journal))
+    try:
+        with registry.access(project_id, revision, 'write'):
+            return apply_resolution(ProjectTransaction(journal), expected, choices)
+    finally:
+        active_transaction.reset(context)

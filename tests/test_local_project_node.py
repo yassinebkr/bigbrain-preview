@@ -29,7 +29,8 @@ async def test_node_dependencies_and_build_output_stay_scoped(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_real_react_build_and_browser_interaction_use_project_dependencies(tmp_path):
+@pytest.mark.parametrize('existing_build', [False, True])
+async def test_real_react_build_and_browser_interaction_use_project_dependencies(tmp_path, existing_build):
     from bigbrain.local_project_web import run_web_tests
     root = tmp_path / 'react-source'
     (root / 'node_modules').mkdir(parents=True)
@@ -56,12 +57,19 @@ async def test_real_react_build_and_browser_interaction_use_project_dependencies
     (root / 'tests/acceptance.json').write_text(json.dumps({'schema_version': 2, 'cases': [
         {'name': 'react increment', 'steps': [{'op': 'click', 'selector': 'button'}],
          'assertions': [{'op': 'text', 'selector': '#count', 'value': '1'}]}]}))
+    if existing_build:
+        (root / 'dist').mkdir()
+        (root / 'dist/user-artifact.txt').write_text('existing user build')
     registry = ProjectRegistry(tmp_path / 'state/registry.json')
     project = registry.attach(root, ('read', 'execute'))
     result = await run_web_tests(registry, project['id'], 1, 'index.html', web_stack='react_vite')
     assert result['status'] == 'passed', result
     assert result['passed_cases'] == ['react increment']
-    assert not (root / 'dist').exists()
+    if existing_build:
+        assert (root / 'dist/user-artifact.txt').read_text() == 'existing user build'
+        assert sorted(path.name for path in (root / 'dist').iterdir()) == ['user-artifact.txt']
+    else:
+        assert not (root / 'dist').exists()
 
 
 @pytest.mark.asyncio

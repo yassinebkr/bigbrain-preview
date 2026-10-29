@@ -135,6 +135,14 @@ def setup_local_project_routes(app, *, registry=None, chooser=None):
                 from ..local_project_recovery import retained_version
                 return web.json_response(retained_version(registry, project_id, revision,
                     body.get('transactionId'), body.get('operationId')))
+            if action == 'inspect-resolution':
+                from ..local_project_recovery import inspect_resolution
+                return web.json_response(inspect_resolution(registry, project_id, revision,
+                    body.get('transactionId')))
+            if action == 'resolve':
+                from ..local_project_recovery import resolve_project
+                return web.json_response(resolve_project(registry, project_id, revision,
+                    body.get('transactionId'), body.get('token'), body.get('choices')))
             files = ProjectFiles(registry, project_id, revision)
             if action == 'list':
                 return web.json_response({'entries': files.list(body.get('path', ''))})

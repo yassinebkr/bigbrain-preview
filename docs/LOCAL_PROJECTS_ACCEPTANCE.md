@@ -25,6 +25,17 @@
 | Runtime environment, network and shutdown checks | 6 targeted cases passed |
 | Post-audit local-project and orchestrator matrix | 92 passed |
 | Origin/context navigation gate | 34 passed; production UI exercised origin switching, reload and an empty new-conversation choice |
+| Current source publication/resolution campaign | 2,059 passed, 8 skipped across exhaustive split groups and updated Node cases; 2,067 collected |
+| Current frontend | 141 passed; production build passed |
+| Native primitives at `1131536` | 9 Ubuntu and 9 Windows cases passed, zero skips |
+
+Current regression reports: `/tmp/bigbrain-regression-am.xml` (868 passed,
+8 skipped), `/tmp/bigbrain-regression-nz.xml` (1,190 passed), and
+`/tmp/bigbrain-regression-node.xml` (four updated cases, including one additional
+existing-build case). The split campaign covers the complete current collection.
+The WebSocket acknowledgement test now awaits its actual delivery task with a
+two-second bound; message, provenance, persistence and acknowledgement assertions
+remain unchanged.
 
 ## Bounded model-led probes
 
@@ -96,8 +107,12 @@ The initial expired ticket was rejected without changing the registry.
   the displaced live object. Linux regressions preserve edits inside the native
   publication window and later writes through open editor descriptors. Conflicts
   block further mutation/execution and expose retained versions in the workspace.
-  Explicit resolution, retention management and build-tree publication remain
-  open. Historical failing evidence:
+  Version-bound explicit resolution passes eight regression cases and a real
+  workspace journey. Restoring the retained editor version preserves the
+  displaced candidate and closes the observed conflict. Retention management
+  remains open. Attached React builds preserve an existing source-side dist;
+  legacy sandbox build-tree recovery remains a separate audit area.
+  Historical failing evidence:
   `/tmp/bigbrain-publication-window-j42yyqd5/result.json`.
 - Browser HTTP routing, response CSP and restricted APIs limit preview requests.
   This browser-layer policy remains separate from OS network namespaces used by
@@ -112,9 +127,9 @@ The initial expired ticket was rejected without changing the registry.
 Functional, native UI and model-led gates pass. The external-editor publication
 hardening now has approved project-local hidden recovery storage and explicit
 retention. Commit `6806680` passes eight primitive cases on Linux and eight on
-Windows in native CI, with zero skips. Shared-journal source integration and
-bounded retained-version inspection pass targeted Linux tests. The UI build
-passes. Current full regression, explicit conflict resolution, build-tree audit
-and updated native qualification remain open. See the
+Windows in native CI, with zero skips. Commit `1131536` extends this to nine cases
+on each platform. Shared-journal source integration, version-bound resolution,
+production UI restoration and the complete split regression campaign pass on
+Linux. Retention management remains open. See the
 [publication design](PUBLICATION_PORTABILITY_DESIGN.md).
 Merge requires user authorization.

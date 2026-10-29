@@ -78,9 +78,20 @@ use the same journal. Recovery storage checks ownership and enforces a 256 MiB
 limit. The focused Linux matrix passes 73 tests, including delivery, registry,
 recovery API and native publication. The frontend passes 141 tests and its build.
 The workspace can inspect a bounded retained version and its SHA-256
-through a project/operation-bound read endpoint. Current full regression,
-conflict resolution, retention management and generated build-tree publication
-remain open.
+through a project/operation-bound read endpoint. Explicit conflict resolution
+binds every file choice to the journal, source versions and retained objects.
+Restoration uses the same publication/rollback engine and retains the displaced
+candidate. Changed observations require another inspection. Later editor writes
+reopen the conflict. Eight resolution regressions pass.
+
+The production UI restores a chosen retained editor version and clears the
+resolved conflict. Evidence: `/tmp/bigbrain-resolved-version-ui.png`.
+Retention management remains an open gate.
+
+Attached React builds run on copied sources through `ProjectRunner`, capture
+`dist` as bounded artifacts and serve those captured bytes. Four real Node/React
+tests preserve dependencies and an existing source-side `dist/user-artifact.txt`.
+Legacy sandbox build-tree recovery remains a separate shared-engine audit area.
 
 Commit `1131536` passes nine native primitive cases on Ubuntu and nine on Windows,
 with zero skips. Cases include late editor writes and directory identity anchors.
@@ -93,7 +104,7 @@ late editor write and its SHA-256 while preserving the published candidate.
 Screenshot: `/tmp/bigbrain-retained-version-ui.png`. Four transmission tests pass,
 including recovery-directory exclusion from source consent and normal file access.
 
-The full `1131536` run reached 95% without reported failures, then terminated
-with exit 143 before writing its JUnit report. Its final three test files pass
-separately: 90 cases, `/tmp/bigbrain-publication-tail.xml`. Full-run completion
-remains an open gate.
+The monolithic `1131536` run terminated with exit 143 at 95%. The replacement
+exhaustive split campaign passes 2,059 cases with eight skips; the collection has
+2,067 cases. Reports and accounting are in the
+[acceptance ledger](LOCAL_PROJECTS_ACCEPTANCE.md).
