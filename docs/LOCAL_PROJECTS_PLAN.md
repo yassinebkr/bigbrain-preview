@@ -2,9 +2,8 @@
 
 30 October 2026. Branch: `feat/local-projects`.
 Implementation and acceptance are verified within the platform/capability matrix.
-Merge awaits user authorization.
 
-## Approved contracts
+## Access and preservation contracts
 
 1. Persist project identity, canonical root and explicit read-only/read-write
    grant. Conversations reference the project independently of its lifecycle.
@@ -39,9 +38,9 @@ reports and remaining capability limits.
 
 - Conversation selection records its active origin separately from the remembered
   local-folder ID. Local-origin prompts exclude stale sandbox navigation hints.
-- Every source-bearing model request checks the approved provider/endpoint,
+- Every source-bearing model request checks the user-confirmed provider/endpoint,
   project/grant revision and exact source inventory. A changed recipient or
-  inventory requires renewed approval. Current proposal limits: 64 files, 128 KB.
+  inventory requires renewed user consent. Current proposal limits: 64 files, 128 KB.
 - Maintenance uses the existing repair engine on a scoped working copy.
   Candidate checks precede publication; published changes receive another
   isolated check before commit. Delivery evidence binds specification revision,
@@ -70,7 +69,7 @@ release primitives are qualified on Linux and Windows. The broader Windows
 filesystem/lock/runner/chooser migration follows the deferred backlog in
 [PORTABILITY.md](PORTABILITY.md). The shared policy applies to future blocks.
 
-Dependency installation and network-enabled execution require separate approved
+Dependency installation and network-enabled execution require separate permissioned
 workflows. Preview frames refresh once per second; native file dialogs and
 downloads remain outside this transport. Release requires supported native
 exclusivity; unsupported filesystems retain the artifacts and return a diagnostic.

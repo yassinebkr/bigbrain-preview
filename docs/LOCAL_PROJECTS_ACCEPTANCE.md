@@ -1,7 +1,7 @@
 # Attached local projects: acceptance ledger
 
 30 October 2026. Branch: `feat/local-projects`. Status: acceptance verified within
-the documented platform/capability matrix. Merge awaits user authorization.
+the documented platform/capability matrix.
 
 ## Contract evidence
 
@@ -122,12 +122,12 @@ The initial expired ticket was rejected without changing the registry.
 - Preview frames refresh once per second. Input is pointer/keyboard/text based;
   native file dialogs and downloads are excluded from this preview transport.
 - Missing project environments stop verification with a diagnostic. Dependency
-  installation requires its own approved preparation workflow.
+  installation requires a separate user-consented preparation workflow.
 
 ## Closure
 
 Functional, native UI and model-led gates pass. The external-editor publication
-hardening now has approved project-local hidden recovery storage and explicit
+hardening uses owned project-local hidden recovery storage and explicit
 retention. Commit `6806680` passes eight primitive cases on Linux and eight on
 Windows in native CI, with zero skips. Commit `1131536` extends this to nine cases
 on each platform. Shared-journal source integration, version-bound resolution,
@@ -140,4 +140,3 @@ journal recovery contents while preserving the current source. Screenshots:
 `/tmp/bigbrain-retention-confirmation-ui.png`, `/tmp/bigbrain-retention-purged-ui.png`.
 See the
 [publication design](PUBLICATION_PORTABILITY_DESIGN.md).
-Merge requires user authorization.

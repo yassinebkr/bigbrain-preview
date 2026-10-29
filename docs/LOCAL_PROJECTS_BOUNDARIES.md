@@ -12,7 +12,7 @@ Implementation boundaries, 29 October 2026.
 | Verification subprocesses | `local_project_runner.py`, `local_project_checks.py`, `verification/web_gate.py` | Project runtime, output/time limits, process cleanup |
 | Recovery | `local_project_recovery.py`, `project_transaction.py`, `project_file_io.py` | Hashes, identity and scoped crash journal |
 | Manual recovery release | `local_project_retention.py`, `native_publication.py` | Deletion grant, versioned inventory, separate confirmation, native exclusivity and resumable receipts |
-| Provider transport | `local_project_provider.py`, `local_project_transmission.py` | Approved recipient and versioned source inventory |
+| Provider transport | `local_project_provider.py`, `local_project_transmission.py` | User-confirmed recipient and versioned source inventory |
 | Conversation context | `front/front_brain.py`, registry selection and run metadata | Project identity persists with its conversation and result |
 
 ## Registry and requests
@@ -27,20 +27,20 @@ Unavailable or replaced roots require reconciliation through the local chooser.
 ## Source transmission decision
 
 The specialist adapter requires a concrete transmission contract before
-activation. Approved fields:
+activation. Transmission contract:
 
 | Field | Enforcement |
 | --- | --- |
 | Project ID and grant revision | Revalidate before each provider request |
 | Provider and configured endpoint | Reject a recipient change |
-| Relative source paths and content hashes | Restrict reads to the approved source revision |
+| Relative source paths and content hashes | Restrict reads to the consented source revision |
 | Exclusion and size limits | Filter credentials and refuse oversized packets |
-| Generated changes | Retain their provenance within the approved repair scope |
+| Generated changes | Retain their provenance within the defined repair scope |
 
-A provider change or expanded source inventory requires a renewed approval.
+A provider change or expanded source inventory requires renewed user consent.
 Local filesystem access and isolated execution continue under their own grants.
-The contract is approved for implementation. Provider calls remain subject to
-the recorded project-specific approval and its exact source inventory.
+Provider calls require recorded project-specific consent for the exact source
+inventory.
 
 Use a native local chooser initiated by an authenticated same-origin request.
 The server resolves the returned path and creates a short-lived, single-use
@@ -65,7 +65,7 @@ a diagnostic and retains the affected artifact.
 ## Execution
 
 Run attached-project commands through a common process launcher. Mount only an
-approved snapshot plus required runtime libraries, use private temporary storage,
+grant-bound snapshot plus required runtime libraries, use private temporary storage,
 clear inherited credentials and isolate network unless granted. Keep generated
 artifacts outside source folders. Apply verified patch sets through the broker
 with input hashes and the existing transaction journal.

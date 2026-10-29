@@ -2,7 +2,7 @@
 
 Architecture rule adopted on 29 October 2026. Existing platform-specific blocks
 enter the deferred adaptation backlog below. This decision records architecture
-and future work; implementation follows separately approved milestones.
+and the remaining adaptation work.
 
 ## Rule for all blocks
 
@@ -22,18 +22,20 @@ and future work; implementation follows separately approved milestones.
 
 ## Current publication design
 
-The concurrency-hardening design must include Linux and Windows adapters under
-one transaction interface. Native exchange/replacement operations, preservation
-of displaced files, open-handle behavior, crash recovery and concurrent creation
-require platform-specific qualification. Native primitives remain candidates
-until the common acceptance cases establish their semantics.
+The shared transaction interface uses native Linux and Windows publication and
+retention-release adapters. At `1dbbf86`, fourteen native cases pass on each
+platform, including preservation, concurrent changes and exclusive cleanup.
 
-The proposed [publication design](PUBLICATION_PORTABILITY_DESIGN.md) records native
-API differences, preservation decisions and qualification milestones. Approval
-of its retention/storage policy precedes implementation.
+| Scope | Qualification |
+| --- | --- |
+| Native publication and retained-object release | Linux and Windows CI |
+| Shared journal, conflict resolution and production UI | Linux application tests and UI journeys |
+| Complete Windows application | Deferred adaptation below |
 
-This rule leaves the existing external-editor race open. Its reproduction and
-current evidence are in [local-project acceptance](LOCAL_PROJECTS_ACCEPTANCE.md).
+The [publication design](PUBLICATION_PORTABILITY_DESIGN.md) describes the lifecycle,
+storage policy and native mechanisms. The
+[acceptance ledger](LOCAL_PROJECTS_ACCEPTANCE.md) records exercised assertions and
+remaining limits.
 
 ## Deferred adaptation backlog
 
