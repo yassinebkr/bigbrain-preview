@@ -6,9 +6,10 @@ import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/compone
 interface LocalProject {
   id: string; name: string; root: string; revision: number;
   rights: string[]; state: string; availability?: string; diagnostic?: string;
+  transactions?: { id: string; state: string; paths: string[] }[];
 }
 interface Entry { name: string; path: string; type: 'file' | 'folder' }
-interface Selection { ticket: string; path: string }
+interface Selection { ticket: string; path: string; relink?: { id: string; revision: number } }
 
 async function api<T>(action: string, data: object = {}): Promise<T> {
   const response = await fetch(`/api/local-projects${action}`, {
@@ -81,7 +82,9 @@ export function LocalProjects() {
 
   async function grant() {
     if (selection) {
-      const attached = await api<LocalProject>('/attach', { ticket: selection.ticket, rights });
+      const attached = selection.relink
+        ? await api<LocalProject>('/relink', { ticket: selection.ticket, projectId: selection.relink.id, revision: selection.relink.revision })
+        : await api<LocalProject>('/attach', { ticket: selection.ticket, rights });
       setSelection(null);
       await select(attached.id);
     } else if (permissionProject) {
@@ -140,7 +143,7 @@ export function LocalProjects() {
           onClick={() => void perform(() => select(item.id))} disabled={busy || item.state !== 'attached'}>
           <span className="flex items-center gap-2"><FolderOpen size={16} />{item.name}</span>
           <span className="text-xs opacity-70 break-all">{item.root}</span>
-          <span className="text-xs opacity-70">{item.state === 'revoked' ? 'Accès révoqué' : item.availability === 'unavailable' ? 'Dossier indisponible' : item.rights.includes('write') ? 'Lecture et écriture' : 'Lecture seule'}</span>
+          <span className="text-xs opacity-70">{item.state === 'revoked' ? 'Accès révoqué' : item.availability === 'unavailable' ? 'Dossier indisponible' : item.rights.includes('write') ? 'Lecture et écriture' : 'Lecture seule'}{item.state === 'attached' && item.rights.includes('execute') ? ' · Exécution autorisée' : ''}</span>
         </button>)}
       </aside>
       <main className="flex flex-1 min-w-0 min-h-0 flex-col gap-3 overflow-auto rounded-2xl bg-[var(--bg-surface)] p-4">
@@ -148,13 +151,34 @@ export function LocalProjects() {
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="font-medium mr-auto">{project.name}</h2>
             <button className={button} disabled={busy} onClick={() => { setPermissionProject(project); setRights(project.rights); }}>Droits d’accès</button>
+            {project.state === 'attached' && <button className={button} onClick={() => {
+              void api('/revoke', { projectId: project.id, revision: project.revision })
+                .then(() => refresh()).catch((cause) => setError(String(cause)));
+            }}>Révoquer l’accès</button>}
             <button className={button} disabled={busy} onClick={() => void perform(async () => {
               await api('/detach', { projectId: project.id, revision: project.revision });
               await select(null); await refresh();
             })}><Unplug size={15} /> Détacher</button>
           </div>
           <p className="text-xs text-[var(--text-secondary)] break-all">{project.root}</p>
-          {project.availability === 'unavailable' ? <p role="status">Dossier indisponible. Reconnectez son disque, puis actualisez.</p> : <>
+          {project.transactions?.map((transaction) => <div key={transaction.id} className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm">
+            <p className="font-medium">Une modification interrompue nécessite une récupération.</p>
+            <p className="mt-2 text-[var(--text-secondary)] break-all">{transaction.paths.join(', ')}</p>
+            <button className={`${button} mt-2`} disabled={busy || !project.rights.includes('write')} onClick={() => void perform(async () => {
+              const result = await api<{ state: string; conflicts: string[] }>('/recover', { projectId: project.id, revision: project.revision, transactionId: transaction.id });
+              await refresh();
+              if (result.conflicts.length) setError(`Vos modifications sont conservées. Résolution nécessaire : ${result.conflicts.join(', ')}`);
+            })}>Restaurer les fichiers de cette opération</button>
+          </div>)}
+          {project.state === 'revoked' ? <div role="status"><p>L’accès à ce projet est révoqué.</p>
+            <button className={button} disabled={busy} onClick={() => void perform(async () => {
+              await api('/restore', { projectId: project.id, revision: project.revision }); await refresh();
+            })}>Rétablir les droits précédents</button></div>
+          : project.availability === 'unavailable' ? <div role="status"><p>Dossier indisponible. Reconnectez son disque, puis actualisez.</p>
+            <button className={button} disabled={busy} onClick={() => void perform(async () => {
+              const chosen = await api<Selection & { cancelled?: boolean }>('/choose', {});
+              if (!chosen.cancelled) setSelection({ ...chosen, relink: { id: project.id, revision: project.revision } });
+            })}>Retrouver le dossier déplacé</button></div> : <>
             <div className="flex items-center gap-2 text-sm">
               {directory && <button className={button} onClick={() => setDirectory(directory.split('/').slice(0, -1).join('/'))}><ChevronLeft size={15} /> Retour</button>}
               <span>{directory || 'Racine du projet'}</span>
@@ -179,12 +203,13 @@ export function LocalProjects() {
     </div>
     <Dialog open={Boolean(selection || permissionProject)} onOpenChange={(open) => { if (!open) { setSelection(null); setPermissionProject(null); } }}>
       <DialogContent data-theme={theme} className="rounded-2xl" style={{ backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)', borderColor: 'var(--border-subtle)' }}>
-        <DialogTitle>{selection ? 'Lier ce dossier' : 'Droits du projet'}</DialogTitle>
+        <DialogTitle>{selection?.relink ? 'Retrouver ce projet' : selection ? 'Lier ce dossier' : 'Droits du projet'}</DialogTitle>
         <DialogDescription className="break-all" style={{ color: 'var(--text-secondary)' }}>{selection?.path || permissionProject?.root}</DialogDescription>
-        <p className="text-sm">La lecture autorise la consultation locale. Chaque action supplémentaire possède son propre droit.</p>
-        {[['write', 'Modifier les sources'], ['execute', 'Exécuter dans une copie isolée'], ['transmit', 'Transmettre les sources au modèle']].map(([right, label]) => <label key={right} className="flex items-center gap-3 text-sm">
+        <p className="text-sm">{selection?.relink ? 'Le dossier doit conserver l’identité du projet d’origine. Les droits précédents seront rétablis.' : 'La lecture autorise la consultation locale. Chaque action supplémentaire possède son propre droit.'}</p>
+        {!selection?.relink && [['write', 'Modifier les sources'], ['execute', 'Exécuter dans une copie isolée'], ['transmit', 'Transmettre les sources au modèle']].map(([right, label]) => <label key={right} className="flex items-center gap-3 text-sm">
           <input type="checkbox" checked={rights.includes(right)} onChange={(event) => setRights((previous) => event.target.checked ? [...previous, right] : previous.filter((item) => item !== right))} />{label}
         </label>)}
+        {!selection?.relink && rights.includes('transmit') && <p className="text-xs text-[var(--text-secondary)]">Le fournisseur destinataire et les fichiers autorisés seront confirmés dans le contrat du travail.</p>}
         <button className={`${button} justify-center`} style={{ backgroundColor: 'var(--accent-blue)', color: '#fff' }} disabled={busy} onClick={() => void perform(grant)}>Confirmer les droits</button>
       </DialogContent>
     </Dialog>

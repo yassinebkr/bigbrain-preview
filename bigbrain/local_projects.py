@@ -27,7 +27,7 @@ class ProjectRegistry:
     """Serialize registry mutations across processes using a sidecar lock."""
 
     def __init__(self, path):
-        self.path = Path(path)
+        self.path = Path(path).absolute()
 
     @contextmanager
     def _locked(self):
@@ -57,6 +57,9 @@ class ProjectRegistry:
         root = Path(selected_root).resolve(strict=True)
         if not root.is_dir() or root == Path(root.anchor):
             raise ProjectAccessError('Choose a project directory')
+        storage = self.path.parent.resolve()
+        if root == storage or root in storage.parents:
+            raise ProjectAccessError('Project registry storage must be outside the attached source directory')
         info = root.stat()
         record = dict(id=str(uuid.uuid4()), root=str(root), name=root.name,
                       device=info.st_dev, inode=info.st_ino, revision=1,
@@ -78,7 +81,36 @@ class ProjectRegistry:
 
     def list(self):
         with self._locked() as records:
-            return list(records.values())
+            return [record for record in records.values() if record.get('origin') != 'runtime_snapshot']
+
+    def create_snapshot(self, project_id, revision):
+        """Create a runtime-owned copy with immutable source-grant provenance."""
+        from .local_project_runner import copy_project
+        source = self.get(project_id)
+        if source.get('origin') == 'runtime_snapshot':
+            raise ProjectAccessError('A runtime snapshot requires an attached source project')
+        runs = self.path.parent / 'runs'
+        runs.mkdir(parents=True, exist_ok=True, mode=0o700)
+        root = Path(tempfile.mkdtemp(prefix='project-', dir=runs))
+        try:
+            observed, _, _ = copy_project(ProjectFiles(self, project_id, revision), root)
+            info = root.stat()
+            record = dict(id=str(uuid.uuid4()), root=str(root), name=source['name'],
+                          device=info.st_dev, inode=info.st_ino, revision=1,
+                          rights=list(source['rights']), state='attached', origin='runtime_snapshot',
+                          source_project_id=project_id, source_revision=revision,
+                          source_versions={path: hashlib.sha256(data).hexdigest()
+                                           for path, data in observed.items()})
+            with self._locked() as records:
+                current = records.get(project_id)
+                if current is None or current['revision'] != revision or current['state'] != 'attached':
+                    raise ProjectAccessError('Source grant changed during snapshot creation')
+                records[record['id']] = record
+            return record
+        except Exception:
+            import shutil
+            shutil.rmtree(root)
+            raise
 
     def change(self, project_id, revision, *, rights=None, state=None):
         with self._locked() as records:
@@ -94,6 +126,32 @@ class ProjectRegistry:
                     raise ProjectAccessError('Invalid project state')
                 record['state'] = state
             record['revision'] += 1
+            return dict(record)
+
+    def restore(self, project_id, revision, *, selected_root=None):
+        """Renew access to the same directory identity after revocation or relocation."""
+        with self._locked() as records:
+            record = records.get(project_id)
+            if record is None or record['revision'] != revision or record.get('origin') == 'runtime_snapshot':
+                raise ProjectAccessError('Project grant changed')
+            root = Path(selected_root).resolve(strict=True) if selected_root is not None else Path(record['root'])
+            fd = _open_root(root)
+            try:
+                info = os.fstat(fd)
+                if (info.st_dev, info.st_ino) != (record['device'], record['inode']):
+                    raise ProjectAccessError('Selected folder has a different project identity')
+            finally:
+                os.close(fd)
+            for other in records.values():
+                if other['id'] == project_id or other['state'] != 'attached':
+                    continue
+                other_root = Path(other['root'])
+                if root == other_root or root in other_root.parents or other_root in root.parents:
+                    raise ProjectAccessError('An overlapping project is already attached')
+            storage = self.path.parent.resolve()
+            if root == storage or root in storage.parents:
+                raise ProjectAccessError('Project registry storage must be outside the attached source directory')
+            record.update(root=str(root), state='attached', revision=record['revision'] + 1)
             return dict(record)
 
     def selection(self, session_id, *, project_id=None, update=False):
@@ -114,20 +172,45 @@ class ProjectRegistry:
             return records.get(session_id)
 
     @contextmanager
-    def access(self, project_id, revision, right):
+    def access(self, project_id, revision, right, *, environment=False):
         # Hold the registry lock through I/O so revocation has a definite boundary.
         with self._locked() as records:
             record = records.get(project_id)
             if (record is None or record['revision'] != revision
                     or record['state'] != 'attached' or right not in record['rights']):
                 raise ProjectAccessError('Project grant unavailable or changed')
+            if right in {'write', 'execute', 'transmit'}:
+                from .local_project_recovery import project_transactions
+                from .project_transaction import active_transaction
+                own = active_transaction.get()
+                own_id = Path(own).stem if own else None
+                if any(transaction['id'] != own_id for transaction in project_transactions(self, record)):
+                    raise ProjectAccessError('Project transaction recovery is required')
+            source = None
+            if record.get('origin') == 'runtime_snapshot':
+                source = records.get(record.get('source_project_id'))
+                if (source is None or source['revision'] != record.get('source_revision')
+                        or source['state'] != 'attached' or right not in source['rights']
+                        or source.get('origin') == 'runtime_snapshot'):
+                    raise ProjectAccessError('Snapshot source grant unavailable or changed')
+                try:
+                    source_fd = _open_root(source['root'])
+                except OSError as exc:
+                    raise ProjectAccessError('Snapshot source directory unavailable') from exc
+                try:
+                    identity = os.fstat(source_fd)
+                    if (identity.st_dev, identity.st_ino) != (source['device'], source['inode']):
+                        raise ProjectAccessError('Snapshot source directory identity changed')
+                finally:
+                    os.close(source_fd)
+            effective = source if environment and source is not None else record
             try:
-                fd = _open_root(record['root'])
+                fd = _open_root(effective['root'])
             except OSError as exc:
                 raise ProjectAccessError('Project directory unavailable') from exc
             try:
                 info = os.fstat(fd)
-                if (info.st_dev, info.st_ino) != (record['device'], record['inode']):
+                if (info.st_dev, info.st_ino) != (effective['device'], effective['inode']):
                     raise ProjectAccessError('Project directory identity changed')
                 yield fd
             finally:

@@ -23,6 +23,24 @@ transmission. Default attachment grants read access. Changes increment revision.
 Operations carry project ID and expected revision; stale requests fail explicitly.
 Unavailable or replaced roots require reconciliation through the local chooser.
 
+## Source transmission decision
+
+The specialist adapter requires a concrete transmission contract before
+activation. Approved fields:
+
+| Field | Enforcement |
+| --- | --- |
+| Project ID and grant revision | Revalidate before each provider request |
+| Provider and configured endpoint | Reject a recipient change |
+| Relative source paths and content hashes | Restrict reads to the approved source revision |
+| Exclusion and size limits | Filter credentials and refuse oversized packets |
+| Generated changes | Retain their provenance within the approved repair scope |
+
+A provider change or expanded source inventory requires a renewed approval.
+Local filesystem access and isolated execution continue under their own grants.
+The contract is approved for implementation. Provider calls remain subject to
+the recorded project-specific approval and its exact source inventory.
+
 Use a native local chooser initiated by an authenticated same-origin request.
 The server resolves the returned path and creates a short-lived, single-use
 selection ticket. Confirmation consumes the ticket. Model payloads reference

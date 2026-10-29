@@ -9,7 +9,39 @@ import shutil
 import sys
 import tempfile
 
-from .local_projects import ProjectAccessError, ProjectFiles, _parts
+from .local_projects import ProjectAccessError, ProjectFiles, _parts, _parent
+
+
+def copy_project(files, destination):
+    """Copy bounded visible sources and recheck their observed revisions."""
+    observed = {}
+    count, total = 0, 0
+
+    def copy(relative=''):
+        nonlocal count, total
+        if len(Path(relative).parts) > 32:
+            raise ProjectAccessError('Project snapshot exceeds directory depth limit')
+        for entry in files.list(relative):
+            target = destination / entry['path']
+            count += 1
+            if count > 2000:
+                raise ProjectAccessError('Project snapshot exceeds file count limit')
+            if entry['type'] == 'folder':
+                target.mkdir()
+                copy(entry['path'])
+            else:
+                data = files.read(entry['path'], limit=4_000_000)
+                total += len(data)
+                if total > 32_000_000:
+                    raise ProjectAccessError('Project snapshot exceeds size limit')
+                target.write_bytes(data)
+                observed[entry['path']] = data
+
+    copy()
+    for path, expected in observed.items():
+        if files.read(path, limit=4_000_000) != expected:
+            raise ProjectAccessError('Project source changed during snapshot')
+    return observed, count, total
 
 
 class ProjectRunner:
@@ -19,7 +51,11 @@ class ProjectRunner:
         self.registry = registry
 
     async def run(self, project_id, revision, argv, *, timeout=30, on_output=None,
-                  patches=None, include_versions=False):
+                  patches=None, include_versions=False, capture_paths=()):
+        if len(capture_paths) > 4:
+            raise ProjectAccessError('Execution artifact count exceeds limit')
+        for path in capture_paths:
+            _parts(path)
         if (not isinstance(argv, list) or not argv or len(argv) > 40
                 or any(not isinstance(arg, str) or '\x00' in arg for arg in argv)
                 or argv[0] not in {'python', 'python3'}):
@@ -34,33 +70,7 @@ class ProjectRunner:
         with ExitStack() as resources:
             temporary = resources.enter_context(tempfile.TemporaryDirectory(prefix='bigbrain-project-run-'))
             snapshot = Path(temporary)
-            count, total = 0, 0
-            observed = {}
-
-            def copy(relative=''):
-                nonlocal count, total
-                if len(Path(relative).parts) > 32:
-                    raise ProjectAccessError('Project snapshot exceeds directory depth limit')
-                for entry in files.list(relative):
-                    destination = snapshot / entry['path']
-                    count += 1
-                    if count > 2000:
-                        raise ProjectAccessError('Project snapshot exceeds file count limit')
-                    if entry['type'] == 'folder':
-                        destination.mkdir()
-                        copy(entry['path'])
-                    else:
-                        data = files.read(entry['path'], limit=4_000_000)
-                        total += len(data)
-                        if total > 32_000_000:
-                            raise ProjectAccessError('Project snapshot exceeds size limit')
-                        destination.write_bytes(data)
-                        observed[entry['path']] = data
-
-            copy()
-            for path, expected in observed.items():
-                if files.read(path, limit=4_000_000) != expected:
-                    raise ProjectAccessError('Project source changed during snapshot')
+            observed, count, total = copy_project(files, snapshot)
             if patches is not None:
                 if not isinstance(patches, list) or not 1 <= len(patches) <= 32:
                     raise ProjectAccessError('Invalid candidate patch set')
@@ -85,7 +95,7 @@ class ProjectRunner:
             interpreter = Path(sys.executable).resolve()
             prefix = interpreter.parent.parent
             environment_fd = None
-            with self.registry.access(project_id, revision, 'execute') as root:
+            with self.registry.access(project_id, revision, 'execute', environment=True) as root:
                 try:
                     environment_fd = os.open('.venv', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
                                              dir_fd=root)
@@ -143,10 +153,28 @@ class ProjectRunner:
                      asyncio.create_task(watch()), asyncio.create_task(process.wait())]
             try:
                 await asyncio.wait_for(asyncio.gather(*tasks), timeout)
+                artifacts = {}
+                root_fd = os.open(snapshot, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+                try:
+                    for path in capture_paths:
+                        with _parent(root_fd, path) as (parent, name):
+                            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+                            with os.fdopen(fd, 'rb') as stream:
+                                import stat
+                                info = os.fstat(stream.fileno())
+                                if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                                    raise ProjectAccessError('Execution artifact must be a regular file')
+                                data = stream.read(1_000_001)
+                                if len(data) > 1_000_000:
+                                    raise ProjectAccessError('Execution artifact exceeds size limit')
+                                artifacts[path] = data.decode('utf-8')
+                finally:
+                    os.close(root_fd)
                 return {'exitCode': process.returncode,
                         'output': output.decode('utf-8', errors='replace'),
                         'environment': 'project' if environment_fd is not None else 'base',
                         'snapshotFiles': count, 'snapshotBytes': total,
+                        **({'artifacts': artifacts} if capture_paths else {}),
                         **({'sourceVersions': {path: hashlib.sha256(data).hexdigest()
                                                for path, data in observed.items()}}
                            if include_versions else {})}

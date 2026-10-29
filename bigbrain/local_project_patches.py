@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .execution_target import ExecutionTarget
 from .local_projects import ProjectAccessError, ProjectFiles, _parts
-from .project_transaction import ProjectTransaction
+from .project_transaction import ProjectTransaction, active_transaction
 
 
 def apply_patch_set(registry, project_id, revision, patches, *, commit=True):
@@ -90,6 +90,7 @@ async def verify_and_apply(registry, project_id, revision, patches, checks):
     published = apply_patch_set(registry, project_id, revision, patches, commit=False)
     transaction = ProjectTransaction(
         registry.path.parent / 'transactions' / (published['transactionId'] + '.json'))
+    token = active_transaction.set(str(transaction.journal))
     try:
         expected_versions = {**baseline, **{patch['path']: hashlib.sha256(
             patch['content'].encode('utf-8')).hexdigest() for patch in patches}}
@@ -109,6 +110,7 @@ async def verify_and_apply(registry, project_id, revision, patches, checks):
                 'checks': evidence, 'changedPaths': published['changedPaths'],
                 'transactionId': published['transactionId']}
     finally:
+        active_transaction.reset(token)
         # The shared journal preserves concurrent user edits during recovery.
         state = json.loads(transaction.journal.read_text())['state']
         if state in {'open', 'cancelling'}:

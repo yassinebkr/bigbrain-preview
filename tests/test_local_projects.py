@@ -102,3 +102,45 @@ def test_conversation_selection_survives_restart(tmp_path):
     assert reopened.selection('conversation-b') is None
     reopened.selection('conversation-a', update=True)
     assert registry.selection('conversation-a') is None
+
+
+def test_snapshot_inherits_source_revocation_and_keeps_separate_files(tmp_path):
+    root, registry, project, _ = fixture(tmp_path)
+    snapshot = registry.create_snapshot(project['id'], 1)
+    assert snapshot['origin'] == 'runtime_snapshot'
+    assert registry.list() == [project]
+    stage = ProjectFiles(registry, snapshot['id'], 1)
+    stage.write('main.py', b'candidate', hashlib.sha256(b'original').hexdigest())
+    assert (root / 'main.py').read_bytes() == b'original'
+    registry.change(project['id'], 1, state='revoked')
+    with pytest.raises(ProjectAccessError, match='source grant'):
+        stage.read('main.py')
+
+
+def test_source_directory_cannot_contain_registry(tmp_path):
+    registry = ProjectRegistry(tmp_path / 'state' / 'registry.json')
+    with pytest.raises(ProjectAccessError, match='outside'):
+        registry.attach(tmp_path)
+
+
+def test_relocated_project_keeps_identity_and_conversation_selection(tmp_path):
+    source, registry, project, old_files = fixture(tmp_path)
+    registry.selection('conversation', project_id=project['id'], update=True)
+    moved = tmp_path / 'renamed-project'
+    source.rename(moved)
+    restored = registry.restore(project['id'], 1, selected_root=moved)
+    assert restored['id'] == project['id']
+    assert restored['revision'] == 2
+    assert registry.selection('conversation') == project['id']
+    assert ProjectFiles(registry, project['id'], 2).read('main.py') == b'original'
+    with pytest.raises(ProjectAccessError):
+        old_files.read('main.py')
+
+
+def test_restore_refuses_replaced_directory(tmp_path):
+    source, registry, project, _ = fixture(tmp_path)
+    revoked = registry.change(project['id'], 1, state='revoked')
+    source.rename(tmp_path / 'original-directory')
+    source.mkdir()
+    with pytest.raises(ProjectAccessError, match='different project identity'):
+        registry.restore(project['id'], revoked['revision'])

@@ -3,15 +3,21 @@
 // workspace is now the project file explorer plus the research bar.
 
 import { motion } from 'framer-motion';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAppStore } from '@/store/appStore';
 import { ResearchBar } from './workspace/ResearchBar';
 import { FileExplorer } from './workspace/FileExplorer';
 import { LocalProjects } from './workspace/LocalProjects';
 
 export function Workspace() {
-  const [local, setLocal] = useState(false);
   const sessionId = useAppStore((state) => state.activeSessionKey);
+  const originKey = `bigbrain-workspace-origin:${sessionId}`;
+  const [local, setLocal] = useState(() => typeof window !== 'undefined' && sessionStorage.getItem(originKey) === 'local');
+  useEffect(() => { setLocal(sessionStorage.getItem(originKey) === 'local'); }, [originKey]);
+  function chooseOrigin(value: boolean) {
+    sessionStorage.setItem(originKey, value ? 'local' : 'workspace');
+    setLocal(value);
+  }
   return (
     <motion.div
       initial={{ opacity: 0, x: 20 }}
@@ -28,8 +34,8 @@ export function Workspace() {
       >
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex rounded-xl bg-white/5 p-1 text-sm" aria-label="Origine des projets">
-            <button aria-pressed={!local} className={`rounded-lg px-3 py-2 ${!local ? 'bg-white/10' : ''}`} onClick={() => setLocal(false)}>Espace BigBrain</button>
-            <button aria-pressed={local} className={`rounded-lg px-3 py-2 ${local ? 'bg-white/10' : ''}`} onClick={() => setLocal(true)}>Dossiers locaux</button>
+            <button aria-pressed={!local} className={`rounded-lg px-3 py-2 ${!local ? 'bg-white/10' : ''}`} onClick={() => chooseOrigin(false)}>Espace BigBrain</button>
+            <button aria-pressed={local} className={`rounded-lg px-3 py-2 ${local ? 'bg-white/10' : ''}`} onClick={() => chooseOrigin(true)}>Dossiers locaux</button>
           </div>
           {!local && <div className="flex-1"><ResearchBar /></div>}
         </div>

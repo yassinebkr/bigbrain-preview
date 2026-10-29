@@ -9,23 +9,35 @@ plan is approved for implementation. Branch: `feat/local-projects`.
 | --- | --- | --- |
 | 1 | Access inventory and boundary specification in `LOCAL_PROJECTS_BOUNDARIES.md`; local bwrap smoke check | Trace individual integration callers |
 | 2 | Registry, filtered listings, descriptor-scoped reads and local HTTP chooser tickets; 14 regression cases pass | Production UI journey and caller integration |
-| 3 | Snapshot execution, project venv packages, revocation, candidate checks and shared batch rollback pass | Specialist repair integration, recovery UI and web preview |
-| 4 | Local folder tab, rights dialog, source viewer and streamed execution observed in browser | Native chooser acceptance, conflict/recovery UI and specialist integration |
+| 3 | Bound working copies, structured test reports, candidate checks, shared rollback and recovery pass | Specialist repair integration and web preview |
+| 4 | Local folder tab, rights dialog, source viewer and streamed execution observed in browser; recovery controls implemented | Native chooser acceptance, remaining browser journeys and specialist integration |
 | 5 | Acceptance matrix recorded | Cross-path campaign and runtime acceptance |
 
-Latest focused verification: 25 passing cases across filesystem capabilities,
+Latest focused verification: 37 passing cases across filesystem capabilities,
 HTTP authority and real isolated subprocess execution. Snapshot creation rechecks
 the copied contents and bounds total bytes, entry count and directory depth.
+
+Runtime working copies inherit the source project and its exact grant revision.
+Revoking or changing the source grant invalidates those copies. Structured test
+reports are read through descriptor-scoped artifact capture. Recoverable
+transactions block subsequent mutation and execution until their journal is
+resolved. Recovery preserves concurrent user edits.
+
+Registry metadata defaults to `$XDG_STATE_HOME/bigbrain/local-projects` (or
+`~/.local/state/bigbrain/local-projects`). `BIGBRAIN_LOCAL_PROJECTS_DIR` overrides
+this location. Attached roots must keep the registry outside their source tree.
+Relinking a moved directory preserves its project ID after device/inode checks.
+The source transmission contract binds the recipient and versioned inventory;
+the current proposal limit is 64 source files and 128 KB.
 
 Overlapping attachments are rejected while an overlapping root remains attached.
 The native chooser currently uses Zenity and requires a local desktop session.
 HTTP access requires a loopback client, an approved Host, a matching Origin and
 the local UI request header. Selection tickets expire after two minutes.
 
-The initial file replacement primitive checks the observed input hash. External
-edits during replacement and directory relocation require stronger publication
-protection before attached-project writes become available through production
-routes.
+File replacement checks the observed input hash and uses the shared recovery
+journal. Publication races and directory relocation during writes remain final
+hardening cases for the production boundary.
 
 Snapshot execution supports the project's `.venv` when its base interpreter
 matches the supported Python runtime. Its packages mount read-only. An incompatible

@@ -16,7 +16,8 @@ from ..local_projects import ProjectAccessError, ProjectFiles, ProjectRegistry
 def setup_local_project_routes(app, *, registry=None, chooser=None):
     registry = registry or ProjectRegistry(
         Path(os.environ.get('BIGBRAIN_LOCAL_PROJECTS_DIR',
-                            str(Path(__file__).resolve().parents[2] / 'data' / 'local-projects')))
+                            str(Path(os.environ.get('XDG_STATE_HOME', Path.home() / '.local' / 'state'))
+                                / 'bigbrain' / 'local-projects')))
         / 'registry.json')
     tickets = {}
     chooser_lock = asyncio.Lock()
@@ -47,6 +48,8 @@ def setup_local_project_routes(app, *, registry=None, chooser=None):
     def overview(session):
         projects = registry.list()
         for project in projects:
+            from ..local_project_recovery import project_transactions
+            project['transactions'] = project_transactions(registry, project)
             if project['state'] == 'attached':
                 try:
                     with registry.access(project['id'], project['revision'], 'read'):
@@ -80,10 +83,13 @@ def setup_local_project_routes(app, *, registry=None, chooser=None):
                 token = secrets.token_urlsafe(32)
                 tickets[token] = (str(Path(root).resolve(strict=True)), time.monotonic() + 120)
                 return web.json_response({'ticket': token, 'path': tickets[token][0]})
-            if action == 'attach':
+            if action in {'attach', 'relink'}:
                 selected = tickets.pop(body.get('ticket', ''), None)
                 if selected is None or selected[1] < time.monotonic():
                     raise ProjectAccessError('Folder selection expired; choose the folder again')
+                if action == 'relink':
+                    return web.json_response(registry.restore(body.get('projectId'), body.get('revision'),
+                                                              selected_root=selected[0]))
                 return web.json_response(registry.attach(selected[0], body.get('rights', ['read'])))
             if action == 'select':
                 return web.json_response({'selectedProjectId': registry.selection(
@@ -96,6 +102,12 @@ def setup_local_project_routes(app, *, registry=None, chooser=None):
             if action in {'detach', 'revoke'}:
                 return web.json_response(registry.change(
                     project_id, revision, state='detached' if action == 'detach' else 'revoked'))
+            if action == 'restore':
+                return web.json_response(registry.restore(project_id, revision))
+            if action == 'recover':
+                from ..local_project_recovery import recover_project
+                return web.json_response(recover_project(
+                    registry, project_id, revision, body.get('transactionId')))
             files = ProjectFiles(registry, project_id, revision)
             if action == 'list':
                 return web.json_response({'entries': files.list(body.get('path', ''))})
