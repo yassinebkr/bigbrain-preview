@@ -7,9 +7,9 @@ plan is approved for implementation. Branch: `feat/local-projects`.
 
 | Phase | Evidence | Remaining work |
 | --- | --- | --- |
-| 1 | Access inventory and boundary specification in `LOCAL_PROJECTS_BOUNDARIES.md`; local bwrap smoke check | Trace individual integration callers |
-| 2 | Registry, filtered listings, descriptor-scoped reads and local HTTP chooser tickets; 14 regression cases pass | Production UI journey and caller integration |
-| 3 | Python and static-web specialists reuse shared repair, isolated checks, source consent and transactional publication | Interactive preview, isolated React builds and final integration acceptance |
+| 1 | Access boundary traced through HTTP, front decisions, orchestrator, both specialists and isolated runners | Final requirement-to-evidence audit |
+| 2 | Registry, filtered listings, descriptor-scoped reads and local HTTP chooser tickets | Native chooser acceptance |
+| 3 | Python and web specialists reuse shared repair, isolated checks, source consent and transactional publication; React builds use project dependencies read-only | Interactive preview and final integration acceptance |
 | 4 | Local folder tab, rights dialog, source viewer and streamed execution observed in browser; recovery controls implemented | Native chooser acceptance, remaining browser journeys and specialist integration |
 | 5 | Acceptance matrix recorded | Cross-path campaign and runtime acceptance |
 
@@ -49,11 +49,19 @@ The 68-case integration suite passes, including real Chromium interaction checks
 publication checks, preview capability enforcement and revocation. The approved
 delivery type, stack and entry point are revalidated at specialist entry.
 
-Live model acceptance, browser acceptance of the consent card, interactive
-workspace preview and isolated React/Node builds remain integration milestones.
+React/Vite verification runs the project's existing Vite dependency inside
+Bubblewrap, with its `node_modules` mounted read-only. Projects with tsconfig.json
+also run their TypeScript checker. Captured build output is bounded and separate
+from user sources. Browser scenarios execute against that captured build. Missing
+dependencies produce an environment diagnostic; installation requires a separate
+environment-preparation workflow. A real React interaction passes this path.
 
-Latest focused verification: 37 passing cases across filesystem capabilities,
-HTTP authority and real isolated subprocess execution. Snapshot creation rechecks
+Live model acceptance, browser acceptance of the consent card and interactive
+workspace preview remain integration milestones.
+
+Latest focused verification: 94 passing cases across filesystem capabilities,
+HTTP authority, front routing, transactions, Python/Node execution and real browser
+checks. Snapshot creation rechecks
 the copied contents and bounds total bytes, entry count and directory depth.
 
 Runtime working copies inherit the source project and its exact grant revision.

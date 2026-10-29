@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 import mimetypes
+import os
 import secrets
 from pathlib import Path
 
@@ -15,9 +16,12 @@ from .local_projects import ProjectAccessError, ProjectFiles, _parts
 from .verification.web_gate import browser_report
 
 
-async def run_web_tests(registry, project_id, revision, entry_point, *, patches=None, include_versions=False):
+async def run_web_tests(registry, project_id, revision, entry_point, *, patches=None,
+                        include_versions=False, web_stack='static'):
     """Run existing executable scenarios against a project-scoped working copy."""
     _parts(entry_point)
+    if web_stack not in {'static', 'react_vite'}:
+        raise ProjectAccessError('Unsupported attached web stack')
     for right in ('read', 'execute'):
         with registry.access(project_id, revision, right):
             pass
@@ -63,6 +67,40 @@ async def run_web_tests(registry, project_id, revision, entry_point, *, patches=
                     'reason': 'Executable browser scenarios are required in tests/acceptance.json: ' + str(exc)[:300],
                     **({'sourceVersions': versions} if include_versions else {})}
 
+        built = None
+        if web_stack == 'react_vite':
+            from .local_project_runner import ProjectRunner
+            tools = [('vite/bin/vite.js', ['build', '--outDir', 'dist', '--emptyOutDir'])]
+            if 'tsconfig.json' in versions:
+                tools.insert(0, ('typescript/bin/tsc', ['--noEmit', '--pretty', 'false']))
+            for tool, args in tools:
+                descriptor = None
+                try:
+                    with registry.access(snapshot['id'], 1, 'execute', environment=True) as root:
+                        descriptor = os.dup(root)
+                        for component in ('node_modules/' + tool).split('/'):
+                            child = os.open(component, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=descriptor)
+                            os.close(descriptor)
+                            descriptor = child
+                except OSError:
+                    return {'status': 'inconclusive', 'cause': 'environment_blocked', 'next_action': 'stop',
+                        'reason': f'Prepare the project dependency node_modules/{tool} before verification',
+                        **({'sourceVersions': versions} if include_versions else {})}
+                finally:
+                    if descriptor is not None:
+                        os.close(descriptor)
+                build = await ProjectRunner(registry).run(snapshot['id'], 1,
+                    ['node', '/project/node_modules/' + tool, *args], timeout=120,
+                    capture_tree='dist' if tool.startswith('vite/') else None)
+                if build['exitCode'] != 0:
+                    return {'status': 'failed', 'framework': 'browser', 'cause': 'reproduced_defect',
+                        'next_action': 'repair', 'diagnostic_output': build['output'],
+                        **({'sourceVersions': versions} if include_versions else {})}
+                if tool.startswith('vite/'):
+                    built = build['treeArtifacts']
+            if 'index.html' not in built:
+                raise ProjectAccessError('The isolated web build produced no index.html')
+
         capability = secrets.token_urlsafe(32)
         cookie_name = 'bigbrain_preview_' + capability[:12]
         async def serve(request):
@@ -71,14 +109,15 @@ async def run_web_tests(registry, project_id, revision, entry_point, *, patches=
                 raise web.HTTPForbidden()
             path = request.match_info.get('path') or entry_point
             try:
-                data = files.read(path, 4_000_000)
+                _parts(path)
+                data = base64.b64decode(built[path], validate=True) if built is not None else files.read(path, 4_000_000)
                 content_type = mimetypes.guess_type(path)[0] or 'application/octet-stream'
                 response = web.Response(body=data, content_type=content_type,
                     headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
                              'Referrer-Policy': 'no-referrer'})
                 response.set_cookie(cookie_name, capability, httponly=True, samesite='Strict')
                 return response
-            except (ProjectAccessError, OSError, ValueError):
+            except (ProjectAccessError, OSError, ValueError, KeyError):
                 raise web.HTTPNotFound()
 
         app = web.Application()

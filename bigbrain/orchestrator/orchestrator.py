@@ -956,8 +956,9 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         if deliverable not in {'python', 'web_app'}:
             raise ProjectAccessError('An attached coding specialist is required')
         data = plan.original_task.payload
-        if deliverable == 'web_app' and data.get('web_stack', 'static') != 'static':
-            raise ProjectAccessError('Attached React builds require isolated Node toolchain integration')
+        stack = data.get('web_stack', 'static')
+        if stack not in {'static', 'react_vite'}:
+            raise ProjectAccessError('Unsupported attached web stack')
         scope = data['local_project']
         if (not isinstance(scope, dict) or set(scope) != {'project_id', 'revision'}
                 or not isinstance(scope['project_id'], str) or type(scope['revision']) is not int):
@@ -980,6 +981,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         spec = ProjectSpec(project_name=project['name'], description=user_request,
             deliverable_type=deliverable, entry_point=entry,
             interaction_mode='cli' if deliverable == 'python' else 'browser', executable=True,
+            web_stack=stack,
             tech_decisions=['Preserve existing stack and source behavior'],
             execution_strategy='Reproduce, repair and independently verify in an isolated copy')
         contracts = await draft_contracts(self.llm_provider, user_request, project_spec=spec)
@@ -990,7 +992,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         return [SubTask(id=plan.id + '_maintenance', description='Inspect and repair attached project',
             brain_target=specialist, payload={'type': 'maintain_project', 'user_request': user_request,
                 'local_project': dict(scope), 'deliverable_type': deliverable, 'entry_point': entry,
-                'web_stack': 'static', 'executable': True, 'interaction_mode': spec.interaction_mode})]
+                'web_stack': stack, 'executable': True, 'interaction_mode': spec.interaction_mode})]
 
     async def _plan_project(self, plan_id: str, user_request: str,
                             needs_research: bool, research_queries: list,

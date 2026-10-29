@@ -57,8 +57,6 @@ async def maintain_attached(brain, registry, project_id, revision, payload):
             or delivery.get('executable') != payload.get('executable', True)
             or delivery.get('web_stack', 'static') != payload.get('web_stack', 'static')):
         raise ProjectAccessError('Attached delivery settings differ from the approved contract')
-    if deliverable == 'web_app' and payload.get('web_stack', 'static') != 'static':
-        raise ProjectAccessError('Attached React builds require isolated Node toolchain integration')
     for right in ('read', 'write', 'execute', 'transmit'):
         with registry.access(project_id, revision, right):
             pass
@@ -103,7 +101,8 @@ async def maintain_attached(brain, registry, project_id, revision, payload):
         nonlocal initial_diagnostic, framework
         if deliverable == 'web_app':
             from .local_project_web import run_web_tests
-            result = await run_web_tests(registry, snapshot['id'], 1, payload['entry_point'])
+            result = await run_web_tests(registry, snapshot['id'], 1, payload['entry_point'],
+                                         web_stack=payload.get('web_stack', 'static'))
         else:
             result = await run_project_tests(registry, snapshot['id'], 1)
         framework = result.get('framework')
@@ -167,7 +166,8 @@ async def maintain_attached(brain, registry, project_id, revision, payload):
                     checks.append(['python', '-u', payload['entry_point']])
                 approved_tests = [change['path'] for change in approved.metadata.get('maintenance', {}).get('test_changes', [])]
                 publication = await verify_and_apply(registry, project_id, revision, patches, checks,
-                    approved_tests=approved_tests, web_entry=payload['entry_point'] if deliverable == 'web_app' else None)
+                    approved_tests=approved_tests, web_entry=payload['entry_point'] if deliverable == 'web_app' else None,
+                    web_stack=payload.get('web_stack', 'static'))
                 result['success'] = publication['state'] == 'committed'
                 result['publication'] = publication
             else:

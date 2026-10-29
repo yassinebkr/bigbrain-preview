@@ -79,7 +79,7 @@ class AttachedWebInput(ClosedModel):
     deliverable_type: Literal['web_app']
     local_project: AttachedProject
     entry_point: str = Field(min_length=1)
-    web_stack: Literal['static']
+    web_stack: Literal['static', 'react_vite']
 
 
 class WebInput(ClosedModel):

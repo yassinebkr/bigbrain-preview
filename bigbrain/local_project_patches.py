@@ -62,7 +62,8 @@ def apply_patch_set(registry, project_id, revision, patches, *, commit=True):
             raise
 
 
-async def verify_and_apply(registry, project_id, revision, patches, checks, *, approved_tests=(), web_entry=None):
+async def verify_and_apply(registry, project_id, revision, patches, checks, *, approved_tests=(),
+                           web_entry=None, web_stack='static'):
     """Check the candidate, publish through the shared journal, then recheck."""
     from .local_project_runner import ProjectRunner
     from .maintenance import protected_test
@@ -86,7 +87,7 @@ async def verify_and_apply(registry, project_id, revision, patches, checks, *, a
                 raise ProjectAccessError('Attached web publication requires executable browser checks')
             from .local_project_web import run_web_tests
             report = await run_web_tests(registry, project_id, revision, web_entry,
-                                        patches=candidate, include_versions=True)
+                                        patches=candidate, include_versions=True, web_stack=web_stack)
             return {'exitCode': 0 if report['status'] == 'passed' else 1,
                     'sourceVersions': report.pop('sourceVersions'), **report}
         return await runner.run(project_id, revision, command, patches=candidate, include_versions=True)
