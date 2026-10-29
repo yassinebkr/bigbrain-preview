@@ -179,6 +179,20 @@ class ProjectRegistry:
                     records[session_id] = project_id
             return records.get(session_id)
 
+    def conversation_context(self, session_id):
+        """Expose selected project identity and root file names for routing."""
+        project_id = self.selection(session_id)
+        if project_id is None:
+            return None
+        project = self.get(project_id)
+        with self.access(project_id, project['revision'], 'read'):
+            pass
+        entries = ProjectFiles(self, project_id, project['revision']).list()
+        files = [entry['name'] for entry in entries if entry['type'] == 'file']
+        return {'project_id': project_id, 'revision': project['revision'],
+                'name': project['name'], 'rights': project['rights'],
+                'root_files': files[:32], 'root_files_truncated': len(files) > 32}
+
     @contextmanager
     def access(self, project_id, revision, right, *, environment=False):
         # Hold the registry lock through I/O so revocation has a definite boundary.
