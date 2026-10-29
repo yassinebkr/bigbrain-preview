@@ -1,6 +1,6 @@
 # Recoverable cross-platform publication
 
-29 October 2026. Proposed design; implementation approval remains pending.
+29 October 2026. Preservation location and retention approved; implementation underway.
 Applies to the shared transaction engine and attached-project publication.
 
 ## Shared contract
@@ -39,17 +39,17 @@ the journal coordinates commit and recovery across the batch.
 API documentation establishes candidate semantics. Acceptance requires actual
 native tests on each supported filesystem and operating system.
 
-## Preservation and conflict policy proposed for approval
+## Approved preservation and conflict policy
 
 1. Keep displaced objects and their journal references after publication. Existing
    editor handles may continue writing to those objects; preservation must retain
    the live object rather than only an earlier byte snapshot.
 2. Surface a changed displaced version as a conflict and retain candidate and user
    data. Restoration uses the same protected publication operations.
-3. Reserve same-volume preservation storage with explicit project ownership,
-   exclusions and access checks. Storage placement and recovery UI require review
-   before implementation because attached folders currently keep runtime artifacts
-   outside their source trees.
+3. Reserve `.bigbrain-recovery` inside each linked project with explicit project
+   ownership, exclusions and access checks. Keep backups on the affected file's
+   volume; a nested mount with incompatible storage blocks the operation.
+   Recovery contents stay outside source scans and provider transmission.
 4. Require explicit resolution before deleting preserved objects. Storage limits
    stop new publications and produce a useful diagnostic.
 5. Treat missing primitives, unsupported filesystems and ambiguous native results
@@ -57,7 +57,7 @@ native tests on each supported filesystem and operating system.
 
 ## Qualification milestones
 
-1. Approve the shared behavior, preservation location and retention policy.
+1. Approved: shared behavior, project-local hidden storage and explicit retention.
 2. Implement native adapters and common journal transitions with per-file crash
    injection and atomic destination-collision tests.
 3. Test an edit inside the former comparison/rename window, writes through an
@@ -67,3 +67,13 @@ native tests on each supported filesystem and operating system.
    The broader Windows runtime migration remains in [PORTABILITY.md](PORTABILITY.md).
 
 The existing publication race remains open until the new path passes its gates.
+
+## Implementation checkpoint
+
+`native_publication.py` provides Linux and Windows primitives under a common
+create/replace-preserving/retire interface. The application still uses its existing
+transaction path. Journal integration, storage ownership, recovery UI and runtime
+cutover remain pending. Native CI runs the isolated primitive contract on Linux
+and Windows; its results must be checked before platform qualification.
+The initial eight native cases pass on Linux, including a write through an
+already-open editor descriptor after replacement. Windows qualification is pending.

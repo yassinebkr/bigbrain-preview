@@ -13,11 +13,11 @@ recorded as deferred work. This documentation update starts no migration.
 
 | Phase | Evidence | Remaining work |
 | --- | --- | --- |
-| 1 | Access boundary traced through HTTP, front decisions, orchestrator, both specialists and isolated runners | External-editor concurrency limitation recorded in the ledger |
+| 1 | Access boundary traced; Linux/Windows preservation and retention design approved | Publication hardening in progress |
 | 2 | Registry, descriptor-scoped reads, chooser tickets and native moved-folder reconciliation verified | Complete within the tested matrix |
 | 3 | Shared repair, transactional publication, isolated runtimes and live Python/React repairs verified | Complete within the documented boundaries |
 | 4 | Production UI verifies consent/rejection, recovery, rights, navigation, read-only mode, detach and native reconciliation | Complete within the tested matrix |
-| 5 | 2,029 backend tests and 141 frontend tests pass; build, model-led probes and native desktop acceptance pass | External-editor publication concurrency decision |
+| 5 | 2,029 backend tests and 141 frontend tests pass; build, model-led probes and native desktop acceptance pass | Publication journal integration, recovery UI and native Windows qualification |
 
 ### Specialist integration checkpoint
 

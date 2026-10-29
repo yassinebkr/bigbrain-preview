@@ -109,5 +109,8 @@ The initial expired ticket was rejected without changing the registry.
 ## Closure
 
 Functional, native UI and model-led gates pass. The external-editor publication
-window remains an explicit concurrency decision before full contract closure.
+hardening now has approved project-local hidden recovery storage and explicit
+retention. Initial native primitives pass eight Linux cases; shared-journal
+integration, recovery UI and Windows qualification remain open. See the
+[publication design](PUBLICATION_PORTABILITY_DESIGN.md).
 Merge requires user authorization.
