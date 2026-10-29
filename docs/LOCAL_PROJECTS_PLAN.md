@@ -9,11 +9,11 @@ plan is approved for implementation. Branch: `feat/local-projects`.
 | --- | --- | --- |
 | 1 | Access inventory and boundary specification in `LOCAL_PROJECTS_BOUNDARIES.md`; local bwrap smoke check | Trace individual integration callers |
 | 2 | Registry, filtered listings, descriptor-scoped reads and local HTTP chooser tickets; 14 regression cases pass | Production UI journey and caller integration |
-| 3 | Snapshot execution, project venv packages, revocation and shared batch rollback pass | Automatic repair integration, recovery UI and web preview |
+| 3 | Snapshot execution, project venv packages, revocation, candidate checks and shared batch rollback pass | Specialist repair integration, recovery UI and web preview |
 | 4 | Local folder tab, rights dialog, source viewer and streamed execution observed in browser | Native chooser acceptance, conflict/recovery UI and specialist integration |
 | 5 | Acceptance matrix recorded | Cross-path campaign and runtime acceptance |
 
-Latest focused verification: 22 passing cases across filesystem capabilities,
+Latest focused verification: 25 passing cases across filesystem capabilities,
 HTTP authority and real isolated subprocess execution. Snapshot creation rechecks
 the copied contents and bounds total bytes, entry count and directory depth.
 
@@ -37,7 +37,14 @@ real execution tests cover outside-root access, scratch writes, project-only
 packages and revocation. Source patch batches reuse `ProjectTransaction` with
 journals stored in registry metadata. Regression cases cover whole-batch version
 checks, second-file failure rollback and preservation of unrelated source files.
-Automatic repair integration, package installation and web preview integration
+The patch endpoint requires verification commands. Candidates run on copied
+sources before publication. Published files pass a second check before journal
+commit. Source hashes bind the checks to the same dependency revision. A failed
+candidate preserves the original sources; a failed published check triggers
+shared-journal rollback. Existing validation files require separate approval.
+Passing these requested checks carries the `requested_checks_passed` label;
+approved-contract acceptance remains a specialist delivery responsibility.
+Specialist repair integration, package installation and web preview integration
 remain acceptance work for Phase 3.
 
 The workspace exposes local folders in a dedicated tab. Conversation selections

@@ -2,13 +2,14 @@
 
 import asyncio
 from contextlib import ExitStack
+import hashlib
 import os
 from pathlib import Path
 import shutil
 import sys
 import tempfile
 
-from .local_projects import ProjectAccessError, ProjectFiles
+from .local_projects import ProjectAccessError, ProjectFiles, _parts
 
 
 class ProjectRunner:
@@ -17,7 +18,8 @@ class ProjectRunner:
     def __init__(self, registry):
         self.registry = registry
 
-    async def run(self, project_id, revision, argv, *, timeout=30, on_output=None):
+    async def run(self, project_id, revision, argv, *, timeout=30, on_output=None,
+                  patches=None, include_versions=False):
         if (not isinstance(argv, list) or not argv or len(argv) > 40
                 or any(not isinstance(arg, str) or '\x00' in arg for arg in argv)
                 or argv[0] not in {'python', 'python3'}):
@@ -59,6 +61,27 @@ class ProjectRunner:
             for path, expected in observed.items():
                 if files.read(path, limit=4_000_000) != expected:
                     raise ProjectAccessError('Project source changed during snapshot')
+            if patches is not None:
+                if not isinstance(patches, list) or not 1 <= len(patches) <= 32:
+                    raise ProjectAccessError('Invalid candidate patch set')
+                patched = set()
+                for patch in patches:
+                    path = patch.get('path')
+                    _parts(path)
+                    content = patch.get('content')
+                    if path in patched or not isinstance(content, str):
+                        raise ProjectAccessError('Candidate patch paths must be unique with text content')
+                    patched.add(path)
+                    before = observed.get(path)
+                    version = hashlib.sha256(before).hexdigest() if before is not None else None
+                    if version != patch.get('sha256'):
+                        raise ProjectAccessError('Candidate source version changed')
+                    data = content.encode('utf-8')
+                    if len(data) > 4_000_000:
+                        raise ProjectAccessError('Candidate patch exceeds size limit')
+                    destination = snapshot / path
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_bytes(data)
             interpreter = Path(sys.executable).resolve()
             prefix = interpreter.parent.parent
             environment_fd = None
@@ -123,7 +146,10 @@ class ProjectRunner:
                 return {'exitCode': process.returncode,
                         'output': output.decode('utf-8', errors='replace'),
                         'environment': 'project' if environment_fd is not None else 'base',
-                        'snapshotFiles': count, 'snapshotBytes': total}
+                        'snapshotFiles': count, 'snapshotBytes': total,
+                        **({'sourceVersions': {path: hashlib.sha256(data).hexdigest()
+                                               for path, data in observed.items()}}
+                           if include_versions else {})}
             finally:
                 if process.returncode is None:
                     import signal
