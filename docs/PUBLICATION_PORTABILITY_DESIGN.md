@@ -75,5 +75,8 @@ create/replace-preserving/retire interface. The application still uses its exist
 transaction path. Journal integration, storage ownership, recovery UI and runtime
 cutover remain pending. Native CI runs the isolated primitive contract on Linux
 and Windows; its results must be checked before platform qualification.
-The initial eight native cases pass on Linux, including a write through an
-already-open editor descriptor after replacement. Windows qualification is pending.
+Commit `6806680` passes all eight primitive cases on native Ubuntu and Windows
+runners, with zero skips. Both runs exercise a late write through an already-open
+editor descriptor/handle after replacement. These results qualify the tested
+primitive cases; journal integration and broader platform support remain pending.
+[Native CI run](https://github.com/yassinebkr/bigbrain-preview/actions/runs/40939809059).

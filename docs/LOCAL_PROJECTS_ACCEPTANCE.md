@@ -110,7 +110,8 @@ The initial expired ticket was rejected without changing the registry.
 
 Functional, native UI and model-led gates pass. The external-editor publication
 hardening now has approved project-local hidden recovery storage and explicit
-retention. Initial native primitives pass eight Linux cases; shared-journal
-integration, recovery UI and Windows qualification remain open. See the
+retention. Commit `6806680` passes eight primitive cases on Linux and eight on
+Windows in native CI, with zero skips. Shared-journal integration, recovery UI
+and end-to-end native qualification remain open. See the
 [publication design](PUBLICATION_PORTABILITY_DESIGN.md).
 Merge requires user authorization.
