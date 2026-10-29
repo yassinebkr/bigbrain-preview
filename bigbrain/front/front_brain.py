@@ -378,8 +378,9 @@ class FrontBrain:
         if attached:
             messages.append({'role': 'system', 'content':
                 'Attached local project selection (routing metadata): ' + json.dumps(attached, ensure_ascii=False) +
-                '\nFor maintenance of this selected project, use python_brain with type maintain_project, '
-                'deliverable_type python, local_project {project_id, revision}, and an existing entry_point. '
+                '\nFor maintenance of this selected project, use python_brain for Python or web_app_brain '
+                'for a static web app, type maintain_project, the matching deliverable_type, '
+                'local_project {project_id, revision}, and an existing entry_point. Static web uses web_stack static. '
                 'Request clarification if the entry point is unclear. The contract approval precedes source '
                 'transmission and changes. A new project uses its own destination. An unavailable selection '
                 'requires restoration through the local folder workspace.'})
@@ -490,6 +491,8 @@ For a fresh documentary research delegation, include payload.obligations: one to
 python_brain/run_file (file); web_app_brain/run_web_project (project_name).
 Attached Python maintenance uses python_brain/maintain_project with deliverable_type python,
 local_project {{project_id,revision}} from the current attached selection and entry_point.
+Attached static web maintenance uses web_app_brain/maintain_project, deliverable_type web_app,
+web_stack static and the same local_project and entry_point fields.
 This route requires the attached selection; omit project_target. The runtime prepares a source consent proposal.
 Code generation and multi-step work use a generic delegation, leaving decomposition to the orchestrator.
 Memory: {{"decision":{{"operation":"consult_memory","tool":"projects.list","arguments":{{}}}}}}.

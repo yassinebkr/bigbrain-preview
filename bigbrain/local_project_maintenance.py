@@ -48,8 +48,17 @@ async def maintain_attached(brain, registry, project_id, revision, payload):
             or approved.user_request != payload.get('user_request')
             or approved.metadata.get('approval', {}).get('decision') != 'approved'):
         raise ProjectAccessError('An approved contract for this attached project revision is required')
-    if payload.get('deliverable_type') != 'python':
-        raise ProjectAccessError('Python maintenance requires a Python deliverable contract')
+    deliverable = payload.get('deliverable_type')
+    if deliverable not in {'python', 'web_app'} or deliverable != brain.project_kind:
+        raise ProjectAccessError('Attached maintenance requires the matching specialist')
+    delivery = approved.metadata.get('delivery', {})
+    if (delivery.get('deliverable_type') != deliverable
+            or delivery.get('entry_point') != payload.get('entry_point')
+            or delivery.get('executable') != payload.get('executable', True)
+            or delivery.get('web_stack', 'static') != payload.get('web_stack', 'static')):
+        raise ProjectAccessError('Attached delivery settings differ from the approved contract')
+    if deliverable == 'web_app' and payload.get('web_stack', 'static') != 'static':
+        raise ProjectAccessError('Attached React builds require isolated Node toolchain integration')
     for right in ('read', 'write', 'execute', 'transmit'):
         with registry.access(project_id, revision, right):
             pass
@@ -92,7 +101,11 @@ async def maintain_attached(brain, registry, project_id, revision, payload):
 
     async def diagnose():
         nonlocal initial_diagnostic, framework
-        result = await run_project_tests(registry, snapshot['id'], 1)
+        if deliverable == 'web_app':
+            from .local_project_web import run_web_tests
+            result = await run_web_tests(registry, snapshot['id'], 1, payload['entry_point'])
+        else:
+            result = await run_project_tests(registry, snapshot['id'], 1)
         framework = result.get('framework')
         if initial_diagnostic is None:
             artifact = repository.put_artifact(json.dumps(result, ensure_ascii=False).encode(),
@@ -107,7 +120,7 @@ async def maintain_attached(brain, registry, project_id, revision, payload):
         if tests['status'] != 'passed':
             failures.append({'stage': 'tests', **stages[-1]})
         entry = payload.get('entry_point')
-        if payload.get('executable', True):
+        if deliverable == 'python' and payload.get('executable', True):
             if not isinstance(entry, str) or entry not in tools.inventory():
                 failures.append({'stage': 'entry_point', 'status': 'inconclusive',
                     'details': {'cause': 'environment_blocked', 'next_action': 'stop',
@@ -147,13 +160,14 @@ async def maintain_attached(brain, registry, project_id, revision, payload):
                         'content': tools.source(path)} for path, version in tools.fingerprints().items()
                        if consent['source_versions'].get(path) != version]
             if patches:
-                command = ['python', '-m', 'unittest', 'discover'] if framework == 'unittest' else ['python', '-m', 'pytest', '-q']
+                command = (['browser'] if deliverable == 'web_app' else
+                    ['python', '-m', 'unittest', 'discover'] if framework == 'unittest' else ['python', '-m', 'pytest', '-q'])
                 checks = [command]
-                if payload.get('executable', True):
+                if deliverable == 'python' and payload.get('executable', True):
                     checks.append(['python', '-u', payload['entry_point']])
                 approved_tests = [change['path'] for change in approved.metadata.get('maintenance', {}).get('test_changes', [])]
                 publication = await verify_and_apply(registry, project_id, revision, patches, checks,
-                                                       approved_tests=approved_tests)
+                    approved_tests=approved_tests, web_entry=payload['entry_point'] if deliverable == 'web_app' else None)
                 result['success'] = publication['state'] == 'committed'
                 result['publication'] = publication
             else:

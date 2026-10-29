@@ -62,7 +62,7 @@ def apply_patch_set(registry, project_id, revision, patches, *, commit=True):
             raise
 
 
-async def verify_and_apply(registry, project_id, revision, patches, checks, *, approved_tests=()):
+async def verify_and_apply(registry, project_id, revision, patches, checks, *, approved_tests=(), web_entry=None):
     """Check the candidate, publish through the shared journal, then recheck."""
     from .local_project_runner import ProjectRunner
     from .maintenance import protected_test
@@ -80,10 +80,20 @@ async def verify_and_apply(registry, project_id, revision, patches, checks, *, a
         with registry.access(project_id, revision, right):
             pass
     runner = ProjectRunner(registry)
+    async def run_check(command, candidate=None):
+        if web_entry is not None:
+            if command != ['browser']:
+                raise ProjectAccessError('Attached web publication requires executable browser checks')
+            from .local_project_web import run_web_tests
+            report = await run_web_tests(registry, project_id, revision, web_entry,
+                                        patches=candidate, include_versions=True)
+            return {'exitCode': 0 if report['status'] == 'passed' else 1,
+                    'sourceVersions': report.pop('sourceVersions'), **report}
+        return await runner.run(project_id, revision, command, patches=candidate, include_versions=True)
     evidence = []
     baseline = None
     for command in checks:
-        result = await runner.run(project_id, revision, command, patches=patches, include_versions=True)
+        result = await run_check(command, patches)
         versions = result.pop('sourceVersions')
         if baseline is not None and versions != baseline:
             raise ProjectAccessError('Project dependencies changed between candidate checks')
@@ -99,7 +109,7 @@ async def verify_and_apply(registry, project_id, revision, patches, checks, *, a
         expected_versions = {**baseline, **{patch['path']: hashlib.sha256(
             patch['content'].encode('utf-8')).hexdigest() for patch in patches}}
         for command in checks:
-            result = await runner.run(project_id, revision, command, include_versions=True)
+            result = await run_check(command)
             if result.pop('sourceVersions') != expected_versions:
                 raise ProjectAccessError('Project dependencies changed before published verification')
             evidence.append({'phase': 'published', 'command': command, **result})

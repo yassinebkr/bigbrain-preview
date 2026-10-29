@@ -9,7 +9,7 @@ plan is approved for implementation. Branch: `feat/local-projects`.
 | --- | --- | --- |
 | 1 | Access inventory and boundary specification in `LOCAL_PROJECTS_BOUNDARIES.md`; local bwrap smoke check | Trace individual integration callers |
 | 2 | Registry, filtered listings, descriptor-scoped reads and local HTTP chooser tickets; 14 regression cases pass | Production UI journey and caller integration |
-| 3 | Bound working copies, structured test reports, candidate checks, shared rollback and recovery pass | Specialist repair integration and web preview |
+| 3 | Python and static-web specialists reuse shared repair, isolated checks, source consent and transactional publication | Interactive preview, isolated React builds and final integration acceptance |
 | 4 | Local folder tab, rights dialog, source viewer and streamed execution observed in browser; recovery controls implemented | Native chooser acceptance, remaining browser journeys and specialist integration |
 | 5 | Acceptance matrix recorded | Cross-path campaign and runtime acceptance |
 
@@ -39,8 +39,18 @@ names. Source contents enter specialist requests after approval. Conflicting
 workspace destinations and references outside the current selection are rejected.
 The focused front/planning suite passes 26 tests.
 
-Live model acceptance, browser acceptance of the consent card and the web
-specialist remain integration milestones.
+Attached static web maintenance uses the same repair engine through WebAppBrain.
+Executable browser scenarios run against a scoped working copy. Chromium restricts
+requests to the preview origin. A random capability protects the temporary HTTP
+server; revocation cancels verification and closes that server. Screenshots become
+local evidence artifacts, while diagnostics carry their hashes. Browser checks
+run before source publication and again before transaction commit.
+The 68-case integration suite passes, including real Chromium interaction checks,
+publication checks, preview capability enforcement and revocation. The approved
+delivery type, stack and entry point are revalidated at specialist entry.
+
+Live model acceptance, browser acceptance of the consent card, interactive
+workspace preview and isolated React/Node builds remain integration milestones.
 
 Latest focused verification: 37 passing cases across filesystem capabilities,
 HTTP authority and real isolated subprocess execution. Snapshot creation rechecks

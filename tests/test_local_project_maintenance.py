@@ -52,6 +52,7 @@ class ProtocolProvider:
 
 class Worker:
     _cancelled = False
+    project_kind = 'python'
 
     def __init__(self, provider):
         self.llm_provider = provider
@@ -81,7 +82,8 @@ def setup(tmp_path):
     repository = default_repository()
     spec = RunGate(repository).build_spec(request, ['main.py'])
     spec.metadata.update(local_project={'project_id': project['id'], 'revision': 1},
-                         source_transmission=consent, business_criteria=['add(2, 3) returns five'])
+                         source_transmission=consent, business_criteria=['add(2, 3) returns five'],
+                         delivery={'deliverable_type': 'python', 'entry_point': 'main.py', 'executable': True})
     repository.save_spec(spec)
     approved = repository.approve_spec(spec.design_id, plan_id='attached-offline')
     payload = {'user_request': request, 'deliverable_type': 'python', 'entry_point': 'main.py',
@@ -121,6 +123,15 @@ async def test_provider_change_requires_renewed_approval(tmp_path):
         await maintain_attached(Worker(provider), registry, project['id'], 1, payload)
     assert provider.calls == []
     assert 'return a - b' in (source / 'arithmetic.py').read_text()
+
+
+@pytest.mark.asyncio
+async def test_changed_entry_point_requires_renewed_approval(tmp_path):
+    _, registry, project, provider, payload = setup(tmp_path)
+    payload['entry_point'] = 'arithmetic.py'
+    with pytest.raises(ProjectAccessError, match='delivery settings'):
+        await maintain_attached(Worker(provider), registry, project['id'], 1, payload)
+    assert provider.calls == []
 
 
 @pytest.mark.asyncio

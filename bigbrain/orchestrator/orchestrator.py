@@ -953,9 +953,11 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         from ..local_projects import default_registry, ProjectAccessError
         from ..local_project_transmission import prepare_source_consent, provider_recipient
         from ..verification.contracts import draft_contracts
-        if deliverable != 'python':
-            raise ProjectAccessError('Attached web specialist integration is pending')
+        if deliverable not in {'python', 'web_app'}:
+            raise ProjectAccessError('An attached coding specialist is required')
         data = plan.original_task.payload
+        if deliverable == 'web_app' and data.get('web_stack', 'static') != 'static':
+            raise ProjectAccessError('Attached React builds require isolated Node toolchain integration')
         scope = data['local_project']
         if (not isinstance(scope, dict) or set(scope) != {'project_id', 'revision'}
                 or not isinstance(scope['project_id'], str) or type(scope['revision']) is not int):
@@ -965,7 +967,8 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             with registry.access(scope['project_id'], scope['revision'], right):
                 pass
         resolver = getattr(self, 'specialist_provider', None)
-        provider = resolver('python_brain') if resolver else None
+        specialist = 'python_brain' if deliverable == 'python' else 'web_app_brain'
+        provider = resolver(specialist) if resolver else None
         consent = prepare_source_consent(registry, scope['project_id'], scope['revision'],
                                          provider_recipient(provider))
         entry = data.get('entry_point')
@@ -975,7 +978,8 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             raise ProjectAccessError('Attached validation changes require a dedicated approval proposal')
         project = registry.get(scope['project_id'])
         spec = ProjectSpec(project_name=project['name'], description=user_request,
-            deliverable_type='python', entry_point=entry, interaction_mode='cli', executable=True,
+            deliverable_type=deliverable, entry_point=entry,
+            interaction_mode='cli' if deliverable == 'python' else 'browser', executable=True,
             tech_decisions=['Preserve existing stack and source behavior'],
             execution_strategy='Reproduce, repair and independently verify in an isolated copy')
         contracts = await draft_contracts(self.llm_provider, user_request, project_spec=spec)
@@ -983,10 +987,10 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         if not spec.acceptance_contracts:
             raise ProjectAccessError('Attached maintenance requires checkable acceptance criteria')
         plan.local_project, plan.source_transmission, plan.project_spec = dict(scope), consent, spec
-        return [SubTask(id=plan.id + '_maintenance', description='Inspect and repair attached Python project',
-            brain_target='python_brain', payload={'type': 'maintain_project', 'user_request': user_request,
-                'local_project': dict(scope), 'deliverable_type': 'python', 'entry_point': entry,
-                'executable': True, 'interaction_mode': 'cli'})]
+        return [SubTask(id=plan.id + '_maintenance', description='Inspect and repair attached project',
+            brain_target=specialist, payload={'type': 'maintain_project', 'user_request': user_request,
+                'local_project': dict(scope), 'deliverable_type': deliverable, 'entry_point': entry,
+                'web_stack': 'static', 'executable': True, 'interaction_mode': spec.interaction_mode})]
 
     async def _plan_project(self, plan_id: str, user_request: str,
                             needs_research: bool, research_queries: list,

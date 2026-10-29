@@ -22,7 +22,8 @@ def intent(scope):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('selected', [True, False])
-async def test_front_requires_current_conversation_selection(tmp_path, selected):
+@pytest.mark.parametrize('deliverable', ['python', 'web_app'])
+async def test_front_requires_current_conversation_selection(tmp_path, selected, deliverable):
     registry = default_registry()
     source = tmp_path / 'source'
     source.mkdir()
@@ -32,7 +33,11 @@ async def test_front_requires_current_conversation_selection(tmp_path, selected)
     if selected:
         registry.selection('s', project_id=project['id'], update=True)
     provider = AsyncMock()
-    provider.chat_complete.return_value = json.dumps(intent(scope))
+    decision = intent(scope)
+    if deliverable == 'web_app':
+        decision['decision']['route']['brain'] = 'web_app_brain'
+        decision['decision']['route']['payload'].update(deliverable_type='web_app', web_stack='static')
+    provider.chat_complete.return_value = json.dumps(decision)
     bus = MessageBus(log_dir=tmp_path / 'logs')
     dispatched = []
     async def receive(frame):
@@ -41,6 +46,7 @@ async def test_front_requires_current_conversation_selection(tmp_path, selected)
     bus.subscribe('orchestrator_default', receive)
     front = FrontBrain(bus, llm_provider=provider)
     front.register_brain('python_brain', 'Python specialist')
+    front.register_brain('web_app_brain', 'Web specialist')
     await front._handle_ui_message(BusMessage(type=MessageType.TASK, source='morphable_ui',
         target='front_brain', payload={'text': 'Corrige ce projet', 'session_id': 's'}))
     assert bool(dispatched) is selected
