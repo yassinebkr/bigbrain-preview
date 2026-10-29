@@ -18,6 +18,7 @@
 | State | Result |
 | --- | --- |
 | Backend at `7a2da2b` | 2,012 passed, 8 skipped |
+| Full backend campaign launched at `57a42fe` | 2,021 passed, 8 skipped, 1 dispatch timeout; exact-text changes received separate targeted checks |
 | Frontend after attached-result navigation | 141 passed |
 | Publication and repair evidence integration | 33 targeted cases passed |
 | Runtime environment, network and shutdown checks | 6 targeted cases passed |
@@ -44,6 +45,11 @@ Regression checks cover `1`, `-1` and `10`; the 21-case browser/adapter suite pa
 The React delivery gate remains open. No further model-led attempt was launched.
 Subscription cost is unknown. Missing usage records remain explicitly uncounted.
 Local reports: `/tmp/bigbrain-local-live-yiyftz27/{python,web_app}-report.json`.
+
+The full campaign timed out in
+`TestReentrantEvents.test_noisy_brain_high_event_throughput`: two subtasks remained
+running after its five-second polling deadline. The same test passed in isolation.
+Its timing/concurrency cause remains unresolved; the full campaign remains red.
 
 The output-limit regression reproduced a pipe-cleanup deadlock. The runner now
 terminates its process group, cancels readers, drains remaining pipe data and
