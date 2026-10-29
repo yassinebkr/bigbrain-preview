@@ -10,10 +10,10 @@ plan is approved for implementation. Branch: `feat/local-projects`.
 | 1 | Access inventory and boundary specification in `LOCAL_PROJECTS_BOUNDARIES.md`; local bwrap smoke check | Trace individual integration callers |
 | 2 | Registry, filtered listings, descriptor-scoped reads and local HTTP chooser tickets; 14 regression cases pass | Production UI journey and caller integration |
 | 3 | Snapshot execution, project venv packages, revocation and shared batch rollback pass | Automatic repair integration, recovery UI and web preview |
-| 4 | Existing project selector identified | Trusted chooser and attachment journeys |
+| 4 | Local folder tab, rights dialog, source viewer and streamed execution observed in browser | Native chooser acceptance, conflict/recovery UI and specialist integration |
 | 5 | Acceptance matrix recorded | Cross-path campaign and runtime acceptance |
 
-Latest focused verification: 20 passing cases across filesystem capabilities,
+Latest focused verification: 22 passing cases across filesystem capabilities,
 HTTP authority and real isolated subprocess execution. Snapshot creation rechecks
 the copied contents and bounds total bytes, entry count and directory depth.
 
@@ -32,13 +32,26 @@ matches the supported Python runtime. Its packages mount read-only. An incompati
 or incomplete environment produces a diagnostic. Projects without a venv use the
 base runtime. Bubblewrap exposes the copied source tree, runtime
 libraries and private temporary storage. Execution has a time limit and a bounded
-output buffer. The host source tree stays outside the process namespace. Two
+output buffer. The host source tree stays outside the process namespace. Three
 real execution tests cover outside-root access, scratch writes, project-only
 packages and revocation. Source patch batches reuse `ProjectTransaction` with
 journals stored in registry metadata. Regression cases cover whole-batch version
 checks, second-file failure rollback and preservation of unrelated source files.
 Automatic repair integration, package installation and web preview integration
 remain acceptance work for Phase 3.
+
+The workspace exposes local folders in a dedicated tab. Conversation selections
+persist in registry metadata. The native chooser creates a ticket before the
+rights dialog confirms attachment. The console receives newline-delimited events
+and reports a terminal result or error. An HTTP regression verifies that output
+arrives while the tested program is still running.
+
+Browser inspection used the production WebServer with disposable source files
+and an injected chooser result. The workspace tab, confirmation dialog, restored
+selection, file read and successful streamed Python execution were observed.
+Theme inheritance covers the workspace and portalled permission dialog. The
+frontend build and 138 existing frontend tests pass. Native desktop chooser
+acceptance remains open.
 
 ## Approved contracts
 

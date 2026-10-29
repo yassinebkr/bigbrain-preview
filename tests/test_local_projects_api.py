@@ -2,6 +2,8 @@
 
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+import asyncio
+import json
 import pytest
 
 from bigbrain.local_projects import ProjectRegistry
@@ -55,3 +57,25 @@ async def test_cross_origin_requests_rejected(tmp_path):
         for headers in ({}, {'Origin': 'https://example.com', 'X-BigBrain-Local': '1'}):
             response = await client.get('/api/local-projects', headers=headers)
             assert response.status == 403
+
+
+@pytest.mark.asyncio
+async def test_stream_delivers_output_before_completion(tmp_path):
+    root = tmp_path / 'source'
+    root.mkdir()
+    (root / 'main.py').write_text('import time\nprint("first", flush=True)\ntime.sleep(1)\nprint("last")\n')
+    registry = ProjectRegistry(tmp_path / 'registry.json')
+    project = registry.attach(root, ('read', 'execute'))
+    app = web.Application()
+    setup_local_project_routes(app, registry=registry)
+    async with TestClient(TestServer(app)) as client:
+        headers = {'Origin': str(client.make_url('')).rstrip('/'), 'X-BigBrain-Local': '1'}
+        response = await client.post('/api/local-projects/run-stream', headers=headers,
+                                     json={'projectId': project['id'], 'revision': 1,
+                                           'argv': ['python', '-u', 'main.py']})
+        first = json.loads(await asyncio.wait_for(response.content.readline(), 0.8))
+        assert first['type'] == 'output' and 'first' in first['text']
+        events = [json.loads(line) async for line in response.content]
+        assert events[-1]['type'] == 'result'
+        assert events[-1]['exitCode'] == 0
+        assert any('last' in event.get('text', '') for event in events)

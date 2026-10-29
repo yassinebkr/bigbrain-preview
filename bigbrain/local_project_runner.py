@@ -17,7 +17,7 @@ class ProjectRunner:
     def __init__(self, registry):
         self.registry = registry
 
-    async def run(self, project_id, revision, argv, *, timeout=30):
+    async def run(self, project_id, revision, argv, *, timeout=30, on_output=None):
         if (not isinstance(argv, list) or not argv or len(argv) > 40
                 or any(not isinstance(arg, str) or '\x00' in arg for arg in argv)
                 or argv[0] not in {'python', 'python3'}):
@@ -106,6 +106,8 @@ class ProjectRunner:
                     output.extend(chunk)
                     if len(output) > 512_000:
                         raise ProjectAccessError('Project output exceeds limit')
+                    if on_output is not None:
+                        await on_output(chunk.decode('utf-8', errors='replace'))
 
             async def watch():
                 while process.returncode is None:

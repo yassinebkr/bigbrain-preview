@@ -92,3 +92,13 @@ def test_ancestor_symlink_substitution(tmp_path):
     container.symlink_to(tmp_path / 'moved', target_is_directory=True)
     with pytest.raises(ProjectAccessError, match='unavailable'):
         ProjectFiles(registry, record['id'], 1).list()
+
+
+def test_conversation_selection_survives_restart(tmp_path):
+    _, registry, project, _ = fixture(tmp_path)
+    registry.selection('conversation-a', project_id=project['id'], update=True)
+    reopened = ProjectRegistry(registry.path)
+    assert reopened.selection('conversation-a') == project['id']
+    assert reopened.selection('conversation-b') is None
+    reopened.selection('conversation-a', update=True)
+    assert registry.selection('conversation-a') is None

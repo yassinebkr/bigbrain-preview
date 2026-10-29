@@ -96,6 +96,23 @@ class ProjectRegistry:
             record['revision'] += 1
             return dict(record)
 
+    def selection(self, session_id, *, project_id=None, update=False):
+        """Persist conversation selection independently of project grants."""
+        if not isinstance(session_id, str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,128}', session_id):
+            raise ProjectAccessError('Invalid conversation identity')
+        if update and project_id is not None:
+            project = self.get(project_id)
+            if project['state'] != 'attached':
+                raise ProjectAccessError('Project is detached or revoked')
+        selections = ProjectRegistry(self.path.with_name('selections.json'))
+        with selections._locked() as records:
+            if update:
+                if project_id is None:
+                    records.pop(session_id, None)
+                else:
+                    records[session_id] = project_id
+            return records.get(session_id)
+
     @contextmanager
     def access(self, project_id, revision, right):
         # Hold the registry lock through I/O so revocation has a definite boundary.
