@@ -8,7 +8,7 @@ import pytest
 from bigbrain.bus.bus import MessageBus
 from bigbrain.bus.message import BusMessage, MessageType
 from bigbrain.local_projects import ProjectRegistry
-from bigbrain.orchestrator.orchestrator import WorkspaceOrchestrator
+from bigbrain.orchestrator.orchestrator import WorkspaceOrchestrator, TaskStatus
 from bigbrain.verification.evidence import default_repository
 
 
@@ -51,3 +51,11 @@ async def test_attached_plan_records_runtime_inventory_before_source_calls(tmp_p
     next_spec = await orchestrator._propose_contracts(next_plan, message.payload['user_request'])
     assert next_spec.revision == spec.revision + 1
     assert default_repository().load_spec(spec.design_id, spec.revision).metadata == spec.metadata
+    plan.status = TaskStatus.COMPLETE
+    plan.subtasks[0].status = TaskStatus.COMPLETE
+    plan.subtasks[0].result = {'success': True}
+    metadata = orchestrator._project_result_metadata(plan)
+    assert metadata['local_project'] == message.payload['local_project']
+    assert metadata['verified'] is True
+    assert metadata['runnable'] is False
+    assert 'project_path' not in metadata

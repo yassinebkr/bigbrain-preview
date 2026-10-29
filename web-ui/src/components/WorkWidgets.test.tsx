@@ -34,6 +34,13 @@ vi.mock('@/store/workspaceStore', async (importOriginal) => {
 
 const run: RunState = { id: 'python', sessionId: 's', description: 'Build tool', status: 'done', startedAt: 1, files: [{ path: 'sandbox/tool/main.py', ts: 1 }], steps: [], runnable: true, deliverableType: 'python', projectPath: 'sandbox/tool', entryPoint: 'main.py' };
 const overview = (value: RunState) => renderToStaticMarkup(<WorkOverview run={value} select={() => {}} journal={<p>real journal</p>} />);
+it('offers the attached folder without sandbox execution controls', () => {
+  const html = overview({ ...run, localProject: { project_id: 'local', revision: 1 } });
+  expect(html).toContain('Ouvrir le dossier local');
+  expect(html).not.toContain('Lancer le projet');
+  expect(html).not.toContain('Ouvrir le projet');
+  expect(html).not.toContain('Console Python');
+});
 it('does not call an incomplete delivery verified even when old checks passed', () => {
   const html = renderToStaticMarkup(<VerificationWidget run={{ ...run, deliveryStatus: 'incomplete',
     verification: { runId: 'old', verdict: 'passed', stages: [{ name: 'tests', status: 'passed' }] } }} />);

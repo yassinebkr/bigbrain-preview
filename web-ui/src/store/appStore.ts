@@ -65,6 +65,7 @@ export interface RunState {
   verification?: RunVerification;
   projectName?: string;
   projectPath?: string;
+  localProject?: { project_id: string; revision: number };
   entryPoint?: string;
   deliverableType?: string;
   previewUrl?: string;
@@ -710,6 +711,12 @@ export const useAppStore = create<AppState>()(
         }
         };
         const update = reduce();
+        const localProject = d.local_project;
+        if (localProject && typeof localProject.project_id === 'string' && Number.isInteger(localProject.revision)) {
+          if (update.activeRun) update.activeRun = { ...update.activeRun, localProject, projectPath: undefined };
+          if (update.completedRuns) update.completedRuns = update.completedRuns.map(item => item.id === taskId
+            ? { ...item, localProject, projectPath: undefined } : item);
+        }
         if ('activeRun' in update) {
           if (run && run.id !== update.activeRun?.id) delete runsById[run.id];
           if (update.activeRun) runsById[update.activeRun.id] = update.activeRun;

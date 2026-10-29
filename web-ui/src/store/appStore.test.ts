@@ -41,6 +41,20 @@ function reset() {
 
 const ev = (type: string, detail: any) => ({ type, detail });
 
+it('retains attached identity through approval and completion while clearing workspace paths', () => {
+  useAppStore.setState({ activeSessionKey: 'local-session', activeRun: null, completedRuns: [] });
+  const local = { project_id: 'attached-project', revision: 4 };
+  const apply = useAppStore.getState().applyRunEvent;
+  apply(ev('task.routing', { task_id: 'local-run', session_id: 'local-session',
+    description: 'Repair local tool', project_path: 'sandbox/old-project', local_project: local }));
+  expect(useAppStore.getState().activeRun?.localProject).toEqual(local);
+  expect(useAppStore.getState().activeRun?.projectPath).toBeUndefined();
+  apply(ev('contracts.proposal', { plan_id: 'local-run', session_id: 'local-session',
+    design_id: 'local-design', contracts: ['Verify the repair'], local_project: local }));
+  apply(ev('task.complete', { task_id: 'local-run', session_id: 'local-session', local_project: local }));
+  expect(useAppStore.getState().completedRuns.find(run => run.id === 'local-run')?.localProject).toEqual(local);
+});
+
 describe('multiple independent runs in the same conversation', () => {
   beforeEach(reset);
   it('keeps incomplete delivery unlaunchable even if a terminal frame contains stale success flags', () => {

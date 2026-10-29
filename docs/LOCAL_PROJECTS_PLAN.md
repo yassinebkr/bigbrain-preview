@@ -5,6 +5,8 @@ plan is approved for implementation. Branch: `feat/local-projects`.
 
 ## Implementation status
 
+Current evidence and remaining gates: [acceptance ledger](LOCAL_PROJECTS_ACCEPTANCE.md).
+
 | Phase | Evidence | Remaining work |
 | --- | --- | --- |
 | 1 | Access boundary traced through HTTP, front decisions, orchestrator, both specialists and isolated runners | Final requirement-to-evidence audit |
@@ -30,7 +32,10 @@ independent evidence review and source publication. The model fixture supplies
 deterministic decisions. Orchestrator proposals now record the runtime inventory
 and actual specialist recipient. Changed inventories create new proposal revisions.
 The chat and Atelier approval cards show the destination, file inventory, full
-hashes and excluded paths. The frontend build and 139 tests pass.
+hashes and excluded paths. The frontend build and 141 tests pass.
+Final repair evidence records the approved specification revision, recipient,
+source inventory and publication outcome in an immutable run manifest. Completed
+work retains its attached-project identity and offers the local folder action.
 
 The front decision schema includes attached Python maintenance. Conversation
 selection comes from the registry and is checked again immediately before task

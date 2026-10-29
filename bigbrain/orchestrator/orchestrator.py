@@ -388,6 +388,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                 "subtasks_count": len(plan.subtasks),
                 "session_id": task_data.get("session_id"),
                 "project_path": plan.execution_target.path if plan.execution_target else None,
+                **({'local_project': plan.local_project} if plan.local_project else {}),
             },
             workspace=self.workspace,
             priority=Priority.NORMAL
@@ -2213,6 +2214,15 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
     @staticmethod
     def _project_result_metadata(plan: TaskPlan) -> dict:
         """Expose only launch/navigation metadata from completed subtasks."""
+        if plan.local_project:
+            verified = bool(plan.subtasks) and plan.status == TaskStatus.COMPLETE and all(
+                subtask.status == TaskStatus.COMPLETE and (subtask.result or {}).get('success') is True
+                for subtask in plan.subtasks)
+            return {'local_project': plan.local_project, 'runnable': False, 'verified': verified,
+                    'delivery_status': 'ready' if verified else 'incomplete',
+                    'project_name': plan.project_spec.project_name if plan.project_spec else None,
+                    'entry_point': plan.project_spec.entry_point if plan.project_spec else None,
+                    'deliverable_type': plan.project_spec.deliverable_type if plan.project_spec else None}
         if WorkspaceOrchestrator._requires_new_delivery(plan):
             return ((plan.result or {}).get('project_delivery') if plan.status == TaskStatus.COMPLETE else None) or {
                 'runnable': False, 'verified': False, 'delivery_status': 'incomplete'}

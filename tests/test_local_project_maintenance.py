@@ -103,6 +103,11 @@ async def test_existing_repair_engine_publishes_verified_attached_change(tmp_pat
     assert provider.review_step == 2
     assert 'synthetic-sensitive-value' not in json.dumps(provider.calls)
     assert 'diagnostic_output' not in json.dumps(result)
+    manifest = default_repository().load_manifest(result['verification']['run_id'])
+    assert manifest.verdict == 'passed'
+    assert manifest.design_id == payload['contract_revision']['design_id']
+    assert manifest.design_revision == payload['contract_revision']['revision']
+    assert manifest.metadata['local_project'] == {'project_id': project['id'], 'revision': 1}
 
 
 @pytest.mark.asyncio

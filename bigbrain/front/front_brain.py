@@ -710,7 +710,9 @@ Type 'quit' or 'exit' to stop."""
                 resolved_request = next((value for value in (
                     route_payload.get("query"), route_payload.get("user_request"), text)
                     if isinstance(value, str) and value.strip()), text)
-                run_id = await self._emit_task_routing(resolved_request, parsed.get("project_target", route_payload.get("project_target")))
+                run_id = await self._emit_task_routing(resolved_request,
+                    parsed.get("project_target", route_payload.get("project_target")),
+                    **({'local_project': route_payload['local_project']} if route_payload.get('local_project') else {}))
                 
                 ws = "default"  # Always route to the single orchestrator
                 task_data = {
@@ -1025,7 +1027,7 @@ Type 'quit' or 'exit' to stop."""
             priority=Priority.NORMAL,
         )
 
-    async def _emit_task_routing(self, description: str, project_target=None) -> str:
+    async def _emit_task_routing(self, description: str, project_target=None, *, local_project=None) -> str:
         """Keep the initiating conversation visibly busy during planning."""
         run_id = str(uuid.uuid4())
         await self.bus.broadcast_event(
@@ -1035,6 +1037,7 @@ Type 'quit' or 'exit' to stop."""
                 "description": description[:140],
                 "session_id": self._chat_session(),
                 "task_id": run_id,
+                **({'local_project': local_project} if local_project else {}),
                 "project_path": project_target.get("path") if isinstance(project_target, dict) and project_target.get("mode") == "existing" else None,
             },
             priority=Priority.NORMAL,

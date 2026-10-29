@@ -5,6 +5,7 @@ import { isBoardRun } from '@/lib/morphable';
 
 export const projectRunKey = (run: RunState) => JSON.stringify([run.sessionId, run.id]);
 export function pythonEntry(run: RunState) {
+  if (run.localProject) return undefined;
   if (run.deliveryStatus === 'incomplete' || isBoardRun(run) || run.status !== 'done' || !run.runnable || run.deliverableType === 'web_app') return undefined;
   const path = run.projectPath && run.entryPoint ? `${run.projectPath}/${run.entryPoint}`
     : run.files.find((file) => file.path === run.entryPoint || file.path.endsWith(`/${run.entryPoint}`))?.path;

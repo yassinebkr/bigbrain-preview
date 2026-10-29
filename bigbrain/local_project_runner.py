@@ -220,13 +220,15 @@ class ProjectRunner:
                                                for path, data in observed.items()}}
                            if include_versions else {})}
             finally:
-                if process.returncode is None:
-                    import signal
-                    try:
-                        os.killpg(process.pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-                await process.wait()
+                import signal
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                # Stop stream consumers before draining the bounded remainder.
+                # Waiting on the process first can deadlock when a full pipe
+                # paused its transport after an output-limit exception.
                 for task in tasks:
                     task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
+                await asyncio.wait_for(process.communicate(), timeout=5)

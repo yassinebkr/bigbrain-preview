@@ -1,18 +1,18 @@
 # Local project boundaries
 
-Phase 1 working specification, 29 October 2026.
+Implementation boundaries, 29 October 2026.
 
 ## Access inventory
 
-| Boundary | Current implementation | Required integration |
+| Boundary | Current implementation | Enforcement |
 | --- | --- | --- |
-| UI filesystem and selection | `web/fs_api.py`, `web/server.py` | Project ID and grant revision on each request |
-| Python execution and maintenance | `brains/python_brain.py`, `maintenance.py` | Scoped file broker and isolated runner |
-| Web generation and preview | `brains/web_app_brain.py`, `brains/web_stack.py` | Same broker, project-specific scratch and preview leases |
-| Verification subprocesses | `verification/executors.py`, `web_gate.py`, `v4_deterministic.py` | Same execution policy as manual runs |
-| Recovery | `project_transaction.py` | Preserve hashes and crash journal; bind grant revision |
-| Provider transport | `llm/codex_provider.py` and prompt assembly | Explicit source-transmission grant before reads enter prompts |
-| Conversation context | Sessions and frontend selection | Persist project identity per conversation |
+| UI filesystem and selection | `web/local_projects_api.py`, `local_projects.py` | Loopback/origin checks, chooser tickets, project ID and revision |
+| Python maintenance | `brains/python_brain.py`, `local_project_maintenance.py` | Shared repair engine, broker and isolated runner |
+| Web maintenance and preview | `brains/web_app_brain.py`, `local_project_web.py`, `local_project_preview.py` | Bound scratch, isolated builds and expiring browser leases |
+| Verification subprocesses | `local_project_runner.py`, `local_project_checks.py`, `verification/web_gate.py` | Project runtime, output/time limits, process cleanup |
+| Recovery | `local_project_recovery.py`, `project_transaction.py`, `project_file_io.py` | Hashes, identity and scoped crash journal |
+| Provider transport | `local_project_provider.py`, `local_project_transmission.py` | Approved recipient and versioned source inventory |
+| Conversation context | `front/front_brain.py`, registry selection and run metadata | Project identity persists with its conversation and result |
 
 ## Registry and requests
 
@@ -64,8 +64,8 @@ clear inherited credentials and isolate network unless granted. Keep generated
 artifacts outside source folders. Apply verified patch sets through the broker
 with input hashes and the existing transaction journal.
 
-The local `bwrap` user-namespace smoke check succeeded. Integration still requires
-runtime mount inventories and executable tests. Fail execution with an actionable
+Real Python and Node checks exercise the `bwrap` boundary, project-only packages,
+private environment/network and bounded output. Fail execution with an actionable
 diagnostic where process isolation is unavailable. Revocation cancels owned
 process groups and blocks subsequent operations; completed external network
 effects remain recorded in the action history.
@@ -82,6 +82,5 @@ effects remain recorded in the action history.
 | UI | Attach, rights confirmation, navigation, unavailable root, detach |
 | Delivery | Disposable Python repair and web preview through production paths |
 
-Each row needs executable evidence in the final acceptance report. The inventory
-above identifies integration modules; Phase 2 implementation must trace individual
-callers before enabling attached roots in existing workflows.
+The [acceptance ledger](LOCAL_PROJECTS_ACCEPTANCE.md) maps these boundaries to
+executed checks and the remaining desktop/live gates.

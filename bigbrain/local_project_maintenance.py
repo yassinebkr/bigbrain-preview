@@ -1,6 +1,7 @@
 """Run the shared repair engine on an approved attached-project working copy."""
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -14,7 +15,7 @@ from .local_project_provider import SourceBoundProvider
 from .local_project_runner import ProjectRunner
 from .maintenance import maintain, ProjectTools
 from .project_transaction import ProjectTransaction, active_transaction
-from .verification.evidence import default_repository
+from .verification.evidence import default_repository, RunManifest, StageResult
 from .verification.semantics import review_semantics
 
 
@@ -172,13 +173,32 @@ async def maintain_attached(brain, registry, project_id, revision, payload):
                 result['publication'] = publication
             else:
                 result['publication'] = {'state': 'unchanged', 'changedPaths': []}
-        artifact = repository.put_artifact(json.dumps(result, ensure_ascii=False).encode(),
+        envelope = {'schema_version': 1, 'local_project': scope, 'contract_revision': reference,
+                    'source_transmission': consent, 'result': result}
+        artifact = repository.put_artifact(json.dumps(envelope, ensure_ascii=False).encode(),
             name='attached-maintenance-result.json', media_type='application/json')
+        stages = [StageResult(name=stage['name'], status=stage['status'],
+            artifact_hashes=[artifact.sha256], details=stage.get('details') or {})
+            for stage in (result.get('verification') or {}).get('stages', [])]
+        stages.append(StageResult(name='attached_delivery',
+            status='passed' if result.get('success') else 'inconclusive',
+            artifact_hashes=[artifact.sha256], details={'publication': result.get('publication', {}).get('state')}))
+        manifest = RunManifest(design_id=approved.design_id, design_revision=approved.revision,
+            spec_sha256=approved.content_sha256(), stages=stages, artifacts=[artifact, baseline_artifact],
+            toolchain={'brain': brain.name if hasattr(brain, 'name') else 'attached-specialist'},
+            metadata={'local_project': scope, 'contract_revision': reference,
+                      'recipient': consent['recipient'], 'source_versions': consent['source_versions']})
+        manifest.completed_at = datetime.now(timezone.utc)
+        manifest.status = {'passed': 'completed', 'failed': 'failed', 'inconclusive': 'inconclusive'}[manifest.verdict]
+        repository.save_manifest(manifest)
+        await brain.send_event('verification.run_recorded', {'run_id': manifest.run_id,
+            'verdict': manifest.verdict, 'local_project': scope,
+            'stages': [{'name': stage.name, 'status': stage.status} for stage in manifest.stages]})
         # Detailed source diagnostics remain in local evidence for the user.
         public = {'success': bool(result.get('success')), 'local_project': scope,
                   'maintenance_status': 'verified' if result.get('success') else result.get('maintenance_status', 'incomplete'),
                   'evidence_artifact_sha256': artifact.sha256,
-                  'verification': {'verdict': 'passed' if result.get('success') else 'inconclusive',
+                  'verification': {'run_id': manifest.run_id, 'verdict': manifest.verdict,
                                    'stages': [{'name': stage['name'], 'status': stage['status']}
                                               for stage in (result.get('verification') or {}).get('stages', [])]},
                   'changed_paths': result.get('publication', {}).get('changedPaths', [])}
