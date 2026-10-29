@@ -1,7 +1,22 @@
 # Attached local projects: approved contracts and implementation plan
 
 29 October 2026. The six contracts below are approved. The phased implementation
-plan awaits user validation. Branch: `feat/local-projects`.
+plan is approved for implementation. Branch: `feat/local-projects`.
+
+## Implementation status
+
+| Phase | Evidence | Remaining work |
+| --- | --- | --- |
+| 1 | Access inventory and boundary specification in `LOCAL_PROJECTS_BOUNDARIES.md`; local bwrap smoke check | Trace individual integration callers |
+| 2 | Registry and descriptor-scoped file primitives; nine focused regression cases pass | Listings, root-swap races, overlap policy, recovery and integration |
+| 3 | Existing transaction journal available | Scoped execution, revocation and repair integration |
+| 4 | Existing project selector identified | Trusted chooser and attachment journeys |
+| 5 | Acceptance matrix recorded | Cross-path campaign and runtime acceptance |
+
+The initial file replacement primitive checks the observed input hash. External
+edits during replacement and directory relocation require stronger publication
+protection before attached-project writes become available through production
+routes.
 
 ## Approved contracts
 
