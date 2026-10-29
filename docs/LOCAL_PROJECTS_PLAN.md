@@ -64,9 +64,16 @@ The native chooser currently uses Zenity and requires a local desktop session.
 HTTP access requires a loopback client, an approved Host, a matching Origin and
 the local UI request header. Selection tickets expire after two minutes.
 
-File replacement checks the observed input hash and uses the shared recovery
-journal. Publication races and directory relocation during writes remain final
-hardening cases for the production boundary.
+File replacement uses descriptor-relative parent traversal, regular-file checks
+and the shared recovery journal. It rechecks source hashes after journal intent
+and immediately before replacement. Race regressions cover user edits and parent
+symlink substitution during that interval. Atomic coordination with external
+editors and directory relocation during the final system call remain hardening
+limits requiring explicit treatment in the acceptance report.
+
+The complete backend suite at `d2c7cd9` passed 1,997 tests with eight skips.
+The subsequent descriptor-publication change passes 70 focused transaction,
+repair and maintenance tests.
 
 Snapshot execution supports the project's `.venv` when its base interpreter
 matches the supported Python runtime. Its packages mount read-only. An incompatible

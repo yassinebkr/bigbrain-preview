@@ -1,8 +1,4 @@
-"""Recoverable, scoped write journal. Not a filesystem/OS sandbox.
-
-Rollback restores only our recorded writes and refuses concurrent user edits.
-Journals survive crashes; unresolved journals block overlapping project runs.
-"""
+"""Recoverable project transactions with versioned writes and crash recovery."""
 import base64
 from contextvars import ContextVar
 import fcntl
@@ -14,6 +10,7 @@ import tempfile
 import uuid
 
 from .execution_target import ExecutionTarget, relative_path
+from .project_file_io import read_source, replace_source
 
 active_transaction = ContextVar('project_transaction', default=None)
 
@@ -43,22 +40,6 @@ def _tree_hash(directory):
                         raise ValueError('Build tree fingerprint budget exceeded')
                     result.update(chunk)
     return result.hexdigest()
-
-
-def _read(path):
-    if not path.exists() and not path.is_symlink():
-        return None
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    try:
-        import stat
-        if not stat.S_ISREG(os.fstat(fd).st_mode) or os.fstat(fd).st_nlink != 1:
-            raise ValueError('Transaction requires regular files')
-        if os.fstat(fd).st_size > 4_000_000:
-            raise ValueError('Transaction file exceeds snapshot budget')
-        with os.fdopen(fd, 'rb', closefd=False) as stream:
-            return stream.read()
-    finally:
-        os.close(fd)
 
 
 def _replace(path, data, mode=0o600):
@@ -112,10 +93,10 @@ class ProjectTransaction:
             for path in sorted(set(paths) | {'.project.json'}):
                 relative_path(path)
                 file = target.file(path)
-                raw = _read(file)
+                raw, mode = read_source(target, path)
                 files[path] = {'before': base64.b64encode(raw).decode() if raw is not None else None,
                     'after': _hash(raw), 'written': False,
-                    'mode': file.stat().st_mode & 0o777 if raw is not None else 0o600}
+                    'mode': mode}
             journal = root / (uuid.uuid4().hex + '.json')
             _replace(journal, json.dumps({'state': 'open', 'target': target.to_payload(),
                 'files': files, 'created_dirs': [], 'pid': os.getpid()}).encode())
@@ -149,7 +130,7 @@ class ProjectTransaction:
                 raise ValueError('Transaction is closed or belongs to another target')
             relative_path(path)
             destination = target.file(path)
-            raw = _read(destination)
+            raw, mode = read_source(target, path)
             if _hash(raw) != expected:
                 raise ValueError(f'{path}: concurrent source change before reservation')
             if path in state['files']:
@@ -158,7 +139,7 @@ class ProjectTransaction:
                 return
             state['files'][path] = {'before': base64.b64encode(raw).decode() if raw is not None else None,
                 'after': expected, 'written': False,
-                'mode': destination.stat().st_mode & 0o777 if raw is not None else 0o600}
+                'mode': mode}
             self._save(state)
         self._locked(reserve)
 
@@ -201,7 +182,8 @@ class ProjectTransaction:
                 raise ValueError(f'{path}: outside approved transaction write set')
             destination = target.file(path)
             entry = state['files'][path]
-            if _hash(_read(destination)) != entry['after']:
+            expected = entry['after']
+            if _hash(read_source(target, path)[0]) != expected:
                 raise ValueError(f'{path}: concurrent change; transaction write refused')
             parent = destination.parent
             while parent != target.directory and not parent.exists():
@@ -211,7 +193,7 @@ class ProjectTransaction:
                 parent = parent.parent
             entry.update(after=_hash(data), written=True)
             self._save(state)  # durable intent before the filesystem change
-            _replace(destination, data, entry['mode'])
+            replace_source(target, path, data, entry['mode'], expected)
         return self._locked(apply)
 
     def finish(self, commit=False):
@@ -231,7 +213,7 @@ class ProjectTransaction:
                     continue
                 try:
                     destination = target.file(path)
-                    actual = _hash(_read(destination))
+                    actual = _hash(read_source(target, path)[0])
                 except (OSError, ValueError):
                     conflicts.append(path)
                     continue
@@ -242,7 +224,10 @@ class ProjectTransaction:
                     conflicts.append(path)
                     continue
                 if not commit:
-                    _replace(destination, before, entry['mode'])
+                    try:
+                        replace_source(target, path, before, entry['mode'], entry['after'])
+                    except (OSError, ValueError):
+                        conflicts.append(path)
             if commit:
                 for path, tree in state.get('trees', {}).items():
                     if not tree.get('after_version') or _tree_hash(target.file(path)) != tree['after_version']:
