@@ -88,9 +88,9 @@ The production UI restores a chosen retained editor version and clears the
 resolved conflict. Evidence: `/tmp/bigbrain-resolved-version-ui.png`.
 Retention management remains an open gate.
 
-### Pending retention decision
+### Approved manual retention release
 
-Proposed manual release contract:
+Approved on 30 October 2026:
 
 - Keep retained objects until a separate irreversible-release confirmation.
 - Require the deletion grant, a resolved transaction and a version-bound inventory.
@@ -101,8 +101,13 @@ Proposed manual release contract:
 - Qualify release, interruption and concurrent-change behavior with disposable
   fixtures before enabling the action. Personal project cleanup remains a user action.
 
-This release contract awaits a decision. The current implementation retains all
-objects and stops publication at its storage limit.
+Native release uses a short-lived Linux helper holding a write lease, or an
+exclusive Windows file handle with deletion disposition. Changed bytes, changed
+file identity, open editor handles and hard links refuse release. Linux signals
+remain confined to the helper. Fourteen native cases pass locally; the updated
+Windows run and application release qualification remain pending.
+[Linux lease contract](https://man7.org/linux/man-pages/man2/F_SETLEASE.2const.html),
+[Windows file disposition](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfileinformationbyhandle).
 
 Attached React builds run on copied sources through `ProjectRunner`, capture
 `dist` as bounded artifacts and serve those captured bytes. Four real Node/React

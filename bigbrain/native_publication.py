@@ -8,8 +8,12 @@ durability failures can leave recoverable intermediate states.
 from contextlib import ExitStack, contextmanager
 import ctypes
 import errno
+import hashlib
+import json
 import os
 from pathlib import Path
+import stat
+import subprocess
 import sys
 
 
@@ -85,6 +89,18 @@ class LinuxPublication:
     def retire(self, destination, preserved, *, anchors=None):
         self._rename(destination, preserved, 1, anchors)
 
+    def release_preserved(self, path, expected, *, anchors=None):
+        """Delete an inspected private artifact through an isolated lease holder."""
+        request = json.dumps({'path': str(Path(path).absolute()), 'expected': expected,
+                              'anchors': anchors or {}})
+        try:
+            result = subprocess.run([sys.executable, '-I', __file__, '--release-linux'],
+                input=request, text=True, capture_output=True, timeout=8)
+        except subprocess.TimeoutExpired as error:
+            raise OSError(errno.ETIMEDOUT, 'Retained release helper exceeded its time limit') from error
+        if result.returncode:
+            raise OSError(errno.EBUSY, 'Retained release refused: ' + result.stdout.strip()[:500])
+
 
 class WindowsPublication:
     """Replacement with backup and destination-exclusive same-volume moves."""
@@ -106,6 +122,12 @@ class WindowsPublication:
         self.api.ReplaceFileW.restype = wintypes.BOOL
         self.api.MoveFileExW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD]
         self.api.MoveFileExW.restype = wintypes.BOOL
+        self.api.ReadFile.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD,
+                                     ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p]
+        self.api.ReadFile.restype = wintypes.BOOL
+        self.api.SetFileInformationByHandle.argtypes = [wintypes.HANDLE, ctypes.c_int,
+                                                       ctypes.c_void_p, wintypes.DWORD]
+        self.api.SetFileInformationByHandle.restype = wintypes.BOOL
 
         class FileInformation(ctypes.Structure):
             _fields_ = [('attributes', wintypes.DWORD), ('created', wintypes.FILETIME),
@@ -173,6 +195,43 @@ class WindowsPublication:
     def retire(self, destination, preserved, *, anchors=None):
         self._move(destination, preserved, anchors)
 
+    def release_preserved(self, path, expected, *, anchors=None):
+        """Check and delete the same exclusively held Windows file object."""
+        from ctypes import wintypes
+        path = Path(path).absolute()
+        with self._directory(path.parent, anchors):
+            handle = self.api.CreateFileW(str(path), 0x80000000 | 0x10000, 0,
+                                         None, 3, 0x00200000, None)
+            if handle == ctypes.c_void_p(-1).value:
+                raise ctypes.WinError(ctypes.get_last_error())
+            try:
+                info = self._information()
+                if not self.api.GetFileInformationByHandle(handle, ctypes.byref(info)):
+                    raise ctypes.WinError(ctypes.get_last_error())
+                identity = [info.volume, (info.index_high << 32) | info.index_low]
+                if info.attributes & (0x400 | 0x10) or info.links != 1:
+                    raise ValueError('Release requires a regular single-link artifact')
+                size = (info.size_high << 32) | info.size_low
+                if size > 4_000_000:
+                    raise ValueError('Retained artifact exceeds release limit')
+                digest, total = hashlib.sha256(), 0
+                buffer, count = ctypes.create_string_buffer(65536), wintypes.DWORD()
+                while True:
+                    if not self.api.ReadFile(handle, buffer, len(buffer), ctypes.byref(count), None):
+                        raise ctypes.WinError(ctypes.get_last_error())
+                    if count.value == 0:
+                        break
+                    total += count.value
+                    digest.update(buffer.raw[:count.value])
+                if identity != expected['identity'] or digest.hexdigest() != expected['version'] or total != size:
+                    raise ValueError('Retained version changed before release')
+                disposition = ctypes.c_ubyte(1)  # FILE_DISPOSITION_INFO.DeleteFile is BOOLEAN.
+                if not self.api.SetFileInformationByHandle(handle, 4, ctypes.byref(disposition),
+                                                           ctypes.sizeof(disposition)):
+                    raise ctypes.WinError(ctypes.get_last_error())
+            finally:
+                self.api.CloseHandle(handle)
+
 
 def publication_backend():
     """Select a native implementation and fail explicitly on unsupported hosts."""
@@ -181,3 +240,44 @@ def publication_backend():
     if sys.platform == 'win32':
         return WindowsPublication()
     raise OSError(errno.ENOTSUP, 'Recoverable publication supports Linux and Windows')
+
+
+def _linux_release(request):
+    """Hold a kernel write lease through verification and unlink in a helper."""
+    import fcntl
+    import signal
+    # Lease-break notifications remain confined to this short-lived helper.
+    signal.signal(signal.SIGIO, signal.SIG_IGN)
+    path, expected = Path(request['path']), request['expected']
+    backend = LinuxPublication()
+    with backend._directory(path.parent, request['anchors']) as parent:
+        descriptor = os.open(path.name, os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+        try:
+            fcntl.fcntl(descriptor, fcntl.F_SETLEASE, fcntl.F_WRLCK)
+            info = os.fstat(descriptor)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > 4_000_000:
+                raise ValueError('Release requires a bounded regular single-link artifact')
+            digest, total = hashlib.sha256(), 0
+            while data := os.read(descriptor, 65536):
+                total += len(data)
+                if total > 4_000_000:
+                    raise ValueError('Retained artifact exceeds release limit')
+                digest.update(data)
+            identity = [info.st_dev, info.st_ino]
+            current = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
+            if (identity != expected['identity'] or digest.hexdigest() != expected['version']
+                    or (current.st_dev, current.st_ino) != (info.st_dev, info.st_ino)
+                    or fcntl.fcntl(descriptor, fcntl.F_GETLEASE) != fcntl.F_WRLCK):
+                raise ValueError('Retained version changed or opened before release')
+            os.unlink(path.name, dir_fd=parent)
+            os.fsync(parent)
+        finally:
+            os.close(descriptor)
+
+
+if __name__ == '__main__' and sys.argv[1:] == ['--release-linux']:
+    try:
+        _linux_release(json.loads(sys.stdin.read(65536)))
+    except Exception as error:
+        print(f'{type(error).__name__}: {error}')
+        sys.exit(1)

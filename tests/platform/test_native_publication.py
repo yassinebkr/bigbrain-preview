@@ -1,6 +1,7 @@
 """Native cases run independently of the application's legacy OS imports."""
 
 import ctypes
+import hashlib
 import importlib.util
 import os
 from pathlib import Path
@@ -137,3 +138,65 @@ def test_replaced_directory_anchor_is_refused(publication, tmp_path):
         backend.create(holder / 'new.txt', candidate, anchors=anchors)
     assert not (holder / 'new.txt').exists()
     assert candidate.read_bytes() == b'candidate\n'
+
+
+def release_version(backend, path):
+    info = path.stat()
+    identity = [info.st_dev, info.st_ino]
+    if os.name == 'nt':
+        handle = backend.api.CreateFileW(str(path), 0x80, 0x7, None, 3, 0x00200000, None)
+        assert handle != ctypes.c_void_p(-1).value
+        try:
+            info = backend._information()
+            assert backend.api.GetFileInformationByHandle(handle, ctypes.byref(info))
+            identity = [info.volume, (info.index_high << 32) | info.index_low]
+        finally:
+            backend.api.CloseHandle(handle)
+    return {'identity': identity, 'version': hashlib.sha256(path.read_bytes()).hexdigest()}
+
+
+def test_release_removes_only_the_inspected_artifact(publication):
+    backend, source, candidate, _ = publication
+    backend.release_preserved(candidate, release_version(backend, candidate))
+    assert not candidate.exists()
+    assert source.read_bytes() == b'original\n'
+
+
+def test_release_refuses_changed_bytes(publication):
+    backend, _, candidate, _ = publication
+    expected = release_version(backend, candidate)
+    candidate.write_bytes(b'later editor save\n')
+    with pytest.raises((OSError, ValueError)):
+        backend.release_preserved(candidate, expected)
+    assert candidate.read_bytes() == b'later editor save\n'
+
+
+def test_release_refuses_open_editor_handle(publication):
+    backend, _, candidate, _ = publication
+    expected = release_version(backend, candidate)
+    with candidate.open('r+b', buffering=0) as editor:
+        with pytest.raises(OSError):
+            backend.release_preserved(candidate, expected)
+        editor.write(b'still editable\n')
+    assert candidate.read_bytes().startswith(b'still editable\n')
+
+
+def test_release_refuses_replaced_object_with_equal_content(publication):
+    backend, _, candidate, _ = publication
+    expected = release_version(backend, candidate)
+    candidate.rename(candidate.with_name('old-artifact'))
+    candidate.write_bytes(b'candidate\n')
+    with pytest.raises((OSError, ValueError)):
+        backend.release_preserved(candidate, expected)
+    assert candidate.read_bytes() == b'candidate\n'
+    assert candidate.with_name('old-artifact').read_bytes() == b'candidate\n'
+
+
+def test_release_refuses_hardlink(publication):
+    backend, _, candidate, _ = publication
+    expected = release_version(backend, candidate)
+    link = candidate.with_name('linked-artifact')
+    os.link(candidate, link)
+    with pytest.raises((OSError, ValueError)):
+        backend.release_preserved(candidate, expected)
+    assert candidate.read_bytes() == link.read_bytes() == b'candidate\n'
