@@ -9,7 +9,7 @@ plan is approved for implementation. Branch: `feat/local-projects`.
 | --- | --- | --- |
 | 1 | Access inventory and boundary specification in `LOCAL_PROJECTS_BOUNDARIES.md`; local bwrap smoke check | Trace individual integration callers |
 | 2 | Registry, filtered listings, descriptor-scoped reads and local HTTP chooser tickets; 14 regression cases pass | Production UI journey and caller integration |
-| 3 | Existing transaction journal available | Scoped execution, revocation and repair integration |
+| 3 | Real snapshot subprocess and revocation tests pass; scoped Python run endpoint | Project interpreter, transaction publication and repair integration |
 | 4 | Existing project selector identified | Trusted chooser and attachment journeys |
 | 5 | Acceptance matrix recorded | Cross-path campaign and runtime acceptance |
 
@@ -22,6 +22,14 @@ The initial file replacement primitive checks the observed input hash. External
 edits during replacement and directory relocation require stronger publication
 protection before attached-project writes become available through production
 routes.
+
+Snapshot execution currently supports Python standard-library commands with the
+BigBrain base interpreter. Bubblewrap exposes the copied source tree, runtime
+libraries and private temporary storage. Execution has a time limit and a bounded
+output buffer. The host source tree stays outside the process namespace. Two
+real execution tests cover outside-root access, scratch writes and revocation.
+Project-specific environments, package installation and web preview integration
+remain acceptance work for Phase 3.
 
 ## Approved contracts
 

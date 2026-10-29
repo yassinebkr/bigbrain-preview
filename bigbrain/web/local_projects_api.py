@@ -84,7 +84,13 @@ def setup_local_project_routes(app, *, registry=None, chooser=None):
                 import hashlib
                 return web.json_response({'content': data.decode('utf-8'),
                                           'sha256': hashlib.sha256(data).hexdigest()})
+            if action == 'run':
+                from ..local_project_runner import ProjectRunner
+                return web.json_response(await ProjectRunner(registry).run(
+                    project_id, revision, body.get('argv'), timeout=body.get('timeout', 30)))
             raise web.HTTPNotFound()
+        except TimeoutError:
+            return web.json_response({'error': 'Project execution reached its time limit'}, status=408)
         except (ProjectAccessError, OSError, UnicodeError, KeyError, TypeError, ValueError) as exc:
             return web.json_response({'error': str(exc)}, status=400)
 
