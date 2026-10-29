@@ -38,6 +38,24 @@ def test_secret_content_is_excluded_from_approval_sources(tmp_path):
     assert consent['excluded_paths'] == ['config.py']
 
 
+def test_retained_versions_stay_outside_sources_and_normal_file_access(tmp_path):
+    import hashlib
+    from bigbrain.local_project_patches import apply_patch_set
+    from bigbrain.local_projects import ProjectFiles
+    source, registry, project, provider, _ = fixture(tmp_path)
+    project = registry.change(project['id'], 1, rights=('read', 'write', 'transmit'))
+    apply_patch_set(registry, project['id'], project['revision'], [{
+        'path': 'main.py', 'sha256': hashlib.sha256(b'print(42)\n').hexdigest(),
+        'content': 'print(43)\n'}])
+    consent = prepare_source_consent(registry, project['id'], project['revision'], provider_recipient(provider))
+    assert set(consent['source_versions']) == {'main.py'}
+    files = ProjectFiles(registry, project['id'], project['revision'])
+    assert [entry['name'] for entry in files.list()] == ['main.py']
+    with pytest.raises(ProjectAccessError, match='Excluded'):
+        files.read('.bigbrain-recovery/.owner.json')
+    assert (source / '.bigbrain-recovery').is_dir()
+
+
 def test_revocation_and_recipient_credentials_are_rejected(tmp_path):
     _, registry, project, provider, consent = fixture(tmp_path)
     registry.change(project['id'], 1, state='revoked')

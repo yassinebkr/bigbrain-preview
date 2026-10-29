@@ -79,13 +79,21 @@ limit. The focused Linux matrix passes 73 tests, including delivery, registry,
 recovery API and native publication. The frontend passes 141 tests and its build.
 The workspace can inspect a bounded retained version and its SHA-256
 through a project/operation-bound read endpoint. Current full regression,
-conflict resolution, retention management, generated build-tree
-publication and updated native qualification remain open.
-Native CI runs the isolated primitive contract on Linux
-and Windows; its results must be checked before platform qualification.
-Commit `6806680` passes all eight primitive cases on native Ubuntu and Windows
-runners, with zero skips. Both runs exercise a late write through an already-open
-editor descriptor/handle after replacement. These results qualify the tested
-primitive cases. Directory identity anchors and application integration were
-added subsequently and require updated qualification.
-[Native CI run](https://github.com/yassinebkr/bigbrain-preview/actions/runs/40939809059).
+conflict resolution, retention management and generated build-tree publication
+remain open.
+
+Commit `1131536` passes nine native primitive cases on Ubuntu and nine on Windows,
+with zero skips. Cases include late editor writes and directory identity anchors.
+[Native CI run](https://github.com/yassinebkr/bigbrain-preview/actions/runs/40970102017).
+The application-level journal matrix runs on Linux; broader Windows runtime
+adaptation remains deferred in [PORTABILITY.md](PORTABILITY.md).
+
+Production UI acceptance on an isolated synthetic project displays the retained
+late editor write and its SHA-256 while preserving the published candidate.
+Screenshot: `/tmp/bigbrain-retained-version-ui.png`. Four transmission tests pass,
+including recovery-directory exclusion from source consent and normal file access.
+
+The full `1131536` run reached 95% without reported failures, then terminated
+with exit 143 before writing its JUnit report. Its final three test files pass
+separately: 90 cases, `/tmp/bigbrain-publication-tail.xml`. Full-run completion
+remains an open gate.
