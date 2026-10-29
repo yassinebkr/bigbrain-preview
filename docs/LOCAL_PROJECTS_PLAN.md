@@ -9,11 +9,11 @@ Current evidence and remaining gates: [acceptance ledger](LOCAL_PROJECTS_ACCEPTA
 
 | Phase | Evidence | Remaining work |
 | --- | --- | --- |
-| 1 | Access boundary traced through HTTP, front decisions, orchestrator, both specialists and isolated runners | Final requirement-to-evidence audit |
+| 1 | Access boundary traced through HTTP, front decisions, orchestrator, both specialists and isolated runners | External-editor concurrency limitation recorded in the ledger |
 | 2 | Registry, filtered listings, descriptor-scoped reads and local HTTP chooser tickets | Native chooser acceptance |
-| 3 | Shared repair, transactional publication, Python/Node isolation, read-only dependencies and leased browser previews | Final integration acceptance |
-| 4 | Local folder tab, rights dialog, source viewer and streamed execution observed in browser; recovery controls implemented | Native chooser acceptance, remaining browser journeys and specialist integration |
-| 5 | Acceptance matrix recorded | Cross-path campaign and runtime acceptance |
+| 3 | Shared repair, transactional publication, isolated runtimes and live Python/React repairs verified | Complete within the documented boundaries |
+| 4 | Production UI journeys verify consent/rejection, recovery, rights, navigation, read-only mode and detach | Native chooser and moved-folder reconciliation |
+| 5 | 2,029 backend tests and 141 frontend tests pass; build passes; model-led probes verified | Native desktop acceptance |
 
 ### Specialist integration checkpoint
 
@@ -72,7 +72,8 @@ The production UI journey on an isolated server confirmed opening, enlargement,
 a real button interaction and closure. Remaining limits include one-second frame
 refresh, browser API/network bypass coverage and native file-dialog support.
 
-Live model acceptance and browser acceptance of the consent card remain gates.
+Live Python/React acceptance and the consent-card rejection journey pass.
+Native desktop selection and reconciliation remain acceptance gates.
 
 The acceptance ledger records current verification results. Snapshot creation
 rechecks copied contents and bounds total bytes, entry count and directory depth.
@@ -123,8 +124,8 @@ candidate preserves the original sources; a failed published check triggers
 shared-journal rollback. Existing validation files require separate approval.
 Passing these requested checks carries the `requested_checks_passed` label;
 approved-contract acceptance remains a specialist delivery responsibility.
-Specialist repair integration, package installation and web preview integration
-remain acceptance work for Phase 3.
+Specialist repair and web preview integration are verified in the acceptance
+ledger. Dependency installation requires a separate environment-preparation flow.
 
 The workspace exposes local folders in a dedicated tab. Conversation selections
 persist in registry metadata. The native chooser creates a ticket before the

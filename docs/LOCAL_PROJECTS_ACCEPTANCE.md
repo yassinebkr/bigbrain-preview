@@ -9,15 +9,16 @@
 | Identity and grants | `test_local_projects.py`: persistence, stale revisions, moved/replaced roots and per-conversation selections | Desktop reconciliation journey |
 | Chooser authority | `test_local_projects_api.py`: single-use tickets, forged path refusal, same-origin enforcement and detach preservation | Actual Zenity selection on the desktop |
 | File containment | `test_local_projects.py`, `test_project_file_io.py`: traversal/exclusions, symlink/hard-link refusal, ancestor substitution and publication races | External-editor atomicity limitation below |
-| Source consent and preservation | Provider/planning/maintenance suites and live Python/React repairs: recipient and source revisions, immutable approvals, targeted publication and recovery conflicts | Consent-card browser journey |
-| Process rights and revocation | Real Python/Node tests and Worker network probes: private environment/network, read-only dependencies, revocation, timeout and output limits | Final cross-path campaign |
-| Scratch, preview and continuity | Real Chromium tests and workspace journey: builds, interaction, enlargement, closure, origin changes, reload and new-conversation isolation | Consent-card, reconciliation and recovery journeys |
+| Source consent and preservation | Provider/planning/maintenance suites, live Python/React repairs and production proposal/rejection UI: immutable recipient, source revisions and targeted publication | Complete within the tested matrix |
+| Process rights and revocation | Real Python/Node tests and Worker network probes: private environment/network, read-only dependencies, revocation, timeout and output limits | Complete within the tested matrix |
+| Scratch, preview and continuity | Production UI: interaction, enlargement, closure, navigation, recovery, revoke/restore, read-only execution denial and detach preservation | Native chooser and moved-folder reconciliation |
 
 ## Verification checkpoints
 
 | State | Result |
 | --- | --- |
 | Backend at `7a2da2b` | 2,012 passed, 8 skipped |
+| Full backend at `93e4162` | 2,029 passed, 8 skipped, 227.75 seconds |
 | Full backend campaign launched at `57a42fe` | 2,021 passed, 8 skipped, 1 dispatch timeout; exact-text changes received separate targeted checks |
 | Frontend after attached-result navigation | 141 passed |
 | Publication and repair evidence integration | 33 targeted cases passed |
@@ -54,7 +55,7 @@ running after its five-second polling deadline. The same test passed in isolatio
 An injected slow-fsync test reproduced event-loop blocking in the bus logger.
 Journal writes now run on a serialized I/O thread, retain per-message fsync and
 drain active writes before cancellation or close. The 46-case logger/bus/dispatch
-suite passes. The full campaign requires another run on the updated revision.
+suite passes. The complete campaign at `93e4162` also passes.
 
 A real blob Worker opened a WebSocket to another loopback service despite the
 page-level constructor restrictions. Preview responses now carry a restrictive
@@ -70,6 +71,16 @@ The server stores each conversation's active origin separately from its remember
 folder ID. The front suppresses sandbox navigation hints while the local origin
 is active. Invalid selection metadata produces an unavailable context and a
 terminal conversational response.
+
+Production UI acceptance used isolated servers and artificial folders. Recovery
+restored the original file; revocation/restore retained the grant identity;
+read-only mode disabled execution; detachment preserved the source on disk.
+The proposal journey used supplied fixture criteria and the production
+orchestrator, immutable specification, journal and WebSocket bridge. The UI showed
+the actual Codex recipient and source SHA-256. Rejection persisted as specification
+revision 2 and remained terminal after reload. This UI journey made zero model calls.
+Local visual evidence: `/tmp/bigbrain-local-recovery-ui.png`,
+`/tmp/bigbrain-local-readonly-ui.png`, `/tmp/bigbrain-local-source-consent-ui.png`.
 
 ## Explicit limits
 
