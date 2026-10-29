@@ -94,6 +94,10 @@ The initial expired ticket was rejected without changing the registry.
 - Source proposals currently permit 64 files and 128 KB; individual reads are bounded.
 - Host editors operate outside broker locks. Hash checks detect observed changes;
   the final comparison/replacement interval lacks a filesystem compare-and-swap.
+  A disposable reproduction injected an external write immediately before the
+  production `os.replace` call: publication replaced that edit with the candidate.
+  Evidence: `/tmp/bigbrain-publication-window-j42yyqd5/result.json`;
+  reproducer: `/tmp/bigbrain-publication-window-check.py`.
 - Browser HTTP routing, response CSP and restricted APIs limit preview requests.
   This browser-layer policy remains separate from OS network namespaces used by
   Python and Node execution.
