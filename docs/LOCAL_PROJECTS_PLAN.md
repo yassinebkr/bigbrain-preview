@@ -7,6 +7,10 @@ plan is approved for implementation. Branch: `feat/local-projects`.
 
 Current evidence and remaining gates: [acceptance ledger](LOCAL_PROJECTS_ACCEPTANCE.md).
 
+Cross-platform rule: [Linux/Windows portability](PORTABILITY.md). Publication
+hardening requires both platform adapters; existing runtime adaptations are
+recorded as deferred work. This documentation update starts no migration.
+
 | Phase | Evidence | Remaining work |
 | --- | --- | --- |
 | 1 | Access boundary traced through HTTP, front decisions, orchestrator, both specialists and isolated runners | External-editor concurrency limitation recorded in the ledger |

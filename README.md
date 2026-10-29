@@ -10,6 +10,10 @@ This is an active development repository. Details live in `docs/`:
 [AUTH.md](docs/AUTH.md), [MODELS.md](docs/MODELS.md),
 [DETERMINISTIC-HARNESS.md](docs/DETERMINISTIC-HARNESS.md).
 
+Linux/Windows architecture policy and deferred platform adaptations:
+[PORTABILITY.md](docs/PORTABILITY.md). Current Linux acceptance results cover
+their documented capabilities; Windows runtime qualification remains pending.
+
 ## Quick start
 
 ```bash
