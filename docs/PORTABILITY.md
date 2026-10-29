@@ -28,6 +28,10 @@ of displaced files, open-handle behavior, crash recovery and concurrent creation
 require platform-specific qualification. Native primitives remain candidates
 until the common acceptance cases establish their semantics.
 
+The proposed [publication design](PUBLICATION_PORTABILITY_DESIGN.md) records native
+API differences, preservation decisions and qualification milestones. Approval
+of its retention/storage policy precedes implementation.
+
 This rule leaves the existing external-editor race open. Its reproduction and
 current evidence are in [local-project acceptance](LOCAL_PROJECTS_ACCEPTANCE.md).
 
