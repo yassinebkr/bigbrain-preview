@@ -17,7 +17,7 @@ from .verification.web_gate import browser_report
 
 
 async def run_web_tests(registry, project_id, revision, entry_point, *, patches=None,
-                        include_versions=False, web_stack='static'):
+                        include_versions=False, web_stack='static', browser_operation=None):
     """Run existing executable scenarios against a project-scoped working copy."""
     _parts(entry_point)
     if web_stack not in {'static', 'react_vite'}:
@@ -60,12 +60,14 @@ async def run_web_tests(registry, project_id, revision, entry_point, *, patches=
                 destination.write_text(content)
         if entry_point not in versions:
             raise ProjectAccessError('The inspected web entry point is unavailable')
-        try:
-            acceptance = normalize_acceptance(json.loads(files.read('tests/acceptance.json')))
-        except (FileNotFoundError, ValueError, TypeError) as exc:
-            return {'status': 'inconclusive', 'cause': 'missing_test', 'next_action': 'add_validation',
-                    'reason': 'Executable browser scenarios are required in tests/acceptance.json: ' + str(exc)[:300],
-                    **({'sourceVersions': versions} if include_versions else {})}
+        acceptance = None
+        if browser_operation is None:
+            try:
+                acceptance = normalize_acceptance(json.loads(files.read('tests/acceptance.json')))
+            except (FileNotFoundError, ValueError, TypeError) as exc:
+                return {'status': 'inconclusive', 'cause': 'missing_test', 'next_action': 'add_validation',
+                        'reason': 'Executable browser scenarios are required in tests/acceptance.json: ' + str(exc)[:300],
+                        **({'sourceVersions': versions} if include_versions else {})}
 
         built = None
         if web_stack == 'react_vite':
@@ -127,7 +129,8 @@ async def run_web_tests(registry, project_id, revision, entry_point, *, patches=
         site = web.TCPSite(runner, '127.0.0.1', 0)
         await site.start()
         port = site._server.sockets[0].getsockname()[1]
-        task = asyncio.create_task(browser_report(f'http://127.0.0.1:{port}/{entry_point}?cap={capability}', acceptance))
+        task = asyncio.create_task((browser_operation or browser_report)(
+            f'http://127.0.0.1:{port}/{entry_point}?cap={capability}', acceptance))
         while not task.done():
             await asyncio.wait({task}, timeout=0.1)
             with registry.access(project_id, revision, 'execute'):

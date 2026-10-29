@@ -15,6 +15,11 @@ from ..local_projects import ProjectAccessError, ProjectFiles, default_registry
 
 def setup_local_project_routes(app, *, registry=None, chooser=None):
     registry = registry or default_registry()
+    from ..local_project_preview import ProjectPreviews
+    previews = ProjectPreviews(registry)
+    async def close_previews(app):
+        await previews.cleanup()
+    app.on_cleanup.append(close_previews)
     tickets = {}
     chooser_lock = asyncio.Lock()
 
@@ -93,6 +98,24 @@ def setup_local_project_routes(app, *, registry=None, chooser=None):
             project_id, revision = body.get('projectId'), body.get('revision')
             if type(revision) is not int:
                 raise ProjectAccessError('A project revision is required')
+            if action.startswith('preview-'):
+                try:
+                    if action == 'preview-open':
+                        return web.json_response(await previews.open(project_id, revision,
+                            body.get('entryPoint'), body.get('webStack', 'static')))
+                    identifier = body.get('previewId')
+                    session = previews.sessions.get(identifier)
+                    if session is not None and (session.project_id, session.revision) != (project_id, revision):
+                        raise ProjectAccessError('Preview belongs to another project revision')
+                    if action == 'preview-close':
+                        await previews.close(identifier)
+                        return web.json_response({'closed': True})
+                    if action == 'preview-frame':
+                        return web.json_response(await asyncio.wait_for(
+                            previews.frame(identifier, project_id, revision, body.get('action')), timeout=12))
+                    raise ProjectAccessError('Unknown preview operation')
+                except Exception as exc:
+                    raise ProjectAccessError(str(exc)[:800]) from exc
             if action == 'grant':
                 return web.json_response(registry.change(project_id, revision, rights=body['rights']))
             if action in {'detach', 'revoke'}:

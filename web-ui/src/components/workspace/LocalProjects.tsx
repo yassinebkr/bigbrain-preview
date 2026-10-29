@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { FolderOpen, FolderPlus, ChevronLeft, FileText, Play, RefreshCw, Unplug } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { LocalProjectPreview } from './LocalProjectPreview';
 
 interface LocalProject {
   id: string; name: string; root: string; revision: number;
@@ -36,6 +37,7 @@ export function LocalProjects() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [output, setOutput] = useState('');
+  const [preview, setPreview] = useState<string | null>(null);
   const generation = useRef(0);
   const streamController = useRef<AbortController | null>(null);
   const project = projects.find((item) => item.id === selectedId);
@@ -60,7 +62,7 @@ export function LocalProjects() {
 
   useEffect(() => {
     let active = true;
-    setEntries([]); setDocument(null); setOutput('');
+    setEntries([]); setDocument(null); setOutput(''); setPreview(null);
     if (project?.state === 'attached' && project.availability === 'available') {
       api<{ entries: Entry[] }>('/list', { projectId: project.id, revision: project.revision, path: directory })
         .then((result) => { if (active) setEntries(result.entries); })
@@ -186,16 +188,19 @@ export function LocalProjects() {
             <div className="flex flex-wrap gap-2">{entries.map((entry) => <button key={entry.path} className={button} disabled={busy}
               onClick={() => entry.type === 'folder' ? setDirectory(entry.path) : void perform(async () => {
                 const result = await api<{ content: string; sha256: string }>('/read', { projectId: project.id, revision: project.revision, path: entry.path });
-                setDocument({ path: entry.path, ...result });
+                setPreview(null); setDocument({ path: entry.path, ...result });
               })}>{entry.type === 'folder' ? <FolderOpen size={15} /> : <FileText size={15} />}{entry.name}</button>)}</div>
             {document && <div className="flex flex-col gap-2">
               <div className="flex items-center gap-2"><span className="text-sm mr-auto">{document.path}</span>
                 {document.path.endsWith('.py') && <button className={button} disabled={busy || !project.rights.includes('execute')} onClick={() => void perform(async () => {
                   await runFile(document.path);
                 })}><Play size={15} /> Exécuter</button>}
+                {document.path.endsWith('.html') && <button className={button} disabled={busy || !project.rights.includes('execute')}
+                  onClick={() => setPreview(document.path)}>Aperçu</button>}
               </div>
               <pre className="overflow-auto rounded-xl bg-black/20 p-4 text-xs whitespace-pre">{document.content}</pre>
             </div>}
+            {preview && <LocalProjectPreview key={`${project.id}:${project.revision}:${preview}`} project={project} entryPoint={preview} request={api} onClose={() => setPreview(null)} />}
             {output && <pre role="log" className="whitespace-pre-wrap rounded-xl bg-black/30 p-4 text-xs">{output}</pre>}
           </>}
         </> : <p className="m-auto text-sm text-[var(--text-secondary)]">Sélectionnez un projet local.</p>}

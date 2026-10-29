@@ -79,3 +79,30 @@ async def test_stream_delivers_output_before_completion(tmp_path):
         assert events[-1]['type'] == 'result'
         assert events[-1]['exitCode'] == 0
         assert any('last' in event.get('text', '') for event in events)
+
+
+@pytest.mark.asyncio
+async def test_preview_http_lifecycle_and_authority(tmp_path):
+    root = tmp_path / 'source'
+    root.mkdir()
+    (root / 'index.html').write_text('<main>Preview fixture</main>')
+    registry = ProjectRegistry(tmp_path / 'state/registry.json')
+    project = registry.attach(root, ('read', 'execute'))
+    app = web.Application()
+    setup_local_project_routes(app, registry=registry)
+    async with TestClient(TestServer(app)) as client:
+        headers = {'Origin': str(client.make_url('')).rstrip('/'), 'X-BigBrain-Local': '1'}
+        scope = {'projectId': project['id'], 'revision': 1}
+        response = await client.post('/api/local-projects/preview-open', headers=headers,
+            json={**scope, 'entryPoint': 'index.html'})
+        assert response.status == 200, await response.text()
+        lease = await response.json()
+        request = {**scope, 'previewId': lease['previewId']}
+        assert (await client.post('/api/local-projects/preview-frame', json=request)).status == 403
+        response = await client.post('/api/local-projects/preview-frame', headers=headers, json=request)
+        assert response.status == 200
+        assert (await response.json())['image'].startswith('iVBOR')
+        response = await client.post('/api/local-projects/preview-close', headers=headers, json=request)
+        assert (await response.json())['closed']
+        response = await client.post('/api/local-projects/preview-frame', headers=headers, json=request)
+        assert response.status == 400

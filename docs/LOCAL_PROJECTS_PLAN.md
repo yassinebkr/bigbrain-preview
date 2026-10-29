@@ -9,7 +9,7 @@ plan is approved for implementation. Branch: `feat/local-projects`.
 | --- | --- | --- |
 | 1 | Access boundary traced through HTTP, front decisions, orchestrator, both specialists and isolated runners | Final requirement-to-evidence audit |
 | 2 | Registry, filtered listings, descriptor-scoped reads and local HTTP chooser tickets | Native chooser acceptance |
-| 3 | Python and web specialists reuse shared repair, isolated checks, source consent and transactional publication; React builds use project dependencies read-only | Interactive preview and final integration acceptance |
+| 3 | Shared repair, transactional publication, Python/Node isolation, read-only dependencies and leased browser previews | Final integration acceptance |
 | 4 | Local folder tab, rights dialog, source viewer and streamed execution observed in browser; recovery controls implemented | Native chooser acceptance, remaining browser journeys and specialist integration |
 | 5 | Acceptance matrix recorded | Cross-path campaign and runtime acceptance |
 
@@ -56,8 +56,16 @@ from user sources. Browser scenarios execute against that captured build. Missin
 dependencies produce an environment diagnostic; installation requires a separate
 environment-preparation workflow. A real React interaction passes this path.
 
-Live model acceptance, browser acceptance of the consent card and interactive
-workspace preview remain integration milestones.
+The workspace opens explicit browser-preview leases with pointer, keyboard and
+text input, scrolling, reload and enlargement. Chromium's sandbox is enabled;
+HTTP routing permits the copied project's origin. Frames are rendered images,
+so project scripts execute in the preview browser. Leases close on navigation,
+visibility changes, revocation or 90 seconds of inactivity. Data is temporary.
+The production UI journey on an isolated server confirmed opening, enlargement,
+a real button interaction and closure. Remaining limits include one-second frame
+refresh, browser API/network bypass coverage and native file-dialog support.
+
+Live model acceptance and browser acceptance of the consent card remain gates.
 
 Latest focused verification: 94 passing cases across filesystem capabilities,
 HTTP authority, front routing, transactions, Python/Node execution and real browser
