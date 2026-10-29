@@ -2,6 +2,8 @@
 
 import asyncio
 import shutil
+import sys
+import subprocess
 import pytest
 
 from bigbrain.local_projects import ProjectAccessError, ProjectRegistry
@@ -42,3 +44,19 @@ async def test_revocation_terminates_running_snapshot(tmp_path):
     registry.change(project['id'], 1, state='revoked')
     with pytest.raises(ProjectAccessError):
         await asyncio.wait_for(running, 3)
+
+
+@pytest.mark.asyncio
+async def test_project_environment_supplies_its_packages(tmp_path):
+    root = tmp_path / 'source'
+    root.mkdir()
+    subprocess.run([sys.executable, '-m', 'venv', '--without-pip', str(root / '.venv')], check=True)
+    packages = next((root / '.venv' / 'lib').glob('python*/site-packages'))
+    (packages / 'project_only.py').write_text('VALUE = "project dependency"')
+    (root / 'main.py').write_text('from project_only import VALUE\nprint(VALUE)\n')
+    registry = ProjectRegistry(tmp_path / 'registry.json')
+    project = registry.attach(root, ('read', 'execute'))
+    result = await ProjectRunner(registry).run(project['id'], 1, ['python', 'main.py'])
+    assert result['exitCode'] == 0, result['output']
+    assert result['environment'] == 'project'
+    assert result['output'].strip() == 'project dependency'

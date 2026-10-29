@@ -88,6 +88,10 @@ def setup_local_project_routes(app, *, registry=None, chooser=None):
                 from ..local_project_runner import ProjectRunner
                 return web.json_response(await ProjectRunner(registry).run(
                     project_id, revision, body.get('argv'), timeout=body.get('timeout', 30)))
+            if action == 'patch':
+                from ..local_project_patches import apply_patch_set
+                return web.json_response(apply_patch_set(
+                    registry, project_id, revision, body.get('patches')))
             raise web.HTTPNotFound()
         except TimeoutError:
             return web.json_response({'error': 'Project execution reached its time limit'}, status=408)

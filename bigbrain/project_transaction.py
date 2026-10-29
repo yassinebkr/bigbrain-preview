@@ -51,7 +51,7 @@ def _read(path):
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         import stat
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
+        if not stat.S_ISREG(os.fstat(fd).st_mode) or os.fstat(fd).st_nlink != 1:
             raise ValueError('Transaction requires regular files')
         if os.fstat(fd).st_size > 4_000_000:
             raise ValueError('Transaction file exceeds snapshot budget')
@@ -83,18 +83,19 @@ class ProjectTransaction:
         self.journal = Path(journal)
 
     @classmethod
-    def begin(cls, target, paths):
+    def begin(cls, target, paths, *, journal_root=None):
         target.validate()
-        root = Path(target.root) / '.bigbrain-transactions'
+        root = Path(journal_root) if journal_root is not None else Path(target.root) / '.bigbrain-transactions'
         if root.is_symlink():
             raise ValueError('Transaction journal directory is a symlink')
-        root.mkdir(exist_ok=True)
+        root.mkdir(parents=True, exist_ok=True, mode=0o700)
         # Serialize reservation across plans/processes, not just asyncio tasks.
         with open(root / 'registry.lock', 'a+b') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             for previous in root.glob('*.json'):
                 state = json.loads(previous.read_text())
-                if state['target']['path'] == target.path and state['state'] in {'open', 'cancelling', 'conflict'}:
+                if (state['target']['path'] == target.path and state['target']['root'] == target.root
+                        and state['state'] in {'open', 'cancelling', 'conflict'}):
                     if state['state'] in {'open', 'cancelling'} and state.get('pid'):
                         try:
                             os.kill(state['pid'], 0)

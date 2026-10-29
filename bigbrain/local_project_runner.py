@@ -1,6 +1,7 @@
 """Execute project snapshots in a private Linux filesystem and process namespace."""
 
 import asyncio
+from contextlib import ExitStack
 import os
 from pathlib import Path
 import shutil
@@ -28,7 +29,8 @@ class ProjectRunner:
         if shutil.which('bwrap') is None:
             raise ProjectAccessError('Project execution requires Bubblewrap')
         files = ProjectFiles(self.registry, project_id, revision)
-        with tempfile.TemporaryDirectory(prefix='bigbrain-project-run-') as temporary:
+        with ExitStack() as resources:
+            temporary = resources.enter_context(tempfile.TemporaryDirectory(prefix='bigbrain-project-run-'))
             snapshot = Path(temporary)
             count, total = 0, 0
             observed = {}
@@ -59,6 +61,24 @@ class ProjectRunner:
                     raise ProjectAccessError('Project source changed during snapshot')
             interpreter = Path(sys.executable).resolve()
             prefix = interpreter.parent.parent
+            environment_fd = None
+            with self.registry.access(project_id, revision, 'execute') as root:
+                try:
+                    environment_fd = os.open('.venv', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                                             dir_fd=root)
+                except FileNotFoundError:
+                    pass
+            executable = str(interpreter)
+            if environment_fd is not None:
+                resources.callback(os.close, environment_fd)
+                environment = Path(f'/proc/self/fd/{environment_fd}')
+                try:
+                    project_python = (environment / 'bin' / 'python').resolve(strict=True)
+                except OSError as exc:
+                    raise ProjectAccessError('Project Python environment is incomplete') from exc
+                if project_python != interpreter:
+                    raise ProjectAccessError('Project Python runtime differs from the supported base runtime')
+                executable = '/venv/bin/python'
             command = ['bwrap', '--unshare-all', '--die-with-parent', '--new-session',
                        '--clearenv', '--setenv', 'PATH', '/usr/bin:/bin',
                        '--setenv', 'HOME', '/tmp', '--setenv', 'PYTHONDONTWRITEBYTECODE', '1',
@@ -68,12 +88,17 @@ class ProjectRunner:
                     command += ['--ro-bind', mount, mount]
             if not str(prefix).startswith('/usr/'):
                 command += ['--ro-bind', str(prefix), str(prefix)]
+            if environment_fd is not None:
+                command += ['--ro-bind-fd', str(environment_fd), '/venv',
+                            '--tmpfs', '/venv/bin', '--symlink', str(interpreter), '/venv/bin/python',
+                            '--setenv', 'VIRTUAL_ENV', '/venv']
             command += ['--bind', str(snapshot), '/project', '--chdir', '/project',
-                        '--', str(interpreter), *argv[1:]]
+                        '--', executable, *argv[1:]]
             with self.registry.access(project_id, revision, 'execute'):
                 process = await asyncio.create_subprocess_exec(
                     *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-                    env={'PATH': '/usr/bin:/bin'}, start_new_session=True)
+                    env={'PATH': '/usr/bin:/bin'}, start_new_session=True,
+                    pass_fds=(environment_fd,) if environment_fd is not None else ())
             output = bytearray()
 
             async def consume(stream):
@@ -95,6 +120,7 @@ class ProjectRunner:
                 await asyncio.wait_for(asyncio.gather(*tasks), timeout)
                 return {'exitCode': process.returncode,
                         'output': output.decode('utf-8', errors='replace'),
+                        'environment': 'project' if environment_fd is not None else 'base',
                         'snapshotFiles': count, 'snapshotBytes': total}
             finally:
                 if process.returncode is None:
