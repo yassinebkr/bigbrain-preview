@@ -6,12 +6,12 @@
 
 | Contract | Exercised implementation and assertions | Remaining gate |
 | --- | --- | --- |
-| Identity and grants | `test_local_projects.py`: persistence, stale revisions, moved/replaced roots and per-conversation selections | Desktop reconciliation journey |
-| Chooser authority | `test_local_projects_api.py`: single-use tickets, forged path refusal, same-origin enforcement and detach preservation | Actual Zenity selection on the desktop |
+| Identity and grants | Offline cases and native reconciliation: persistence, stale revisions, moved/replaced roots, per-conversation selections, preserved UUID/inode/grants | Complete within the tested matrix |
+| Chooser authority | Native Zenity selection, production confirmation and HTTP cases: single-use tickets, forged path refusal, same-origin enforcement and detach preservation | Complete within the tested matrix |
 | File containment | `test_local_projects.py`, `test_project_file_io.py`: traversal/exclusions, symlink/hard-link refusal, ancestor substitution and publication races | External-editor atomicity limitation below |
 | Source consent and preservation | Provider/planning/maintenance suites, live Python/React repairs and production proposal/rejection UI: immutable recipient, source revisions and targeted publication | Complete within the tested matrix |
 | Process rights and revocation | Real Python/Node tests and Worker network probes: private environment/network, read-only dependencies, revocation, timeout and output limits | Complete within the tested matrix |
-| Scratch, preview and continuity | Production UI: interaction, enlargement, closure, navigation, recovery, revoke/restore, read-only execution denial and detach preservation | Native chooser and moved-folder reconciliation |
+| Scratch, preview and continuity | Production UI: interaction, enlargement, closure, navigation, recovery, revoke/restore, read-only execution denial, detach and native reconciliation | Complete within the tested matrix |
 
 ## Verification checkpoints
 
@@ -82,6 +82,13 @@ revision 2 and remained terminal after reload. This UI journey made zero model c
 Local visual evidence: `/tmp/bigbrain-local-recovery-ui.png`,
 `/tmp/bigbrain-local-readonly-ui.png`, `/tmp/bigbrain-local-source-consent-ui.png`.
 
+Native reconciliation used the desktop Zenity chooser and production rights
+confirmation. The moved artificial root retained UUID
+`c6845801-2fda-4605-a777-d49e617e545b`, device/inode `40:179510` and its four
+grants; revision advanced from 1 to 2. The source remained `print(42)` and the
+selection survived reload. Visual evidence: `/tmp/bigbrain-local-native-relink.png`.
+The initial expired ticket was rejected without changing the registry.
+
 ## Explicit limits
 
 - Source proposals currently permit 64 files and 128 KB; individual reads are bounded.
@@ -97,5 +104,6 @@ Local visual evidence: `/tmp/bigbrain-local-recovery-ui.png`,
 
 ## Closure
 
-Finish the remaining gates, rerun backend/frontend checks on the final revision,
-and record the bounded live-probe evidence. Merge requires user authorization.
+Functional, native UI and model-led gates pass. The external-editor publication
+window remains an explicit concurrency decision before full contract closure.
+Merge requires user authorization.

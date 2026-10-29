@@ -10,10 +10,10 @@ Current evidence and remaining gates: [acceptance ledger](LOCAL_PROJECTS_ACCEPTA
 | Phase | Evidence | Remaining work |
 | --- | --- | --- |
 | 1 | Access boundary traced through HTTP, front decisions, orchestrator, both specialists and isolated runners | External-editor concurrency limitation recorded in the ledger |
-| 2 | Registry, filtered listings, descriptor-scoped reads and local HTTP chooser tickets | Native chooser acceptance |
+| 2 | Registry, descriptor-scoped reads, chooser tickets and native moved-folder reconciliation verified | Complete within the tested matrix |
 | 3 | Shared repair, transactional publication, isolated runtimes and live Python/React repairs verified | Complete within the documented boundaries |
-| 4 | Production UI journeys verify consent/rejection, recovery, rights, navigation, read-only mode and detach | Native chooser and moved-folder reconciliation |
-| 5 | 2,029 backend tests and 141 frontend tests pass; build passes; model-led probes verified | Native desktop acceptance |
+| 4 | Production UI verifies consent/rejection, recovery, rights, navigation, read-only mode, detach and native reconciliation | Complete within the tested matrix |
+| 5 | 2,029 backend tests and 141 frontend tests pass; build, model-led probes and native desktop acceptance pass | External-editor publication concurrency decision |
 
 ### Specialist integration checkpoint
 
@@ -73,7 +73,8 @@ a real button interaction and closure. Remaining limits include one-second frame
 refresh, browser API/network bypass coverage and native file-dialog support.
 
 Live Python/React acceptance and the consent-card rejection journey pass.
-Native desktop selection and reconciliation remain acceptance gates.
+Native desktop selection and reconciliation pass. The acceptance ledger records
+the remaining external-editor publication concurrency decision.
 
 The acceptance ledger records current verification results. Snapshot creation
 rechecks copied contents and bounds total bytes, entry count and directory depth.
