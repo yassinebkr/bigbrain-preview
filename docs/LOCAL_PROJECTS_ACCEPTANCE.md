@@ -9,8 +9,8 @@
 | Identity and grants | `test_local_projects.py`: persistence, stale revisions, moved/replaced roots and per-conversation selections | Desktop reconciliation journey |
 | Chooser authority | `test_local_projects_api.py`: single-use tickets, forged path refusal, same-origin enforcement and detach preservation | Actual Zenity selection on the desktop |
 | File containment | `test_local_projects.py`, `test_project_file_io.py`: traversal/exclusions, symlink/hard-link refusal, ancestor substitution and publication races | External-editor atomicity limitation below |
-| Source consent and preservation | Provider/planning/maintenance suites and live Python repair: recipient and source revisions, immutable approvals, targeted publication and recovery conflicts | React delivery probe with exact assertion |
-| Process rights and revocation | Real Python/Node tests: private environment/network, read-only dependencies, revocation, timeout and output limits | Browser network/API bypass audit |
+| Source consent and preservation | Provider/planning/maintenance suites and live Python/React repairs: recipient and source revisions, immutable approvals, targeted publication and recovery conflicts | Consent-card browser journey |
+| Process rights and revocation | Real Python/Node tests and Worker network probes: private environment/network, read-only dependencies, revocation, timeout and output limits | Final cross-path campaign |
 | Scratch, preview and continuity | Real Chromium tests and workspace journey: builds, interaction, enlargement, closure, origin changes, reload and new-conversation isolation | Consent-card, reconciliation and recovery journeys |
 
 ## Verification checkpoints
@@ -36,20 +36,31 @@ launch environment failed to locate it; those launch failures produced no infere
 | --- | --- | ---: | ---: | --- |
 | Python addition and CLI | Verified; corrected `arithmetic.py`, added `test_cli.py`, published after checks | 5 | 37.460 | 23,704 / 643 across 3 usage records; 2 calls have unreported usage |
 | React counter | Arbitration; preserved sources after inconsistent browser evidence | 2 | 24.077 | 13,872 / 407 across 2 usage records |
+| React counter, exact assertion | Verified; corrected only `src/main.jsx`; build, browser assertion, review and publication passed | 3 | 31.634 | 14,489 / 347 across 2 usage records; 1 call has unreported usage |
 
 The React scenario used substring matching: `1` matched the incorrect value `-1`.
 The model compared the source, assertion and observed page, identified the
 contradiction and stopped. The runtime now supports `text_equals` for exact
 counter/state assertions while preserving the existing substring operation.
 Regression checks cover `1`, `-1` and `10`; the 21-case browser/adapter suite passes.
-The React delivery gate remains open. No further model-led attempt was launched.
+The separately authorized exact-assertion probe closes the React delivery gate.
 Subscription cost is unknown. Missing usage records remain explicitly uncounted.
 Local reports: `/tmp/bigbrain-local-live-yiyftz27/{python,web_app}-report.json`.
+Exact-assertion report: `/tmp/bigbrain-local-live-2rix6q02/web_app-report.json`.
 
 The full campaign timed out in
 `TestReentrantEvents.test_noisy_brain_high_event_throughput`: two subtasks remained
 running after its five-second polling deadline. The same test passed in isolation.
-Its timing/concurrency cause remains unresolved; the full campaign remains red.
+An injected slow-fsync test reproduced event-loop blocking in the bus logger.
+Journal writes now run on a serialized I/O thread, retain per-message fsync and
+drain active writes before cancellation or close. The 46-case logger/bus/dispatch
+suite passes. The full campaign requires another run on the updated revision.
+
+A real blob Worker opened a WebSocket to another loopback service despite the
+page-level constructor restrictions. Preview responses now carry a restrictive
+Content Security Policy inherited by blob workers. Adversarial WebSocket and
+fetch cases verify execution, blocked outcomes and zero requests at the target.
+The 13-case preview/web/Node suite passes, including the React build path.
 
 The output-limit regression reproduced a pipe-cleanup deadlock. The runner now
 terminates its process group, cancels readers, drains remaining pipe data and
@@ -65,8 +76,9 @@ terminal conversational response.
 - Source proposals currently permit 64 files and 128 KB; individual reads are bounded.
 - Host editors operate outside broker locks. Hash checks detect observed changes;
   the final comparison/replacement interval lacks a filesystem compare-and-swap.
-- Browser HTTP routing and restricted APIs enforce preview-origin requests.
-  Independent browser networking paths still require adversarial coverage.
+- Browser HTTP routing, response CSP and restricted APIs limit preview requests.
+  This browser-layer policy remains separate from OS network namespaces used by
+  Python and Node execution.
 - Preview frames refresh once per second. Input is pointer/keyboard/text based;
   native file dialogs and downloads are excluded from this preview transport.
 - Missing project environments stop verification with a diagnostic. Dependency

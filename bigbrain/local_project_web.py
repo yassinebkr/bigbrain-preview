@@ -15,6 +15,16 @@ from .brains.web_acceptance import normalize_acceptance
 from .local_projects import ProjectAccessError, ProjectFiles, _parts
 from .verification.web_gate import browser_report
 
+# Response policy also applies to frames and blob workers, whose globals are
+# independent of the preview page's disabled connection constructors.
+PREVIEW_CSP = (
+    "default-src 'self'; script-src 'self' 'unsafe-inline' blob:; "
+    "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+    "font-src 'self' data:; media-src 'self' blob:; connect-src 'self'; "
+    "worker-src 'self' blob:; frame-src 'self'; object-src 'none'; "
+    "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+)
+
 
 async def run_web_tests(registry, project_id, revision, entry_point, *, patches=None,
                         include_versions=False, web_stack='static', browser_operation=None):
@@ -116,7 +126,9 @@ async def run_web_tests(registry, project_id, revision, entry_point, *, patches=
                 content_type = mimetypes.guess_type(path)[0] or 'application/octet-stream'
                 response = web.Response(body=data, content_type=content_type,
                     headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
-                             'Referrer-Policy': 'no-referrer'})
+                             'Referrer-Policy': 'no-referrer',
+                             'Content-Security-Policy': PREVIEW_CSP,
+                             'X-DNS-Prefetch-Control': 'off'})
                 response.set_cookie(cookie_name, capability, httponly=True, samesite='Strict')
                 return response
             except (ProjectAccessError, OSError, ValueError, KeyError):
