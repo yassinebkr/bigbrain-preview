@@ -32,7 +32,10 @@ class ProjectRegistry:
         with open(str(self.path) + '.lock', 'a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             records = json.loads(self.path.read_text()) if self.path.exists() else {}
+            before = json.dumps(records, sort_keys=True)
             yield records
+            if json.dumps(records, sort_keys=True) == before:
+                return
             fd, name = tempfile.mkstemp(dir=self.path.parent)
             try:
                 with os.fdopen(fd, 'w') as stream:
@@ -56,6 +59,11 @@ class ProjectRegistry:
                       device=info.st_dev, inode=info.st_ino, revision=1,
                       rights=sorted(rights), state='attached')
         with self._locked() as records:
+            for existing in records.values():
+                other = Path(existing['root'])
+                if existing['state'] == 'attached' and (
+                        root == other or root in other.parents or other in root.parents):
+                    raise ProjectAccessError('An overlapping project is already attached')
             records[record['id']] = record
         return record
 
@@ -94,7 +102,7 @@ class ProjectRegistry:
                     or record['state'] != 'attached' or right not in record['rights']):
                 raise ProjectAccessError('Project grant unavailable or changed')
             try:
-                fd = os.open(record['root'], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+                fd = _open_root(record['root'])
             except OSError as exc:
                 raise ProjectAccessError('Project directory unavailable') from exc
             try:
@@ -115,6 +123,22 @@ def _parts(path):
             or p.endswith(('.pem', '.key')) for p in parts):
         raise ProjectAccessError('Excluded project path')
     return parts
+
+
+def _open_root(path):
+    """Pin every root component to reject ancestor symlink substitution."""
+    fd = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for component in Path(path).parts[1:]:
+            child = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                            dir_fd=fd)
+            os.close(fd)
+            fd = child
+        result, fd = fd, None
+        return result
+    finally:
+        if fd is not None:
+            os.close(fd)
 
 
 @contextmanager
@@ -138,6 +162,8 @@ class ProjectFiles:
         self.registry, self.project_id, self.revision = registry, project_id, revision
 
     def read(self, path, limit=512_000):
+        if type(limit) is not int or limit < 1:
+            raise ProjectAccessError('Invalid project read limit')
         with self.registry.access(self.project_id, self.revision, 'read') as root:
             with _parent(root, path) as (parent, name):
                 fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
@@ -149,6 +175,37 @@ class ProjectFiles:
                     if len(data) > min(limit, 4_000_000):
                         raise ProjectAccessError('Project read exceeds size limit')
                     return data
+
+    def list(self, path=''):
+        """List bounded visible children using the read grant."""
+        with self.registry.access(self.project_id, self.revision, 'read') as root:
+            fd = os.dup(root)
+            try:
+                for component in _parts(path) if path else []:
+                    child = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                                    dir_fd=fd)
+                    os.close(fd)
+                    fd = child
+                entries = []
+                with os.scandir(fd) as children:
+                    for child in children:
+                        if len(entries) >= 2000:
+                            raise ProjectAccessError('Project directory exceeds listing limit')
+                        try:
+                            _parts(child.name)
+                            info = child.stat(follow_symlinks=False)
+                        except (ProjectAccessError, FileNotFoundError):
+                            continue
+                        directory = stat.S_ISDIR(info.st_mode)
+                        if not directory and (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1):
+                            continue
+                        entries.append({'name': child.name,
+                                        'path': '/'.join(filter(None, (path, child.name))),
+                                        'type': 'folder' if directory else 'file',
+                                        'size': info.st_size if not directory else None})
+                return sorted(entries, key=lambda entry: (entry['type'] != 'folder', entry['name']))
+            finally:
+                os.close(fd)
 
     def write(self, path, data, expected_sha256):
         """Replace a versioned file; None expects an absent destination."""

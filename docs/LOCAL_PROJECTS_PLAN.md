@@ -8,10 +8,15 @@ plan is approved for implementation. Branch: `feat/local-projects`.
 | Phase | Evidence | Remaining work |
 | --- | --- | --- |
 | 1 | Access inventory and boundary specification in `LOCAL_PROJECTS_BOUNDARIES.md`; local bwrap smoke check | Trace individual integration callers |
-| 2 | Registry and descriptor-scoped file primitives; nine focused regression cases pass | Listings, root-swap races, overlap policy, recovery and integration |
+| 2 | Registry, filtered listings, descriptor-scoped reads and local HTTP chooser tickets; 14 regression cases pass | Production UI journey and caller integration |
 | 3 | Existing transaction journal available | Scoped execution, revocation and repair integration |
 | 4 | Existing project selector identified | Trusted chooser and attachment journeys |
 | 5 | Acceptance matrix recorded | Cross-path campaign and runtime acceptance |
+
+Overlapping attachments are rejected while an overlapping root remains attached.
+The native chooser currently uses Zenity and requires a local desktop session.
+HTTP access requires a loopback client, an approved Host, a matching Origin and
+the local UI request header. Selection tickets expire after two minutes.
 
 The initial file replacement primitive checks the observed input hash. External
 edits during replacement and directory relocation require stronger publication

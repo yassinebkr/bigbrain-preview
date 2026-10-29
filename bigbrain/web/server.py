@@ -271,6 +271,8 @@ class WebServer:
         # Real workspace filesystem API (replaces the UI's mock file tree).
         from .fs_api import setup_fs_routes
         setup_fs_routes(self._app)
+        from .local_projects_api import setup_local_project_routes
+        setup_local_project_routes(self._app)
 
         # Streaming manual runs: fs_api pushes fs.run_output / fs.run_result
         # through the bus so every connected browser sees them on its WS.

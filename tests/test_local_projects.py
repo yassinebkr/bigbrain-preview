@@ -58,3 +58,37 @@ def test_symlinks_hardlinks_and_replaced_root(tmp_path):
     root.mkdir()
     with pytest.raises(ProjectAccessError, match='identity'):
         files.read('main.py')
+
+
+def test_listing_filters_sensitive_and_indirect_files(tmp_path):
+    root, _, _, files = fixture(tmp_path)
+    (root / '.env').write_text('secret')
+    (root / 'node_modules').mkdir()
+    (root / 'sub').mkdir()
+    (root / 'sub' / 'code.py').write_text('pass')
+    (root / 'alias').symlink_to(root / 'main.py')
+    assert [entry['name'] for entry in files.list()] == ['sub', 'main.py']
+    assert files.list('sub')[0]['path'] == 'sub/code.py'
+
+
+def test_overlap_and_stale_grant(tmp_path):
+    root, registry, record, files = fixture(tmp_path)
+    (root / 'sub').mkdir()
+    with pytest.raises(ProjectAccessError, match='overlapping'):
+        registry.attach(root / 'sub')
+    registry.change(record['id'], 1, rights=('read',))
+    with pytest.raises(ProjectAccessError):
+        files.list()
+
+
+def test_ancestor_symlink_substitution(tmp_path):
+    container = tmp_path / 'container'
+    container.mkdir()
+    root = container / 'project'
+    root.mkdir()
+    registry = ProjectRegistry(tmp_path / 'state.json')
+    record = registry.attach(root)
+    container.rename(tmp_path / 'moved')
+    container.symlink_to(tmp_path / 'moved', target_is_directory=True)
+    with pytest.raises(ProjectAccessError, match='unavailable'):
+        ProjectFiles(registry, record['id'], 1).list()
