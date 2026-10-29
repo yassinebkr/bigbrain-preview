@@ -7,7 +7,8 @@ import { LocalProjectPreview } from './LocalProjectPreview';
 interface LocalProject {
   id: string; name: string; root: string; revision: number;
   rights: string[]; state: string; availability?: string; diagnostic?: string;
-  transactions?: { id: string; state: string; paths: string[] }[];
+  transactions?: { id: string; state: string; paths: string[]; conflicts?: string[];
+    retainedVersions?: { operationId: string; path: string; state: string }[] }[];
 }
 interface Entry { name: string; path: string; type: 'file' | 'folder' }
 interface Selection { ticket: string; path: string; relink?: { id: string; revision: number } }
@@ -38,6 +39,7 @@ export function LocalProjects() {
   const [error, setError] = useState('');
   const [output, setOutput] = useState('');
   const [preview, setPreview] = useState<string | null>(null);
+  const [retained, setRetained] = useState<{ path: string; content: string; sha256: string } | null>(null);
   const generation = useRef(0);
   const streamController = useRef<AbortController | null>(null);
   const project = projects.find((item) => item.id === selectedId);
@@ -62,6 +64,7 @@ export function LocalProjects() {
 
   useEffect(() => {
     let active = true;
+    setRetained(null);
     setEntries([]); setDocument(null); setOutput(''); setPreview(null);
     if (project?.state === 'attached' && project.availability === 'available') {
       api<{ entries: Entry[] }>('/list', { projectId: project.id, revision: project.revision, path: directory })
@@ -164,8 +167,17 @@ export function LocalProjects() {
           </div>
           <p className="text-xs text-[var(--text-secondary)] break-all">{project.root}</p>
           {project.transactions?.map((transaction) => <div key={transaction.id} className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm">
-            <p className="font-medium">Une modification interrompue nécessite une récupération.</p>
+            <p className="font-medium">{transaction.state === 'conflict' ? 'Des versions concurrentes sont conservées.' : 'Une modification interrompue nécessite une récupération.'}</p>
             <p className="mt-2 text-[var(--text-secondary)] break-all">{transaction.paths.join(', ')}</p>
+            {transaction.retainedVersions?.map((version) => <button key={version.operationId}
+              className={`${button} mt-2`} disabled={busy || project.state !== 'attached'}
+              onClick={() => void perform(async () => {
+                const result = await api<{ path: string; content: string; sha256: string }>('/retained-version', {
+                  projectId: project.id, revision: project.revision,
+                  transactionId: transaction.id, operationId: version.operationId,
+                });
+                setRetained(result);
+              })}>Consulter la version conservée · {version.path}</button>)}
             <button className={`${button} mt-2`} disabled={busy || !project.rights.includes('write')} onClick={() => void perform(async () => {
               const result = await api<{ state: string; conflicts: string[] }>('/recover', { projectId: project.id, revision: project.revision, transactionId: transaction.id });
               await refresh();
@@ -206,6 +218,14 @@ export function LocalProjects() {
         </> : <p className="m-auto text-sm text-[var(--text-secondary)]">Sélectionnez un projet local.</p>}
       </main>
     </div>
+    <Dialog open={Boolean(retained)} onOpenChange={(open) => { if (!open) setRetained(null); }}>
+      <DialogContent data-theme={theme} className="rounded-2xl max-w-3xl" style={{ backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)', borderColor: 'var(--border-subtle)' }}>
+        <DialogTitle>Version conservée · {retained?.path}</DialogTitle>
+        <DialogDescription style={{ color: 'var(--text-secondary)' }}>Cette version reste sur disque. La consultation conserve les fichiers actuels du projet.</DialogDescription>
+        <pre className="max-h-[60vh] overflow-auto rounded-xl bg-black/20 p-4 text-xs whitespace-pre">{retained?.content}</pre>
+        <p className="text-xs break-all text-[var(--text-secondary)]">SHA-256 · {retained?.sha256}</p>
+      </DialogContent>
+    </Dialog>
     <Dialog open={Boolean(selection || permissionProject)} onOpenChange={(open) => { if (!open) { setSelection(null); setPermissionProject(null); } }}>
       <DialogContent data-theme={theme} className="rounded-2xl" style={{ backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)', borderColor: 'var(--border-subtle)' }}>
         <DialogTitle>{selection?.relink ? 'Retrouver ce projet' : selection ? 'Lier ce dossier' : 'Droits du projet'}</DialogTitle>

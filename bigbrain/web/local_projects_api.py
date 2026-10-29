@@ -131,6 +131,10 @@ def setup_local_project_routes(app, *, registry=None, chooser=None):
                 from ..local_project_recovery import recover_project
                 return web.json_response(recover_project(
                     registry, project_id, revision, body.get('transactionId')))
+            if action == 'retained-version':
+                from ..local_project_recovery import retained_version
+                return web.json_response(retained_version(registry, project_id, revision,
+                    body.get('transactionId'), body.get('operationId')))
             files = ProjectFiles(registry, project_id, revision)
             if action == 'list':
                 return web.json_response({'entries': files.list(body.get('path', ''))})

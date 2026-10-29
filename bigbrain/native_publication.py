@@ -38,23 +38,34 @@ class LinuxPublication:
         self._renameat2.restype = ctypes.c_int
 
     @contextmanager
-    def _directory(self, path):
+    def _directory(self, path, anchors=None):
         with ExitStack() as stack:
             descriptor = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
             stack.callback(os.close, descriptor)
+            current = Path('/')
             for part in path.parts[1:]:
+                current /= part
                 descriptor = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
                                      dir_fd=descriptor)
                 stack.callback(os.close, descriptor)
+                info = os.fstat(descriptor)
+                expected = (anchors or {}).get(str(current))
+                if expected is not None and tuple(expected) != (info.st_dev, info.st_ino):
+                    raise OSError(errno.ESTALE, 'Publication directory identity changed', str(current))
             yield descriptor
+
+    def directory_identity(self, path):
+        with self._directory(Path(path).absolute()) as descriptor:
+            info = os.fstat(descriptor)
+            return [info.st_dev, info.st_ino]
 
     def preservation_path(self, candidate):
         # Exchange retains the displaced live object at the candidate's old name.
         return Path(candidate).absolute()
 
-    def _rename(self, source, destination, flags):
+    def _rename(self, source, destination, flags, anchors=None):
         source, destination = _operands(source, destination)
-        with self._directory(source.parent) as source_fd, self._directory(destination.parent) as dest_fd:
+        with self._directory(source.parent, anchors) as source_fd, self._directory(destination.parent, anchors) as dest_fd:
             if self._renameat2(source_fd, os.fsencode(source.name), dest_fd,
                                os.fsencode(destination.name), flags):
                 number = ctypes.get_errno()
@@ -63,16 +74,16 @@ class LinuxPublication:
             os.fsync(source_fd)
             os.fsync(dest_fd)
 
-    def replace_preserving(self, destination, candidate, preserved):
+    def replace_preserving(self, destination, candidate, preserved, *, anchors=None):
         if Path(preserved).absolute() != self.preservation_path(candidate):
             raise ValueError('Linux exchange preserves the original at the candidate path')
-        self._rename(candidate, destination, 2)  # RENAME_EXCHANGE
+        self._rename(candidate, destination, 2, anchors)  # RENAME_EXCHANGE
 
-    def create(self, destination, candidate):
-        self._rename(candidate, destination, 1)  # RENAME_NOREPLACE
+    def create(self, destination, candidate, *, anchors=None):
+        self._rename(candidate, destination, 1, anchors)  # RENAME_NOREPLACE
 
-    def retire(self, destination, preserved):
-        self._rename(destination, preserved, 1)
+    def retire(self, destination, preserved, *, anchors=None):
+        self._rename(destination, preserved, 1, anchors)
 
 
 class WindowsPublication:
@@ -105,7 +116,7 @@ class WindowsPublication:
         self._information = FileInformation
 
     @contextmanager
-    def _directory(self, path):
+    def _directory(self, path, anchors=None):
         # Hold each ancestor against rename/removal and inspect its opened object.
         if str(path).startswith('\\\\') or not path.drive:
             raise OSError(errno.ENOTSUP, 'Publication requires a qualified local Windows volume')
@@ -122,37 +133,45 @@ class WindowsPublication:
                     raise ctypes.WinError(ctypes.get_last_error())
                 if info.attributes & 0x400 or not info.attributes & 0x10:
                     raise OSError(errno.ELOOP, 'Publication directory has a reparse point or changed type')
-            yield
+                identity = [info.volume, (info.index_high << 32) | info.index_low]
+                expected = (anchors or {}).get(str(current))
+                if expected is not None and list(expected) != identity:
+                    raise OSError(errno.ESTALE, 'Publication directory identity changed', str(current))
+            yield identity
+
+    def directory_identity(self, path):
+        with self._directory(Path(path).absolute()) as identity:
+            return identity
 
     def preservation_path(self, candidate):
         candidate = Path(candidate).absolute()
         return candidate.with_name(candidate.name + '.displaced')
 
-    def replace_preserving(self, destination, candidate, preserved):
+    def replace_preserving(self, destination, candidate, preserved, *, anchors=None):
         destination, candidate, preserved = _operands(destination, candidate, preserved)
         if preserved != self.preservation_path(candidate):
             raise ValueError('Windows replacement requires its reserved backup path')
         with ExitStack() as stack:
             for parent in sorted({destination.parent, candidate.parent, preserved.parent}):
-                stack.enter_context(self._directory(parent))
+                stack.enter_context(self._directory(parent, anchors))
             if preserved.exists() or preserved.is_symlink():
                 raise FileExistsError(errno.EEXIST, 'Preservation path is occupied', str(preserved))
             # The journal reserves an operation-private recovery namespace first.
             if not self.api.ReplaceFileW(str(destination), str(candidate), str(preserved), 0, None, None):
                 raise ctypes.WinError(ctypes.get_last_error())
 
-    def _move(self, source, destination):
+    def _move(self, source, destination, anchors=None):
         source, destination = _operands(source, destination)
-        with self._directory(source.parent), self._directory(destination.parent):
+        with self._directory(source.parent, anchors), self._directory(destination.parent, anchors):
             # Flags zero require same-volume movement and refuse an existing name.
             if not self.api.MoveFileExW(str(source), str(destination), 0):
                 raise ctypes.WinError(ctypes.get_last_error())
 
-    def create(self, destination, candidate):
-        self._move(candidate, destination)
+    def create(self, destination, candidate, *, anchors=None):
+        self._move(candidate, destination, anchors)
 
-    def retire(self, destination, preserved):
-        self._move(destination, preserved)
+    def retire(self, destination, preserved, *, anchors=None):
+        self._move(destination, preserved, anchors)
 
 
 def publication_backend():

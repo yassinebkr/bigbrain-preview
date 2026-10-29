@@ -38,7 +38,12 @@ def test_rollback_restores_multiple_files_manifest_and_removes_new_files(tmp_pat
     # Re-open a persisted journal: recovery does not depend on process memory.
     outcome = ProjectTransaction(transaction.journal).finish()
     assert outcome['state'] == 'rolled_back'
-    assert {p.name: p.read_bytes() for p in target.directory.iterdir()} == before
+    assert {p.name: p.read_bytes() for p in target.directory.iterdir()
+            if p.name != '.bigbrain-recovery'} == before
+    # Retained native objects remain available for explicit recovery resolution.
+    recovery = target.directory / '.bigbrain-recovery'
+    assert recovery.is_dir()
+    assert b'print(2)\n' in [p.read_bytes() for p in recovery.rglob('*') if p.is_file()]
     with pytest.raises(ValueError, match='closed'):
         transaction.write(target, 'main.py', b'late worker')
 

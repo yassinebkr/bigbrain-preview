@@ -10,7 +10,8 @@ import tempfile
 import uuid
 
 from .execution_target import ExecutionTarget, relative_path
-from .project_file_io import read_source, replace_source
+from .project_file_io import (read_source, prepare_publication, execute_publication,
+                             publication_conflicts)
 
 active_transaction = ContextVar('project_transaction', default=None)
 
@@ -193,13 +194,23 @@ class ProjectTransaction:
                 parent = parent.parent
             entry.update(after=_hash(data), written=True)
             self._save(state)  # durable intent before the filesystem change
-            replace_source(target, path, data, entry['mode'], expected)
+            self._publish(state, target, path, data, entry['mode'], expected)
         return self._locked(apply)
+
+    def _publish(self, state, target, path, data, mode, expected):
+        if data is None and expected is None:
+            return
+        operation = prepare_publication(target, path, data, mode, expected, self.journal.stem)
+        state.setdefault('publications', []).append(operation)
+        state['publication_protocol'] = 2
+        self._save(state)
+        try:
+            execute_publication(target, operation)
+        finally:
+            self._save(state)
 
     def finish(self, commit=False):
         def finish(state):
-            if state['state'] in {'committed', 'rolled_back'}:
-                return {'state': state['state'], 'conflicts': []}
             target = ExecutionTarget(**state['target'])
             try:
                 target.validate()
@@ -207,9 +218,16 @@ class ProjectTransaction:
                 state['state'] = 'conflict'
                 self._save(state)
                 return {'state': 'conflict', 'conflicts': ['project destination replaced'], 'journal': str(self.journal)}
-            conflicts = []
+            conflicts = publication_conflicts(target, state.get('publications', []))
+            if state['state'] in {'committed', 'rolled_back'}:
+                if conflicts:
+                    state['previous_state'], state['state'] = state['state'], 'conflict'
+                    self._save(state)
+                return {'state': state['state'], 'conflicts': conflicts, 'journal': str(self.journal)}
             for path, entry in state['files'].items():
                 if not entry['written']:
+                    continue
+                if path in conflicts:
                     continue
                 try:
                     destination = target.file(path)
@@ -225,7 +243,7 @@ class ProjectTransaction:
                     continue
                 if not commit:
                     try:
-                        replace_source(target, path, before, entry['mode'], entry['after'])
+                        self._publish(state, target, path, before, entry['mode'], entry['after'])
                     except (OSError, ValueError):
                         conflicts.append(path)
             if commit:
@@ -268,16 +286,27 @@ def write_text(target, path, text):
     transaction = active_transaction.get()
     if transaction:
         return ProjectTransaction(transaction).write(target, path, text.encode('utf-8'))
-    destination = target.file(path)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(text, encoding='utf-8')
+    _standalone_write(target, path, text.encode('utf-8'))
 
 
 def remove(target, path):
     transaction = active_transaction.get()
     if transaction:
         return ProjectTransaction(transaction).write(target, path, None)
-    target.file(path).unlink(missing_ok=True)
+    _standalone_write(target, path, None)
+
+
+def _standalone_write(target, path, data):
+    """Give single-file callers the shared publication and recovery contract."""
+    transaction = ProjectTransaction.begin(target, [path])
+    try:
+        transaction.write(target, path, data)
+        result = transaction.finish(commit=True)
+        if result['state'] != 'committed':
+            raise ValueError('Project publication requires recovery')
+    except BaseException:
+        transaction.finish()
+        raise
 
 
 def assert_project_idle(root, project):

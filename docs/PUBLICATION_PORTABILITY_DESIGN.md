@@ -71,12 +71,21 @@ The existing publication race remains open until the new path passes its gates.
 ## Implementation checkpoint
 
 `native_publication.py` provides Linux and Windows primitives under a common
-create/replace-preserving/retire interface. The application still uses its existing
-transaction path. Journal integration, storage ownership, recovery UI and runtime
-cutover remain pending. Native CI runs the isolated primitive contract on Linux
+create/replace-preserving/retire interface. Source writes and rollback now record
+native intent before publication, reconcile interrupted operations and retain
+displaced live objects. Direct attached-project writes and single-file helpers
+use the same journal. Recovery storage checks ownership and enforces a 256 MiB
+limit. The focused Linux matrix passes 73 tests, including delivery, registry,
+recovery API and native publication. The frontend passes 141 tests and its build.
+The workspace can inspect a bounded retained version and its SHA-256
+through a project/operation-bound read endpoint. Current full regression,
+conflict resolution, retention management, generated build-tree
+publication and updated native qualification remain open.
+Native CI runs the isolated primitive contract on Linux
 and Windows; its results must be checked before platform qualification.
 Commit `6806680` passes all eight primitive cases on native Ubuntu and Windows
 runners, with zero skips. Both runs exercise a late write through an already-open
 editor descriptor/handle after replacement. These results qualify the tested
-primitive cases; journal integration and broader platform support remain pending.
+primitive cases. Directory identity anchors and application integration were
+added subsequently and require updated qualification.
 [Native CI run](https://github.com/yassinebkr/bigbrain-preview/actions/runs/40939809059).

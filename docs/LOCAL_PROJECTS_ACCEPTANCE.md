@@ -92,12 +92,13 @@ The initial expired ticket was rejected without changing the registry.
 ## Explicit limits
 
 - Source proposals currently permit 64 files and 128 KB; individual reads are bounded.
-- Host editors operate outside broker locks. Hash checks detect observed changes;
-  the final comparison/replacement interval lacks a filesystem compare-and-swap.
-  A disposable reproduction injected an external write immediately before the
-  production `os.replace` call: publication replaced that edit with the candidate.
-  Evidence: `/tmp/bigbrain-publication-window-j42yyqd5/result.json`;
-  reproducer: `/tmp/bigbrain-publication-window-check.py`.
+- Host editors operate outside broker locks. Source writes and rollback retain
+  the displaced live object. Linux regressions preserve edits inside the native
+  publication window and later writes through open editor descriptors. Conflicts
+  block further mutation/execution and expose retained versions in the workspace.
+  Explicit resolution, retention management and build-tree publication remain
+  open. Historical failing evidence:
+  `/tmp/bigbrain-publication-window-j42yyqd5/result.json`.
 - Browser HTTP routing, response CSP and restricted APIs limit preview requests.
   This browser-layer policy remains separate from OS network namespaces used by
   Python and Node execution.
@@ -111,7 +112,9 @@ The initial expired ticket was rejected without changing the registry.
 Functional, native UI and model-led gates pass. The external-editor publication
 hardening now has approved project-local hidden recovery storage and explicit
 retention. Commit `6806680` passes eight primitive cases on Linux and eight on
-Windows in native CI, with zero skips. Shared-journal integration, recovery UI
-and end-to-end native qualification remain open. See the
+Windows in native CI, with zero skips. Shared-journal source integration and
+bounded retained-version inspection pass targeted Linux tests. The UI build
+passes. Current full regression, explicit conflict resolution, build-tree audit
+and updated native qualification remain open. See the
 [publication design](PUBLICATION_PORTABILITY_DESIGN.md).
 Merge requires user authorization.

@@ -124,3 +124,16 @@ def test_unsupported_platform_stops_explicitly(monkeypatch):
     monkeypatch.setattr(native.sys, 'platform', 'unsupported-test-host')
     with pytest.raises(OSError, match='Linux and Windows'):
         native.publication_backend()
+
+
+def test_replaced_directory_anchor_is_refused(publication, tmp_path):
+    backend, source, candidate, _ = publication
+    holder = tmp_path / 'holder'
+    holder.mkdir()
+    anchors = {str(holder): backend.directory_identity(holder)}
+    holder.rename(tmp_path / 'old-holder')
+    holder.mkdir()
+    with pytest.raises(OSError, match='identity changed'):
+        backend.create(holder / 'new.txt', candidate, anchors=anchors)
+    assert not (holder / 'new.txt').exists()
+    assert candidate.read_bytes() == b'candidate\n'

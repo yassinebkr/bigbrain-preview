@@ -17,7 +17,7 @@ recorded as deferred work. This documentation update starts no migration.
 | 2 | Registry, descriptor-scoped reads, chooser tickets and native moved-folder reconciliation verified | Complete within the tested matrix |
 | 3 | Shared repair, transactional publication, isolated runtimes and live Python/React repairs verified | Complete within the documented boundaries |
 | 4 | Production UI verifies consent/rejection, recovery, rights, navigation, read-only mode, detach and native reconciliation | Complete within the tested matrix |
-| 5 | 2,029 backend tests and 141 frontend tests pass; build, model-led probes and native desktop acceptance pass | Publication journal integration, recovery UI and native Windows qualification |
+| 5 | Previous baseline: 2,029 backend and 141 frontend tests; live repairs and native desktop acceptance pass. Retained publication is integrated and its targeted tests pass | Current full regression, conflict resolution, build-tree audit and updated native qualification |
 
 ### Specialist integration checkpoint
 

@@ -363,6 +363,10 @@ class ProjectFiles:
         """Replace a versioned file; None expects an absent destination."""
         if not isinstance(data, bytes) or len(data) > 4_000_000:
             raise ProjectAccessError('Invalid project write')
+        from .execution_target import ExecutionTarget
+        from .project_transaction import ProjectTransaction
+
+        record = self.registry.get(self.project_id)
         with self.registry.access(self.project_id, self.revision, 'write') as root:
             with _parent(root, path) as (parent, name):
                 try:
@@ -379,18 +383,19 @@ class ProjectFiles:
                         mode = stat.S_IMODE(info.st_mode)
                 if current != expected_sha256:
                     raise ProjectAccessError('Project file changed concurrently')
-                temporary = '.bigbrain-' + uuid.uuid4().hex
+                info = os.fstat(root)
+                directory = Path(record['root'])
+                target = ExecutionTarget('existing', directory.name, str(directory.parent),
+                                         info.st_dev, info.st_ino)
+                transaction = ProjectTransaction.begin(target, [path],
+                    journal_root=self.registry.path.parent / 'transactions')
                 try:
-                    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-                                 mode, dir_fd=parent)
-                    with os.fdopen(fd, 'wb') as stream:
-                        stream.write(data)
-                        stream.flush()
-                        os.fsync(stream.fileno())
-                    os.rename(temporary, name, src_dir_fd=parent, dst_dir_fd=parent)
-                    os.fsync(parent)
-                finally:
-                    try:
-                        os.unlink(temporary, dir_fd=parent)
-                    except FileNotFoundError:
-                        pass
+                    # Bind the journal baseline to the version supplied by the caller.
+                    transaction.reserve(target, path, expected_sha256)
+                    transaction.write(target, path, data)
+                    result = transaction.finish(commit=True)
+                    if result['state'] != 'committed':
+                        raise ProjectAccessError('Project publication requires recovery')
+                except Exception as error:
+                    transaction.finish()
+                    raise ProjectAccessError(str(error)) from error
