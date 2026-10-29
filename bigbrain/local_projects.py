@@ -23,6 +23,13 @@ class ProjectAccessError(ValueError):
     """A project operation exceeded its current grant."""
 
 
+def default_registry():
+    """Use the configured per-user metadata store outside project sources."""
+    state = Path(os.environ.get('XDG_STATE_HOME', Path.home() / '.local' / 'state'))
+    root = Path(os.environ.get('BIGBRAIN_LOCAL_PROJECTS_DIR', state / 'bigbrain' / 'local-projects'))
+    return ProjectRegistry(root / 'registry.json')
+
+
 class ProjectRegistry:
     """Serialize registry mutations across processes using a sidecar lock."""
 
@@ -83,7 +90,7 @@ class ProjectRegistry:
         with self._locked() as records:
             return [record for record in records.values() if record.get('origin') != 'runtime_snapshot']
 
-    def create_snapshot(self, project_id, revision):
+    def create_snapshot(self, project_id, revision, *, allowed_versions=None):
         """Create a runtime-owned copy with immutable source-grant provenance."""
         from .local_project_runner import copy_project
         source = self.get(project_id)
@@ -93,7 +100,8 @@ class ProjectRegistry:
         runs.mkdir(parents=True, exist_ok=True, mode=0o700)
         root = Path(tempfile.mkdtemp(prefix='project-', dir=runs))
         try:
-            observed, _, _ = copy_project(ProjectFiles(self, project_id, revision), root)
+            observed, _, _ = copy_project(ProjectFiles(self, project_id, revision), root,
+                                          allowed_versions=allowed_versions)
             info = root.stat()
             record = dict(id=str(uuid.uuid4()), root=str(root), name=source['name'],
                           device=info.st_dev, inode=info.st_ino, revision=1,

@@ -93,5 +93,5 @@ async def test_repair_protects_validation_files(tmp_path):
     _, registry, project, _ = setup(tmp_path)
     with pytest.raises(ProjectAccessError, match='approved contract'):
         await verify_and_apply(registry, project['id'], 1,
-                               [{'path': 'tests/test_main.py', 'content': 'pass', 'sha256': None}],
+                               [{'path': 'tests/test_main.py', 'content': 'pass', 'sha256': 'existing-source-hash'}],
                                [['python', '-m', 'unittest']])

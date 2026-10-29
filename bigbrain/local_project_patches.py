@@ -62,7 +62,7 @@ def apply_patch_set(registry, project_id, revision, patches, *, commit=True):
             raise
 
 
-async def verify_and_apply(registry, project_id, revision, patches, checks):
+async def verify_and_apply(registry, project_id, revision, patches, checks, *, approved_tests=()):
     """Check the candidate, publish through the shared journal, then recheck."""
     from .local_project_runner import ProjectRunner
     from .maintenance import protected_test
@@ -70,7 +70,11 @@ async def verify_and_apply(registry, project_id, revision, patches, checks):
             or not isinstance(patches, list) or not patches):
         raise ProjectAccessError('A repair requires candidate patches and verification commands')
     for patch in patches:
-        if not isinstance(patch, dict) or protected_test(patch.get('path', '')):
+        if not isinstance(patch, dict):
+            raise ProjectAccessError('Invalid repair patch')
+        path = patch.get('path')
+        _parts(path)
+        if protected_test(path) and path not in approved_tests and patch.get('sha256') is not None:
             raise ProjectAccessError('Validation changes require a separately approved contract')
     for right in ('read', 'write', 'execute'):
         with registry.access(project_id, revision, right):

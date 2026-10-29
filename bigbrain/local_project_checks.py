@@ -98,7 +98,11 @@ async def run_project_tests(registry, project_id, revision):
         passed = valid and result['exitCode'] == 0 and count > 0
         passed_cases = sorted({item['nodeid'] for item in records
                               if item.get('phase') == 'call' and item.get('outcome') == 'passed'}) if valid else []
-    return {'status': 'passed' if passed else 'failed', 'returncode': result['exitCode'],
+    inconclusive = result['exitCode'] == 0 and not passed_cases
+    return {'status': 'inconclusive' if inconclusive else 'passed' if passed else 'failed',
+            'framework': 'unittest' if unittest else 'pytest', 'returncode': result['exitCode'],
+            **({'cause': 'missing_test', 'next_action': 'extend_validation',
+                'reason': 'No passing executable assertion was observed'} if inconclusive else {}),
             'tests': paths, 'passed_cases': passed_cases, 'test_count': count,
             'records': records, 'diagnostic_output': result['output'],
             'environment': result['environment']}

@@ -10,15 +10,11 @@ import time
 
 from aiohttp import web
 
-from ..local_projects import ProjectAccessError, ProjectFiles, ProjectRegistry
+from ..local_projects import ProjectAccessError, ProjectFiles, default_registry
 
 
 def setup_local_project_routes(app, *, registry=None, chooser=None):
-    registry = registry or ProjectRegistry(
-        Path(os.environ.get('BIGBRAIN_LOCAL_PROJECTS_DIR',
-                            str(Path(os.environ.get('XDG_STATE_HOME', Path.home() / '.local' / 'state'))
-                                / 'bigbrain' / 'local-projects')))
-        / 'registry.json')
+    registry = registry or default_registry()
     tickets = {}
     chooser_lock = asyncio.Lock()
 

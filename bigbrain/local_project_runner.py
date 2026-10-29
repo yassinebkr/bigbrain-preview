@@ -12,7 +12,7 @@ import tempfile
 from .local_projects import ProjectAccessError, ProjectFiles, _parts, _parent
 
 
-def copy_project(files, destination):
+def copy_project(files, destination, *, allowed_versions=None):
     """Copy bounded visible sources and recheck their observed revisions."""
     observed = {}
     count, total = 0, 0
@@ -30,7 +30,12 @@ def copy_project(files, destination):
                 target.mkdir()
                 copy(entry['path'])
             else:
+                if allowed_versions is not None and entry['path'] not in allowed_versions:
+                    continue
                 data = files.read(entry['path'], limit=4_000_000)
+                if (allowed_versions is not None
+                        and hashlib.sha256(data).hexdigest() != allowed_versions[entry['path']]):
+                    raise ProjectAccessError('Approved source revision changed during snapshot creation')
                 total += len(data)
                 if total > 32_000_000:
                     raise ProjectAccessError('Project snapshot exceeds size limit')
@@ -38,6 +43,8 @@ def copy_project(files, destination):
                 observed[entry['path']] = data
 
     copy()
+    if allowed_versions is not None and set(observed) != set(allowed_versions):
+        raise ProjectAccessError('Approved source inventory is incomplete')
     for path, expected in observed.items():
         if files.read(path, limit=4_000_000) != expected:
             raise ProjectAccessError('Project source changed during snapshot')

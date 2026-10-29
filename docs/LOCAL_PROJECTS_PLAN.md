@@ -13,6 +13,23 @@ plan is approved for implementation. Branch: `feat/local-projects`.
 | 4 | Local folder tab, rights dialog, source viewer and streamed execution observed in browser; recovery controls implemented | Native chooser acceptance, remaining browser journeys and specialist integration |
 | 5 | Acceptance matrix recorded | Cross-path campaign and runtime acceptance |
 
+### Specialist integration checkpoint
+
+The Python specialist accepts an attached-project ID and grant revision through
+its task entry point. It reuses the existing maintenance engine on a bounded
+working copy. Candidate verification precedes publication; published changes
+receive another isolated check before transaction commit.
+
+Every source-bearing model call requires the approved proposal's recipient and
+source hashes. Recipient changes, source changes and grant revocation require
+renewed approval. The runtime excludes sensitive source files from the candidate
+inventory and keeps detailed diagnostics in local evidence artifacts.
+
+Offline protocol tests exercise actual subprocess checks, a targeted repair,
+independent evidence review and source publication. The model fixture supplies
+deterministic decisions. Live model acceptance, orchestrator proposal assembly,
+the consent presentation and the web specialist remain integration milestones.
+
 Latest focused verification: 37 passing cases across filesystem capabilities,
 HTTP authority and real isolated subprocess execution. Snapshot creation rechecks
 the copied contents and bounds total bytes, entry count and directory depth.
