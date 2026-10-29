@@ -1,5 +1,6 @@
 """BusLogger - JSONL disk logging for BigBrain message bus."""
 
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -29,6 +30,7 @@ class BusLogger:
         self.log_dir.mkdir(exist_ok=True, parents=True)
         self._current_file: Optional[Path] = None
         self._file_handle = None
+        self._write_lock = asyncio.Lock()
     
     def _get_log_file(self) -> Path:
         """Get current log file path (one per day for rotation)."""
@@ -37,6 +39,21 @@ class BusLogger:
         return self.log_dir / f"bus-{date_str}.jsonl"
     
     async def log_message(self, message: BusMessage) -> None:
+        """Persist a message before delivery while keeping the event loop available."""
+        await self._durable_io(self._write_message, message)
+
+    async def _durable_io(self, operation, *args):
+        # Keep file rotation, fsync and close ordered. Cancellation drains the
+        # current write before releasing the lock or closing its descriptor.
+        async with self._write_lock:
+            task = asyncio.create_task(asyncio.to_thread(operation, *args))
+            try:
+                return await asyncio.shield(task)
+            except asyncio.CancelledError:
+                await task
+                raise
+
+    def _write_message(self, message: BusMessage) -> None:
         """
         Log a message to disk.
         
@@ -47,7 +64,7 @@ class BusLogger:
         
         # Rotate to new file if date changed
         if self._current_file != log_file:
-            await self._rotate_file(log_file)
+            self._rotate_file(log_file)
         
         try:
             # Write message as single JSON line
@@ -63,7 +80,7 @@ class BusLogger:
             import sys
             print(f"BusLogger: Failed to log message {message.id}: {e}", file=sys.stderr)
     
-    async def _rotate_file(self, new_file: Path) -> None:
+    def _rotate_file(self, new_file: Path) -> None:
         """Rotate to a new log file."""
         if self._file_handle:
             self._file_handle.close()
@@ -147,6 +164,9 @@ class BusLogger:
     
     async def close(self) -> None:
         """Close the logger and any open file handles."""
+        await self._durable_io(self._close_file)
+
+    def _close_file(self):
         if self._file_handle:
             self._file_handle.close()
             self._file_handle = None
