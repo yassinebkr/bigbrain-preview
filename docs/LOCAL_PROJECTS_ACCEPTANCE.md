@@ -11,7 +11,7 @@
 | File containment | `test_local_projects.py`, `test_project_file_io.py`: traversal/exclusions, symlink/hard-link refusal, ancestor substitution and publication races | External-editor atomicity limitation below |
 | Source consent and preservation | Provider/planning/maintenance suites: recipient and source revisions, immutable approvals, targeted publication and recovery conflicts | Bounded model-led Python/React probes |
 | Process rights and revocation | Real Python/Node tests: private environment/network, read-only dependencies, revocation, timeout and output limits | Browser network/API bypass audit |
-| Scratch, preview and continuity | Real Chromium tests plus workspace journey: separate builds, pointer interaction, enlargement, preview closure and result-to-folder identity | Final navigation/refresh and consent-card journeys |
+| Scratch, preview and continuity | Real Chromium tests and workspace journey: builds, interaction, enlargement, closure, origin changes, reload and new-conversation isolation | Consent-card, reconciliation and recovery journeys |
 
 ## Verification checkpoints
 
@@ -22,10 +22,20 @@
 | Publication and repair evidence integration | 33 targeted cases passed |
 | Runtime environment, network and shutdown checks | 6 targeted cases passed |
 | Post-audit local-project and orchestrator matrix | 92 passed |
+| Origin/context navigation gate | 34 passed; production UI exercised origin switching, reload and an empty new-conversation choice |
+
+The two authorized synthetic Codex probes stopped before inference because the
+launch environment could not locate the Codex executable. Both reports contain
+zero usage records. Their live acceptance gate remains open.
 
 The output-limit regression reproduced a pipe-cleanup deadlock. The runner now
 terminates its process group, cancels readers, drains remaining pipe data and
 bounds cleanup. Browser verification uses the same drain-before-return principle.
+
+The server stores each conversation's active origin separately from its remembered
+folder ID. The front suppresses sandbox navigation hints while the local origin
+is active. Invalid selection metadata produces an unavailable context and a
+terminal conversational response.
 
 ## Explicit limits
 

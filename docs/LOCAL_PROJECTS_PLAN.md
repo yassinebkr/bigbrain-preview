@@ -43,6 +43,9 @@ dispatch. Its prompt includes project identity, rights and up to 32 root file
 names. Source contents enter specialist requests after approval. Conflicting
 workspace destinations and references outside the current selection are rejected.
 The focused front/planning suite passes 26 tests.
+The active workspace origin is persisted server-side per conversation. Switching
+to BigBrain preserves the remembered local folder; switching back restores it.
+Local-origin prompts exclude the previous sandbox navigation hint.
 
 Attached static web maintenance uses the same repair engine through WebAppBrain.
 Executable browser scenarios run against a scoped working copy. Chromium restricts

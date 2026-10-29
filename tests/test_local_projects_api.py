@@ -50,6 +50,23 @@ async def test_native_ticket_grants_and_detachment(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_origin_is_server_owned_and_scoped_to_conversation(tmp_path):
+    app = web.Application()
+    setup_local_project_routes(app, registry=ProjectRegistry(tmp_path / 'state/registry.json'))
+    async with TestClient(TestServer(app)) as client:
+        headers = {'Origin': str(client.make_url('')).rstrip('/'), 'X-BigBrain-Local': '1'}
+        response = await client.post('/api/local-projects/origin', headers=headers,
+            json={'sessionId': 'a', 'origin': 'local'})
+        assert (await response.json())['selectedOrigin'] == 'local'
+        for session, expected in [('a', 'local'), ('b', 'workspace')]:
+            response = await client.post('/api/local-projects/projects', headers=headers, json={'sessionId': session})
+            assert (await response.json())['selectedOrigin'] == expected
+        response = await client.post('/api/local-projects/origin', headers=headers,
+            json={'sessionId': 'a', 'origin': 'arbitrary'})
+        assert response.status == 400
+
+
+@pytest.mark.asyncio
 async def test_cross_origin_requests_rejected(tmp_path):
     app = web.Application()
     setup_local_project_routes(app, registry=ProjectRegistry(tmp_path / 'registry.json'))

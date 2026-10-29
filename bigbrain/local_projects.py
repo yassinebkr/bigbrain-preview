@@ -173,17 +173,40 @@ class ProjectRegistry:
         selections = ProjectRegistry(self.path.with_name('selections.json'))
         with selections._locked() as records:
             if update:
-                if project_id is None:
-                    records.pop(session_id, None)
-                else:
-                    records[session_id] = project_id
-            return records.get(session_id)
+                records[session_id] = {'project_id': project_id, 'origin': 'local'}
+            value = records.get(session_id)
+            project = value.get('project_id') if isinstance(value, dict) else value
+            if project is not None and not isinstance(project, str):
+                raise ProjectAccessError('Invalid stored project selection')
+            return project
+
+    def selection_origin(self, session_id, *, origin=None, update=False):
+        """Keep the active origin beside the remembered attached-folder choice."""
+        if not isinstance(session_id, str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,128}', session_id):
+            raise ProjectAccessError('Invalid conversation identity')
+        if update and origin not in {'workspace', 'local'}:
+            raise ProjectAccessError('Unknown project origin')
+        selections = ProjectRegistry(self.path.with_name('selections.json'))
+        with selections._locked() as records:
+            value = records.get(session_id)
+            if value is not None and not isinstance(value, (str, dict)):
+                raise ProjectAccessError('Invalid stored project selection')
+            selection = (dict(value) if isinstance(value, dict) else
+                {'project_id': value, 'origin': 'local' if value else 'workspace'})
+            if update:
+                selection['origin'] = origin
+                records[session_id] = selection
+            if selection.get('origin') not in {'workspace', 'local'}:
+                raise ProjectAccessError('Invalid stored project origin')
+            return selection['origin']
 
     def conversation_context(self, session_id):
         """Expose selected project identity and root file names for routing."""
+        if self.selection_origin(session_id) != 'local':
+            return None
         project_id = self.selection(session_id)
         if project_id is None:
-            return None
+            return {'state': 'unselected', 'origin': 'local'}
         project = self.get(project_id)
         with self.access(project_id, project['revision'], 'read'):
             pass

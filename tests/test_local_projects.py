@@ -104,6 +104,34 @@ def test_conversation_selection_survives_restart(tmp_path):
     assert registry.selection('conversation-a') is None
 
 
+def test_project_origin_switch_preserves_choice_and_conversation_boundary(tmp_path):
+    _, registry, project, _ = fixture(tmp_path)
+    registry.selection('a', project_id=project['id'], update=True)
+    assert registry.conversation_context('a')['project_id'] == project['id']
+    registry.selection_origin('a', origin='workspace', update=True)
+    assert registry.conversation_context('a') is None
+    assert registry.selection('a') == project['id']
+    reopened = ProjectRegistry(registry.path)
+    assert reopened.selection_origin('a') == 'workspace'
+    assert reopened.selection_origin('b') == 'workspace'
+    reopened.selection_origin('a', origin='local', update=True)
+    assert reopened.conversation_context('a')['project_id'] == project['id']
+    reopened.selection('a', project_id=None, update=True)
+    assert reopened.conversation_context('a')['state'] == 'unselected'
+
+
+def test_legacy_selection_keeps_its_identity_during_origin_migration(tmp_path):
+    _, registry, project, _ = fixture(tmp_path)
+    selections = ProjectRegistry(registry.path.with_name('selections.json'))
+    with selections._locked() as records:
+        records['legacy'] = project['id']
+    assert registry.selection_origin('legacy') == 'local'
+    assert registry.conversation_context('legacy')['project_id'] == project['id']
+    registry.selection_origin('legacy', origin='workspace', update=True)
+    assert registry.selection('legacy') == project['id']
+    assert registry.conversation_context('legacy') is None
+
+
 def test_snapshot_inherits_source_revocation_and_keeps_separate_files(tmp_path):
     root, registry, project, _ = fixture(tmp_path)
     snapshot = registry.create_snapshot(project['id'], 1)

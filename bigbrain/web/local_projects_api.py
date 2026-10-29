@@ -60,7 +60,8 @@ def setup_local_project_routes(app, *, registry=None, chooser=None):
                     project['availability'] = 'unavailable'
                     project['diagnostic'] = str(exc)
         return {'projects': projects,
-                'selectedProjectId': registry.selection(session) if session else None}
+                'selectedProjectId': registry.selection(session) if session else None,
+                'selectedOrigin': registry.selection_origin(session) if session else 'workspace'}
 
     async def handle(request):
         guard(request)
@@ -95,6 +96,9 @@ def setup_local_project_routes(app, *, registry=None, chooser=None):
             if action == 'select':
                 return web.json_response({'selectedProjectId': registry.selection(
                     body.get('sessionId'), project_id=body.get('projectId'), update=True)})
+            if action == 'origin':
+                return web.json_response({'selectedOrigin': registry.selection_origin(
+                    body.get('sessionId'), origin=body.get('origin'), update=True)})
             project_id, revision = body.get('projectId'), body.get('revision')
             if type(revision) is not int:
                 raise ProjectAccessError('A project revision is required')

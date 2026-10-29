@@ -3,7 +3,7 @@
 // workspace is now the project file explorer plus the research bar.
 
 import { motion } from 'framer-motion';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '@/store/appStore';
 import { ResearchBar } from './workspace/ResearchBar';
 import { FileExplorer } from './workspace/FileExplorer';
@@ -13,10 +13,36 @@ export function Workspace() {
   const sessionId = useAppStore((state) => state.activeSessionKey);
   const originKey = `bigbrain-workspace-origin:${sessionId}`;
   const [local, setLocal] = useState(() => typeof window !== 'undefined' && sessionStorage.getItem(originKey) === 'local');
-  useEffect(() => { setLocal(sessionStorage.getItem(originKey) === 'local'); }, [originKey]);
-  function chooseOrigin(value: boolean) {
-    sessionStorage.setItem(originKey, value ? 'local' : 'workspace');
-    setLocal(value);
+  const [choosing, setChoosing] = useState(false);
+  const [originError, setOriginError] = useState('');
+  const generation = useRef(0);
+  useEffect(() => {
+    const version = ++generation.current;
+    setLocal(sessionStorage.getItem(originKey) === 'local');
+    setChoosing(false); setOriginError('');
+    void fetch('/api/local-projects/projects', { method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-BigBrain-Local': '1' },
+      body: JSON.stringify({ sessionId }) }).then(async response => {
+      if (!response.ok) throw new Error('Impossible de restaurer l’origine du projet.');
+      const data = await response.json();
+      if (version !== generation.current) return;
+      const value = data.selectedOrigin === 'local';
+      sessionStorage.setItem(originKey, value ? 'local' : 'workspace'); setLocal(value);
+    }).catch(error => { if (version === generation.current) setOriginError(String(error)); });
+    return () => { generation.current += 1; };
+  }, [originKey, sessionId]);
+  async function chooseOrigin(value: boolean) {
+    const version = ++generation.current;
+    setChoosing(true); setOriginError('');
+    try {
+      const response = await fetch('/api/local-projects/origin', { method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-BigBrain-Local': '1' },
+        body: JSON.stringify({ sessionId, origin: value ? 'local' : 'workspace' }) });
+      if (!response.ok) throw new Error('Le changement d’origine du projet a échoué.');
+      if (version !== generation.current) return;
+      sessionStorage.setItem(originKey, value ? 'local' : 'workspace'); setLocal(value);
+    } catch (error) { if (version === generation.current) setOriginError(String(error)); }
+    finally { if (version === generation.current) setChoosing(false); }
   }
   return (
     <motion.div
@@ -34,11 +60,12 @@ export function Workspace() {
       >
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex rounded-xl bg-white/5 p-1 text-sm" aria-label="Origine des projets">
-            <button aria-pressed={!local} className={`rounded-lg px-3 py-2 ${!local ? 'bg-white/10' : ''}`} onClick={() => chooseOrigin(false)}>Espace BigBrain</button>
-            <button aria-pressed={local} className={`rounded-lg px-3 py-2 ${local ? 'bg-white/10' : ''}`} onClick={() => chooseOrigin(true)}>Dossiers locaux</button>
+            <button aria-pressed={!local} disabled={choosing} className={`rounded-lg px-3 py-2 ${!local ? 'bg-white/10' : ''}`} onClick={() => void chooseOrigin(false)}>Espace BigBrain</button>
+            <button aria-pressed={local} disabled={choosing} className={`rounded-lg px-3 py-2 ${local ? 'bg-white/10' : ''}`} onClick={() => void chooseOrigin(true)}>Dossiers locaux</button>
           </div>
           {!local && <div className="flex-1"><ResearchBar /></div>}
         </div>
+        {originError && <p role="alert" className="mt-2 text-xs text-amber-400">{originError}</p>}
       </div>
 
       {/* File explorer — full width, files only */}

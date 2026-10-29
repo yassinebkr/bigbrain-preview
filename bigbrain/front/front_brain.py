@@ -384,7 +384,8 @@ class FrontBrain:
                 'or react_vite according to the existing project. '
                 'Request clarification if the entry point is unclear. The contract approval precedes source '
                 'transmission and changes. A new project uses its own destination. An unavailable selection '
-                'requires restoration through the local folder workspace.'})
+                'requires restoration through the local folder workspace. An unselected local origin '
+                'requires the user to select a folder there.'})
         project = self._navigation_context.get()
         if project:
             messages.append({"role": "system", "content": (
@@ -608,9 +609,11 @@ Type 'quit' or 'exit' to stop."""
                 from ..local_projects import default_registry, ProjectAccessError
                 try:
                     attached = default_registry().conversation_context(message.payload['session_id'])
-                except ProjectAccessError:
+                except (ProjectAccessError, OSError, ValueError, TypeError, KeyError):
                     attached = {'state': 'unavailable'}
                 self._attached_project_context.set(attached)
+                if attached is not None:
+                    self._navigation_context.set(None)
             await self._process_ui_message(message)
         except asyncio.CancelledError:
             # Cancellation bypasses _process_ui_message's Exception handler.
