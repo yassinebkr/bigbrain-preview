@@ -130,6 +130,8 @@ def run(request: dict) -> dict:
                                 expect(locator).to_be_visible(timeout=2500)
                             elif op == "text":
                                 expect(locator).to_contain_text(value, timeout=2500)
+                            elif op == "text_equals":
+                                expect(locator).to_have_text(value, timeout=2500)
                             elif op == "count":
                                 expect(locator).to_have_count(value, timeout=2500)
                             elif op == "checked":

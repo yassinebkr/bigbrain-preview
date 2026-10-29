@@ -14,18 +14,20 @@ steps: {"op":"click","selector":"..."}, {"op":"fill","selector":"...","value":".
 {"op":"select","selector":"...","value":"..."}, {"op":"press","selector":"...","value":"Enter"},
 {"op":"reload"}, {"op":"viewport","width":375,"height":812}.
 assertions: {"op":"visible","selector":"..."}, {"op":"text","selector":"...","value":"substring"},
+{"op":"text_equals","selector":"...","value":"exact visible text"},
 {"op":"count","selector":"...","value":3}, {"op":"checked","selector":"...","value":true},
 {"op":"value","selector":"...","value":"..."}, {"op":"storage_equals","key":"...","value":"raw localStorage string"},
 {"op":"no_overflow"}. Assertions may also be placed between steps to check state before/after reload.
 Only these operations are supported. No prose strings, arbitrary JS, URLs or Python.
-Use real selectors matching your HTML/JS. Include meaningful interaction cases and,
-if the app saves state, a case exercising a change then reload then checking restored UI.
+Use real selectors matching your HTML/JS. Include meaningful interaction cases.
+Use text_equals for counters and exact state labels; text checks a substring.
+If the app saves state, exercise a change then reload and check the restored UI.
 At most 20 cases, 40 steps and 40 assertions per case. Non-empty assertions required.
 The gate automatically checks main visibility, JS/console errors and failed local assets.
 Do not claim execution: BigBrain will execute these scenarios independently."""
 
 STEP_OPS = {"click", "fill", "check", "uncheck", "select", "press", "reload", "viewport"}
-ASSERT_OPS = {"visible", "text", "count", "checked", "value", "storage_equals", "no_overflow"}
+ASSERT_OPS = {"visible", "text", "text_equals", "count", "checked", "value", "storage_equals", "no_overflow"}
 
 
 def _executable_cases(document: dict) -> dict:
@@ -57,7 +59,7 @@ def _executable_cases(document: dict) -> dict:
                         or not operation["selector"].strip()
                     ):
                         raise ValueError(f"{op} needs a selector")
-                if op in {"fill", "select", "press", "text", "value", "storage_equals"}:
+                if op in {"fill", "select", "press", "text", "text_equals", "value", "storage_equals"}:
                     if not isinstance(operation.get("value"), str):
                         raise ValueError(f"{op} needs a string value")
                 if op == "storage_equals" and not isinstance(operation.get("key"), str):

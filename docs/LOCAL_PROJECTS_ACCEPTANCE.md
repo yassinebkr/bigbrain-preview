@@ -9,7 +9,7 @@
 | Identity and grants | `test_local_projects.py`: persistence, stale revisions, moved/replaced roots and per-conversation selections | Desktop reconciliation journey |
 | Chooser authority | `test_local_projects_api.py`: single-use tickets, forged path refusal, same-origin enforcement and detach preservation | Actual Zenity selection on the desktop |
 | File containment | `test_local_projects.py`, `test_project_file_io.py`: traversal/exclusions, symlink/hard-link refusal, ancestor substitution and publication races | External-editor atomicity limitation below |
-| Source consent and preservation | Provider/planning/maintenance suites: recipient and source revisions, immutable approvals, targeted publication and recovery conflicts | Bounded model-led Python/React probes |
+| Source consent and preservation | Provider/planning/maintenance suites and live Python repair: recipient and source revisions, immutable approvals, targeted publication and recovery conflicts | React delivery probe with exact assertion |
 | Process rights and revocation | Real Python/Node tests: private environment/network, read-only dependencies, revocation, timeout and output limits | Browser network/API bypass audit |
 | Scratch, preview and continuity | Real Chromium tests and workspace journey: builds, interaction, enlargement, closure, origin changes, reload and new-conversation isolation | Consent-card, reconciliation and recovery journeys |
 
@@ -24,9 +24,26 @@
 | Post-audit local-project and orchestrator matrix | 92 passed |
 | Origin/context navigation gate | 34 passed; production UI exercised origin switching, reload and an empty new-conversation choice |
 
-The two authorized synthetic Codex probes stopped before inference because the
-launch environment could not locate the Codex executable. Both reports contain
-zero usage records. Their live acceptance gate remains open.
+## Bounded model-led probes
+
+GPT-6.1 Sol low through the Codex subscription. Each case had a ten-call,
+300-second ceiling. Only synthetic sources and diagnostics were transmitted.
+The executable was resolved to `/usr/lib/chatgpt/resources/codex` after the initial
+launch environment failed to locate it; those launch failures produced no inference.
+
+| Case | Outcome | Calls | Seconds | Reported input/output tokens |
+| --- | --- | ---: | ---: | --- |
+| Python addition and CLI | Verified; corrected `arithmetic.py`, added `test_cli.py`, published after checks | 5 | 37.460 | 23,704 / 643 across 3 usage records; 2 calls have unreported usage |
+| React counter | Arbitration; preserved sources after inconsistent browser evidence | 2 | 24.077 | 13,872 / 407 across 2 usage records |
+
+The React scenario used substring matching: `1` matched the incorrect value `-1`.
+The model compared the source, assertion and observed page, identified the
+contradiction and stopped. The runtime now supports `text_equals` for exact
+counter/state assertions while preserving the existing substring operation.
+Regression checks cover `1`, `-1` and `10`; the 21-case browser/adapter suite passes.
+The React delivery gate remains open. No further model-led attempt was launched.
+Subscription cost is unknown. Missing usage records remain explicitly uncounted.
+Local reports: `/tmp/bigbrain-local-live-yiyftz27/{python,web_app}-report.json`.
 
 The output-limit regression reproduced a pipe-cleanup deadlock. The runner now
 terminates its process group, cancels readers, drains remaining pipe data and

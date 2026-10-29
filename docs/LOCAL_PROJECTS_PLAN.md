@@ -42,7 +42,6 @@ selection comes from the registry and is checked again immediately before task
 dispatch. Its prompt includes project identity, rights and up to 32 root file
 names. Source contents enter specialist requests after approval. Conflicting
 workspace destinations and references outside the current selection are rejected.
-The focused front/planning suite passes 26 tests.
 The active workspace origin is persisted server-side per conversation. Switching
 to BigBrain preserves the remembered local folder; switching back restores it.
 Local-origin prompts exclude the previous sandbox navigation hint.
@@ -53,8 +52,8 @@ requests to the preview origin. A random capability protects the temporary HTTP
 server; revocation cancels verification and closes that server. Screenshots become
 local evidence artifacts, while diagnostics carry their hashes. Browser checks
 run before source publication and again before transaction commit.
-The 68-case integration suite passes, including real Chromium interaction checks,
-publication checks, preview capability enforcement and revocation. The approved
+Integration tests cover Chromium interactions, publication, preview capability
+enforcement and revocation. The approved
 delivery type, stack and entry point are revalidated at specialist entry.
 
 React/Vite verification runs the project's existing Vite dependency inside
@@ -75,10 +74,8 @@ refresh, browser API/network bypass coverage and native file-dialog support.
 
 Live model acceptance and browser acceptance of the consent card remain gates.
 
-Latest focused verification: 94 passing cases across filesystem capabilities,
-HTTP authority, front routing, transactions, Python/Node execution and real browser
-checks. Snapshot creation rechecks
-the copied contents and bounds total bytes, entry count and directory depth.
+The acceptance ledger records current verification results. Snapshot creation
+rechecks copied contents and bounds total bytes, entry count and directory depth.
 
 Runtime working copies inherit the source project and its exact grant revision.
 Revoking or changing the source grant invalidates those copies. Structured test

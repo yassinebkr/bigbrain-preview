@@ -26,6 +26,19 @@ def setup(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('displayed, expected_status', [('1', 'passed'), ('-1', 'failed'), ('10', 'failed')])
+async def test_exact_browser_text_distinguishes_counter_values(tmp_path, displayed, expected_status):
+    root, registry, project = setup(tmp_path)
+    (root / 'app.js').write_text('document.querySelector("#add").onclick = () => '
+        f'document.querySelector("#count").textContent = {json.dumps(displayed)};')
+    acceptance = json.loads((root / 'tests/acceptance.json').read_text())
+    acceptance['cases'][0]['assertions'][0]['op'] = 'text_equals'
+    (root / 'tests/acceptance.json').write_text(json.dumps(acceptance))
+    result = await run_web_tests(registry, project['id'], 1, 'index.html')
+    assert result['status'] == expected_status, result
+
+
+@pytest.mark.asyncio
 async def test_browser_defect_is_reproduced_then_verified_before_publication(tmp_path):
     root, registry, project = setup(tmp_path)
     result = await run_web_tests(registry, project['id'], 1, 'index.html')
