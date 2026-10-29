@@ -77,6 +77,7 @@ class FrontBrain:
         self._decision_context = ContextVar('front_brain_decision', default=None)
         self._turn_context = ContextVar('front_brain_turn', default=None)
         self._navigation_context = ContextVar('front_brain_navigation', default=None)
+        self._attached_project_context = ContextVar('front_brain_attached_project', default=None)
         self._source_message_context = ContextVar('front_brain_source_message', default=None)
 
         # The soul: batch-consolidated identity memory (memory/soul.py).
@@ -373,6 +374,18 @@ class FrontBrain:
 
         # Navigation context supplied by this turn's client. It never owns
         # the execution destination and never falls back to a global selection.
+        attached = self._attached_project_context.get()
+        if attached:
+            messages.append({'role': 'system', 'content':
+                'Attached local project selection (routing metadata): ' + json.dumps(attached, ensure_ascii=False) +
+                '\nFor maintenance of this selected project, use python_brain for Python or web_app_brain '
+                'for a web app, type maintain_project, the matching deliverable_type, '
+                'local_project {project_id, revision}, and an existing entry_point. Preserve web_stack static '
+                'or react_vite according to the existing project. '
+                'Request clarification if the entry point is unclear. The contract approval precedes source '
+                'transmission and changes. A new project uses its own destination. An unavailable selection '
+                'requires restoration through the local folder workspace. An unselected local origin '
+                'requires the user to select a folder there.'})
         project = self._navigation_context.get()
         if project:
             messages.append({"role": "system", "content": (
@@ -478,6 +491,11 @@ Direct specialist work may also include route:
 Write the objective once; the runtime supplies the researcher's query from it. Other direct routes: taskboard/board_task (title, optional description/status);
 For a fresh documentary research delegation, include payload.obligations: one to six concise, independent questions capturing exactly the user's requested facts and source/version restrictions. The researcher must cover this fixed list. Citation format and response language constrain the answer; they are not separate factual questions. Add no implementation details, historical comparisons or extra research requirements. A continuation retains its original questions.
 python_brain/run_file (file); web_app_brain/run_web_project (project_name).
+Attached Python maintenance uses python_brain/maintain_project with deliverable_type python,
+local_project {{project_id,revision}} from the current attached selection and entry_point.
+Attached web maintenance uses web_app_brain/maintain_project, deliverable_type web_app,
+web_stack static or react_vite and the same local_project and entry_point fields.
+This route requires the attached selection; omit project_target. The runtime prepares a source consent proposal.
 Code generation and multi-step work use a generic delegation, leaving decomposition to the orchestrator.
 Memory: {{"decision":{{"operation":"consult_memory","tool":"projects.list","arguments":{{}}}}}}.
 Wait for the actual runtime memory result before answering or delegating.
@@ -584,8 +602,18 @@ Type 'quit' or 'exit' to stop."""
         decision_token = self._decision_context.set(None)
         turn_token = self._turn_context.set(message.payload.get('turn_id'))
         navigation_token = self._navigation_context.set(message.payload.get('navigation_project'))
+        attached_token = self._attached_project_context.set(None)
         source_token = self._source_message_context.set(message.payload.get('user_message_id'))
         try:
+            if message.payload.get('session_id'):
+                from ..local_projects import default_registry, ProjectAccessError
+                try:
+                    attached = default_registry().conversation_context(message.payload['session_id'])
+                except (ProjectAccessError, OSError, ValueError, TypeError, KeyError):
+                    attached = {'state': 'unavailable'}
+                self._attached_project_context.set(attached)
+                if attached is not None:
+                    self._navigation_context.set(None)
             await self._process_ui_message(message)
         except asyncio.CancelledError:
             # Cancellation bypasses _process_ui_message's Exception handler.
@@ -598,6 +626,7 @@ Type 'quit' or 'exit' to stop."""
             self._decision_context.reset(decision_token)
             self._turn_context.reset(turn_token)
             self._navigation_context.reset(navigation_token)
+            self._attached_project_context.reset(attached_token)
             self._source_message_context.reset(source_token)
 
     async def _process_ui_message(self, message: BusMessage) -> None:
@@ -671,13 +700,22 @@ Type 'quit' or 'exit' to stop."""
             )
             
             if parsed and route_valid:
+                if route_payload.get('local_project') is not None:
+                    from ..local_projects import default_registry
+                    current = default_registry().conversation_context(session_id)
+                    expected = ({k: current[k] for k in ('project_id', 'revision')}
+                                if current and 'project_id' in current else None)
+                    if route_payload['local_project'] != expected:
+                        raise ValueError('Le dossier local sélectionné a changé. Sélectionne-le puis renouvelle la demande.')
                 reply_text = parsed.get("reply", "Working on it...")
                 # Preserve the model's resolved task. The conversational turn
                 # can be a reference such as a retry rather than an objective.
                 resolved_request = next((value for value in (
                     route_payload.get("query"), route_payload.get("user_request"), text)
                     if isinstance(value, str) and value.strip()), text)
-                run_id = await self._emit_task_routing(resolved_request, parsed.get("project_target", route_payload.get("project_target")))
+                run_id = await self._emit_task_routing(resolved_request,
+                    parsed.get("project_target", route_payload.get("project_target")),
+                    **({'local_project': route_payload['local_project']} if route_payload.get('local_project') else {}))
                 
                 ws = "default"  # Always route to the single orchestrator
                 task_data = {
@@ -992,7 +1030,7 @@ Type 'quit' or 'exit' to stop."""
             priority=Priority.NORMAL,
         )
 
-    async def _emit_task_routing(self, description: str, project_target=None) -> str:
+    async def _emit_task_routing(self, description: str, project_target=None, *, local_project=None) -> str:
         """Keep the initiating conversation visibly busy during planning."""
         run_id = str(uuid.uuid4())
         await self.bus.broadcast_event(
@@ -1002,6 +1040,7 @@ Type 'quit' or 'exit' to stop."""
                 "description": description[:140],
                 "session_id": self._chat_session(),
                 "task_id": run_id,
+                **({'local_project': local_project} if local_project else {}),
                 "project_path": project_target.get("path") if isinstance(project_target, dict) and project_target.get("mode") == "existing" else None,
             },
             priority=Priority.NORMAL,

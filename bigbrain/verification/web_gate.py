@@ -48,7 +48,9 @@ async def browser_report(url: str, acceptance: dict | None, timeout: float = 60)
                 pass
         elif process.returncode is None:
             process.kill()
-        await process.wait()
+        # Drain after termination so buffered pipe transports can close even
+        # when the original communicate call was cancelled by its deadline.
+        await asyncio.wait_for(process.communicate(), timeout=5)
 
 
 def record_attempt(

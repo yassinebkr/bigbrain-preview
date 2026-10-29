@@ -65,6 +65,7 @@ export interface RunState {
   verification?: RunVerification;
   projectName?: string;
   projectPath?: string;
+  localProject?: { project_id: string; revision: number };
   entryPoint?: string;
   deliverableType?: string;
   previewUrl?: string;
@@ -166,7 +167,9 @@ interface AppState {
   // Contract approval (Phase B): before the agent writes code, it proposes
   // checkable contracts; the user approves → execution resumes, the
   // approval is traced in the evidence DesignSpec.
-  contractProposal: { designId: string; planId: string; request: string; contracts: string[]; target?: { mode: string; path: string } } | null;
+  contractProposal: { designId: string; planId: string; request: string; contracts: string[]; target?: { mode: string; path: string };
+    sourceTransmission?: { project_id: string; revision: number; recipient: { provider: string; endpoint: string };
+      source_versions: Record<string, string>; source_bytes: number; excluded_paths: string[] } } | null;
   sessionProposals: Record<string, NonNullable<AppState['contractProposal']>>;
   contractSending: boolean;
   contractError: string | null;
@@ -708,6 +711,12 @@ export const useAppStore = create<AppState>()(
         }
         };
         const update = reduce();
+        const localProject = d.local_project;
+        if (localProject && typeof localProject.project_id === 'string' && Number.isInteger(localProject.revision)) {
+          if (update.activeRun) update.activeRun = { ...update.activeRun, localProject, projectPath: undefined };
+          if (update.completedRuns) update.completedRuns = update.completedRuns.map(item => item.id === taskId
+            ? { ...item, localProject, projectPath: undefined } : item);
+        }
         if ('activeRun' in update) {
           if (run && run.id !== update.activeRun?.id) delete runsById[run.id];
           if (update.activeRun) runsById[update.activeRun.id] = update.activeRun;
@@ -726,6 +735,7 @@ export const useAppStore = create<AppState>()(
         if (activity.type === 'contracts.proposal' && d.design_id && d.plan_id) {
           sessionProposals[sessionId] = { designId: d.design_id, planId: d.plan_id,
             request: d.user_request || '', contracts: Array.isArray(d.contracts) ? d.contracts : [],
+            ...(d.source_transmission ? { sourceTransmission: d.source_transmission } : {}),
             ...(d.project_target ? { target: d.project_target } : {}) };
         } else if (['contracts.approved', 'contracts.rejected', 'task.cancelled', 'task.failed', 'task.complete'].includes(activity.type)) {
           const proposal = sessionProposals[sessionId];

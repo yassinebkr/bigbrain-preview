@@ -62,6 +62,26 @@ class PythonInput(ClosedModel):
     file: str = Field(min_length=1)
 
 
+class AttachedProject(ClosedModel):
+    project_id: str = Field(min_length=1)
+    revision: int = Field(ge=1, strict=True)
+
+
+class AttachedPythonInput(ClosedModel):
+    type: Literal['maintain_project']
+    deliverable_type: Literal['python']
+    local_project: AttachedProject
+    entry_point: str = Field(min_length=1)
+
+
+class AttachedWebInput(ClosedModel):
+    type: Literal['maintain_project']
+    deliverable_type: Literal['web_app']
+    local_project: AttachedProject
+    entry_point: str = Field(min_length=1)
+    web_stack: Literal['static', 'react_vite']
+
+
 class WebInput(ClosedModel):
     type: Literal["run_web_project"]
     project_name: str = Field(min_length=1)
@@ -79,12 +99,12 @@ class BoardRoute(ClosedModel):
 
 class PythonRoute(ClosedModel):
     brain: Literal["python_brain"]
-    payload: PythonInput
+    payload: PythonInput | AttachedPythonInput
 
 
 class WebRoute(ClosedModel):
     brain: Literal["web_app_brain"]
-    payload: WebInput
+    payload: WebInput | AttachedWebInput
 
 
 class Respond(ClosedModel):
@@ -104,6 +124,14 @@ class Delegate(ClosedModel):
     route: ResearchRoute | BoardRoute | PythonRoute | WebRoute | None = None
     project_target: ProjectTarget | None = None
     test_changes: list[ValidationChange] = Field(default_factory=list, max_length=10)
+
+    @model_validator(mode='after')
+    def attached_destination(self):
+        if (isinstance(self.route, (PythonRoute, WebRoute))
+                and isinstance(self.route.payload, (AttachedPythonInput, AttachedWebInput))
+                and (self.project_target is not None or self.test_changes)):
+            raise ValueError('Attached maintenance uses its selected project scope and preserved validation')
+        return self
 
     def task_payload(self):
         """Adapt validated intent to the existing orchestrator envelope."""

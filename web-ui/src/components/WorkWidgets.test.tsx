@@ -4,7 +4,18 @@ import { PythonConsole, WorkOverview, VerificationWidget } from './WorkWidgets';
 import { useAppStore, type RunState } from '@/store/appStore';
 import { projectRunKey, useProjectRunStore } from '@/store/projectRunStore';
 import { useWorkspaceStore } from '@/store/workspaceStore';
-import { ContractCard, ContractCriteria, StackSummary } from './ContractCard';
+import { ContractCard, ContractCriteria, StackSummary, SourceConsent } from './ContractCard';
+
+it('shows the approved source recipient, inventory and full source hashes', () => {
+  const html = renderToStaticMarkup(<SourceConsent value={{ project_id: 'local-1', revision: 3,
+    recipient: { provider: 'codex', endpoint: 'OpenAI ChatGPT subscription' },
+    source_versions: { 'main.py': 'a'.repeat(64) }, source_bytes: 40, excluded_paths: ['config.py'] }} />);
+  expect(html).toContain('OpenAI ChatGPT subscription');
+  expect(html).toContain('main.py');
+  expect(html).toContain('a'.repeat(64));
+  expect(html).toContain('config.py');
+  expect(html).toContain('nouvel accord');
+});
 
 // Read current snapshots in these server-rendered component tests. Zustand's
 // real browser subscription is exercised separately by Chromium acceptance.
@@ -23,6 +34,13 @@ vi.mock('@/store/workspaceStore', async (importOriginal) => {
 
 const run: RunState = { id: 'python', sessionId: 's', description: 'Build tool', status: 'done', startedAt: 1, files: [{ path: 'sandbox/tool/main.py', ts: 1 }], steps: [], runnable: true, deliverableType: 'python', projectPath: 'sandbox/tool', entryPoint: 'main.py' };
 const overview = (value: RunState) => renderToStaticMarkup(<WorkOverview run={value} select={() => {}} journal={<p>real journal</p>} />);
+it('offers the attached folder without sandbox execution controls', () => {
+  const html = overview({ ...run, localProject: { project_id: 'local', revision: 1 } });
+  expect(html).toContain('Ouvrir le dossier local');
+  expect(html).not.toContain('Lancer le projet');
+  expect(html).not.toContain('Ouvrir le projet');
+  expect(html).not.toContain('Console Python');
+});
 it('does not call an incomplete delivery verified even when old checks passed', () => {
   const html = renderToStaticMarkup(<VerificationWidget run={{ ...run, deliveryStatus: 'incomplete',
     verification: { runId: 'old', verdict: 'passed', stages: [{ name: 'tests', status: 'passed' }] } }} />);

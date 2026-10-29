@@ -127,6 +127,7 @@ export default function App() {
             planId: d.plan_id,
             request: d.user_request || '',
             contracts: Array.isArray(d.contracts) ? d.contracts : [],
+            ...(d.source_transmission ? { sourceTransmission: d.source_transmission } : {}),
             ...(d.project_target ? { target: d.project_target } : {}),
           });
         }

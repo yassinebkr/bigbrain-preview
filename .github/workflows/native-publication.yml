@@ -1,0 +1,30 @@
+name: Native publication
+
+on:
+  push:
+    paths:
+      - bigbrain/native_publication.py
+      - tests/platform/**
+      - .github/workflows/native-publication.yml
+  pull_request:
+    paths:
+      - bigbrain/native_publication.py
+      - tests/platform/**
+      - .github/workflows/native-publication.yml
+
+jobs:
+  native-primitives:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install pytest
+      - name: Native preservation contract
+        run: python -m pytest tests/platform --confcutdir=tests/platform -q

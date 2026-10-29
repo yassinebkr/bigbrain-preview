@@ -3,12 +3,12 @@ import { Check, ChevronRight, FileCode2, FolderOpen, Loader2, Play, ShieldCheck,
 import { useAppStore, type RunState } from '@/store/appStore';
 import { projectRunKey, pythonEntry, useProjectRunStore } from '@/store/projectRunStore';
 import { isBoardRun, webEntryPath, type SurfaceKind } from '@/lib/morphable';
-import { ContractCriteria, StackSummary } from './ContractCard';
+import { ContractCriteria, StackSummary, SourceConsent } from './ContractCard';
 import { composeWidgets, parseWidgetProposal } from '@/lib/widgetPolicy';
 import { useWorkspaceStore } from '@/store/workspaceStore';
 import { ResearchActivity } from './ResearchPanel';
 
-const stageLabels: Record<string, string> = { syntax: 'Syntaxe', compile: 'Compilation', run: 'Exécution', contracts: 'Fichiers attendus', tests: 'Tests' };
+const stageLabels: Record<string, string> = { syntax: 'Syntaxe', compile: 'Compilation', run: 'Exécution', contracts: 'Fichiers attendus', tests: 'Tests', entry_point: 'Point d’entrée', semantics: 'Revue indépendante', attached_delivery: 'Livraison du dossier local' };
 
 export function VerificationWidget({ run }: { run: RunState }) {
   const setView = useAppStore((s) => s.setView);
@@ -44,6 +44,7 @@ function ProposalWidget({ run }: { run: RunState }) {
     {proposal.target && <code className="block text-[11px] break-all mt-3 work-muted">{proposal.target.path}</code>}
     {stack && <StackSummary value={stack} />}
     <ContractCriteria contracts={proposal.contracts} />
+    <SourceConsent value={proposal.sourceTransmission} />
     <div className="mt-5 flex flex-wrap gap-2"><button disabled={sending || !canDecide} className="work-primary" onClick={() => void decide(true)}>{sending ? <Loader2 size={14} className="animate-spin motion-reduce:animate-none" /> : <Check size={14} />} Approuver et lancer</button>
       <button disabled={sending || !canDecide} className="work-secondary" onClick={() => void decide(false)}><X size={13} /> Refuser</button></div>
     {canDecide && error && <p role="alert" className="text-[12px] mt-3" style={{ color: 'var(--warning)' }}>{error}</p>}
@@ -94,6 +95,18 @@ export function WorkOverview({ run, select, journal }: { run: RunState; select: 
   const proposal = parseWidgetProposal(run.widgetProposal);
   const widgetLabels = { files: 'Fichiers', verification: 'Vérifications', console: 'Console Python', preview: 'Accès à l’aperçu' };
   const openProject = async () => {
+    if (run.localProject) {
+      try {
+        if (useAppStore.getState().activeSessionKey !== run.sessionId) throw new Error('Ouvre la conversation de ce travail avant son dossier.');
+        const response = await fetch('/api/local-projects/select', { method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-BigBrain-Local': '1' },
+          body: JSON.stringify({ sessionId: run.sessionId, projectId: run.localProject.project_id }) });
+        if (!response.ok) throw new Error('Le dossier local est indisponible. Vérifie ses droits dans le workspace.');
+        sessionStorage.setItem(`bigbrain-workspace-origin:${run.sessionId}`, 'local');
+        setView('workspace');
+      } catch (error) { setOpenError(String(error)); }
+      return;
+    }
     if (!entry) return;
     setOpenError('');
     try {
@@ -116,6 +129,7 @@ export function WorkOverview({ run, select, journal }: { run: RunState; select: 
       {run.projectPath && <code className="block text-[11px] break-all mt-3 work-muted">{run.projectPath}/</code>}
       {!board && run.entryPoint && <div className="work-artifact mt-5" aria-label="Point d’entrée du livrable"><div className="work-artifact-icon"><FileCode2 size={25} strokeWidth={1.4} /></div><div className="min-w-0"><p className="text-[13px] font-medium break-all">{run.entryPoint}</p><p className="text-[11px] mt-1 work-muted">{run.deliverableType === 'python' ? 'Programme Python' : run.deliverableType === 'web_app' ? 'Application web' : 'Point d’entrée déclaré'}</p></div></div>}
       <div className="flex flex-wrap gap-2 mt-5">
+        {run.localProject && <button className="work-primary" onClick={() => void openProject()}><FolderOpen size={14} /> Ouvrir le dossier local</button>}
         {board && <button className="work-primary" onClick={() => setView('tasks')}>Ouvrir la taskboard</button>}
         {preview && <button className="work-primary" onClick={() => select('preview')}><Play size={14} /> Ouvrir l’aperçu</button>}
         {entry && <button className="work-secondary" onClick={() => void openProject()}><FolderOpen size={14} /> Ouvrir le projet</button>}

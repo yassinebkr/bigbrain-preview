@@ -298,6 +298,14 @@ class PythonBrain(BaseBrain):
         if task_type == 'maintain_project':
             if payload.get('deliverable_type') != 'python':
                 raise ValueError('PythonBrain maintains Python projects only')
+            if payload.get('local_project') is not None:
+                from ..local_projects import default_registry
+                from ..local_project_maintenance import maintain_attached
+                scope = payload['local_project']
+                if (not isinstance(scope, dict) or set(scope) != {'project_id', 'revision'}
+                        or not isinstance(scope['project_id'], str) or type(scope['revision']) is not int):
+                    raise ValueError('An attached project ID and grant revision are required')
+                return await maintain_attached(self, default_registry(), scope['project_id'], scope['revision'], payload)
             return await self.maintain_project(payload)
         elif task_type == "generate_and_execute":
             # LLM generates code from natural language, then we execute it

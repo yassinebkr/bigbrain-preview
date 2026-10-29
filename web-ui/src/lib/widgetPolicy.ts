@@ -18,7 +18,7 @@ export function parseWidgetProposal(value: unknown): WidgetProposal | undefined 
 
 export function composeWidgets(run: RunState, requested?: WidgetKind[], consoleOpen = false): WidgetKind[] {
   const available: WidgetKind[] = [];
-  if (!isBoardRun(run)) {
+  if (!isBoardRun(run) && !run.localProject) {
     if (run.files.length) available.push('files');
     const entry = run.projectPath && run.entryPoint ? `${run.projectPath}/${run.entryPoint}`
       : run.files.find((file) => file.path === run.entryPoint || file.path.endsWith(`/${run.entryPoint}`))?.path;
