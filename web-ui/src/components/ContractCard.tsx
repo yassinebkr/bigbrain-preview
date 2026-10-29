@@ -13,6 +13,26 @@ import { Check, X, Loader2 } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 import { useWorkspaceStore } from '@/store/workspaceStore';
 
+export function SourceConsent({ value }: { value: NonNullable<ReturnType<typeof useAppStore.getState>['contractProposal']>['sourceTransmission'] }) {
+  if (!value) return null;
+  const files = Object.entries(value.source_versions);
+  return <section className="rounded-xl p-3 my-3 text-[12px]" aria-label="Transmission des sources"
+    style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}>
+    <p className="font-medium">Sources autorisées pour ce travail</p>
+    <p className="mt-2 break-words">Destinataire : {value.recipient.endpoint}</p>
+    <p className="work-muted mt-1">{files.length} fichier(s) · {value.source_bytes.toLocaleString('fr-FR')} octets · droits révision {value.revision}</p>
+    <details className="mt-2"><summary className="work-link">Examiner les fichiers et leurs versions</summary>
+      <ul className="mt-2 space-y-2 max-h-48 overflow-auto">{files.map(([path, hash]) => <li key={path}>
+        <span className="block break-all">{path}</span><code className="block text-[10px] break-all work-muted">SHA-256 {hash}</code>
+      </li>)}</ul>
+    </details>
+    {value.excluded_paths.length > 0 && <details className="mt-2"><summary className="work-muted">{value.excluded_paths.length} fichier(s) exclus</summary>
+      <ul className="mt-2 max-h-32 overflow-auto">{value.excluded_paths.map(path => <li className="break-all" key={path}>{path}</li>)}</ul>
+    </details>}
+    <p className="work-muted mt-2">L’approbation autorise ce destinataire et ces versions. Toute évolution demande un nouvel accord.</p>
+  </section>;
+}
+
 export function ContractCriteria({ contracts }: { contracts: string[] }) {
   return <ol className="contract-criteria">{contracts.filter((item) => !item.startsWith('[Stack]')).map((item, i) =>
     <li key={i}><span className="contract-number">{i + 1}</span>{item.length > 190
@@ -103,6 +123,7 @@ export function ContractCard({ compact = false }: { compact?: boolean }) {
                 <StackSummary value={proposal.contracts.find((contract) => contract.startsWith('[Stack]'))!} />
               )}
               <ContractCriteria contracts={proposal.contracts} />
+              <SourceConsent value={proposal.sourceTransmission} />
 
               <p className="text-[12px] mt-1 mb-2 m-0" style={{ color: 'var(--text-tertiary)' }}>
                 Le travail attend ton accord.

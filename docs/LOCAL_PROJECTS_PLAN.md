@@ -27,8 +27,13 @@ inventory and keeps detailed diagnostics in local evidence artifacts.
 
 Offline protocol tests exercise actual subprocess checks, a targeted repair,
 independent evidence review and source publication. The model fixture supplies
-deterministic decisions. Live model acceptance, orchestrator proposal assembly,
-the consent presentation and the web specialist remain integration milestones.
+deterministic decisions. Orchestrator proposals now record the runtime inventory
+and actual specialist recipient. Changed inventories create new proposal revisions.
+The chat and Atelier approval cards show the destination, file inventory, full
+hashes and excluded paths. The frontend build and 139 tests pass.
+
+Conversation routing to attached work, live model acceptance, browser acceptance
+of the consent card and the web specialist remain integration milestones.
 
 Latest focused verification: 37 passing cases across filesystem capabilities,
 HTTP authority and real isolated subprocess execution. Snapshot creation rechecks

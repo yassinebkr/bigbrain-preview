@@ -519,6 +519,17 @@ class BigBrainSystem:
         # "python_brain" → least-loaded worker from the pool
         if python_pool_names:
             self.orchestrator.register_brain_pool("python_brain", python_pool_names)
+        # Resolve the current worker transport when constructing source consent.
+        def specialist_provider(logical_name):
+            from .local_project_transmission import provider_recipient
+            workers = [self.brains[name] for name in self.orchestrator.brain_pools.get(logical_name, [])]
+            if not workers:
+                raise ValueError('Specialist provider is unavailable')
+            providers = [worker.llm_provider for worker in workers]
+            if any(provider_recipient(p) != provider_recipient(providers[0]) for p in providers):
+                raise ValueError('Specialist pool uses several source recipients')
+            return providers[0]
+        self.orchestrator.specialist_provider = specialist_provider
 
         # Browser-first pool with its own contracts, validation and preview.
         web_pool_size = int(os.environ.get("BIGBRAIN_WEB_POOL", "3"))

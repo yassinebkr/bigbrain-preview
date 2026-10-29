@@ -91,6 +91,8 @@ class TaskPlan:
     execution_target: Optional[ExecutionTarget] = None
     inspection: Optional[dict] = None
     transaction: Optional[str] = None
+    local_project: Optional[dict] = None
+    source_transmission: Optional[dict] = None
     
     def get_ready_subtasks(self) -> List[SubTask]:
         """Get subtasks that are ready to execute (dependencies satisfied)."""
@@ -474,6 +476,9 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             # never from a worker's tool action or an arbitrary payload flag.
             spec.metadata['maintenance'] = {'protocol': 'bigbrain-maintenance/1',
                 'test_changes': plan.project_spec.test_changes}
+        if plan.local_project:
+            spec.metadata['local_project'] = dict(plan.local_project)
+            spec.metadata['source_transmission'] = plan.source_transmission
         if plan.execution_target is not None:
             spec.metadata["execution_target"] = plan.execution_target.public()
         if plan.inspection:
@@ -491,7 +496,9 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                     and stored.metadata.get('delivery') == spec.metadata.get('delivery')
                     and stored.metadata.get('execution') == spec.metadata.get('execution')
                     and stored.metadata.get('business_criteria') == spec.metadata.get('business_criteria')
-                    and stored.metadata.get('inspection') == spec.metadata.get('inspection')):
+                    and stored.metadata.get('inspection') == spec.metadata.get('inspection')
+                    and stored.metadata.get('local_project') == spec.metadata.get('local_project')
+                    and stored.metadata.get('source_transmission') == spec.metadata.get('source_transmission')):
                 spec = stored
             else:
                 spec = spec.model_copy(update={"revision": stored.revision + 1})
@@ -510,6 +517,8 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                 "plan_id": plan.id,
                 "user_request": user_request,
                 "contracts": list(spec.contracts),
+                "local_project": plan.local_project,
+                "source_transmission": plan.source_transmission,
                 "project_target": plan.execution_target.public() if plan.execution_target else None,
                 "session_id": (plan.original_task.payload or {}).get("session_id"),
             },
@@ -603,6 +612,11 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
     @scoped_conversation('planner', message_argument='message')
     async def _create_task_plan(self, message: BusMessage) -> TaskPlan:
         plan = await self._create_unbound_task_plan(message)
+        if plan.local_project:
+            # Attached work owns its registry-bound transaction and scratch copy.
+            if any(st.payload.get('local_project') != plan.local_project for st in plan.subtasks):
+                raise PlanningError('destination', 'Attached project scope differs between subtasks', plan.id)
+            return plan
         try:
             from ..memory.shared import SharedMemory
             log_dir = getattr(getattr(self.bus, 'logger', None), 'log_dir', None)
@@ -886,6 +900,8 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         from ..project_inspection import digest
         from ..verification.contracts import draft_contracts
         data = plan.original_task.payload
+        if data.get('local_project') is not None:
+            return await self._plan_attached_maintenance(plan, user_request, deliverable)
         log_dir = getattr(getattr(self.bus, 'logger', None), 'log_dir', None)
         marker = SubTask(id=plan.id + '_maintenance', description='Inspect and maintain existing project',
             brain_target='web_app_brain' if deliverable == 'web_app' else 'python_brain',
@@ -931,6 +947,46 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             _maintenance_manifest_sha=digest(raw))
         plan.execution_target, plan.project_spec = target, spec
         return [marker]
+
+    async def _plan_attached_maintenance(self, plan, user_request, deliverable):
+        """Prepare local inventory consent before specialist source inspection."""
+        from ..local_projects import default_registry, ProjectAccessError
+        from ..local_project_transmission import prepare_source_consent, provider_recipient
+        from ..verification.contracts import draft_contracts
+        if deliverable != 'python':
+            raise ProjectAccessError('Attached web specialist integration is pending')
+        data = plan.original_task.payload
+        scope = data['local_project']
+        if (not isinstance(scope, dict) or set(scope) != {'project_id', 'revision'}
+                or not isinstance(scope['project_id'], str) or type(scope['revision']) is not int):
+            raise ProjectAccessError('An attached project ID and grant revision are required')
+        registry = default_registry()
+        for right in ('read', 'write', 'execute', 'transmit'):
+            with registry.access(scope['project_id'], scope['revision'], right):
+                pass
+        resolver = getattr(self, 'specialist_provider', None)
+        provider = resolver('python_brain') if resolver else None
+        consent = prepare_source_consent(registry, scope['project_id'], scope['revision'],
+                                         provider_recipient(provider))
+        entry = data.get('entry_point')
+        if not isinstance(entry, str) or entry not in consent['source_versions']:
+            raise ProjectAccessError('Select an entry point from the attached source inventory')
+        if data.get('test_changes'):
+            raise ProjectAccessError('Attached validation changes require a dedicated approval proposal')
+        project = registry.get(scope['project_id'])
+        spec = ProjectSpec(project_name=project['name'], description=user_request,
+            deliverable_type='python', entry_point=entry, interaction_mode='cli', executable=True,
+            tech_decisions=['Preserve existing stack and source behavior'],
+            execution_strategy='Reproduce, repair and independently verify in an isolated copy')
+        contracts = await draft_contracts(self.llm_provider, user_request, project_spec=spec)
+        spec.acceptance_contracts = [c for c in contracts if not c.startswith('[Stack]')]
+        if not spec.acceptance_contracts:
+            raise ProjectAccessError('Attached maintenance requires checkable acceptance criteria')
+        plan.local_project, plan.source_transmission, plan.project_spec = dict(scope), consent, spec
+        return [SubTask(id=plan.id + '_maintenance', description='Inspect and repair attached Python project',
+            brain_target='python_brain', payload={'type': 'maintain_project', 'user_request': user_request,
+                'local_project': dict(scope), 'deliverable_type': 'python', 'entry_point': entry,
+                'executable': True, 'interaction_mode': 'cli'})]
 
     async def _plan_project(self, plan_id: str, user_request: str,
                             needs_research: bool, research_queries: list,

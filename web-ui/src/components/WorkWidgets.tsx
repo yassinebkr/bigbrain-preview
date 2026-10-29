@@ -3,7 +3,7 @@ import { Check, ChevronRight, FileCode2, FolderOpen, Loader2, Play, ShieldCheck,
 import { useAppStore, type RunState } from '@/store/appStore';
 import { projectRunKey, pythonEntry, useProjectRunStore } from '@/store/projectRunStore';
 import { isBoardRun, webEntryPath, type SurfaceKind } from '@/lib/morphable';
-import { ContractCriteria, StackSummary } from './ContractCard';
+import { ContractCriteria, StackSummary, SourceConsent } from './ContractCard';
 import { composeWidgets, parseWidgetProposal } from '@/lib/widgetPolicy';
 import { useWorkspaceStore } from '@/store/workspaceStore';
 import { ResearchActivity } from './ResearchPanel';
@@ -44,6 +44,7 @@ function ProposalWidget({ run }: { run: RunState }) {
     {proposal.target && <code className="block text-[11px] break-all mt-3 work-muted">{proposal.target.path}</code>}
     {stack && <StackSummary value={stack} />}
     <ContractCriteria contracts={proposal.contracts} />
+    <SourceConsent value={proposal.sourceTransmission} />
     <div className="mt-5 flex flex-wrap gap-2"><button disabled={sending || !canDecide} className="work-primary" onClick={() => void decide(true)}>{sending ? <Loader2 size={14} className="animate-spin motion-reduce:animate-none" /> : <Check size={14} />} Approuver et lancer</button>
       <button disabled={sending || !canDecide} className="work-secondary" onClick={() => void decide(false)}><X size={13} /> Refuser</button></div>
     {canDecide && error && <p role="alert" className="text-[12px] mt-3" style={{ color: 'var(--warning)' }}>{error}</p>}

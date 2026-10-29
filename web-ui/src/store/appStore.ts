@@ -166,7 +166,9 @@ interface AppState {
   // Contract approval (Phase B): before the agent writes code, it proposes
   // checkable contracts; the user approves → execution resumes, the
   // approval is traced in the evidence DesignSpec.
-  contractProposal: { designId: string; planId: string; request: string; contracts: string[]; target?: { mode: string; path: string } } | null;
+  contractProposal: { designId: string; planId: string; request: string; contracts: string[]; target?: { mode: string; path: string };
+    sourceTransmission?: { project_id: string; revision: number; recipient: { provider: string; endpoint: string };
+      source_versions: Record<string, string>; source_bytes: number; excluded_paths: string[] } } | null;
   sessionProposals: Record<string, NonNullable<AppState['contractProposal']>>;
   contractSending: boolean;
   contractError: string | null;
@@ -726,6 +728,7 @@ export const useAppStore = create<AppState>()(
         if (activity.type === 'contracts.proposal' && d.design_id && d.plan_id) {
           sessionProposals[sessionId] = { designId: d.design_id, planId: d.plan_id,
             request: d.user_request || '', contracts: Array.isArray(d.contracts) ? d.contracts : [],
+            ...(d.source_transmission ? { sourceTransmission: d.source_transmission } : {}),
             ...(d.project_target ? { target: d.project_target } : {}) };
         } else if (['contracts.approved', 'contracts.rejected', 'task.cancelled', 'task.failed', 'task.complete'].includes(activity.type)) {
           const proposal = sessionProposals[sessionId];

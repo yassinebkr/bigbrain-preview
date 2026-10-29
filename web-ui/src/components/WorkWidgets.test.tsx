@@ -4,7 +4,18 @@ import { PythonConsole, WorkOverview, VerificationWidget } from './WorkWidgets';
 import { useAppStore, type RunState } from '@/store/appStore';
 import { projectRunKey, useProjectRunStore } from '@/store/projectRunStore';
 import { useWorkspaceStore } from '@/store/workspaceStore';
-import { ContractCard, ContractCriteria, StackSummary } from './ContractCard';
+import { ContractCard, ContractCriteria, StackSummary, SourceConsent } from './ContractCard';
+
+it('shows the approved source recipient, inventory and full source hashes', () => {
+  const html = renderToStaticMarkup(<SourceConsent value={{ project_id: 'local-1', revision: 3,
+    recipient: { provider: 'codex', endpoint: 'OpenAI ChatGPT subscription' },
+    source_versions: { 'main.py': 'a'.repeat(64) }, source_bytes: 40, excluded_paths: ['config.py'] }} />);
+  expect(html).toContain('OpenAI ChatGPT subscription');
+  expect(html).toContain('main.py');
+  expect(html).toContain('a'.repeat(64));
+  expect(html).toContain('config.py');
+  expect(html).toContain('nouvel accord');
+});
 
 // Read current snapshots in these server-rendered component tests. Zustand's
 // real browser subscription is exercised separately by Chromium acceptance.
