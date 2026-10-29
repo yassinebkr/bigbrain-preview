@@ -5,6 +5,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 from pathlib import Path, PurePosixPath
 import stat
 import tempfile
@@ -14,6 +15,8 @@ import uuid
 RIGHTS = frozenset({'read', 'write', 'execute', 'delete', 'install', 'network', 'transmit'})
 EXCLUDED = frozenset({'node_modules', '__pycache__', 'venv', 'dist', 'build',
                       'credentials', 'credentials.json', 'id_rsa', 'id_ed25519'})
+SENSITIVE_NAME = re.compile(
+    r'(?:^|[._-])(?:secrets?|credentials?|passwords?|private.?key|tokens?)(?:[._-]|$)', re.I)
 
 
 class ProjectAccessError(ValueError):
@@ -119,7 +122,7 @@ def _parts(path):
         raise ProjectAccessError('Invalid project path')
     parts = path.split('/')
     if PurePosixPath(path).is_absolute() or any(
-            p in {'', '.', '..'} or p.startswith('.') or p in EXCLUDED
+            p in {'', '.', '..'} or p.startswith('.') or p in EXCLUDED or SENSITIVE_NAME.search(p)
             or p.endswith(('.pem', '.key')) for p in parts):
         raise ProjectAccessError('Excluded project path')
     return parts
@@ -174,6 +177,10 @@ class ProjectFiles:
                     data = stream.read(min(limit, 4_000_000) + 1)
                     if len(data) > min(limit, 4_000_000):
                         raise ProjectAccessError('Project read exceeds size limit')
+                    after = os.fstat(stream.fileno())
+                    if (info.st_size, info.st_mtime_ns, info.st_ctime_ns) != (
+                            after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+                        raise ProjectAccessError('Project source changed during read')
                     return data
 
     def list(self, path=''):
@@ -188,8 +195,8 @@ class ProjectFiles:
                     fd = child
                 entries = []
                 with os.scandir(fd) as children:
-                    for child in children:
-                        if len(entries) >= 2000:
+                    for scanned, child in enumerate(children):
+                        if scanned >= 2000:
                             raise ProjectAccessError('Project directory exceeds listing limit')
                         try:
                             _parts(child.name)

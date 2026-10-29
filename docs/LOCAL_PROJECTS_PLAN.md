@@ -13,6 +13,10 @@ plan is approved for implementation. Branch: `feat/local-projects`.
 | 4 | Existing project selector identified | Trusted chooser and attachment journeys |
 | 5 | Acceptance matrix recorded | Cross-path campaign and runtime acceptance |
 
+Latest focused verification: 16 passing cases across filesystem capabilities,
+HTTP authority and real isolated subprocess execution. Snapshot creation rechecks
+the copied contents and bounds total bytes, entry count and directory depth.
+
 Overlapping attachments are rejected while an overlapping root remains attached.
 The native chooser currently uses Zenity and requires a local desktop session.
 HTTP access requires a loopback client, an approved Host, a matching Origin and

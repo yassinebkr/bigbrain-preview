@@ -31,9 +31,12 @@ class ProjectRunner:
         with tempfile.TemporaryDirectory(prefix='bigbrain-project-run-') as temporary:
             snapshot = Path(temporary)
             count, total = 0, 0
+            observed = {}
 
             def copy(relative=''):
                 nonlocal count, total
+                if len(Path(relative).parts) > 32:
+                    raise ProjectAccessError('Project snapshot exceeds directory depth limit')
                 for entry in files.list(relative):
                     destination = snapshot / entry['path']
                     count += 1
@@ -48,8 +51,12 @@ class ProjectRunner:
                         if total > 32_000_000:
                             raise ProjectAccessError('Project snapshot exceeds size limit')
                         destination.write_bytes(data)
+                        observed[entry['path']] = data
 
             copy()
+            for path, expected in observed.items():
+                if files.read(path, limit=4_000_000) != expected:
+                    raise ProjectAccessError('Project source changed during snapshot')
             interpreter = Path(sys.executable).resolve()
             prefix = interpreter.parent.parent
             command = ['bwrap', '--unshare-all', '--die-with-parent', '--new-session',
