@@ -88,6 +88,22 @@ The production UI restores a chosen retained editor version and clears the
 resolved conflict. Evidence: `/tmp/bigbrain-resolved-version-ui.png`.
 Retention management remains an open gate.
 
+### Pending retention decision
+
+Proposed manual release contract:
+
+- Keep retained objects until a separate irreversible-release confirmation.
+- Require the deletion grant, a resolved transaction and a version-bound inventory.
+- Show affected versions and storage size before confirmation; refuse changed
+  observations and preserve the objects for renewed inspection.
+- Warn that editors must close their old file handles before release. Writes
+  through a surviving handle after deletion fall outside the recovery guarantee.
+- Qualify release, interruption and concurrent-change behavior with disposable
+  fixtures before enabling the action. Personal project cleanup remains a user action.
+
+This release contract awaits a decision. The current implementation retains all
+objects and stops publication at its storage limit.
+
 Attached React builds run on copied sources through `ProjectRunner`, capture
 `dist` as bounded artifacts and serve those captured bytes. Four real Node/React
 tests preserve dependencies and an existing source-side `dist/user-artifact.txt`.
