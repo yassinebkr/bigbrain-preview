@@ -77,7 +77,8 @@ class ProjectTransaction:
             for previous in root.glob('*.json'):
                 state = json.loads(previous.read_text())
                 if (state['target']['path'] == target.path and state['target']['root'] == target.root
-                        and state['state'] in {'open', 'cancelling', 'conflict'}):
+                        and (state['state'] in {'open', 'cancelling', 'conflict'}
+                             or state.get('retention', {}).get('status') == 'pending')):
                     if state['state'] in {'open', 'cancelling'} and state.get('pid'):
                         try:
                             os.kill(state['pid'], 0)

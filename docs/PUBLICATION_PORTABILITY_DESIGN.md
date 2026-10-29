@@ -1,6 +1,7 @@
 # Recoverable cross-platform publication
 
-29 October 2026. Preservation location and retention approved; implementation underway.
+30 October 2026. Source publication, conflict resolution and manual release
+are qualified within the recorded platform and capability matrix.
 Applies to the shared transaction engine and attached-project publication.
 
 ## Shared contract
@@ -66,7 +67,7 @@ native tests on each supported filesystem and operating system.
 4. Run native Linux/Windows integration jobs and existing regression suites.
    The broader Windows runtime migration remains in [PORTABILITY.md](PORTABILITY.md).
 
-The existing publication race remains open until the new path passes its gates.
+The qualification below defines the exercised publication and release boundaries.
 
 ## Implementation checkpoint
 
@@ -86,7 +87,7 @@ reopen the conflict. Eight resolution regressions pass.
 
 The production UI restores a chosen retained editor version and clears the
 resolved conflict. Evidence: `/tmp/bigbrain-resolved-version-ui.png`.
-Retention management remains an open gate.
+Manual retention release passes its application and production UI gates.
 
 ### Approved manual retention release
 
@@ -104,10 +105,29 @@ Approved on 30 October 2026:
 Native release uses a short-lived Linux helper holding a write lease, or an
 exclusive Windows file handle with deletion disposition. Changed bytes, changed
 file identity, open editor handles and hard links refuse release. Linux signals
-remain confined to the helper. Fourteen native cases pass locally; the updated
-Windows run and application release qualification remain pending.
+remain confined to the helper. Commit `1dbbf86` passes fourteen native cases on
+Ubuntu and fourteen on Windows, with zero skips.
+[Native release CI](https://github.com/yassinebkr/bigbrain-preview/actions/runs/40973915789).
 [Linux lease contract](https://man7.org/linux/man-pages/man2/F_SETLEASE.2const.html),
 [Windows file disposition](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfileinformationbyhandle).
+
+The UI lists terminal journals, exact artifacts, hashes and byte sizes. Release
+records both original and private quarantine names before movement. A request
+spends at most fifteen seconds starting file operations; each Linux helper has
+an eight-second ceiling. Partial work remains pending and blocks new mutation
+and execution until a fresh inventory receives another confirmation. Remaining
+artifacts stay readable. Finalization scrubs journal recovery preimages while
+retaining their hashes and receipts; empty owned directories are removed.
+Each confirmed batch holds the registry grant boundary through its native work.
+Rights changes apply after that bounded batch and govern subsequent requests.
+
+Ten application regressions cover permissions, HTTP confirmation, changed data,
+open handles, interruption before/after deletion, foreign roots and resumed work.
+The separately authorized production UI journey released one synthetic 26-byte
+artifact and its journal preimages. The current `main.py` stayed unchanged.
+Evidence: `/tmp/bigbrain-retention-confirmation-ui.png` and
+`/tmp/bigbrain-retention-purged-ui.png`. The final split campaign passes 2,074 cases
+with eight optional skips; frontend 141 cases and the production build pass.
 
 Attached React builds run on copied sources through `ProjectRunner`, capture
 `dist` as bounded artifacts and serve those captured bytes. Four real Node/React
@@ -126,6 +146,6 @@ Screenshot: `/tmp/bigbrain-retained-version-ui.png`. Four transmission tests pas
 including recovery-directory exclusion from source consent and normal file access.
 
 The monolithic `1131536` run terminated with exit 143 at 95%. The replacement
-exhaustive split campaign passes 2,059 cases with eight skips; the collection has
-2,067 cases. Reports and accounting are in the
+exhaustive final split campaign passes 2,074 cases with eight skips; the collection
+contains 2,082 cases. Reports and accounting are in the
 [acceptance ledger](LOCAL_PROJECTS_ACCEPTANCE.md).

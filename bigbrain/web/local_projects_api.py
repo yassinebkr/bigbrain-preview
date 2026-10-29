@@ -51,6 +51,8 @@ def setup_local_project_routes(app, *, registry=None, chooser=None):
         for project in projects:
             from ..local_project_recovery import project_transactions
             project['transactions'] = project_transactions(registry, project)
+            from ..local_project_retention import retained_journals
+            project['retainedJournals'] = retained_journals(registry, project)
             if project['state'] == 'attached':
                 try:
                     with registry.access(project['id'], project['revision'], 'read'):
@@ -139,6 +141,19 @@ def setup_local_project_routes(app, *, registry=None, chooser=None):
                 from ..local_project_recovery import inspect_resolution
                 return web.json_response(inspect_resolution(registry, project_id, revision,
                     body.get('transactionId')))
+            if action == 'inspect-retention':
+                from ..local_project_retention import inspect_retention
+                return web.json_response(await asyncio.to_thread(inspect_retention,
+                    registry, project_id, revision, body.get('transactionId')))
+            if action == 'release-retention':
+                from ..local_project_retention import release_retention
+                return web.json_response(await asyncio.to_thread(release_retention,
+                    registry, project_id, revision, body.get('transactionId'),
+                    body.get('token'), body.get('confirmed')))
+            if action == 'read-retention':
+                from ..local_project_retention import read_retention
+                return web.json_response(await asyncio.to_thread(read_retention,
+                    registry, project_id, revision, body.get('transactionId'), body.get('artifact')))
             if action == 'resolve':
                 from ..local_project_recovery import resolve_project
                 return web.json_response(resolve_project(registry, project_id, revision,

@@ -20,10 +20,11 @@ def project_transactions(registry, record):
         if Path(target.get('root', '')) / target.get('path', '') != root:
             continue
         conflicts = []
-        if state.get('publications'):
+        retention_pending = state.get('retention', {}).get('status') == 'pending'
+        if state.get('publications') and not retention_pending:
             conflicts = publication_conflicts(ExecutionTarget(**target), state['publications'])
-        if state.get('state') in {'open', 'cancelling', 'conflict'} or conflicts:
-            results.append({'id': journal.stem, 'state': 'conflict' if conflicts else state['state'],
+        if state.get('state') in {'open', 'cancelling', 'conflict'} or conflicts or retention_pending:
+            results.append({'id': journal.stem, 'state': 'retention_pending' if retention_pending else 'conflict' if conflicts else state['state'],
                             'conflicts': conflicts,
                             'retainedVersions': [{'operationId': operation['id'], 'path': operation['path'],
                                 'state': operation['status'], 'preserved': operation['preserved']}
@@ -83,6 +84,8 @@ def retained_version(registry, project_id, revision, transaction_id, operation_i
 def recover_project(registry, project_id, revision, transaction_id):
     """Restore this transaction's changes while preserving concurrent user edits."""
     journal, state = _journal_for(registry, project_id, transaction_id)
+    if state.get('retention', {}).get('status') == 'pending':
+        raise ProjectAccessError('Complete the pending recovery release before source recovery')
     token = active_transaction.set(str(journal))
     try:
         with registry.access(project_id, revision, 'write'):
@@ -105,7 +108,9 @@ def inspect_resolution(registry, project_id, revision, transaction_id):
 def resolve_project(registry, project_id, revision, transaction_id, expected, choices):
     """Apply explicit source choices while retaining every displaced version."""
     from .project_resolution import apply_resolution
-    journal, _ = _journal_for(registry, project_id, transaction_id)
+    journal, state = _journal_for(registry, project_id, transaction_id)
+    if state.get('retention', {}).get('status') == 'pending':
+        raise ProjectAccessError('Complete the pending recovery release before source resolution')
     context = active_transaction.set(str(journal))
     try:
         with registry.access(project_id, revision, 'write'):

@@ -9,6 +9,7 @@ interface LocalProject {
   rights: string[]; state: string; availability?: string; diagnostic?: string;
   transactions?: { id: string; state: string; paths: string[]; conflicts?: string[];
     retainedVersions?: { operationId: string; path: string; state: string }[] }[];
+  retainedJournals?: { id: string; state: string; paths: string[] }[];
 }
 interface Entry { name: string; path: string; type: 'file' | 'folder' }
 interface Selection { ticket: string; path: string; relink?: { id: string; revision: number } }
@@ -16,6 +17,10 @@ interface Resolution {
   token: string; transactionId: string;
   files: { path: string; sha256: string | null;
     versions: { operationId: string; sha256: string }[] }[];
+}
+interface Retention {
+  token: string; transactionId: string; bytes: number; eligible: boolean; conflicts: string[];
+  files: { artifact: string; path: string; version: string; bytes: number }[];
 }
 
 async function api<T>(action: string, data: object = {}): Promise<T> {
@@ -47,6 +52,8 @@ export function LocalProjects() {
   const [retained, setRetained] = useState<{ path: string; content: string; sha256: string } | null>(null);
   const [resolution, setResolution] = useState<Resolution | null>(null);
   const [resolutionChoices, setResolutionChoices] = useState<Record<string, string>>({});
+  const [retention, setRetention] = useState<Retention | null>(null);
+  const [releaseConfirmed, setReleaseConfirmed] = useState(false);
   const generation = useRef(0);
   const streamController = useRef<AbortController | null>(null);
   const project = projects.find((item) => item.id === selectedId);
@@ -73,6 +80,7 @@ export function LocalProjects() {
     let active = true;
     setRetained(null);
     setResolution(null); setResolutionChoices({});
+    setRetention(null); setReleaseConfirmed(false);
     setEntries([]); setDocument(null); setOutput(''); setPreview(null);
     if (project?.state === 'attached' && project.availability === 'available') {
       api<{ entries: Entry[] }>('/list', { projectId: project.id, revision: project.revision, path: directory })
@@ -175,9 +183,9 @@ export function LocalProjects() {
           </div>
           <p className="text-xs text-[var(--text-secondary)] break-all">{project.root}</p>
           {project.transactions?.map((transaction) => <div key={transaction.id} className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm">
-            <p className="font-medium">{transaction.state === 'conflict' ? 'Des versions concurrentes sont conservées.' : 'Une modification interrompue nécessite une récupération.'}</p>
+            <p className="font-medium">{transaction.state === 'retention_pending' ? 'Un nettoyage interrompu attend une nouvelle confirmation.' : transaction.state === 'conflict' ? 'Des versions concurrentes sont conservées.' : 'Une modification interrompue nécessite une récupération.'}</p>
             <p className="mt-2 text-[var(--text-secondary)] break-all">{transaction.paths.join(', ')}</p>
-            {transaction.retainedVersions?.map((version) => <button key={version.operationId}
+            {transaction.state !== 'retention_pending' && transaction.retainedVersions?.map((version) => <button key={version.operationId}
               className={`${button} mt-2`} disabled={busy || project.state !== 'attached'}
               onClick={() => void perform(async () => {
                 const result = await api<{ path: string; content: string; sha256: string }>('/retained-version', {
@@ -194,12 +202,25 @@ export function LocalProjects() {
                 });
                 setResolutionChoices({}); setResolution({ ...result, transactionId: transaction.id });
               })}>Choisir les versions à conserver</button>}
-            <button className={`${button} mt-2`} disabled={busy || !project.rights.includes('write')} onClick={() => void perform(async () => {
+            {transaction.state !== 'retention_pending' && <button className={`${button} mt-2`} disabled={busy || !project.rights.includes('write')} onClick={() => void perform(async () => {
               const result = await api<{ state: string; conflicts: string[] }>('/recover', { projectId: project.id, revision: project.revision, transactionId: transaction.id });
               await refresh();
               if (result.conflicts.length) setError(`Vos modifications sont conservées. Résolution nécessaire : ${result.conflicts.join(', ')}`);
-            })}>Restaurer les fichiers de cette opération</button>
+            })}>Restaurer les fichiers de cette opération</button>}
           </div>)}
+          {!!project.retainedJournals?.length && <details className="rounded-xl border border-[var(--border-subtle)] p-3 text-sm">
+            <summary className="cursor-pointer">Versions de récupération · {project.retainedJournals.length} opération(s)</summary>
+            <div className="mt-3 space-y-3">{project.retainedJournals.map((item) => <div key={item.id}>
+              <p className="break-all text-[var(--text-secondary)]">{item.paths.join(', ')}{item.state === 'pending' ? ' · Nettoyage interrompu' : ''}</p>
+              <button className={button} disabled={busy || project.state !== 'attached' || project.availability !== 'available'}
+                onClick={() => void perform(async () => {
+                  const result = await api<Omit<Retention, 'transactionId'>>('/inspect-retention', {
+                    projectId: project.id, revision: project.revision, transactionId: item.id,
+                  });
+                  setReleaseConfirmed(false); setRetention({ ...result, transactionId: item.id });
+                })}>Examiner et libérer l’espace</button>
+            </div>)}</div>
+          </details>}
           {project.state === 'revoked' ? <div role="status"><p>L’accès à ce projet est révoqué.</p>
             <button className={button} disabled={busy} onClick={() => void perform(async () => {
               await api('/restore', { projectId: project.id, revision: project.revision }); await refresh();
@@ -234,6 +255,45 @@ export function LocalProjects() {
         </> : <p className="m-auto text-sm text-[var(--text-secondary)]">Sélectionnez un projet local.</p>}
       </main>
     </div>
+    <Dialog open={Boolean(retention)} onOpenChange={(open) => { if (!open && !busy) setRetention(null); }}>
+      <DialogContent data-theme={theme} className="rounded-2xl max-w-3xl" style={{ backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)', borderColor: 'var(--border-subtle)' }}>
+        <DialogTitle>Libérer les versions de récupération</DialogTitle>
+        <DialogDescription style={{ color: 'var(--text-secondary)' }}>Suppression définitive des fichiers listés et des contenus de récupération de leur journal. Les fichiers actuels du projet restent en place. Fermez les éditeurs utilisant ces anciennes versions.</DialogDescription>
+        {error && <p role="alert" className="rounded-xl bg-amber-500/10 p-3 text-sm text-amber-300">{error}</p>}
+        <p className="text-sm">{retention?.files.length || 0} fichier(s) · {((retention?.bytes || 0) / 1024).toFixed(1)} Kio de fichiers récupérables</p>
+        <div className="max-h-[40vh] overflow-auto space-y-2">{retention?.files.map((file) => <div key={file.artifact} className="rounded-xl bg-black/20 p-3 text-xs">
+          <p className="font-medium break-all">{file.path} · {file.bytes} octets</p>
+          <p className="break-all text-[var(--text-secondary)]">{file.artifact}</p>
+          <p className="break-all text-[var(--text-secondary)]">SHA-256 · {file.version}</p>
+          <button className={button} disabled={busy} onClick={() => void perform(async () => {
+            if (!project || !retention) return;
+            setRetained(await api('/read-retention', { projectId: project.id, revision: project.revision,
+              transactionId: retention.transactionId, artifact: file.artifact }));
+          })}>Consulter</button>
+        </div>)}</div>
+        {!retention?.eligible && <p className="text-sm text-amber-300">Résolvez les conflits de cette opération avant de libérer ses versions.</p>}
+        {!project?.rights.includes('delete') && <p className="text-sm text-[var(--text-secondary)]">Le droit « Supprimer les versions de récupération » est requis dans les droits du projet.</p>}
+        <button className={button} disabled={busy} onClick={() => void perform(async () => {
+          if (!project || !retention) return;
+          const result = await api<Omit<Retention, 'transactionId'>>('/inspect-retention', {
+            projectId: project.id, revision: project.revision, transactionId: retention.transactionId,
+          });
+          setReleaseConfirmed(false); setRetention({ ...result, transactionId: retention.transactionId });
+        })}>Relire l’inventaire</button>
+        <label className="flex items-start gap-3 text-sm"><input type="checkbox" checked={releaseConfirmed} disabled={busy}
+          onChange={(event) => setReleaseConfirmed(event.target.checked)} />J’ai fermé les éditeurs concernés et je confirme la suppression définitive des versions listées.</label>
+        <button className={`${button} justify-center bg-red-500/20 text-red-300`} disabled={busy || !retention?.eligible || !project?.rights.includes('delete') || !releaseConfirmed}
+          onClick={() => void perform(async () => {
+            if (!project || !retention) return;
+            const result = await api<{ state: string }>('/release-retention', {
+              projectId: project.id, revision: project.revision, transactionId: retention.transactionId,
+              token: retention.token, confirmed: releaseConfirmed,
+            });
+            setRetention(null); setReleaseConfirmed(false); await refresh();
+            if (result.state === 'pending') setError('Nettoyage partiel conservé dans le journal. Inspectez les versions restantes avant de confirmer la suite.');
+          })}>Supprimer définitivement ces versions</button>
+      </DialogContent>
+    </Dialog>
     <Dialog open={Boolean(resolution)} onOpenChange={(open) => { if (!open && !busy) setResolution(null); }}>
       <DialogContent data-theme={theme} className="rounded-2xl max-w-3xl" style={{ backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)', borderColor: 'var(--border-subtle)' }}>
         <DialogTitle>Résoudre les versions concurrentes</DialogTitle>
@@ -291,7 +351,7 @@ export function LocalProjects() {
         <DialogTitle>{selection?.relink ? 'Retrouver ce projet' : selection ? 'Lier ce dossier' : 'Droits du projet'}</DialogTitle>
         <DialogDescription className="break-all" style={{ color: 'var(--text-secondary)' }}>{selection?.path || permissionProject?.root}</DialogDescription>
         <p className="text-sm">{selection?.relink ? 'Le dossier doit conserver l’identité du projet d’origine. Les droits précédents seront rétablis.' : 'La lecture autorise la consultation locale. Chaque action supplémentaire possède son propre droit.'}</p>
-        {!selection?.relink && [['write', 'Modifier les sources'], ['execute', 'Exécuter dans une copie isolée'], ['transmit', 'Transmettre les sources au modèle']].map(([right, label]) => <label key={right} className="flex items-center gap-3 text-sm">
+        {!selection?.relink && [['write', 'Modifier les sources'], ['execute', 'Exécuter dans une copie isolée'], ['transmit', 'Transmettre les sources au modèle'], ['delete', 'Supprimer les versions de récupération']].map(([right, label]) => <label key={right} className="flex items-center gap-3 text-sm">
           <input type="checkbox" checked={rights.includes(right)} onChange={(event) => setRights((previous) => event.target.checked ? [...previous, right] : previous.filter((item) => item !== right))} />{label}
         </label>)}
         {!selection?.relink && rights.includes('transmit') && <p className="text-xs text-[var(--text-secondary)]">Le fournisseur destinataire et les fichiers autorisés seront confirmés dans le contrat du travail.</p>}

@@ -1,6 +1,7 @@
 # Attached local projects: acceptance ledger
 
-29 October 2026. Branch: `feat/local-projects`. Status: final acceptance in progress.
+30 October 2026. Branch: `feat/local-projects`. Status: acceptance verified within
+the documented platform/capability matrix. Merge awaits user authorization.
 
 ## Contract evidence
 
@@ -8,7 +9,7 @@
 | --- | --- | --- |
 | Identity and grants | Offline cases and native reconciliation: persistence, stale revisions, moved/replaced roots, per-conversation selections, preserved UUID/inode/grants | Complete within the tested matrix |
 | Chooser authority | Native Zenity selection, production confirmation and HTTP cases: single-use tickets, forged path refusal, same-origin enforcement and detach preservation | Complete within the tested matrix |
-| File containment | `test_local_projects.py`, `test_project_file_io.py`: traversal/exclusions, symlink/hard-link refusal, ancestor substitution and publication races | External-editor atomicity limitation below |
+| File containment | Filesystem/publication suites: traversal/exclusions, symlink/hard-link refusal, directory substitution, native retained exchange and late editor writes | Complete within the tested matrix |
 | Source consent and preservation | Provider/planning/maintenance suites, live Python/React repairs and production proposal/rejection UI: immutable recipient, source revisions and targeted publication | Complete within the tested matrix |
 | Process rights and revocation | Real Python/Node tests and Worker network probes: private environment/network, read-only dependencies, revocation, timeout and output limits | Complete within the tested matrix |
 | Scratch, preview and continuity | Production UI: interaction, enlargement, closure, navigation, recovery, revoke/restore, read-only execution denial, detach and native reconciliation | Complete within the tested matrix |
@@ -25,14 +26,14 @@
 | Runtime environment, network and shutdown checks | 6 targeted cases passed |
 | Post-audit local-project and orchestrator matrix | 92 passed |
 | Origin/context navigation gate | 34 passed; production UI exercised origin switching, reload and an empty new-conversation choice |
-| Current source publication/resolution campaign | 2,059 passed, 8 skipped across exhaustive split groups and updated Node cases; 2,067 collected |
+| Final attached-project campaign | 2,074 passed, 8 optional skips across exhaustive split groups; 2,082 collected |
 | Current frontend | 141 passed; production build passed |
-| Native primitives at `1131536` | 9 Ubuntu and 9 Windows cases passed, zero skips |
+| Native publication/release at `1dbbf86` | 14 Ubuntu and 14 Windows cases passed, zero skips |
 
-Current regression reports: `/tmp/bigbrain-regression-am.xml` (868 passed,
-8 skipped), `/tmp/bigbrain-regression-nz.xml` (1,190 passed), and
-`/tmp/bigbrain-regression-node.xml` (four updated cases, including one additional
-existing-build case). The split campaign covers the complete current collection.
+Final regression reports: `/tmp/bigbrain-local-final-am.xml` (884 passed,
+8 skipped), `/tmp/bigbrain-local-final-nz.xml` (1,190 passed). The split campaign
+covers the complete collection. The eight skips belong to optional historical
+research extractor comparisons requiring their separate experiment environment.
 The WebSocket acknowledgement test now awaits its actual delivery task with a
 two-second bound; message, provenance, persistence and acknowledgement assertions
 remain unchanged.
@@ -109,8 +110,9 @@ The initial expired ticket was rejected without changing the registry.
   block further mutation/execution and expose retained versions in the workspace.
   Version-bound explicit resolution passes eight regression cases and a real
   workspace journey. Restoring the retained editor version preserves the
-  displaced candidate and closes the observed conflict. Retention management
-  remains open. Attached React builds preserve an existing source-side dist;
+  displaced candidate and closes the observed conflict. Manual retention release
+  passes ten application cases and its production UI journey. Attached React
+  builds preserve an existing source-side dist;
   legacy sandbox build-tree recovery remains a separate audit area.
   Historical failing evidence:
   `/tmp/bigbrain-publication-window-j42yyqd5/result.json`.
@@ -130,6 +132,12 @@ retention. Commit `6806680` passes eight primitive cases on Linux and eight on
 Windows in native CI, with zero skips. Commit `1131536` extends this to nine cases
 on each platform. Shared-journal source integration, version-bound resolution,
 production UI restoration and the complete split regression campaign pass on
-Linux. Retention management remains open. See the
+Linux. Manual release passes its deletion-grant, exact-inventory, irreversible
+confirmation, private-quarantine, interruption and resumption gates. Native
+release at `1dbbf86` passes fourteen Ubuntu and fourteen Windows cases.
+The separately authorized UI test deleted one synthetic 26-byte backup and its
+journal recovery contents while preserving the current source. Screenshots:
+`/tmp/bigbrain-retention-confirmation-ui.png`, `/tmp/bigbrain-retention-purged-ui.png`.
+See the
 [publication design](PUBLICATION_PORTABILITY_DESIGN.md).
 Merge requires user authorization.

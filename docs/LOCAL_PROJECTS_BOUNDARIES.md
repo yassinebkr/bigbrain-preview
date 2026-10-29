@@ -11,6 +11,7 @@ Implementation boundaries, 29 October 2026.
 | Web maintenance and preview | `brains/web_app_brain.py`, `local_project_web.py`, `local_project_preview.py` | Bound scratch, isolated builds and expiring browser leases |
 | Verification subprocesses | `local_project_runner.py`, `local_project_checks.py`, `verification/web_gate.py` | Project runtime, output/time limits, process cleanup |
 | Recovery | `local_project_recovery.py`, `project_transaction.py`, `project_file_io.py` | Hashes, identity and scoped crash journal |
+| Manual recovery release | `local_project_retention.py`, `native_publication.py` | Deletion grant, versioned inventory, separate confirmation, native exclusivity and resumable receipts |
 | Provider transport | `local_project_provider.py`, `local_project_transmission.py` | Approved recipient and versioned source inventory |
 | Conversation context | `front/front_brain.py`, registry selection and run metadata | Project identity persists with its conversation and result |
 
@@ -55,6 +56,11 @@ hidden components, credentials, generated environments and dependency trees.
 Runtime-owned manifests receive a separate internal interface. Enforce bounded
 regular-file reads; reject special files and hard-linked writable sources.
 Overlapping roots share an overlap lock and preserve independent grant checks.
+Journal-owned recovery artifacts use a separate read/release boundary and remain
+excluded from source snapshots and provider inventories. Manual release preserves
+the current project files, records interrupted work and erases only the confirmed
+recovery objects and journal preimages. Unsupported native exclusivity produces
+a diagnostic and retains the affected artifact.
 
 ## Execution
 
@@ -83,4 +89,4 @@ effects remain recorded in the action history.
 | Delivery | Disposable Python repair and web preview through production paths |
 
 The [acceptance ledger](LOCAL_PROJECTS_ACCEPTANCE.md) maps these boundaries to
-executed checks and the remaining desktop/live gates.
+executed checks, production UI journeys and platform limits.

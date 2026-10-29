@@ -231,6 +231,10 @@ def publication_conflicts(target, operations):
     for operation in operations:
         try:
             facts = publication_facts(target, operation)
+            if operation['status'] == 'released':
+                if any(facts[role]['identity'] is not None for role in ('candidate', 'preserved')):
+                    conflicts.append(operation['path'])
+                continue
             if operation['status'] == 'conflict':
                 conflicts.append(operation['path'])
                 continue
