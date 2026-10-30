@@ -7,8 +7,11 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # This baseline supports the user namespaces required by both sandbox paths.
+    # Newer Ubuntu images need explicit AppArmor profiles before migration.
+    runs-on: ubuntu-22.04
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.12", "3.13"]
     steps:
@@ -22,11 +25,43 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: Fetch pinned Bubblewrap 0.12.0
+        uses: actions/checkout@v4
+        with:
+          repository: containers/bubblewrap
+          ref: 2a76602a8c71f36c1527cf9fc3417d9149822e0c
+          path: .ci-bubblewrap
+          persist-credentials: false
+      - name: Build descriptor-aware isolation runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcap-dev ninja-build pkg-config
+          python -m pip install meson
+          meson setup .ci-bubblewrap/build .ci-bubblewrap --prefix=/usr/local -Dman=disabled -Dtests=false
+          ninja -C .ci-bubblewrap/build
+          sudo ninja -C .ci-bubblewrap/build install
       - name: Install core + test deps
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[test,web,memory,research]"
           python -m playwright install --with-deps chromium
+      - name: Install React integration fixtures
+        run: npm ci --prefix web-ui
+      - name: Verify execution and browser isolation
+        run: |
+          bwrap --help | grep -- --ro-bind-fd
+          bwrap --unshare-all --die-with-parent --ro-bind / / --proc /proc --dev /dev /bin/true
+          python - <<'PY'
+          import asyncio
+          from playwright.async_api import async_playwright
+
+          async def check():
+              async with async_playwright() as driver:
+                  browser = await driver.chromium.launch(chromium_sandbox=True)
+                  await browser.close()
+
+          asyncio.run(check())
+          PY
       - name: Lint (ruff, non-blocking on docs)
         run: |
           pip install ruff
