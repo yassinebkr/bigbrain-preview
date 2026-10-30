@@ -2,6 +2,7 @@
 
 import asyncio
 import shutil
+import shlex
 import sys
 import subprocess
 import socket
@@ -9,6 +10,26 @@ import pytest
 
 from bigbrain.local_projects import ProjectAccessError, ProjectRegistry
 from bigbrain.local_project_runner import ProjectRunner
+
+
+@pytest.mark.asyncio
+async def test_isolation_runtime_outside_sanitized_path(tmp_path, monkeypatch):
+    """Launch the discovered binary after clearing the inherited environment."""
+    tools = tmp_path / 'tools'
+    tools.mkdir()
+    selected = tools / 'bwrap'
+    selected.write_text('#!/bin/sh\nprintf "selected runtime\\n"\nexec '
+                        + shlex.quote(shutil.which('bwrap')) + ' "$@"\n')
+    selected.chmod(0o700)
+    monkeypatch.setenv('PATH', str(tools))
+    root = tmp_path / 'source'
+    root.mkdir()
+    (root / 'main.py').write_text('print("isolated custom runtime")\n')
+    registry = ProjectRegistry(tmp_path / 'registry.json')
+    project = registry.attach(root, ('read', 'execute'))
+    result = await ProjectRunner(registry).run(project['id'], 1, ['python', 'main.py'])
+    assert result['exitCode'] == 0, result
+    assert result['output'].splitlines() == ['selected runtime', 'isolated custom runtime']
 
 
 @pytest.mark.asyncio

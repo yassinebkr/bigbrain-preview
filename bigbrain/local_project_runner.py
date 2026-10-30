@@ -74,7 +74,8 @@ class ProjectRunner:
             raise ProjectAccessError('Execution timeout must be between 1 and 120 seconds')
         with self.registry.access(project_id, revision, 'execute'):
             pass
-        if shutil.which('bwrap') is None:
+        isolation_runtime = shutil.which('bwrap')
+        if isolation_runtime is None:
             raise ProjectAccessError('Project execution requires Bubblewrap')
         files = ProjectFiles(self.registry, project_id, revision)
         with ExitStack() as resources:
@@ -126,7 +127,8 @@ class ProjectRunner:
                 if project_python != interpreter:
                     raise ProjectAccessError('Project Python runtime differs from the supported base runtime')
                 executable = '/venv/bin/python'
-            command = ['bwrap', '--unshare-all', '--die-with-parent', '--new-session',
+            # Preserve the discovered executable across environment sanitization.
+            command = [str(Path(isolation_runtime).resolve()), '--unshare-all', '--die-with-parent', '--new-session',
                        '--clearenv', '--setenv', 'PATH', '/usr/bin:/bin',
                        '--setenv', 'HOME', '/tmp', '--setenv', 'PYTHONDONTWRITEBYTECODE', '1',
                        '--tmpfs', '/tmp', '--proc', '/proc', '--dev', '/dev']
