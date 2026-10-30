@@ -77,6 +77,9 @@ Legacy sandbox generated-build-tree recovery has a separate audit boundary.
 
 ## Following milestone — CAD brain and piece preview
 
+Implementation phases and the deferred workspace redesign are tracked in
+[the CAD integration plan](CAD_BRAIN_PLAN.md).
+
 Close the CAD artifact/preview contract, then implement a dedicated SolidCraft
 adapter using this project/access foundation. Keep headless computation, native
 history, geometry checks, revision-bound fast previews and optional GUI handoff.
