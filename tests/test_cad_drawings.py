@@ -59,3 +59,33 @@ def test_derived_dimension_preserves_units_and_dependencies():
                      dependencies=['width'], derivation='width / 2')
     data['dimensions'].append(dimension)
     assert DrawingSpecification.model_validate(data).require_resolved().dimensions[1].value == 30
+
+
+def test_front_drawing_route_preserves_interpretation_and_blocks_uncertainty():
+    from bigbrain.front.decision import CadInput
+    payload = {'type': 'model_cad', 'drawing': drawing()}
+    assert CadInput.model_validate(payload).drawing.dimensions[0].value == 60
+    payload['drawing']['dimensions'][0].update(value=None, origin='unresolved')
+    with pytest.raises(ValidationError, match='clarification'):
+        CadInput.model_validate(payload)
+
+
+@pytest.mark.asyncio
+async def test_planner_cannot_replace_drawing_authority():
+    import json
+    from bigbrain.cad_planning import draft_cad_plan
+    spec = DrawingSpecification.model_validate(drawing())
+
+    class Planner:
+        async def chat_complete(self, **arguments):
+            prompt = json.loads(arguments['messages'][1]['content'])
+            assert prompt['drawing']['sources'][0]['sha256'] == 'a' * 64
+            assert 'image_url' not in arguments['messages'][1]['content']
+            return json.dumps({'title': 'Support', 'commands': [
+                {'command': 'solid.box', 'params': {'length': 60, 'width': 40, 'height': 6}}],
+                'criteria': [{'id': 'bounds', 'label': 'Envelope', 'metric': 'dimensions_mm',
+                              'expected': [60, 40, 6]}]})
+
+    plan = await draft_cad_plan(Planner(), 'Model this drawing', drawing=spec)
+    assert plan.drawing == spec
+    assert any('60 mm' in item for item in plan.contracts())

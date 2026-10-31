@@ -7,6 +7,7 @@ from typing import Annotated, Any, Literal
 from pydantic import Field, model_validator
 
 from .cad_contracts import Contract, CriterionObservation, Finite, GeometryObservation, Identity
+from .cad_drawings import DrawingSpecification
 
 
 class CadCommand(Contract):
@@ -65,9 +66,12 @@ class CadPlan(Contract):
     commands: tuple[CadCommand, ...] = Field(min_length=1, max_length=32)
     criteria: tuple[CadCriterion, ...] = Field(min_length=1, max_length=16)
     limitations: tuple[Annotated[str, Field(min_length=1, max_length=500)], ...] = Field(default=(), max_length=6)
+    drawing: DrawingSpecification | None = None
 
     @model_validator(mode='after')
     def distinct_criteria(self):
+        if self.drawing is not None:
+            self.drawing.require_resolved()
         if len({item.id for item in self.criteria}) != len(self.criteria):
             raise ValueError('CAD criterion identifiers must be unique')
         if 'dimensions_mm' not in {item.metric for item in self.criteria}:
@@ -79,10 +83,13 @@ class CadPlan(Contract):
     def contracts(self):
         return ([f'Pièce CAO : {self.title}. Solide fermé, document SolidCraft éditable, exports STEP/STL et aperçu versionné.']
                 + [item.describe() for item in self.criteria]
+                + ([f'Cote du dessin {item.id} — {item.label} : {item.value:g} {item.unit} '
+                    f'({item.origin}, annotation : {item.annotation})'
+                    for item in self.drawing.dimensions if item.value is not None] if self.drawing else [])
                 + [f'Limite à prendre en compte : {item}' for item in self.limitations])
 
 
-async def draft_cad_plan(provider, objective, *, context=None, model=None):
+async def draft_cad_plan(provider, objective, *, context=None, model=None, drawing=None):
     """Generate the bounded recipe before the user confirms its measured scope."""
     if provider is None:
         raise ValueError('CAD planning requires a configured model')
@@ -95,15 +102,25 @@ async def draft_cad_plan(provider, objective, *, context=None, model=None):
         'A cut needs targets with the existing body name. Use dimensions_mm in world XYZ. '
         'Keep numeric criteria faithful to the request; measure volume where it verifies requested material removal. '
         'Describe criterion labels/title in the user language. List verification limitations explicitly. '
-        'Photos, uncertain dimensions, wall-thickness guarantees and arbitrary topology validation require clarification. '
+        'Use the supplied resolved drawing specification as the dimensional authority. '
+        'Preserve every feature and dimension; declare unsupported geometry before execution. '
+        'Uncertain dimensions, wall-thickness guarantees and arbitrary topology validation require clarification. '
         'For an existing document, edit its parameters or geometry and preserve unrelated geometry. '
         'Every operation runs on a private document candidate after the contract is confirmed. '
         'Tools, external file access and shell execution belong to the runtime. Output JSON only.'
     )
     raw = await provider.chat_complete(messages=[{'role': 'system', 'content': prompt},
-        {'role': 'user', 'content': json.dumps({'objective': objective, 'existing_document': context}, ensure_ascii=False)}],
+        {'role': 'user', 'content': json.dumps({'objective': objective, 'existing_document': context,
+            'drawing': drawing.model_dump(mode='json') if drawing else None}, ensure_ascii=False)}],
         model=model or 'default', stream=False, max_tokens=4000, temperature=0.1)
     raw = raw.strip()
     if raw.startswith('```') and raw.endswith('```'):
         raw = '\n'.join(raw.splitlines()[1:-1])
-    return CadPlan.model_validate_json(raw)
+    plan = CadPlan.model_validate_json(raw)
+    # Bind the source interpretation supplied by the runtime. Model output
+    # cannot replace its dimensions while drafting the recipe.
+    if drawing is not None:
+        return CadPlan.model_validate({**plan.model_dump(), 'drawing': drawing.model_dump()})
+    if plan.drawing is not None:
+        raise ValueError('CAD planner invented a drawing without source interpretation')
+    return plan

@@ -17,6 +17,10 @@ async def prepare_cad_plan(provider, payload, *, model=None):
     store = CadStore()
     document_id = payload.get('document_id')
     context = None
+    drawing = None
+    if payload.get('drawing') is not None:
+        from ..cad_drawings import DrawingSpecification
+        drawing = DrawingSpecification.model_validate(payload['drawing']).require_resolved()
     if document_id:
         view = store.view(document_id, payload.get('session_id'))
         if view['document']['revision'] != payload.get('base_revision'):
@@ -26,7 +30,7 @@ async def prepare_cad_plan(provider, payload, *, model=None):
         async with SolidCraftSession(store.directory(document_id)) as session:
             await session.reopen(document.native)
             context = {'geometry': view['geometry'], 'design': await session.tool('inspect_design')}
-    return await draft_cad_plan(provider, payload['user_request'], context=context, model=model)
+    return await draft_cad_plan(provider, payload['user_request'], context=context, model=model, drawing=drawing)
 
 
 class CadBrain(BaseBrain):

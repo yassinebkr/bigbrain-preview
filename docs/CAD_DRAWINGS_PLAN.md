@@ -43,3 +43,17 @@ surface finishes and manufacturing requirements require supported checks.
 
 Phase 1 defines the shared contract; phases 2–4 connect it to the live pipeline,
 geometry evidence, repair and representative end-to-end validation.
+
+## Phase 2
+
+The vision message includes runtime-computed attachment identity and SHA256.
+The front decision carries the drawing specification in the typed CAD input.
+Before delegation, each source must match an image attached to the current turn
+and its stored bytes. Unresolved critical dimensions require clarification.
+The CAD planner receives the interpreted specification, while the runtime binds
+the original interpretation to the resulting recipe and immutable proposal.
+The proposal displays the drawing dimensions together with measured criteria.
+
+The current source scope requires attaching the drawing to the modeling turn.
+Resuming image interpretation across turns will require a conversation-owned
+attachment inventory. Feature verification and repair follow in phase 3.

@@ -497,6 +497,12 @@ Consult cad.list with empty arguments to find CAD document identities in this co
 then cad.read with {{id:document_id}} for current dimensions and revision before an edit.
 Use this dedicated route for CAD modeling; the runtime proposes its measured contract before execution.
 CAD work currently uses application-owned documents. Importing attached native CAD files requires a future scoped import path.
+For a dimensioned drawing, interpret the image into CadInput.drawing. Preserve exact annotations,
+units, source attachment IDs and SHA256 from the image metadata, views and dimension dependencies.
+Every feature size and location needed to reproduce the part must appear in the specification.
+Use clarify when critical dimensions are missing, conflicting or illegible. Perspective views
+provide shape context; dimensions come from annotated views. Ask about unsupported tolerances,
+fits or features before delegation. The runtime binds the interpretation to the confirmed recipe.
 Attached Python maintenance uses python_brain/maintain_project with deliverable_type python,
 local_project {{project_id,revision}} from the current attached selection and entry_point.
 Attached web maintenance uses web_app_brain/maintain_project, deliverable_type web_app,
@@ -706,6 +712,23 @@ Type 'quit' or 'exit' to stop."""
             )
             
             if parsed and route_valid:
+                if route_brain == 'cad_brain':
+                    from ..cad_drawings import DrawingSpecification
+                    drawing = route_payload.get('drawing')
+                    images = [item for item in attachments
+                              if str(item.get('type') or '').lower().startswith('image/')]
+                    if images and drawing is None:
+                        raise ValueError('Une pièce issue d’un dessin exige son interprétation cotée.')
+                    if drawing is not None:
+                        import hashlib
+                        from ..web.attachments import read_attachment
+                        interpretation = DrawingSpecification.model_validate(drawing).require_resolved()
+                        current = {item.get('id') for item in images}
+                        for source in interpretation.sources:
+                            path = read_attachment(source.attachment_id)
+                            if (source.attachment_id not in current or path is None
+                                    or hashlib.sha256(path.read_bytes()).hexdigest() != source.sha256):
+                                raise ValueError('Les sources du dessin ont changé. Joins le dessin pour cette demande.')
                 if route_payload.get('local_project') is not None:
                     from ..local_projects import default_registry
                     current = default_registry().conversation_context(session_id)
@@ -824,6 +847,10 @@ Type 'quit' or 'exit' to stop."""
                         "Please upload it again.")
                 blocks.append(image_content_block(
                     path.read_bytes(), str(image.get("type")).lower()))
+                import hashlib
+                blocks.append({'type': 'text', 'text': 'Image provenance: ' + json.dumps({
+                    'attachment_id': image['id'],
+                    'sha256': hashlib.sha256(path.read_bytes()).hexdigest()})})
 
         notes = []
         if images:

@@ -2,6 +2,7 @@
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from ..cad_drawings import DrawingSpecification
 
 
 class ClosedModel(BaseModel):
@@ -91,11 +92,14 @@ class CadInput(ClosedModel):
     type: Literal['model_cad']
     document_id: str | None = Field(default=None, pattern=r'^[a-f0-9]{32}$')
     base_revision: int | None = Field(default=None, strict=True, ge=1)
+    drawing: DrawingSpecification | None = None
 
     @model_validator(mode='after')
     def edit_revision(self):
         if (self.document_id is None) != (self.base_revision is None):
             raise ValueError('CAD edits require both document identity and observed revision')
+        if self.drawing is not None:
+            self.drawing.require_resolved()
         return self
 
 
