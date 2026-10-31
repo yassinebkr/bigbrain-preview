@@ -18,7 +18,7 @@ MEMORY_TOOL_SCHEMA = {
     'description': 'Consult shared memory for facts or previous projects, or record an explicitly sourced user fact. Call this tool now when a lookup is needed; do not end with a promise to check later.',
     'parameters': {'type': 'object', 'required': ['tool', 'arguments'], 'additionalProperties': False,
         'properties': {
-            'tool': {'type': 'string', 'enum': ['projects.list', 'projects.read', 'facts.search', 'facts.read', 'facts.write', 'memory.search']},
+            'tool': {'type': 'string', 'enum': ['projects.list', 'projects.read', 'facts.search', 'facts.read', 'facts.write', 'memory.search', 'cad.list', 'cad.read']},
             'arguments': {'type': 'object', 'additionalProperties': False, 'properties': {
                 'query': {'type': 'string'}, 'id': {'type': 'string'}, 'key': {'type': 'string'},
                 'value': {'type': 'string'}, 'quote': {'type': 'string'},
@@ -268,6 +268,16 @@ def execute_memory(request, shared: SharedMemory, persistent, session_id: str | 
             return shared.facts_write(args, session_id)
         if tool == 'projects.list' and not args:
             return shared.projects(session_id)
+        if tool in {'cad.list', 'cad.read'}:
+            from ..cad_store import CadStore
+            from ..web.sessions import SessionStore
+            if not session_id or SessionStore().is_deleted(session_id):
+                return {'status': 'unavailable', 'reason': 'No active conversation scope'}
+            if tool == 'cad.list' and not args:
+                return CadStore().list(session_id)
+            if tool == 'cad.read' and set(args) == {'id'}:
+                return {'status': 'ok', 'piece': CadStore().view(args['id'], session_id)}
+            raise ValueError('CAD memory requires an empty list request or an exact document ID')
         if tool == 'projects.read' and set(args) == {'id'} and isinstance(args['id'], str) and 0 < len(args['id']) <= 150:
             return shared.projects(session_id, args['id'])
         if tool == 'memory.search' and set(args) == {'query'} and isinstance(args['query'], str) and 0 < len(args['query'].strip()) <= 500:

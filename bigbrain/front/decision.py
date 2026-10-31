@@ -87,6 +87,23 @@ class WebInput(ClosedModel):
     project_name: str = Field(min_length=1)
 
 
+class CadInput(ClosedModel):
+    type: Literal['model_cad']
+    document_id: str | None = Field(default=None, pattern=r'^[a-f0-9]{32}$')
+    base_revision: int | None = Field(default=None, strict=True, ge=1)
+
+    @model_validator(mode='after')
+    def edit_revision(self):
+        if (self.document_id is None) != (self.base_revision is None):
+            raise ValueError('CAD edits require both document identity and observed revision')
+        return self
+
+
+class CadRoute(ClosedModel):
+    brain: Literal['cad_brain']
+    payload: CadInput
+
+
 class ResearchRoute(ClosedModel):
     brain: Literal["researcher"]
     payload: ResearchInput
@@ -121,12 +138,14 @@ class Delegate(ClosedModel):
     operation: Literal["delegate"]
     reply: str = Field(min_length=1)
     objective: str = Field(min_length=2, max_length=8000)
-    route: ResearchRoute | BoardRoute | PythonRoute | WebRoute | None = None
+    route: ResearchRoute | BoardRoute | PythonRoute | WebRoute | CadRoute | None = None
     project_target: ProjectTarget | None = None
     test_changes: list[ValidationChange] = Field(default_factory=list, max_length=10)
 
     @model_validator(mode='after')
     def attached_destination(self):
+        if isinstance(self.route, CadRoute) and (self.project_target is not None or self.test_changes):
+            raise ValueError('CAD work uses its document identity and owned artifact storage')
         if (isinstance(self.route, (PythonRoute, WebRoute))
                 and isinstance(self.route.payload, (AttachedPythonInput, AttachedWebInput))
                 and (self.project_target is not None or self.test_changes)):
@@ -164,7 +183,7 @@ class MemoryArguments(ClosedModel):
 
 class ConsultMemory(ClosedModel):
     operation: Literal["consult_memory"]
-    tool: Literal["projects.list", "projects.read", "facts.search", "facts.read", "facts.write", "memory.search"]
+    tool: Literal["projects.list", "projects.read", "facts.search", "facts.read", "facts.write", "memory.search", "cad.list", "cad.read"]
     arguments: MemoryArguments
 
 

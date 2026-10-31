@@ -19,6 +19,7 @@ from typing import Any, List, Optional
 # Subtask types that WRITE code/files — those need contract approval
 # before they run. Read-only or conversational types never pause.
 CODEGEN_TYPES = frozenset({
+    "model_cad",
     "maintain_project",
     "generate_and_execute",
     "write_project_file",

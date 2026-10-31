@@ -4,6 +4,7 @@ import type { Message, Attachment, Session, Settings, Theme, View, ConnectionSta
 import type { ConnectionLike } from '@/lib/connection';
 import { parseWidgetProposal, type WidgetProposal } from '@/lib/widgetPolicy';
 import { researchUpdate, type ResearchView } from '@/lib/research';
+import { cadUpdate, type CadView } from '@/lib/cad';
 
 // A first message can arrive before sessions.create answers. Never send it
 // with the previous conversation's id (or the server's implicit fallback).
@@ -51,6 +52,7 @@ export interface RunVerification {
 }
 
 export interface RunState {
+  cad?: CadView;
   researches?: Record<string, ResearchView>;
   widgetProposal?: WidgetProposal;
   sessionId: string;
@@ -465,6 +467,10 @@ export const useAppStore = create<AppState>()(
           !taskId ? sessionRuns[sessionId] : null) || null;
         // Replays/snapshots are idempotent. A finished run never becomes live again.
         if (finished && activity.type === 'task.progress') {
+          if (d.cad && d.brain === 'cad_brain' && d.subtask_id && d.session_id === finished.sessionId && d.task_id === finished.id) {
+            const cad = cadUpdate(d.cad, finished.cad);
+            return cad ? { completedRuns: state.completedRuns.map(item => item.id === finished.id ? { ...item, cad } : item) } : {};
+          }
           if (d.research && d.subtask_id && d.session_id === finished.sessionId && d.task_id === finished.id) {
             const key = `${d.subtask_id}:${d.research.research_id}`;
             const research = researchUpdate(d.research, finished.researches?.[key], d.observation, d);
@@ -605,6 +611,11 @@ export const useAppStore = create<AppState>()(
           }
           case 'task.progress': {
             if (!run) return {};
+            if (d.cad) {
+              if (d.brain !== 'cad_brain' || !d.subtask_id || d.session_id !== run.sessionId || d.task_id !== run.id) return {};
+              const cad = cadUpdate(d.cad, run.cad);
+              return cad ? { activeRun: { ...run, cad } } : {};
+            }
             if (d.research) {
               if (!d.subtask_id || d.session_id !== run.sessionId || d.task_id !== run.id) return {};
               const key = `${d.subtask_id}:${d.research.research_id}`;

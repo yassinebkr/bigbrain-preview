@@ -7,6 +7,7 @@ import { ContractCriteria, StackSummary, SourceConsent } from './ContractCard';
 import { composeWidgets, parseWidgetProposal } from '@/lib/widgetPolicy';
 import { useWorkspaceStore } from '@/store/workspaceStore';
 import { ResearchActivity } from './ResearchPanel';
+import { CadPanel } from './CadPanel';
 
 const stageLabels: Record<string, string> = { syntax: 'Syntaxe', compile: 'Compilation', run: 'Exécution', contracts: 'Fichiers attendus', tests: 'Tests', entry_point: 'Point d’entrée', semantics: 'Revue indépendante', attached_delivery: 'Livraison du dossier local' };
 
@@ -119,7 +120,7 @@ export function WorkOverview({ run, select, journal }: { run: RunState; select: 
     } catch (error) { setOpenError(String(error)); }
   };
   return <div className="work-overview">
-    {run.awaitingApproval ? <ProposalWidget run={run} /> : <section className="work-widget" aria-label="Objet du travail">
+    {run.awaitingApproval ? <ProposalWidget run={run} /> : run.cad ? <CadPanel run={run} /> : <section className="work-widget" aria-label="Objet du travail">
       <div className="work-eyebrow">{running && <span className="work-pulse" aria-hidden="true" />}{board ? 'Organisation' : running ? 'En construction' : 'Livrable'}</div>
       <h3 className="work-heading">{run.deliveryStatus === 'incomplete' ? 'Projet incomplet · non validé' : running ? 'Le travail prend forme' : run.status === 'done' ? 'Le résultat est disponible' : run.status === 'failed' ? 'Le travail a rencontré un obstacle' : 'Travail arrêté'}</h3>
       {run.error && <p role="alert" className="mt-3 text-[12px] leading-relaxed break-words" style={{ color: 'var(--warning)' }}>{run.error}</p>}

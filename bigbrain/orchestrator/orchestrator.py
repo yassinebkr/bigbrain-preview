@@ -413,7 +413,8 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             started = time.monotonic()
             await self._planning_progress("contracts", "running", task_data.get("session_id"), task_id=plan.id)
             try:
-                spec = await asyncio.wait_for(self._propose_contracts(plan, user_request), timeout=20)
+                proposal_timeout = 60 if any(st.payload.get('type') == 'model_cad' for st in plan.subtasks) else 20
+                spec = await asyncio.wait_for(self._propose_contracts(plan, user_request), timeout=proposal_timeout)
                 if spec is None:
                     raise ValueError("Proposal was not recorded")
             except Exception as exc:
@@ -437,8 +438,19 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         )
         from ..verification.evidence import ImmutableRunError, default_repository
 
-        contracts = await draft_contracts(
-            self.llm_provider, user_request, project_spec=plan.project_spec)
+        cad = None
+        if len(plan.subtasks) == 1 and plan.subtasks[0].payload.get('type') == 'model_cad':
+            from ..brains.cad_brain import prepare_cad_plan
+            task = plan.subtasks[0]
+            recipe = await prepare_cad_plan(self.llm_provider, task.payload, model=self.planner_model)
+            cad = {'plan': recipe.model_dump(mode='json'),
+                   'document_id': task.payload.get('document_id'),
+                   'base_revision': task.payload.get('base_revision'),
+                   'session_id': plan.original_task.payload.get('session_id')}
+            contracts = recipe.contracts()
+        else:
+            contracts = await draft_contracts(
+                self.llm_provider, user_request, project_spec=plan.project_spec)
         maintenance = any(st.payload.get('type') == 'maintain_project' for st in plan.subtasks)
         if maintenance:
             contracts.append('Maintenance du projet existant : inspection progressive, corrections ciblées des sources dans le projet approuvé, sans remplacement du projet. Tests existants et comportement attendu inchangés sauf décision explicitement approuvée ci-dessous. Maximum 40 actions / 600 secondes ; livraison uniquement après vérification indépendante.')
@@ -454,6 +466,8 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         if not any(not item.startswith("[Stack]") for item in contracts):
             raise ValueError("No verifiable acceptance contracts were produced; execution remains blocked")
         spec = build_proposal_spec(user_request, contracts)
+        if cad:
+            spec.metadata['cad'] = cad
         spec.metadata['business_criteria'] = list(plan.project_spec.acceptance_contracts) if plan.project_spec else list(contracts)
         if plan.project_spec:
             spec.metadata['execution'] = {'interaction_mode': plan.project_spec.interaction_mode}
@@ -499,7 +513,8 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                     and stored.metadata.get('business_criteria') == spec.metadata.get('business_criteria')
                     and stored.metadata.get('inspection') == spec.metadata.get('inspection')
                     and stored.metadata.get('local_project') == spec.metadata.get('local_project')
-                    and stored.metadata.get('source_transmission') == spec.metadata.get('source_transmission')):
+                    and stored.metadata.get('source_transmission') == spec.metadata.get('source_transmission')
+                    and stored.metadata.get('cad') == spec.metadata.get('cad')):
                 spec = stored
             else:
                 spec = spec.model_copy(update={"revision": stored.revision + 1})
@@ -2214,6 +2229,9 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
     @staticmethod
     def _project_result_metadata(plan: TaskPlan) -> dict:
         """Expose only launch/navigation metadata from completed subtasks."""
+        if any(st.payload.get('type') == 'model_cad' for st in plan.subtasks):
+            return {'result_kind': 'cad', 'runnable': False,
+                    'delivery_status': 'ready' if plan.status == TaskStatus.COMPLETE else 'incomplete'}
         if plan.local_project:
             verified = bool(plan.subtasks) and plan.status == TaskStatus.COMPLETE and all(
                 subtask.status == TaskStatus.COMPLETE and (subtask.result or {}).get('success') is True
