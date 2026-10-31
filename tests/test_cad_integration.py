@@ -45,7 +45,7 @@ def engine():
     try:
         return solidcraft_executable()
     except CadError:
-        pytest.skip('Native SolidCraft 0.25.1 installation is required')
+        pytest.skip('Native SolidCraft 0.28.0 installation is required')
 
 
 def test_native_front_route_preserves_cad_edit_identity():

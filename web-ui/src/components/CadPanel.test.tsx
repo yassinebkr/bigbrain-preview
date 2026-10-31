@@ -10,7 +10,7 @@ function checkpoint(sequence = 1, status = 'ready') {
   const native = { path: 'revision-1/part.sc', format: 'solidcraft', sha256: source, size_bytes: 500, source_sha256: null };
   return { schema_version: '1.0', document_id: id, title: 'Plaque de test', sequence, status, elapsed_seconds: 1,
     diagnostic: null, snapshot: {
-      document: { project_id: id, document_id: id, revision: 1, engine_version: '0.25.1', units: 'mm', native,
+      document: { project_id: id, document_id: id, revision: 1, engine_version: '0.28.0', units: 'mm', native,
         exports: [{ ...native, path: 'revision-1/part.step', format: 'step', source_sha256: source }] },
       geometry: { source_sha256: source, body_count: 1, closed_solid: true, bounds_min_mm: [0, 0, 0],
         bounds_max_mm: [60, 40, 6], volume_mm3: 14400 },
@@ -33,8 +33,9 @@ describe('CAD piece surface', () => {
     const html = renderToStaticMarkup(<CadPanel run={{ ...run, status: 'done', cad }} />);
     expect(html).toContain('60 × 40 × 6');
     expect(html).toContain('Révision 1');
-    expect(html).toContain('Document éditable');
-    expect(html).toContain('STEP');
+    expect(html).toContain('Télécharger la pièce');
+    expect(html).toContain('Ouvrir dans SolidCraft');
+    expect(html).not.toContain('>STEP</button>');
     expect(html).toContain('Dimensions vérifiées');
     expect(html).not.toContain('Lancer le projet');
     expect(surfaceRegistry(run.sessionId, [{ ...run, cad }]).map(item => item.kind)).toEqual(['cad', 'activity']);

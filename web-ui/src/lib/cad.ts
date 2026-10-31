@@ -49,3 +49,12 @@ export async function cadArtifact(cad: CadView, sessionId: string, kind: string,
   if (!response.ok) throw new Error((await response.json()).error || 'Artefact CAO indisponible');
   return response.blob();
 }
+
+export async function cadDesktop(cad: CadView, sessionId: string, action: 'open' | 'capability', signal?: AbortSignal) {
+  const response = await fetch(`/api/cad/${action}`, { method: 'POST', signal,
+    headers: { 'Content-Type': 'application/json', 'X-BigBrain-CAD': '1' },
+    body: JSON.stringify({ documentId: cad.document_id, sessionId, revision: cad.snapshot?.document.revision }) });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || 'Ouverture SolidCraft indisponible');
+  return result as { available?: boolean; diagnostic?: string; message?: string };
+}

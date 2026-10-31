@@ -7,16 +7,52 @@ immutable revisions, STEP/STL exports and a revision-bound PNG in the Atelier.
 The model-led plate probe qualifies the integration path. Richer geometry and
 editing behavior require the acceptance campaign below.
 
+## Implementation checkpoint — 31 October
+
+- Installed 0.28.0 alongside 0.25.1 and verified its published SHA-256.
+- Selected 0.28.0 as the Linux fallback engine; explicit executable configuration
+  and PATH retain precedence. Active execution requires engine version 0.28.0.
+- Sixty CAD contract, transport, real-engine integration and desktop-launch tests
+  pass. The frontend has 149 passing tests and a successful production build.
+- The Atelier uses a lazy STL viewer with orbit, zoom, fit, PNG fallback, bounded
+  input and GPU-resource disposal. Rendering occurs on interaction and resize.
+- One icon-only download menu exposes native, STEP and STL. A local-only GUI
+  endpoint verifies the selected artifact, creates a private working copy and
+  invokes the native executable with an argument array.
+- Browser validation uses deterministic planning with actual SolidCraft
+  geometry: a support with two through holes, measured volume 14,060.764 mm³,
+  real mesh rotation, enlargement, artifact menu and GUI launch request.
+  This journey consumes no model credits. Screenshot: `/tmp/cad-interactive-proof.png`.
+- The initial browser fixture inherited PATH links to 0.25.1. Explicit-path 0.28
+  engine tests passed separately. System links now target 0.28; the browser journey
+  was repeated and its captured engine version checked before retiring 0.25.1.
+- Updated Linux Applications and desktop launchers to 0.28.0. A direct GUI launch
+  initialized Vulkan and its local control server; confirmation of the visible
+  desktop revision remains a native acceptance step.
+
+Remaining qualification: native Windows execution, explicit WebGL-loss and
+task-switch browser cases, GUI working-copy edit/reimport semantics, and the richer
+model-led campaign. The existing plate/enclosure/edit engine tests establish the
+native adapter behavior independently from planning quality. This branch remains
+open while those acceptance cases are completed.
+
 ## Phases and milestones
 
 ### Engine qualification first
 
 Target SolidCraft 0.28.0 for this cycle, following the user's decision on
-31 October. Install alongside 0.25.1, verify the official archive checksum, then
+31 October. Install alongside 0.25.1 during qualification, verify the official archive checksum, then
 run headless command, measurement, native reopen, rollback, export and GUI tests
 before changing the default. Existing disposable fixtures can adopt format 45;
 preserve their originals for comparisons. Versions 0.27.x and earlier cannot open
 documents saved by 0.28.0.
+
+Migration checkpoint: CLI PATH links and both Linux desktop launchers now select
+0.28.0. The active adapter and planning prompt require 0.28.0. The replacement
+browser capture records that exact engine version. Retire the old installation
+after this checkpoint; historical qualification documents retain their original
+version numbers. Desktop handoff is verified as a launch request with a private
+copy; native visual confirmation and Windows qualification remain separate.
 
 Relevant upstream changes include strict parameter checks for calls forwarded to
 the GUI, corrected circle-length measurement, improved model caching and rendering,
