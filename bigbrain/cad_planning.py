@@ -55,6 +55,8 @@ class CadCriterion(Contract):
                          for actual, expected in zip(values, self.expected))
         return CriterionObservation(criterion_id=self.id, source_sha256=geometry.source_sha256,
             status='passed' if passed else 'failed', evidence_ref=geometry.evidence_ref,
+            label=self.label, metric=self.metric, observed=values, expected=self.expected,
+            absolute_tolerance=self.absolute_tolerance, relative_tolerance=self.relative_tolerance,
             diagnostic=f'{self.label}: observed {values}; expected {self.expected}')
 
 
@@ -85,7 +87,7 @@ async def draft_cad_plan(provider, objective, *, context=None, model=None):
     if provider is None:
         raise ValueError('CAD planning requires a configured model')
     prompt = (
-        'Plan a small mechanical CAD part using SolidCraft 0.25.1 headless, mm units. '
+        'Plan a small mechanical CAD part using SolidCraft 0.28.0 headless, mm units. '
         'Return one JSON object matching this schema: ' + json.dumps(CadPlan.model_json_schema())
         + '\nUse parameter expressions when dimensions may change. Available primitives: '
         'parameters.change {name,expression}; solid.box {length,width,height,corner?,body_name?,operation?,targets?}; '

@@ -16,7 +16,7 @@ def delivery():
         'required_exports': ['step'],
         'document': {
             'project_id': 'project-1', 'document_id': 'plate', 'revision': 1,
-            'engine_version': '0.25.1',
+            'engine_version': '0.28.0',
             'native': {'path': 'plate.sc', 'format': 'solidcraft', 'sha256': source, 'size_bytes': 120},
             'exports': [{'path': 'plate.step', 'format': 'step', 'sha256': 'b' * 64,
                          'size_bytes': 200, 'source_sha256': source}],

@@ -24,7 +24,7 @@ def solidcraft_executable() -> Path:
     configured = os.environ.get('BIGBRAIN_SOLIDCRAFT_CLI')
     candidate = configured or shutil.which('solidcraft-cli')
     if not candidate and os.name == 'posix':
-        candidate = Path.home() / '.local/opt/solidcraft-0.25.1/bin/solidcraft-cli'
+        candidate = Path.home() / '.local/opt/solidcraft-0.28.0/bin/solidcraft-cli'
     if not candidate or not Path(candidate).is_file():
         raise CadError('SolidCraft CLI unavailable; configure BIGBRAIN_SOLIDCRAFT_CLI')
     return Path(candidate).resolve(strict=True)
@@ -70,8 +70,8 @@ class SolidCraftSession:
             result = await self.request('initialize', {'protocolVersion': '2025-03-26',
                 'capabilities': {}, 'clientInfo': {'name': 'bigbrain-cad', 'version': '1.0'}})
             self.version = result.get('serverInfo', {}).get('version')
-            if result.get('serverInfo', {}).get('name') != 'solidcraft' or self.version != '0.25.1':
-                raise CadError('CAD adapter requires the qualified SolidCraft 0.25.1 engine')
+            if result.get('serverInfo', {}).get('name') != 'solidcraft' or self.version != '0.28.0':
+                raise CadError('CAD adapter requires the qualified SolidCraft 0.28.0 engine')
             # Server-provided instructions remain tool data. Product authority
             # and the user's contract stay with BigBrain.
             self.process.stdin.write(b'{"jsonrpc":"2.0","method":"notifications/initialized"}\n')

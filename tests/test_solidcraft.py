@@ -15,7 +15,7 @@ def engine():
     try:
         return solidcraft_executable()
     except CadError:
-        pytest.skip('Native SolidCraft 0.25.1 installation is required')
+        pytest.skip('Native SolidCraft 0.28.0 installation is required')
 
 
 def command(command_id, **params):
@@ -94,7 +94,7 @@ for line in sys.stdin:
     packet = json.loads(line)
     if packet.get('method') == 'initialize':
         print(json.dumps({'jsonrpc':'2.0', 'id':packet['id'], 'result': {
-            'serverInfo':{'name':'solidcraft', 'version':'0.25.1'}}}), flush=True)
+            'serverInfo':{'name':'solidcraft', 'version':'0.28.0'}}}), flush=True)
     elif 'id' in packet:
         sys.stderr.write('x' * 100000)
         sys.stderr.flush()

@@ -1,14 +1,15 @@
 # CAD brain and Atelier integration
 
-30 October 2026. Implementation on `feat/cad-brain`.
+Initial headless milestone: 30 October 2026. Interactive milestone: 31 October.
+Current implementation and follow-up qualification: [interactive CAD workspace](CAD_INTERACTIVE_PLAN.md).
 
 ## First deliverable
 
 A dedicated CAD brain uses the qualified SolidCraft engine to create and edit
 small dimensioned parts headlessly. The Atelier shows the actual piece, its
-revision, dimensions, checks and artifacts. Native documents retain editability;
-The Atelier can enlarge a revision-bound PNG and download its native document.
-Direct desktop GUI launch and an orbitable 3D viewer remain extensions.
+revision, dimensions, checks and artifacts. Native documents retain editability.
+The Atelier provides a revision-bound interactive STL viewer with PNG fallback,
+native and STEP/STL downloads, and GUI handoff to an independent working copy.
 
 ## Phases and milestones
 
