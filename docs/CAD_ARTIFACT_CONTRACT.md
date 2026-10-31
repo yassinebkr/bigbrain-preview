@@ -14,8 +14,9 @@
 
 The runtime assembles observations from actual tool responses and captured files.
 Schema validation checks consistency; engine measurements and artifact reads
-establish the evidence. Source consent and access grants remain enforced by the
-existing project broker.
+establish the evidence. The initial runtime owns new CAD documents and scopes
+artifact access to their conversation. Attached-document imports require the
+project broker integration planned for a later cycle.
 
 ## Lifecycle
 
@@ -27,7 +28,8 @@ bound to the previous document revision. Terminal runs retain their outcome.
 
 Successful mutations advance document revision. Failed or interrupted mutations
 require state inspection before another mutation; uncertain state blocks the run.
-Publication uses the shared transaction engine and preserves prior revisions.
+Publication uses a CAD revision comparison and an atomic current-revision pointer,
+preserving prior revisions in the application-owned store.
 
 ## Delivery gate
 
@@ -48,8 +50,8 @@ Rendering failures remain visible alongside the geometry and delivery outcome.
 - Read actions inspect commands, document state, measurements and existing artifacts.
 - Mutations use typed SolidCraft commands in bounded batches with strict parameter checks.
 - Save, export and render paths are allocated inside runtime-owned scratch storage.
-  Publication into a project requires the corresponding project grant.
-- GUI handoff opens an explicitly saved revision through a platform adapter.
+  Attached-project publication remains a later integration with project grants.
+- Direct GUI handoff requires a platform adapter in the next CAD cycle.
 - Timeouts and Stop terminate owned work and trigger state reconciliation.
 - Linux and Windows use the same artifact, lifecycle and evidence contracts.
   Native launcher/isolation capabilities require separate platform qualification.
