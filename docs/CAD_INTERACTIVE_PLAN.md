@@ -13,7 +13,8 @@ editing behavior require the acceptance campaign below.
 - Selected 0.28.0 as the Linux fallback engine; explicit executable configuration
   and PATH retain precedence. Active execution requires engine version 0.28.0.
 - Sixty CAD contract, transport, real-engine integration and desktop-launch tests
-  pass. The frontend has 149 passing tests and a successful production build.
+  pass. The final measurement-display supplement passes 53 backend tests; the
+  frontend has 152 passing tests and a successful production build.
 - The Atelier uses a lazy STL viewer with orbit, zoom, fit, PNG fallback, bounded
   input and GPU-resource disposal. Rendering occurs on interaction and resize.
 - One icon-only download menu exposes native, STEP and STL. A local-only GUI
@@ -34,7 +35,7 @@ Remaining qualification: native Windows execution, explicit WebGL-loss and
 task-switch browser cases, GUI working-copy edit/reimport semantics, and the richer
 model-led campaign. The existing plate/enclosure/edit engine tests establish the
 native adapter behavior independently from planning quality. This branch remains
-open while those acceptance cases are completed.
+tracks these acceptance cases as follow-up qualification after this milestone.
 
 ## Phases and milestones
 
@@ -49,8 +50,8 @@ documents saved by 0.28.0.
 
 Migration checkpoint: CLI PATH links and both Linux desktop launchers now select
 0.28.0. The active adapter and planning prompt require 0.28.0. The replacement
-browser capture records that exact engine version. Retire the old installation
-after this checkpoint; historical qualification documents retain their original
+browser capture records that exact engine version. The old installation was moved
+to the desktop trash and remains recoverable; historical reports retain their original
 version numbers. Desktop handoff is verified as a launch request with a private
 copy; native visual confirmation and Windows qualification remain separate.
 
@@ -72,6 +73,16 @@ Sources: [0.26.0](https://github.com/tangency-labs/solidcraft/releases/tag/v0.26
 | 4. CAD capability campaign | Perforated support, hollow enclosure, parametric edit preserving existing features, invalid operation and contradictory criterion | Independent dimensions/volume/body assertions, native reopen, STEP round trip, prior revision preserved on failure, browser journey |
 
 ## Behavioral contracts
+
+### Measured checks
+
+Present each criterion with its status, measured and expected values, units and
+tolerance. Structured observation fields carry these values for new captures.
+Historical diagnostics retain a bounded display adapter for their earlier tuple
+serialization. Unrecognized diagnostics remain available under technical detail;
+missing historical tolerance directs the reader to the revision contract. Display
+rounding preserves the original evidence and verdict; small nonzero values retain
+significant digits.
 
 ### Artifact menu
 

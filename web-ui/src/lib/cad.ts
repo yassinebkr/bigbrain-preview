@@ -13,7 +13,11 @@ const snapshot = z.object({ document,
     image: artifact, width: z.number().int().positive(), height: z.number().int().positive() }).nullable(),
   preview_state: z.enum(['current', 'stale', 'pending', 'failed', 'absent']), preview_error: z.string().nullable(),
   checks: z.array(z.object({ criterion_id: z.string(), status: z.enum(['passed', 'failed', 'inconclusive']),
-    diagnostic: z.string(), evidence_ref: z.string(), source_sha256: hash })).max(64).default([]) });
+    diagnostic: z.string(), evidence_ref: z.string(), source_sha256: hash,
+    label: z.string().nullable().optional(), metric: z.enum(['dimensions_mm', 'volume_mm3', 'body_count', 'closed_solid']).nullable().optional(),
+    observed: z.array(z.number().finite()).max(3).nullable().optional(), expected: z.array(z.number().finite()).max(3).nullable().optional(),
+    absolute_tolerance: z.number().finite().nullable().optional(), relative_tolerance: z.number().finite().nullable().optional(),
+  })).max(64).default([]) });
 const view = z.object({ schema_version: z.literal('1.0'), document_id: z.string().regex(/^[a-f0-9]{32}$/),
   title: z.string(), sequence: z.number().int().positive(),
   status: z.enum(['modeling', 'checking', 'ready', 'failed', 'cancelled']),

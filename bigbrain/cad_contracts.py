@@ -83,6 +83,12 @@ class CriterionObservation(Contract):
     status: Literal['passed', 'failed', 'inconclusive']
     evidence_ref: Identity
     diagnostic: str = Field(min_length=1, max_length=2000)
+    label: str | None = Field(default=None, max_length=500)
+    metric: Literal['dimensions_mm', 'volume_mm3', 'body_count', 'closed_solid'] | None = None
+    observed: tuple[Finite, ...] | None = Field(default=None, max_length=3)
+    expected: tuple[Finite, ...] | None = Field(default=None, max_length=3)
+    absolute_tolerance: Finite | None = None
+    relative_tolerance: Finite | None = None
 
 
 class CadDelivery(Contract):

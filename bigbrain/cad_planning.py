@@ -55,6 +55,8 @@ class CadCriterion(Contract):
                          for actual, expected in zip(values, self.expected))
         return CriterionObservation(criterion_id=self.id, source_sha256=geometry.source_sha256,
             status='passed' if passed else 'failed', evidence_ref=geometry.evidence_ref,
+            label=self.label, metric=self.metric, observed=values, expected=self.expected,
+            absolute_tolerance=self.absolute_tolerance, relative_tolerance=self.relative_tolerance,
             diagnostic=f'{self.label}: observed {values}; expected {self.expected}')
 
 
