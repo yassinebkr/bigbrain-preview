@@ -57,3 +57,31 @@ The proposal displays the drawing dimensions together with measured criteria.
 The current source scope requires attaching the drawing to the modeling turn.
 Resuming image interpretation across turns will require a conversation-owned
 attachment inventory. Feature verification and repair follow in phase 3.
+
+## Phase 3
+
+Critical linear dimensions bind directly to measured envelope components or
+material-section endpoints, lengths and gaps. Runtime validation checks the
+expected value against the drawing, including inch-to-millimetre conversion.
+Missing bindings block the recipe. Angular and manufacturing criteria require
+additional measurement support and clarification.
+
+Sections intersect the captured binary STL with axis-aligned lines. They check
+local material and void intervals for hole position, diameter, depth, recesses
+and stepped profiles. Samples retain the STL hash and native revision hash.
+Triangle and interval counts are bounded. Ambiguous intersections produce an
+inconclusive result. Sampling covers the specified lines; exhaustive topology
+and manufacturing qualification require additional checks.
+
+Confirmed proposals authorize at most two repairs within 120 seconds. Each
+candidate begins from the approved original and receives a fresh capture.
+Repair inference can change recipe commands; dimensions, source provenance,
+measurement targets and export requirements remain fixed. Reproduced failures
+trigger repair; inconclusive evidence stops execution. Publication occurs after
+every required criterion passes. Older proposals default to zero repairs.
+
+The planner receives the installed engine's command reference for editable
+sketches, extrusions, chamfers and fillets alongside primitive operations.
+Independent tests move a hole while retaining equal volume: global checks agree,
+while the local section detects the incorrect position. Repair tests exercise
+both successful correction and persistent failure without publication.

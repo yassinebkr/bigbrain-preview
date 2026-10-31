@@ -3,10 +3,12 @@
 import asyncio
 import json
 import time
+import tempfile
+from pathlib import Path
 
 from .base import BaseBrain
 from ..cad_contracts import CadDelivery
-from ..cad_planning import CadPlan, draft_cad_plan
+from ..cad_planning import CadPlan, draft_cad_plan, draft_cad_repair
 from ..cad_store import CadStore
 from ..solidcraft import CadError, SolidCraftSession, solidcraft_executable
 
@@ -30,7 +32,18 @@ async def prepare_cad_plan(provider, payload, *, model=None):
         async with SolidCraftSession(store.directory(document_id)) as session:
             await session.reopen(document.native)
             context = {'geometry': view['geometry'], 'design': await session.tool('inspect_design')}
-    return await draft_cad_plan(provider, payload['user_request'], context=context, model=model, drawing=drawing)
+    # Read the installed engine documentation for the available sketch and
+    # feature operations before proposing their parameters.
+    commands = {'solid.box', 'solid.cylinder', 'solid.extrude', 'solid.chamfer', 'solid.fillet',
+                'sketch.create', 'sketch.line', 'sketch.arc.three_point', 'sketch.circle.center',
+                'sketch.rectangle.two_point', 'sketch.rectangle.rounded', 'sketch.finish', 'parameters.change'}
+    with tempfile.TemporaryDirectory(prefix='bigbrain-cad-catalog-') as scratch:
+        async with SolidCraftSession(Path(scratch)) as session:
+            catalog = await session.tool('list_commands')
+            reference = [{'id': item['id'], 'params': item['params']}
+                         for item in catalog if item['id'] in commands]
+    return await draft_cad_plan(provider, payload['user_request'], context=context, model=model,
+                                drawing=drawing, command_reference=reference)
 
 
 class CadBrain(BaseBrain):
@@ -82,32 +95,55 @@ class CadBrain(BaseBrain):
 
         try:
             async with asyncio.timeout(120):
-                await progress('modeling', 'cad_modeling', previous)
-                async with SolidCraftSession(root) as session:
-                    if previous:
-                        from ..cad_contracts import CadRevision
-                        await session.reopen(CadRevision.model_validate(previous['document']).native)
-                    await session.batch([item.model_dump(exclude={'schema_version'}) for item in plan.commands])
-                    await progress('checking', 'cad_checking', previous)
-                    # Incomplete captures remain available for diagnosis. Allocate
-                    # a fresh folder after an interrupted capture.
-                    revisions = [int(path.name.split('-')[1]) for path in root.glob('revision-*')
-                                 if path.name.split('-')[1].isdigit()]
-                    revision = max([base, *revisions]) + 1
-                    capture = await session.capture(document_id, document_id, revision)
-                    checks = tuple(item.observe(capture.geometry) for item in plan.criteria)
-                    evidence = root / f'revision-{revision}'
-                    (evidence / 'engine-observations.json').write_text(
-                        json.dumps(session.observations, allow_nan=False), encoding='utf-8')
-                    (evidence / 'criterion-observations.json').write_text(
-                        json.dumps([item.model_dump(mode='json') for item in checks]), encoding='utf-8')
-                    failed = [item.diagnostic for item in checks if item.status != 'passed']
-                    if failed:
-                        raise CadError('Critères CAO non satisfaits : ' + ' ; '.join(failed)[:800])
-                    delivery = CadDelivery(specification_id=f'{spec.design_id}:{spec.revision}',
-                        required_criteria=tuple(item.id for item in plan.criteria), required_exports=('step', 'stl'),
-                        document=capture.document, geometry=capture.geometry, checks=checks)
-                    view = store.publish(session_id, capture, delivery=delivery, base_revision=base, title=plan.title)
+                for attempt in range(plan.max_repairs + 1):
+                    await progress('modeling', 'cad_modeling' if attempt == 0 else 'cad_repairing', previous)
+                    # Each repair starts from the approved original. Failed
+                    # candidates remain separate captured evidence revisions.
+                    async with SolidCraftSession(root) as session:
+                        if previous:
+                            from ..cad_contracts import CadRevision
+                            await session.reopen(CadRevision.model_validate(previous['document']).native)
+                        await session.batch([item.model_dump(exclude={'schema_version'}) for item in plan.commands])
+                        await progress('checking', 'cad_checking', previous)
+                        revisions = [int(path.name.split('-')[1]) for path in root.glob('revision-*')
+                                     if path.name.split('-')[1].isdigit()]
+                        revision = max([base, *revisions]) + 1
+                        capture = await session.capture(document_id, document_id, revision)
+                        checks = tuple(item.observe(capture.geometry) for item in plan.criteria)
+                        evidence = root / f'revision-{revision}'
+                        if plan.sections:
+                            from ..cad_sections import read_triangles, observe_section
+                            if capture.geometry.body_count != 1:
+                                raise CadError('Section verification requires one closed body')
+                            artifact = next(item for item in capture.document.exports if item.format == 'stl')
+                            if session._artifact(root / artifact.path, 'stl').sha256 != artifact.sha256:
+                                raise CadError('CAD surface changed before section verification')
+                            triangles = await asyncio.to_thread(read_triangles, root / artifact.path)
+                            section_evidence = []
+                            for section in plan.sections:
+                                observation, actual = await asyncio.to_thread(observe_section,
+                                    section, triangles, source_sha256=capture.document.native.sha256,
+                                    evidence_ref=f'revision-{revision}/sections.json')
+                                checks += (observation,)
+                                section_evidence.append({'criterion': section.model_dump(mode='json'),
+                                    'observed_intervals_mm': actual, 'surface_sha256': artifact.sha256})
+                            (evidence / 'sections.json').write_text(json.dumps(section_evidence, allow_nan=False), encoding='utf-8')
+                        (evidence / 'engine-observations.json').write_text(
+                            json.dumps(session.observations, allow_nan=False), encoding='utf-8')
+                        (evidence / 'criterion-observations.json').write_text(
+                            json.dumps([item.model_dump(mode='json') for item in checks]), encoding='utf-8')
+                    failed = [item for item in checks if item.status != 'passed']
+                    if not failed:
+                        break
+                    if attempt == plan.max_repairs or any(item.status == 'inconclusive' for item in failed) or self.llm_provider is None:
+                        raise CadError('Critères CAO non satisfaits : ' + ' ; '.join(item.diagnostic for item in failed)[:800])
+                    await progress('checking', 'cad_repair_diagnosis', previous,
+                                   'Correction de géométrie à partir des mesures, critères conservés.')
+                    plan = await draft_cad_repair(self.llm_provider, plan, checks, model=self.model)
+                delivery = CadDelivery(specification_id=f'{spec.design_id}:{spec.revision}',
+                    required_criteria=tuple(item.id for item in (*plan.criteria, *plan.sections)), required_exports=('step', 'stl'),
+                    document=capture.document, geometry=capture.geometry, checks=checks)
+                view = store.publish(session_id, capture, delivery=delivery, base_revision=base, title=plan.title)
                 await progress('ready', 'cad_ready', view)
                 return {'success': True, 'result_kind': 'cad', 'runnable': False,
                     'delivery_status': 'ready', 'cad': view,

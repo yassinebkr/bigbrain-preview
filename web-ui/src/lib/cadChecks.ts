@@ -18,6 +18,14 @@ function legacy(check: Check) {
 }
 
 export function presentCadCheck(check: Check) {
+  if (check.observed_intervals_mm && check.expected_intervals_mm) {
+    const intervals = (values: [number, number][]) => values.length
+      ? values.map(([start, end]) => `${number(start)}–${number(end)} mm`).join(' ; ')
+      : 'Vide traversant';
+    return { label: check.label || 'Section de la pièce',
+      observed: intervals(check.observed_intervals_mm), expected: intervals(check.expected_intervals_mm),
+      tolerance: check.absolute_tolerance != null ? `${number(check.absolute_tolerance)} mm` : undefined };
+  }
   const data = check.observed && check.expected ? check : legacy(check);
   const format = (values: number[]) => {
     if (data?.metric === 'closed_solid') return values[0] === 1 ? 'Solide fermé' : 'Surface ouverte';

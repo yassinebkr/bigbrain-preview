@@ -211,3 +211,33 @@ async def test_cad_confirmation_reaches_chat_without_another_inference(tmp_path)
         assert any(frame.get('text') == 'Pièce vérifiée dans l’Atelier.' for frame in frames), frames
     finally:
         await bus.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('repair_succeeds', [True, False])
+async def test_bounded_repair_preserves_confirmed_targets(tmp_path, engine, repair_succeeds):
+    initial = recipe()
+    initial['commands'][1]['params']['height'] = 5
+    repair = recipe()
+    if not repair_succeeds:
+        repair['commands'][1]['params']['height'] = 4
+    provider = Provider({'commands': repair['commands']})
+    bus = MessageBus(tmp_path / 'bus', auth=None)
+    try:
+        plan, spec, _ = await prepared(bus, initial)
+        confirmed = default_repository().approve_spec(spec.design_id, plan_id=plan.id)
+        worker = CadBrain('cad_brain', bus, llm_provider=provider)
+        result = await worker.handle_task(task(plan, confirmed))
+        assert result['success'] is repair_succeeds, result
+        assert len(provider.calls) == (1 if repair_succeeds else 2)
+        contract = json.loads(provider.calls[0]['messages'][1]['content'])['confirmed_plan']
+        assert contract['criteria'][0]['expected'] == [60, 40, 6]
+        assert contract['max_repairs'] == 2
+        if repair_succeeds:
+            assert result['cad']['document']['revision'] == 2
+            assert all(item['status'] == 'passed' for item in result['cad']['checks'])
+        else:
+            assert result['delivery_status'] == 'incomplete'
+            assert not list(CadStore().root.glob('*/current.json'))
+    finally:
+        await bus.close()

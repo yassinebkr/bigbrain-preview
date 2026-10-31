@@ -89,6 +89,8 @@ class CriterionObservation(Contract):
     expected: tuple[Finite, ...] | None = Field(default=None, max_length=3)
     absolute_tolerance: Finite | None = None
     relative_tolerance: Finite | None = None
+    observed_intervals_mm: tuple[tuple[Finite, Finite], ...] | None = Field(default=None, max_length=16)
+    expected_intervals_mm: tuple[tuple[Finite, Finite], ...] | None = Field(default=None, max_length=16)
 
 
 class CadDelivery(Contract):

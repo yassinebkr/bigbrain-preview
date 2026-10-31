@@ -17,6 +17,8 @@ const snapshot = z.object({ document,
     label: z.string().nullable().optional(), metric: z.enum(['dimensions_mm', 'volume_mm3', 'body_count', 'closed_solid']).nullable().optional(),
     observed: z.array(z.number().finite()).max(3).nullable().optional(), expected: z.array(z.number().finite()).max(3).nullable().optional(),
     absolute_tolerance: z.number().finite().nullable().optional(), relative_tolerance: z.number().finite().nullable().optional(),
+    observed_intervals_mm: z.array(z.tuple([z.number().finite(), z.number().finite()])).max(16).nullable().optional(),
+    expected_intervals_mm: z.array(z.tuple([z.number().finite(), z.number().finite()])).max(16).nullable().optional(),
   })).max(64).default([]) });
 const view = z.object({ schema_version: z.literal('1.0'), document_id: z.string().regex(/^[a-f0-9]{32}$/),
   title: z.string(), sequence: z.number().int().positive(),

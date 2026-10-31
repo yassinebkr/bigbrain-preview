@@ -84,7 +84,7 @@ async def test_planner_cannot_replace_drawing_authority():
             return json.dumps({'title': 'Support', 'commands': [
                 {'command': 'solid.box', 'params': {'length': 60, 'width': 40, 'height': 6}}],
                 'criteria': [{'id': 'bounds', 'label': 'Envelope', 'metric': 'dimensions_mm',
-                              'expected': [60, 40, 6]}]})
+                              'expected': [60, 40, 6], 'dimension_bindings': {'width': 0}}]})
 
     plan = await draft_cad_plan(Planner(), 'Model this drawing', drawing=spec)
     assert plan.drawing == spec
