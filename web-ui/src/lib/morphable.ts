@@ -1,7 +1,7 @@
 import type { RunState } from '@/store/appStore';
 import type { WidgetKind } from './widgetPolicy';
 
-export type SurfaceKind = 'preview' | 'activity' | 'files' | 'verification' | 'research';
+export type SurfaceKind = 'preview' | 'activity' | 'files' | 'verification' | 'research' | 'cad';
 export type WorkspaceMode = 'focus' | 'peek' | 'workspace' | 'expanded';
 export interface WorkspacePreference {
   mode?: WorkspaceMode;
@@ -35,6 +35,7 @@ export function webEntryPath(run: RunState) {
   return run.projectPath && run.entryPoint ? `${run.projectPath}/${run.entryPoint}` : undefined;
 }
 export function runTitle(run: RunState) {
+  if (run.cad) return run.cad.title;
   const name = run.projectName || run.projectPath?.split('/').pop();
   return name ? name.replaceAll(/[-_]/g, ' ').replace(/^./, (c) => c.toUpperCase()) : run.description;
 }
@@ -49,6 +50,7 @@ export function surfaceRegistry(sessionId: string | null, runs: RunState[]): Wor
       || (a.status === 'running' ? a.startedAt - b.startedAt : b.startedAt - a.startedAt)
       || a.id.localeCompare(b.id))
     .flatMap((run): WorkSurface[] => [
+      ...(run.cad ? [{ id: surfaceId(run, 'cad'), kind: 'cad' as const, run }] : []),
       ...(webEntryPath(run) ? [{ id: surfaceId(run, 'preview'), kind: 'preview' as const, run }] : []),
       { id: surfaceId(run, 'activity'), kind: 'activity', run },
       ...(Object.keys(run.researches || {}).length ? [{ id: surfaceId(run, 'research'), kind: 'research' as const, run }] : []),

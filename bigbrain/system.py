@@ -368,6 +368,7 @@ class BigBrainSystem:
             "researcher": "Web search via Brave API, parallel queries, source triangulation, LLM-powered summarization. Use for fact-finding, research, data gathering, current events",
             "taskboard": "Adds tasks to the user's persistent task board. Use when the user asks to add/create a task or todo (\"ajoute une tâche\", \"add a task to my board\"). The task lands on the board as a to-do by default and survives restarts",
             "web_app_brain": "Builds and previews interactive browser applications with web-specific validation",
+            "cad_brain": "Creates and edits dimensioned mechanical CAD parts in SolidCraft headless, with measured geometry, native history, STEP/STL exports and an Atelier piece preview",
         }
         # Register pool workers with same description
         for name in self.brains:
@@ -544,6 +545,10 @@ class BigBrainSystem:
             web_pool_names.append(worker_name)
         self.orchestrator.register_brain_pool("web_app_brain", web_pool_names)
         print(f"🌐 WebAppBrain pool: {web_pool_size} workers ({', '.join(web_pool_names)})")
+
+        from .brains.cad_brain import CadBrain
+        self.brains['cad_brain'] = CadBrain('cad_brain', self.bus, self.workspace,
+                                          llm_provider=self.llm_provider)
         
         # Research brain — real Brave search + shared LLM
         try:
@@ -700,6 +705,7 @@ class BigBrainSystem:
             brain_descriptions = {
                 "python_brain": "Generates and executes Python code, scripts, calculations, data processing",
                 "web_app_brain": "Builds browser-first HTML/CSS/JavaScript applications, validates artifacts, and starts previews",
+                "cad_brain": "Models mechanical CAD parts with SolidCraft and verifies their measured geometry and revision-bound artifacts",
                 "researcher": "Researches topics, gathers information, analyzes data, web searches",
                 "taskboard": "Adds tasks to the user's persistent task board. Use when the user asks to add/create a task or todo. Payload: {\"type\": \"board_task\", \"title\": \"...\", \"description\": \"...\", \"status\": \"todo|in-progress|review|done\"} — status defaults to todo",
             }

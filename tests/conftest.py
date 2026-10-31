@@ -20,6 +20,7 @@ def _isolate_evidence(tmp_path, monkeypatch):
     monkeypatch.setenv("BIGBRAIN_SOUL_FILE", str(tmp_path / "soul.json"))
     monkeypatch.setenv("BIGBRAIN_ATTACHMENTS_DIR", str(tmp_path / "attachments"))
     monkeypatch.setenv("BIGBRAIN_LOCAL_PROJECTS_DIR", str(tmp_path / "local-projects"))
+    monkeypatch.setenv("BIGBRAIN_CAD_DIR", str(tmp_path / "cad"))
     monkeypatch.setenv("BIGBRAIN_WORKSPACE_DIR", str(tmp_path / "workspace"))
     monkeypatch.setenv("BIGBRAIN_TASKS_FILE", str(tmp_path / "tasks.json"))
     from bigbrain.web import fs_api

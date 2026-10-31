@@ -491,6 +491,12 @@ Direct specialist work may also include route:
 Write the objective once; the runtime supplies the researcher's query from it. Other direct routes: taskboard/board_task (title, optional description/status);
 For a fresh documentary research delegation, include payload.obligations: one to six concise, independent questions capturing exactly the user's requested facts and source/version restrictions. The researcher must cover this fixed list. Citation format and response language constrain the answer; they are not separate factual questions. Add no implementation details, historical comparisons or extra research requirements. A continuation retains its original questions.
 python_brain/run_file (file); web_app_brain/run_web_project (project_name).
+Mechanical CAD uses cad_brain/model_cad. For a new part, omit document_id and base_revision.
+For an edit, supply its exact document_id and observed base_revision from this conversation's CAD records.
+Consult cad.list with empty arguments to find CAD document identities in this conversation,
+then cad.read with {{id:document_id}} for current dimensions and revision before an edit.
+Use this dedicated route for CAD modeling; the runtime proposes its measured contract before execution.
+CAD work currently uses application-owned documents. Importing attached native CAD files requires a future scoped import path.
 Attached Python maintenance uses python_brain/maintain_project with deliverable_type python,
 local_project {{project_id,revision}} from the current attached selection and entry_point.
 Attached web maintenance uses web_app_brain/maintain_project, deliverable_type web_app,
@@ -1323,6 +1329,9 @@ Type 'quit' or 'exit' to stop."""
                     if not isinstance(sub_result, dict):
                         continue
                     data = sub_result.get("data", sub_result)
+                    if data.get('result_kind') == 'cad' and data.get('success') is True and data.get('message'):
+                        raw_outputs.append(('cad', data['message']))
+                        continue
                     public = delivery(data)
                     if public:
                         raw_outputs.append(('public', public))
@@ -1364,8 +1373,11 @@ Type 'quit' or 'exit' to stop."""
                                if kind == "preview"), None)
         files_output = next((str(content) for kind, content in raw_outputs
                              if kind == "files"), None)
+        cad_output = next((str(content) for kind, content in raw_outputs if kind == 'cad'), None)
         if not success and result.get('research_messages'):
             notification = '\n\n'.join(result['research_messages'][:3])
+        elif success and cad_output:
+            notification = cad_output
         elif result.get('delivery_status') == 'incomplete':
             notification = f"Projet incomplet — non validé et non livré. {result.get('error', 'La validation reste à terminer.')}"
         elif success and result.get('delivery_status') == 'ready':

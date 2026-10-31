@@ -1,13 +1,14 @@
 # CAD brain and Atelier integration
 
-30 October 2026. Next implementation cycle after attached local projects.
+30 October 2026. Implementation on `feat/cad-brain`.
 
 ## First deliverable
 
 A dedicated CAD brain uses the qualified SolidCraft engine to create and edit
 small dimensioned parts headlessly. The Atelier shows the actual piece, its
 revision, dimensions, checks and artifacts. Native documents retain editability;
-GUI handoff opens an explicitly saved revision.
+The Atelier can enlarge a revision-bound PNG and download its native document.
+Direct desktop GUI launch and an orbitable 3D viewer remain extensions.
 
 ## Phases and milestones
 
@@ -40,6 +41,71 @@ The 48-case offline suite covers revision binding, missing or failed criteria,
 invalid geometry, required exports, portable references, stale previews and
 terminal outcomes. Adapter measurements and frontend acceptance follow in
 phases 2–4.
+
+## Implemented journey
+
+```text
+Chat request → typed CAD route → measured recipe and criteria
+                                      ↓
+                            immutable contract / user decision
+                                      ↓
+                    bounded SolidCraft headless session
+                                      ↓
+             native save + geometry measurements + STEP/STL + PNG
+                                      ↓
+                    criterion checks → revision publication
+                                      ↓
+                  Atelier piece surface / scoped downloads
+```
+
+The dedicated CAD brain executes the recipe stored in the selected contract.
+An edit reopens the exact native revision, checks its hash and publishes through
+a revision comparison. Failed checks preserve the previous published revision;
+engine and criterion observations remain available in the capture directory.
+Conversation-scoped `cad.list` and `cad.read` provide focused lookup.
+
+`BIGBRAIN_SOLIDCRAFT_CLI` selects the engine executable. `BIGBRAIN_CAD_DIR`
+selects the application-owned artifact store. Sessions serialize engine calls,
+bound their duration and output, and retire the subprocess after cancellation
+or a transport failure. The worker has a 120-second execution deadline.
+
+### Verification checkpoint
+
+- Backend campaign: 2,132 passing tests and eight skips across two groups.
+- Final CAD supplement: 57 passing contract, adapter and integration tests.
+- Frontend: 146 passing tests; production build succeeds.
+- Actual SolidCraft 0.25.1: plate, enclosure, parameter edit, failed batch
+  rollback, native reopen and STEP round trip exercised on Linux.
+- Browser: contract decision, actual piece rendering, enlargement, STEP download
+  and history restoration after server restart exercised in isolated stores.
+
+### Model-led browser probe
+
+On 30 October, an isolated browser journey used Codex Sol 6.1 low with a
+three-call, three-minute ceiling. Two model calls selected `cad_brain` and
+prepared a parametric recipe for a new 60 × 40 × 6 mm plate. After the contract
+decision, SolidCraft created one closed body with measured volume 14,400 mm³.
+All four proposed geometric criteria passed. Native, STEP, STL and PNG artifacts
+were published and the Atelier displayed the actual revision. Confirmation in
+the chat required no additional model call.
+
+Evidence root: `/tmp/bigbrain-cad-ui-x8o9k1my`; screenshot:
+`/tmp/bigbrain-cad-live-atelier.png`. The front decision took 7.7 seconds and
+reported 7,607 input / 179 output tokens with zero cached input. Planner token
+usage was not persisted by this harness, so complete probe usage remains unknown.
+The initial harness launch lacked the Codex executable on PATH and stopped
+before inference; selecting the installed extension binary resolved that setup
+issue. The isolated server uses a synthetic bus configuration; authenticated
+production bus behavior remains covered separately by the backend suite.
+
+### Current limits
+
+Qualification covers Linux and small dimensioned solids. Windows subprocess
+support requires native qualification. The current document store owns newly
+created CAD projects; importing attached CAD documents requires a separate access
+contract. Photos, uncertain dimensions, wall-thickness analysis and physical
+strength checks require additional capabilities. Failed jobs stop with evidence;
+automatic CAD repair, storage quotas and capture cleanup remain future work.
 
 ## Deferred workspace redesign
 
