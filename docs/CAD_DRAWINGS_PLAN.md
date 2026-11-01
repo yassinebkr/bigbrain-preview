@@ -136,8 +136,23 @@ compatibility regression and two timing-sensitive failures. The prefix was
 restored; isolated rechecks and the subsequent complete run pass. CI is deferred
 until the pre-merge review as requested.
 
-A fresh uninterrupted browser run of the final code remains a qualification
-step. The recorded stages establish vision, contract gating, Atelier approval,
-native repair and measured publication individually. Windows native behavior,
-cross-turn image inventory, arbitrary topology, fits and manufacturing tolerances
-remain follow-up work. Existing-component portability follows this CAD cycle.
+An additional uninterrupted browser run completed on 1 November through the
+3134 demo server, in conversation `sess-96aa155be0da`. The artificial drawing
+was uploaded through the attachment picker, interpreted by the front brain,
+and converted into a proposal. Confirmation in the Atelier launched SolidCraft
+0.28.0 and published revision 1 with all 16 required checks passing. The browser
+displayed the stepped solid and through-hole, readable measurement details,
+the native-editor action and the export menu. Mouse-wheel zoom updated the
+interactive preview. This candidate succeeded on its first execution; repair
+behavior is covered by the earlier recorded candidate and regression tests.
+
+The resulting document ID is `0d15e364d72543399336061e4bf143e0`, with native
+SHA256 `209dc6afdac4fef6945c893bec70bbd25256b8e75571e7e78c7f607c10bcbfc1`.
+Dimensions are 80 × 40 × 20 mm and measured volume is 34,973.84290071025 mm³.
+The bus trace is under `/tmp/cad-interactive-qa-ezwuatyy/logs/`; the browser
+capture is `/tmp/cad-drawing-ui-live-success.jpg`. The generated title retains
+proposal wording after completion, a presentation limitation visible in this run.
+
+Windows native behavior, cross-turn image inventory, arbitrary topology, fits
+and manufacturing tolerances remain follow-up work. Existing-component
+portability follows this CAD cycle.
