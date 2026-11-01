@@ -1,5 +1,7 @@
 # CAD from dimensioned drawings
 
+The multi-turn extension is tracked in [Conversational CAD qualification](CAD_CONVERSATION_PLAN.md).
+
 The front brain reads the drawing and coordinates an editable SolidCraft piece.
 Dimensions retain image provenance, derivations and uncertainties throughout the
 contract, execution and verification path. Existing-component portability work
@@ -48,15 +50,16 @@ geometry evidence, repair and representative end-to-end validation.
 
 The vision message includes runtime-computed attachment identity and SHA256.
 The front decision carries the drawing specification in the typed CAD input.
-Before delegation, each source must match an image attached to the current turn
+Before delegation, each source must match an image owned by this conversation
 and its stored bytes. Unresolved critical dimensions require clarification.
 The CAD planner receives the interpreted specification, while the runtime binds
 the original interpretation to the resulting recipe and immutable proposal.
 The proposal displays the drawing dimensions together with measured criteria.
 
-The current source scope requires attaching the drawing to the modeling turn.
-Resuming image interpretation across turns will require a conversation-owned
-attachment inventory. Feature verification and repair follow in phase 3.
+The conversation-owned attachment inventory now restores drawings across
+clarification turns. Its original hashes, exact exchanges and versioned
+dimension snapshots survive reload and restart. See the conversation cycle
+for qualification and bounds. Feature verification and repair follow in phase 3.
 
 ## Phase 3
 
@@ -153,6 +156,6 @@ The bus trace is under `/tmp/cad-interactive-qa-ezwuatyy/logs/`; the browser
 capture is `/tmp/cad-drawing-ui-live-success.jpg`. The generated title retains
 proposal wording after completion, a presentation limitation visible in this run.
 
-Windows native behavior, cross-turn image inventory, arbitrary topology, fits
+Windows native behavior, arbitrary topology, fits
 and manufacturing tolerances remain follow-up work. Existing-component
 portability follows this CAD cycle.

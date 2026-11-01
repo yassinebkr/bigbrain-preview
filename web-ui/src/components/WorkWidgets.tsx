@@ -46,8 +46,8 @@ function ProposalWidget({ run }: { run: RunState }) {
     <h3 className="work-heading">{proposal.target?.mode === 'existing' ? 'Valider les changements proposés' : 'Voici ce qui sera livré'}</h3>
     {proposal.target && <code className="block text-[11px] break-all mt-3 work-muted">{proposal.target.path}</code>}
     {stack && <StackSummary value={stack} />}
-    {brief?.status === 'proposed' && <CadDesignBrief brief={brief} />}
-    {brief?.status === 'proposed'
+    {brief?.status === 'proposed' && brief.run_id === run.id && <CadDesignBrief brief={brief} />}
+    {brief?.status === 'proposed' && brief.run_id === run.id
       ? <details className="mt-4"><summary className="work-link text-xs">Examiner les vérifications et limites · {proposal.contracts.length}</summary><ContractCriteria contracts={proposal.contracts} /></details>
       : <ContractCriteria contracts={proposal.contracts} />}
     <SourceConsent value={proposal.sourceTransmission} />

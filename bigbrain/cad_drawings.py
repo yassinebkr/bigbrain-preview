@@ -66,6 +66,49 @@ class DrawingDimension(Contract):
         return self
 
 
+class ExplicitDimension(DrawingDimension):
+    origin: Literal['explicit']
+    value: Finite
+    dependencies: tuple[Identity, ...] = Field(default=(), max_length=0,
+        description='Empty for directly read annotations; geometric support relations belong to feature descriptions.')
+    derivation: None = None
+    user_message_id: None = None
+    user_quote: None = None
+
+
+class UserDimension(DrawingDimension):
+    origin: Literal['user']
+    value: Finite
+    dependencies: tuple[Identity, ...] = Field(default=(), max_length=0,
+        description='Empty for a value quoted from the user. This field represents arithmetic inputs exclusively.')
+    derivation: Text | None = Field(default=None, description='Optional explanation of unit normalization, such as 2 cm = 20 mm.')
+    user_message_id: str = Field(min_length=1, max_length=100)
+    user_quote: Text
+
+
+class DerivedDimension(DrawingDimension):
+    origin: Literal['derived']
+    value: Finite
+    dependencies: tuple[Identity, ...] = Field(min_length=1, max_length=16,
+        description='Identifiers of the measured dimensions used to calculate this value.')
+    derivation: Text
+    user_message_id: None = None
+    user_quote: None = None
+
+
+class UnresolvedDimension(DrawingDimension):
+    origin: Literal['unresolved']
+    value: None = None
+    dependencies: tuple[Identity, ...] = Field(default=(), max_length=0)
+    derivation: None = None
+    user_message_id: None = None
+    user_quote: None = None
+
+
+Dimension = Annotated[ExplicitDimension | UserDimension | DerivedDimension | UnresolvedDimension,
+                      Field(discriminator='origin')]
+
+
 class DrawingIssue(Contract):
     id: Identity
     question: Text
@@ -80,7 +123,7 @@ class DrawingSpecification(Contract):
     title: str = Field(min_length=1, max_length=160)
     sources: tuple[DrawingSource, ...] = Field(min_length=1, max_length=8)
     views: tuple[Text, ...] = Field(min_length=1, max_length=16)
-    dimensions: tuple[DrawingDimension, ...] = Field(min_length=1, max_length=64)
+    dimensions: tuple[Dimension, ...] = Field(min_length=1, max_length=64)
     issues: tuple[DrawingIssue, ...] = Field(default=(), max_length=32)
 
     @model_validator(mode='after')

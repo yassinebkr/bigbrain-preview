@@ -74,7 +74,7 @@ export function ContractCard({ compact = false }: { compact?: boolean }) {
   const brief = useAppStore((s) => s.cadBriefs[sessionId]);
   const run = useAppStore((s) => proposal ? s.runsById[proposal.planId] : undefined);
   const selectedId = useWorkspaceStore((s) => s.sessions[sessionId]?.selectedId);
-  if (proposal && brief && run) {
+  if (proposal && brief?.run_id === proposal.planId && run) {
     return <div className="self-start max-w-sm rounded-2xl px-4 py-3 text-sm" style={{ border: '1px solid var(--border-subtle)' }}>
       <p>La définition de la pièce est prête.</p>
       <button className="work-link mt-2 text-xs" onClick={() => useWorkspaceStore.getState().inspect(run)}>Examiner le contrat dans l’Atelier →</button>

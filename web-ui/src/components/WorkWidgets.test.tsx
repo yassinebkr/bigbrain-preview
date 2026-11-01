@@ -49,7 +49,7 @@ it('does not call an incomplete delivery verified even when old checks passed', 
 });
 beforeEach(() => {
   useWorkspaceStore.setState({ sessions: {} });
-  useProjectRunStore.setState({ launches: {} }); useAppStore.setState({ liveRuns: {}, sessionProposals: {}, contractProposal: null });
+  useProjectRunStore.setState({ launches: {} }); useAppStore.setState({ liveRuns: {}, sessionProposals: {}, contractProposal: null, cadBriefs: {}, runsById: {} });
 });
 
 it('has one full approval surface only when the Atelier shows this exact contract', () => {
@@ -63,6 +63,23 @@ it('has one full approval surface only when the Atelier shows this exact contrac
   useWorkspaceStore.setState({ sessions: { s: { selectedId: 's/other/activity' } } });
   expect(renderToStaticMarkup(<ContractCard compact />)).toContain('A real acceptance criterion');
   expect(renderToStaticMarkup(<ContractCard />)).toContain('A real acceptance criterion');
+});
+
+it('binds a CAD definition to its exact contract and keeps the chat compact', () => {
+  const cadRun = { ...run, id: 'cad-run', resultKind: 'cad', awaitingApproval: true };
+  const proposal = { planId: cadRun.id, designId: 'design', request: 'Create support', contracts: ['Measured criterion'] };
+  const brief = { revision: 2, run_id: cadRun.id, status: 'proposed' as const, sources: [], exchanges: [],
+    drawing: { title: 'Current support', dimensions: [], issues: [] } };
+  useAppStore.setState({ activeSessionKey: 's', contractProposal: proposal,
+    sessionProposals: { s: proposal }, runsById: { [cadRun.id]: cadRun }, cadBriefs: { s: brief } });
+  const chat = renderToStaticMarkup(<ContractCard />);
+  expect(chat).toContain('Examiner le contrat dans l’Atelier');
+  expect(chat).not.toContain('Measured criterion');
+  expect(overview(cadRun)).toContain('Current support');
+  useAppStore.setState({ cadBriefs: { s: { ...brief, run_id: 'another-run',
+    drawing: { ...brief.drawing, title: 'Unrelated design' } } } });
+  expect(renderToStaticMarkup(<ContractCard />)).toContain('Measured criterion');
+  expect(overview(cadRun)).not.toContain('Unrelated design');
 });
 
 it('keeps full long criteria accessible, with technical prose collapsed by default', () => {

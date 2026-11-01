@@ -809,6 +809,7 @@ export const useAppStore = create<AppState>()(
           localStorage.removeItem('aplot_messages');
         }
         set((s) => ({ sessions: s.sessions.filter((session) => session.key !== key),
+          cadBriefs: Object.fromEntries(Object.entries(s.cadBriefs).filter(([id]) => id !== key)),
           runsById: Object.fromEntries(Object.entries(s.runsById).filter(([, run]) => run.sessionId !== key)),
           completedRuns: s.completedRuns.filter((run) => run.sessionId !== key),
           sessionRuns: Object.fromEntries(Object.entries(s.sessionRuns).filter(([id]) => id !== key)),

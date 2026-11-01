@@ -26,7 +26,7 @@ def verified_images(inventory):
     return inventory
 
 
-def save_clarification(session_id, decision, user_text, source_message_id, sources):
+def save_clarification(session_id, decision, user_text, source_message_id, sources, *, expected_revision=None):
     """Retain exact exchanges independently of the rolling inference window."""
     from .decision import Clarify, Delegate, CadRoute
     if not session_id:
@@ -36,6 +36,8 @@ def save_clarification(session_id, decision, user_text, source_message_id, sourc
     if session is None:
         return None
     previous = session.get('cad_context') or {}
+    if expected_revision is not None and previous.get('revision', 0) != expected_revision:
+        raise ValueError('La définition de la pièce a évolué pendant cette réponse. Reprends les dernières précisions.')
     is_cad = isinstance(decision, Delegate) and isinstance(decision.route, CadRoute)
     drawing = (decision.drawing if isinstance(decision, Clarify) else
                decision.route.payload.drawing if is_cad else None)
@@ -82,5 +84,6 @@ def save_clarification(session_id, decision, user_text, source_message_id, sourc
                'sources': sources,
                'drawing': drawing.model_dump(mode='json') if drawing else previous.get('drawing'),
                'exchanges': exchanges,
-               'question': decision.reply if isinstance(decision, Clarify) else None}
-    return store.set_cad_context(session_id, context)
+               'question': decision.reply if isinstance(decision, Clarify) else
+                           None if is_cad else previous.get('question')}
+    return store.set_cad_context(session_id, context, expected_revision=previous.get('revision', 0))

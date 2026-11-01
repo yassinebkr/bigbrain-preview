@@ -169,12 +169,14 @@ class SessionStore:
         self._atomic_write(self._path(session["id"]), session)
         return session
 
-    def set_cad_context(self, session_id: str, context: dict) -> dict:
+    def set_cad_context(self, session_id: str, context: dict, *, expected_revision: int | None = None) -> dict:
         """Persist a conversation-owned design snapshot beside its transcript."""
         session = self.get(session_id)
         if session is None:
             raise SessionError('Conversation introuvable.')
         previous = session.get('cad_context') or {}
+        if expected_revision is not None and previous.get('revision', 0) != expected_revision:
+            raise SessionError('La définition de la pièce a évolué pendant cette réponse. Reprends les dernières précisions.')
         context = dict(context, revision=previous.get('revision', 0) + 1)
         session['cad_context'] = context
         self._atomic_write(self._path(session_id), session)

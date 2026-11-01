@@ -27,6 +27,17 @@ def fixture():
     return store, session['id'], record, data
 
 
+def test_native_schema_exposes_dimension_origin_constraints():
+    from bigbrain.cad_drawings import DrawingSpecification
+    schema = DrawingSpecification.model_json_schema()
+    user = schema['$defs']['UserDimension']
+    assert user['properties']['dependencies']['maxItems'] == 0
+    assert {'value', 'user_message_id', 'user_quote'} <= set(user['required'])
+    derived = schema['$defs']['DerivedDimension']
+    assert derived['properties']['dependencies']['minItems'] == 1
+    assert schema['$defs']['UnresolvedDimension']['properties']['value']['type'] == 'null'
+
+
 def test_sources_and_thumbnail_refs_survive_reload():
     store, sid, record, _ = fixture()
     loaded = SessionStore().get(sid)
@@ -69,6 +80,31 @@ def test_natural_language_clarification_has_no_image_dependency():
     assert result['sources'] == []
     assert result['question'] == 'Quelle épaisseur ?'
     assert result['exchanges'][0]['user'] == 'Une plaque de 40 par 20 mm'
+
+
+def test_conversational_reply_preserves_the_pending_question():
+    from bigbrain.front.decision import Respond
+    store, sid, _, _ = fixture()
+    save_clarification(sid, Clarify(operation='clarify', cad=True, reply='Quelle hauteur ?'),
+                       'Create this support', 'first', [])
+    result = save_clarification(sid, Respond(operation='respond', reply='Bien sûr.'),
+                                'Un instant', 'second', [])
+    assert result['question'] == 'Quelle hauteur ?'
+
+
+def test_stale_design_snapshot_cannot_overwrite_newer_answers():
+    store, sid, _, _ = fixture()
+    first = save_clarification(sid, Clarify(operation='clarify', cad=True, reply='Quelle hauteur ?'),
+                              'Create this support', 'first', [], expected_revision=0)
+    second = save_clarification(sid, Clarify(operation='clarify', cad=True, reply='Quel diamètre ?'),
+                               '25 mm', 'second', [], expected_revision=first['revision'])
+    with pytest.raises(ValueError, match='évolué'):
+        save_clarification(sid, Clarify(operation='clarify', cad=True, reply='Ancienne question'),
+                           'old', 'old', [], expected_revision=first['revision'])
+    assert store.get(sid)['cad_context'] == second
+    with pytest.raises(ValueError, match='évolué'):
+        store.set_cad_context(sid, {**first, 'run_id': 'stale-run'}, expected_revision=first['revision'])
+    assert store.get(sid)['cad_context'] == second
 
 
 def test_cross_conversation_drawing_sources_are_rejected():
@@ -191,6 +227,7 @@ async def test_followup_after_front_restart_receives_image_and_dossier(monkeypat
         await front._handle_ui_message(message)
         messages = provider.calls[0]['messages']
         assert any('Quelle hauteur ?' in str(item['content']) for item in messages)
+        assert any(store.get(sid)['messages'][0]['id'] in str(item['content']) for item in messages)
         assert any(block.get('type') == 'image_url' for block in messages[-1]['content'])
         assert messages[-1]['content'][0]['text'] == '2 cm'
         assert emitted

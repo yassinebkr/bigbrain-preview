@@ -2,6 +2,7 @@ import type { Attachment } from '@/types';
 
 export interface CadBrief {
   revision: number;
+  run_id?: string;
   status: 'clarifying' | 'proposed';
   sources: Attachment[];
   question?: string | null;
