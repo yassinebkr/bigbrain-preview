@@ -163,6 +163,7 @@ export class BigBrainConnection implements ConnectionLike {
           id: m.id,
           role: m.role === 'user' ? 'user' : 'assistant',
           content: m.text,
+          attachments: m.attachments,
           timestamp: typeof m.timestamp === 'number'
             ? m.timestamp * 1000
             : Date.parse(m.timestamp) || Date.now(),
@@ -176,6 +177,8 @@ export class BigBrainConnection implements ConnectionLike {
       // Also surface as catch-up so App can wire it later.
       if (responseSession === this.sessionKey && !frame.error) {
         this.callbacks.onResumeCatchUp?.(messages, responseSession, asOf);
+        this.callbacks.onAgentActivity?.({ type: 'cad.context.updated', detail: {
+          session_id: responseSession, context: frame.payload?.cad_context || null } });
         for (const activity of frame.payload?.activities || []) {
           if (activity.payload?.session_id !== responseSession) continue;
           this.callbacks.onAgentActivity?.({ type: activity.payload.event,

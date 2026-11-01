@@ -8,6 +8,7 @@ import { composeWidgets, parseWidgetProposal } from '@/lib/widgetPolicy';
 import { useWorkspaceStore } from '@/store/workspaceStore';
 import { ResearchActivity } from './ResearchPanel';
 import { CadPanel } from './CadPanel';
+import { CadDesignBrief } from './CadDesignBrief';
 
 const stageLabels: Record<string, string> = { syntax: 'Syntaxe', compile: 'Compilation', run: 'Exécution', contracts: 'Fichiers attendus', tests: 'Tests', entry_point: 'Point d’entrée', semantics: 'Revue indépendante', attached_delivery: 'Livraison du dossier local' };
 
@@ -31,6 +32,7 @@ export function VerificationWidget({ run }: { run: RunState }) {
 }
 
 function ProposalWidget({ run }: { run: RunState }) {
+  const brief = useAppStore((s) => s.cadBriefs[run.sessionId]);
   const proposal = useAppStore((s) => s.sessionProposals[run.sessionId]);
   const activeProposal = useAppStore((s) => s.contractProposal);
   const sending = useAppStore((s) => s.contractSending);
@@ -44,7 +46,10 @@ function ProposalWidget({ run }: { run: RunState }) {
     <h3 className="work-heading">{proposal.target?.mode === 'existing' ? 'Valider les changements proposés' : 'Voici ce qui sera livré'}</h3>
     {proposal.target && <code className="block text-[11px] break-all mt-3 work-muted">{proposal.target.path}</code>}
     {stack && <StackSummary value={stack} />}
-    <ContractCriteria contracts={proposal.contracts} />
+    {brief?.status === 'proposed' && <CadDesignBrief brief={brief} />}
+    {brief?.status === 'proposed'
+      ? <details className="mt-4"><summary className="work-link text-xs">Examiner les vérifications et limites · {proposal.contracts.length}</summary><ContractCriteria contracts={proposal.contracts} /></details>
+      : <ContractCriteria contracts={proposal.contracts} />}
     <SourceConsent value={proposal.sourceTransmission} />
     <div className="mt-5 flex flex-wrap gap-2"><button disabled={sending || !canDecide} className="work-primary" onClick={() => void decide(true)}>{sending ? <Loader2 size={14} className="animate-spin motion-reduce:animate-none" /> : <Check size={14} />} Approuver et lancer</button>
       <button disabled={sending || !canDecide} className="work-secondary" onClick={() => void decide(false)}><X size={13} /> Refuser</button></div>

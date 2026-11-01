@@ -71,7 +71,16 @@ export function ContractCard({ compact = false }: { compact?: boolean }) {
   const error = useAppStore((s) => s.contractError);
   const sendContractDecision = useAppStore((s) => s.sendContractDecision);
   const sessionId = useAppStore((s) => s.activeSessionKey);
+  const brief = useAppStore((s) => s.cadBriefs[sessionId]);
+  const run = useAppStore((s) => proposal ? s.runsById[proposal.planId] : undefined);
   const selectedId = useWorkspaceStore((s) => s.sessions[sessionId]?.selectedId);
+  if (proposal && brief && run) {
+    return <div className="self-start max-w-sm rounded-2xl px-4 py-3 text-sm" style={{ border: '1px solid var(--border-subtle)' }}>
+      <p>La définition de la pièce est prête.</p>
+      <button className="work-link mt-2 text-xs" onClick={() => useWorkspaceStore.getState().inspect(run)}>Examiner le contrat dans l’Atelier →</button>
+      <p className="work-muted text-xs mt-2">La construction attend ton accord.</p>
+    </div>;
+  }
   if (proposal && compact && selectedId?.startsWith(`${encodeURIComponent(sessionId)}/${encodeURIComponent(proposal.planId)}/`)) {
     return <div className="self-start max-w-sm rounded-2xl px-4 py-3 text-[13px] work-muted" style={{ border: '1px solid var(--border-subtle)' }} role="status">Contrat prêt à examiner dans l’Atelier → <span className="block mt-1 text-[11px]">Le travail attend ton accord.</span></div>;
   }

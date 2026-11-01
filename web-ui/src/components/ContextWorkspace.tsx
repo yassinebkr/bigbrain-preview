@@ -9,6 +9,7 @@ import { usePreview } from '@/lib/usePreview';
 import { WorkOverview } from './WorkWidgets';
 import { ResearchPanel } from './ResearchPanel';
 import { CadPanel } from './CadPanel';
+import { CadDesignBrief } from './CadDesignBrief';
 import { isPartialResearch } from '@/lib/research';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from './ui/dropdown-menu';
 
@@ -78,6 +79,8 @@ export function SurfaceContent({ surface, select = () => {} }: { surface: WorkSu
 export function ContextWorkspace({ children }: { children: (ownsActivity: boolean) => ReactNode }) {
   const reducedMotion = useReducedMotion();
   const sessionId = useAppStore((s) => s.activeSessionKey);
+  const brief = useAppStore((s) => s.cadBriefs[sessionId]);
+  const clarifying = brief?.status === 'clarifying';
   const runsById = useAppStore((s) => s.runsById);
   const completed = useAppStore((s) => s.completedRuns);
   const stopGeneration = useAppStore((s) => s.stopGeneration);
@@ -90,7 +93,7 @@ export function ContextWorkspace({ children }: { children: (ownsActivity: boolea
   const runs = surfaces.filter((surface) => surface.kind === 'activity');
   const expanded = state.mode === 'expanded';
   const explicit = state.mode === 'workspace' || expanded;
-  const open = !!sessionId && (runs.length > 0 || !!preference?.selectedId) && state.mode !== 'focus';
+  const open = !!sessionId && (runs.length > 0 || !!preference?.selectedId || clarifying) && state.mode !== 'focus';
   const visible = open && (explicit || wide);
   // Anchor the first real object once. Events can enrich it, not select a
   // concurrent run or open a preview server on the user's behalf.
@@ -117,11 +120,11 @@ export function ContextWorkspace({ children }: { children: (ownsActivity: boolea
   const close = () => change({ mode: 'focus' });
   const resize = (width: number) => change({ width: Math.min(1000, Math.max(400, width)) });
   return <section className="relative flex flex-col h-full min-h-0 min-w-0" aria-label="Workspace adaptatif" style={{ color: 'var(--text-primary)' }}>
-    {(runs.length > 0 || !!preference?.selectedId) && <button
+    {(runs.length > 0 || !!preference?.selectedId || clarifying) && <button
       className={`absolute right-4 top-2 z-10 rounded-lg px-3 py-2 text-[11px] ${open ? (explicit ? 'hidden' : 'min-[1440px]:hidden') : ''}`}
       style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)' }}
       onClick={() => change({ mode: 'workspace' })} aria-label="Ouvrir l’espace de travail">
-      <PanelRight size={14} className="inline mr-2" />Travaux · {runs.length}
+      <PanelRight size={14} className="inline mr-2" />{clarifying ? 'Conception de la pièce' : `Travaux · ${runs.length}`}
     </button>}
     <div className="context-layout flex-1 min-h-0 min-w-0" data-mode={visible ? expanded ? 'expanded' : 'open' : !open && preference?.mode !== 'focus' ? 'reserved' : 'closed'} style={{ '--context-width': `${state.width}px` } as CSSProperties}>
       <div className="context-chat min-w-0 h-full">{children(visible)}</div>
@@ -142,7 +145,7 @@ export function ContextWorkspace({ children }: { children: (ownsActivity: boolea
             <div className="context-identity" aria-hidden="true"><Layers size={19} /></div>
             <div className="flex-1 min-w-0">
               <p className="text-[10px] uppercase tracking-[0.14em] work-muted mb-1">Atelier</p>
-              {runs.length > 1 ? <DropdownMenu>
+              {clarifying ? <h2 className="text-sm font-medium">Définition de la pièce</h2> : runs.length > 1 ? <DropdownMenu>
                 <DropdownMenuTrigger asChild><button className="atelier-work-trigger" aria-label="Travail consulté"><span>{state.selected ? runTitle(state.selected.run) : 'Choisir un travail'}</span><ChevronDown size={14} /></button></DropdownMenuTrigger>
                 <DropdownMenuContent align="start" sideOffset={10} className="atelier-work-menu">
                   <DropdownMenuLabel className="atelier-work-menu-label">Travaux de cette conversation</DropdownMenuLabel>
@@ -151,20 +154,20 @@ export function ContextWorkspace({ children }: { children: (ownsActivity: boolea
                   </DropdownMenuRadioGroup>
                 </DropdownMenuContent>
               </DropdownMenu> : <h2 className="text-[14px] font-medium line-clamp-2" title={state.selected?.run.description}>{state.selected ? (state.selected.run.cad || state.selected.run.projectName || state.selected.run.projectPath ? runTitle(state.selected.run) : Object.keys(state.selected.run.researches || {}).length ? 'Recherche documentaire' : 'Travail de la conversation') : 'Résultat indisponible'}</h2>}
-              {state.selected && <p className="context-status text-[11px] mt-1 flex items-center gap-2" data-status={state.selected.run.status}>{state.selected.run.status === 'running' && !state.selected.run.awaitingApproval && <span className="work-pulse" aria-hidden="true" />}{state.selected.run.deliveryStatus === 'incomplete' ? 'Incomplet · non validé' : isPartialResearch(state.selected.run) ? 'Incomplet' : state.selected.run.awaitingApproval ? 'Ton accord est nécessaire' : statuses[state.selected.run.status]}</p>}
+              {clarifying ? <p className="text-xs mt-1 work-muted">Tes précisions sont nécessaires</p> : state.selected && <p className="context-status text-[11px] mt-1 flex items-center gap-2" data-status={state.selected.run.status}>{state.selected.run.status === 'running' && !state.selected.run.awaitingApproval && <span className="work-pulse" aria-hidden="true" />}{state.selected.run.deliveryStatus === 'incomplete' ? 'Incomplet · non validé' : isPartialResearch(state.selected.run) ? 'Incomplet' : state.selected.run.awaitingApproval ? 'Ton accord est nécessaire' : statuses[state.selected.run.status]}</p>}
             </div>
             <button className="p-1" aria-label={expanded ? 'Redonner la place principale au chat' : 'Donner la place principale à cette activité'} onClick={() => change({ mode: expanded ? 'workspace' : 'expanded' })}>{expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
             <button className="p-1" aria-label="Fermer la surface" onClick={close}><X size={16} /></button>
           </header>
-          <nav className="context-tabs flex shrink-0 overflow-x-auto" aria-label="Contenu de la surface">
+          {!clarifying && <nav className="context-tabs flex shrink-0 overflow-x-auto" aria-label="Contenu de la surface">
             {surfaces.filter((s) => s.run.id === state.selected?.run.id).sort((a, b) => ['activity', 'cad', 'research', 'preview', 'files', 'verification'].indexOf(a.kind) - ['activity', 'cad', 'research', 'preview', 'files', 'verification'].indexOf(b.kind)).map((surface) => <button key={surface.id} aria-pressed={state.selected?.id === surface.id} className="text-[11px] shrink-0" onClick={() => change({ selectedId: surface.id })}>{labels[surface.kind]}</button>)}
-          </nav>
+          </nav>}
           <div className="flex-1 overflow-y-auto min-h-0" ref={contentRef} onScroll={(event) => { if (state.selected) positions.current[state.selected.id] = event.currentTarget.scrollTop; }}>
-            {visible && (state.selected ? <SurfaceContent key={state.selected.id} surface={state.selected} select={(kind) => { const surface = surfaces.find((item) => item.run.id === state.selected?.run.id && item.kind === kind); if (surface) change({ selectedId: surface.id }); }} /> : <p className="p-5 text-[12px]" role="status">Historique en cours de restauration ou résultat indisponible. Les autres travaux restent accessibles.</p>)}
+            {visible && (clarifying && brief ? <div className="p-4"><CadDesignBrief brief={brief} /></div> : state.selected ? <SurfaceContent key={state.selected.id} surface={state.selected} select={(kind) => { const surface = surfaces.find((item) => item.run.id === state.selected?.run.id && item.kind === kind); if (surface) change({ selectedId: surface.id }); }} /> : <p className="p-5 text-[12px]" role="status">Historique en cours de restauration ou résultat indisponible. Les autres travaux restent accessibles.</p>)}
           </div>
           <footer className="context-footer px-4 py-3 text-[11px] shrink-0 flex justify-between gap-2" style={{ color: 'var(--text-tertiary)' }}>
-            <span>{state.selected?.run.awaitingApproval ? 'Ton accord est nécessaire' : state.selected?.run.status === 'running' ? 'Activité en direct' : 'Résultat conservé dans la conversation'}</span>
-            {state.selected?.run.status === 'running' && <button className="shrink-0" onClick={stopGeneration}>Arrêter les travaux</button>}
+            <span>{clarifying ? 'Sources et précisions conservées dans cette conversation' : state.selected?.run.awaitingApproval ? 'Ton accord est nécessaire' : state.selected?.run.status === 'running' ? 'Activité en direct' : 'Résultat conservé dans la conversation'}</span>
+            {!clarifying && state.selected?.run.status === 'running' && <button className="shrink-0" onClick={stopGeneration}>Arrêter les travaux</button>}
           </footer>
         </motion.aside>
       </>}

@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm';
 import { Check, Copy } from 'lucide-react';
 import { useState } from 'react';
 import type { Message } from '@/types';
+import { AttachmentPreview } from './AttachmentPreview';
 
 interface MessageBubbleProps {
   message: Message;
@@ -142,7 +143,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
                       color: isUser ? '#ffffff' : 'var(--text-primary)',
                     }}
                   >
-                    {att.name}
+                    <AttachmentPreview attachment={att} />
                   </div>
                 ))}
               </div>
