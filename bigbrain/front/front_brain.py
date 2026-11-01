@@ -845,12 +845,13 @@ Type 'quit' or 'exit' to stop."""
                     return stored, None, (
                         "I couldn’t read the attached image from storage. "
                         "Please upload it again.")
+                image_bytes = path.read_bytes()
                 blocks.append(image_content_block(
-                    path.read_bytes(), str(image.get("type")).lower()))
+                    image_bytes, str(image.get("type")).lower()))
                 import hashlib
                 blocks.append({'type': 'text', 'text': 'Image provenance: ' + json.dumps({
                     'attachment_id': image['id'],
-                    'sha256': hashlib.sha256(path.read_bytes()).hexdigest()})})
+                    'sha256': hashlib.sha256(image_bytes).hexdigest()})})
 
         notes = []
         if images:

@@ -4,6 +4,13 @@ import { presentCadCheck } from './cadChecks';
 const base = { criterion_id: 'volume', status: 'passed' as const, evidence_ref: 'measure.json', source_sha256: 'a'.repeat(64),
   diagnostic: 'Volume après perçages: observed (14060.764351065302,); expected (14060.707993412303,)' };
 describe('CAD measurement presentation', () => {
+  it('presents measured material sections and an empty through hole', () => {
+    const result = presentCadCheck({ ...base, label: 'Perçage', observed_intervals_mm: [[0, 12], [18, 60]],
+      expected_intervals_mm: [[0, 12], [18, 60]], absolute_tolerance: 0.05 });
+    expect(result.observed).toBe('0–12 mm ; 18–60 mm');
+    expect(result.tolerance).toBe('0,05 mm');
+    expect(presentCadCheck({ ...base, observed_intervals_mm: [], expected_intervals_mm: [] }).observed).toBe('Vide traversant');
+  });
   it('formats historical floating point diagnostics without changing their verdict', () => {
     const result = presentCadCheck(base);
     expect(result.label).toBe('Volume après perçages');

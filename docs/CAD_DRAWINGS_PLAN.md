@@ -66,6 +66,10 @@ expected value against the drawing, including inch-to-millimetre conversion.
 Missing bindings block the recipe. Angular and manufacturing criteria require
 additional measurement support and clarification.
 
+Bindings can subtract another section quantity. Both independently measured
+sections must pass, and their expected difference must match the source dimension.
+This covers dimensions such as step rise = total height − base thickness.
+
 Sections intersect the captured binary STL with axis-aligned lines. They check
 local material and void intervals for hole position, diameter, depth, recesses
 and stepped profiles. Samples retain the STL hash and native revision hash.
@@ -85,3 +89,55 @@ sketches, extrusions, chamfers and fillets alongside primitive operations.
 Independent tests move a hole while retaining equal volume: global checks agree,
 while the local section detects the incorrect position. Repair tests exercise
 both successful correction and persistent failure without publication.
+
+## Phase 4 evidence — 1 November 2026
+
+The artificial drawing fixture `tests/fixtures/cad/stepped-support.svg` defines
+an 80 × 40 mm base, 8 mm thick, a 20 mm long raised step reaching Z=20 mm,
+and a through-hole Ø6 at X=60, Y=20. Its expected geometry is independent of
+the model output. The native regression campaign also covers rounded outlines,
+equal-volume hole relocation, ambiguous boundary sections, invalid STL records,
+unit conversion, missing/conflicting dimensions and stale image hashes.
+
+The Codex adapter now sends image blocks as native app-server image inputs.
+Earlier code serialized multimodal blocks into text despite declaring vision.
+RPC regression tests cover image ordering, text accounting and rejection of
+remote/file URLs. Text-only conversation reuse retains its existing format.
+
+The model-led validation ran in stages, using Sol 6.1 low through Codex:
+
+| Stage | Observed result | Calls | Reported input / output / cached tokens |
+| --- | --- | ---: | --- |
+| Browser drawing upload, front interpretation and first proposal | Dimensions read correctly; missing measurement binding for derived step rise blocked the proposal | 2 | 22,543 / 4,809 / 3,584 |
+| Targeted proposal continuation | Corrected contract generated; the browser driver exhausted its remaining observation window | 1 | 16,101 / 2,631 / 3,584 |
+| Local proposal replay and Atelier confirmation | Confirmation reached the worker; the engine rejected a symbolic sketch-circle diameter | 0 | — |
+| Authorized native repair of the recorded candidate | One correction, fresh candidate, 13 passing criteria and publication in 9.05 s | 1 | 9,514 / 363 / 3,584 |
+
+The repair retained all confirmed dimensions and measurement targets. It changed
+the sketch-circle diameter from the expression `D` to numeric 6, as required by
+the installed engine. Completed command rejections enter the bounded repair
+loop; transport uncertainty stops the run. Command diagnostics remain available
+beside the candidate evidence. The native document was independently reopened:
+the cylinder radius is 3 mm at X=60/Y=20, base and step faces lie at Z=8/20,
+and the editable sketch and feature history remain present.
+
+Measured volume is 34,973.84290071026 mm³. Its native SHA256 is
+`878777d61a45ea3f738072d3ff17dcf9ab7539bc134d03eee762eb897bd41295`.
+The final repair report is temporarily available at
+`/tmp/cad-repair-live-dwx9igu_/report.json`; earlier browser/call records are under
+`/tmp/bigbrain-cad-drawing-probe-wb7d5b5l/`. Temporary files can disappear after
+cleanup or reboot. Subscription usage was observed; monetary cost is unknown.
+
+Local verification: the full backend run passes 2,170 tests with eight optional
+extractor cases skipped. Six stricter axis-type cases were added after that run's
+collection; all eighteen section tests then passed. The frontend build and all
+153 Vitest cases pass. The first full run exposed a CAD diagnostic-prefix
+compatibility regression and two timing-sensitive failures. The prefix was
+restored; isolated rechecks and the subsequent complete run pass. CI is deferred
+until the pre-merge review as requested.
+
+A fresh uninterrupted browser run of the final code remains a qualification
+step. The recorded stages establish vision, contract gating, Atelier approval,
+native repair and measured publication individually. Windows native behavior,
+cross-turn image inventory, arbitrary topology, fits and manufacturing tolerances
+remain follow-up work. Existing-component portability follows this CAD cycle.

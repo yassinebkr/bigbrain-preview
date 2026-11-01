@@ -4,13 +4,14 @@ import asyncio
 import json
 import time
 import tempfile
+import uuid
 from pathlib import Path
 
 from .base import BaseBrain
 from ..cad_contracts import CadDelivery
 from ..cad_planning import CadPlan, draft_cad_plan, draft_cad_repair
 from ..cad_store import CadStore
-from ..solidcraft import CadError, SolidCraftSession, solidcraft_executable
+from ..solidcraft import CadError, CadCommandError, SolidCraftSession, solidcraft_executable
 
 
 async def prepare_cad_plan(provider, payload, *, model=None):
@@ -103,7 +104,22 @@ class CadBrain(BaseBrain):
                         if previous:
                             from ..cad_contracts import CadRevision
                             await session.reopen(CadRevision.model_validate(previous['document']).native)
-                        await session.batch([item.model_dump(exclude={'schema_version'}) for item in plan.commands])
+                        try:
+                            await session.batch([item.model_dump(exclude={'schema_version'}) for item in plan.commands])
+                        except CadCommandError as error:
+                            diagnostic = {'attempt': attempt, 'engine_result': error.result,
+                                          'observations': session.observations}
+                            (root / f'command-failure-{uuid.uuid4().hex}.json').write_text(
+                                json.dumps(diagnostic, allow_nan=False), encoding='utf-8')
+                            if attempt == plan.max_repairs or self.llm_provider is None:
+                                raise
+                            # The next attempt opens a new isolated session from
+                            # the approved original, regardless of batch rollback.
+                            await session.close()
+                            await progress('checking', 'cad_repair_diagnosis', previous, str(error))
+                            plan = await draft_cad_repair(self.llm_provider, plan, (), model=self.model,
+                                                         command_diagnostic=error.result.get('failed'))
+                            continue
                         await progress('checking', 'cad_checking', previous)
                         revisions = [int(path.name.split('-')[1]) for path in root.glob('revision-*')
                                      if path.name.split('-')[1].isdigit()]

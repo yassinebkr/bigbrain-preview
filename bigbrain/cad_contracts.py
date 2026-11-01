@@ -12,7 +12,7 @@ Vector = tuple[Finite, Finite, Finite]
 
 
 class Contract(BaseModel):
-    """Immutable records assembled by the runtime from captured observations."""
+    """Immutable versioned CAD records validated at runtime."""
 
     model_config = ConfigDict(extra='forbid', frozen=True, revalidate_instances='always')
     schema_version: Literal['1.0'] = '1.0'

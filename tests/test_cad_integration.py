@@ -56,7 +56,7 @@ def test_native_front_route_preserves_cad_edit_identity():
     assert decision.decision.task_payload()['route']['payload']['user_request'].startswith('Créer une plaque')
 
 
-async def prepared(bus, plan_data, *, document_id=None, revision=None):
+async def prepared(bus, plan_data, *, document_id=None, revision=None, drawing=None):
     provider = Provider(plan_data)
     orchestrator = WorkspaceOrchestrator('default', bus, llm_provider=provider)
     orchestrator.register_brain('cad_brain', {'description': 'CAD'})
@@ -64,6 +64,8 @@ async def prepared(bus, plan_data, *, document_id=None, revision=None):
                'user_request': 'Plaque mécanique ' + str(plan_data['criteria'][0]['expected'])}
     if document_id:
         payload.update(document_id=document_id, base_revision=revision)
+    if drawing is not None:
+        payload['drawing'] = drawing
     message = BusMessage(type=MessageType.TASK, source='morphable_ui', target=orchestrator.name, payload=payload)
     plan = await orchestrator._create_task_plan(message)
     assert len(plan.subtasks) == 1 and plan.subtasks[0].brain_target == 'cad_brain'
@@ -239,5 +241,92 @@ async def test_bounded_repair_preserves_confirmed_targets(tmp_path, engine, repa
         else:
             assert result['delivery_status'] == 'incomplete'
             assert not list(CadStore().root.glob('*/current.json'))
+    finally:
+        await bus.close()
+
+
+@pytest.mark.asyncio
+async def test_dimensioned_stepped_support_runs_through_contract_and_local_checks(tmp_path, engine):
+    from pathlib import Path
+    import hashlib
+    source = {'attachment_id': 'att-012345abcdef',
+              'sha256': hashlib.sha256(Path('tests/fixtures/cad/stepped-support.svg').read_bytes()).hexdigest()}
+    dimensions = [('width', 80, 'length'), ('depth', 40, 'length'), ('height', 20, 'length'),
+                  ('step', 20, 'length'), ('base', 8, 'depth'), ('diameter', 6, 'diameter'),
+                  ('hole_x', 60, 'position'), ('hole_y', 20, 'position')]
+    drawing = {'title': 'Stepped support', 'sources': [source], 'views': ['top', 'front'],
+        'dimensions': [{'id': identity, 'feature_id': identity, 'label': identity,
+            'kind': kind, 'value': value, 'unit': 'mm', 'origin': 'explicit',
+            'sources': [source], 'annotation': str(value)} for identity, value, kind in dimensions]}
+    def section(identity, axis, point, intervals, bindings=()):
+        return {'id': identity, 'label': identity, 'axis': axis, 'point_mm': point,
+                'intervals_mm': intervals, 'bindings': [
+                    {'dimension_id': dimension, 'quantity': quantity, 'interval': index}
+                    for dimension, quantity, index in bindings]}
+    data = {'title': 'Stepped support', 'commands': [
+        {'command': 'solid.box', 'params': {'length': 80, 'width': 40, 'height': 8, 'body_name': 'support'}},
+        {'command': 'solid.box', 'params': {'length': 20, 'width': 40, 'height': 12,
+            'corner': [0, 0, 8], 'operation': 'join', 'targets': ['support']}},
+        {'command': 'solid.cylinder', 'params': {'radius': 3, 'height': 8,
+            'base': [60, 20, 0], 'operation': 'cut', 'targets': ['support']}}],
+        'criteria': [{'id': 'envelope', 'label': 'Envelope', 'metric': 'dimensions_mm',
+            'expected': [80, 40, 20], 'dimension_bindings': {'width': 0, 'depth': 1, 'height': 2}}],
+        'sections': [section('step_length', 0, [0, 10, 12], [[0, 20]], [('step', 'length', 0)]),
+            section('base_thickness', 2, [30, 10, 0], [[0, 8]], [('base', 'length', 0)]),
+            section('hole_x', 0, [0, 20, 4], [[0, 57], [63, 80]], [('hole_x', 'gap_center', 0), ('diameter', 'gap', 0)]),
+            section('hole_y', 1, [60, 0, 4], [[0, 17], [23, 40]], [('hole_y', 'gap_center', 0)]),
+            section('through', 2, [60, 20, 0], [])]}
+    bus = MessageBus(tmp_path / 'bus', auth=None)
+    try:
+        plan, spec, _ = await prepared(bus, data, drawing=drawing)
+        assert spec.metadata['cad']['plan']['drawing']['sources'] == [dict(source, schema_version='1.0', region=[0, 0, 1, 1])]
+        confirmed = default_repository().approve_spec(spec.design_id, plan_id=plan.id)
+        result = await CadBrain('cad_brain', bus).handle_task(task(plan, confirmed))
+        assert result['success'], result
+        assert len(result['cad']['checks']) == 6
+        assert all(item['status'] == 'passed' for item in result['cad']['checks'])
+        root = CadStore().directory(result['cad']['document']['document_id'])
+        sections = json.loads((root / 'revision-1/sections.json').read_text())
+        assert len(sections) == 5 and all(len(item['surface_sha256']) == 64 for item in sections)
+    finally:
+        await bus.close()
+
+
+@pytest.mark.asyncio
+async def test_native_command_rejection_enters_the_same_bounded_repair_loop(tmp_path, engine):
+    initial = recipe()
+    initial['commands'][0]['params']['expression'] = 'missing_parameter + 1'
+    provider = Provider({'commands': recipe()['commands']})
+    bus = MessageBus(tmp_path / 'bus', auth=None)
+    try:
+        plan, spec, _ = await prepared(bus, initial)
+        confirmed = default_repository().approve_spec(spec.design_id, plan_id=plan.id)
+        result = await CadBrain('cad_brain', bus, llm_provider=provider).handle_task(task(plan, confirmed))
+        assert result['success'], result
+        assert len(provider.calls) == 1
+        diagnosis = json.loads(provider.calls[0]['messages'][1]['content'])['command_diagnostic']
+        assert diagnosis['command'] == 'parameters.change' and diagnosis['index'] == 0
+        root = CadStore().directory(result['cad']['document']['document_id'])
+        assert len(list(root.glob('command-failure-*.json'))) == 1
+        assert all(item['status'] == 'passed' for item in result['cad']['checks'])
+    finally:
+        await bus.close()
+
+
+@pytest.mark.asyncio
+async def test_transport_uncertainty_stops_before_repair(tmp_path, engine, monkeypatch):
+    from bigbrain.solidcraft import SolidCraftSession
+    provider = Provider({'commands': recipe()['commands']})
+    bus = MessageBus(tmp_path / 'bus', auth=None)
+    try:
+        plan, spec, _ = await prepared(bus, recipe())
+        confirmed = default_repository().approve_spec(spec.design_id, plan_id=plan.id)
+        async def uncertain(*args, **kwargs):
+            raise CadError('CAD response identity mismatch')
+        monkeypatch.setattr(SolidCraftSession, 'batch', uncertain)
+        result = await CadBrain('cad_brain', bus, llm_provider=provider).handle_task(task(plan, confirmed))
+        assert not result['success'] and result['delivery_status'] == 'incomplete'
+        assert provider.calls == []
+        assert not list(CadStore().root.glob('*/current.json'))
     finally:
         await bus.close()

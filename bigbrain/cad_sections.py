@@ -10,10 +10,17 @@ from pydantic import Field, model_validator
 from .cad_contracts import Contract, CriterionObservation, Finite, Identity, Vector
 
 
+class SectionOperand(Contract):
+    section_id: Identity
+    quantity: Literal['start', 'end', 'length', 'gap', 'gap_center']
+    interval: int = Field(ge=0, le=15, strict=True)
+
+
 class DimensionBinding(Contract):
     dimension_id: Identity
-    quantity: Literal['start', 'end', 'length', 'gap']
+    quantity: Literal['start', 'end', 'length', 'gap', 'gap_center']
     interval: int = Field(ge=0, le=15, strict=True)
+    subtract: SectionOperand | None = None
 
 
 class CadSection(Contract):
@@ -21,7 +28,7 @@ class CadSection(Contract):
 
     id: Identity
     label: str = Field(min_length=1, max_length=500)
-    axis: Literal[0, 1, 2]
+    axis: int = Field(strict=True, ge=0, le=2)
     point_mm: Vector
     intervals_mm: tuple[tuple[Finite, Finite], ...] = Field(max_length=16)
     absolute_tolerance_mm: Finite = Field(default=0.05, gt=0, le=0.1)
@@ -43,10 +50,11 @@ class CadSection(Contract):
         if index >= len(self.intervals_mm):
             raise ValueError('Dimension binding references an absent section interval')
         start, end = self.intervals_mm[index]
-        if binding.quantity == 'gap':
+        if binding.quantity in {'gap', 'gap_center'}:
             if index + 1 >= len(self.intervals_mm):
                 raise ValueError('Gap requires a following material interval')
-            return self.intervals_mm[index + 1][0] - end
+            following = self.intervals_mm[index + 1][0]
+            return following - end if binding.quantity == 'gap' else (following + end) / 2
         return {'start': start, 'end': end, 'length': end - start}[binding.quantity]
 
 
@@ -83,6 +91,16 @@ def material_intervals(triangles, section: CadSection):
         cu, cv = c[u] - a[u], c[v] - a[v]
         denominator = bu * cv - bv * cu
         if abs(denominator) < 1e-12:
+            # A line lying on a surface has no stable inside/outside result.
+            # Detect it in the degenerate perpendicular projection.
+            for first, second in ((a, b), (b, c), (c, a)):
+                du, dv = second[u] - first[u], second[v] - first[v]
+                length2 = du * du + dv * dv
+                fraction = ((pu - first[u]) * du + (pv - first[v]) * dv) / length2 if length2 else 0
+                if (0 <= fraction <= 1 and
+                        math.hypot(pu - first[u] - fraction * du,
+                                   pv - first[v] - fraction * dv) < 1e-8):
+                    raise ValueError('Section lies on a surface boundary')
             continue
         du, dv = pu - a[u], pv - a[v]
         beta = (du * cv - dv * cu) / denominator

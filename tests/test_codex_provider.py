@@ -18,6 +18,28 @@ from bigbrain.llm.codex_provider import (
 from bigbrain.llm.codex_provider import CodexJsonRpcClient, CodexUnavailable, CodexNativeToolAttempt, RPC_FRAME_LIMIT
 
 
+def test_native_images_are_sent_as_images_and_omitted_from_text_accounting():
+    from bigbrain.llm.codex_provider import _native_inputs, _flatten
+    messages = [{'role': 'system', 'content': 'Read the drawing'}, {'role': 'user', 'content': [
+        {'type': 'text', 'text': 'Source A'},
+        {'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,UE5H'}},
+        {'type': 'text', 'text': 'Source B'},
+        {'type': 'image_url', 'image_url': {'url': 'data:image/jpeg;base64,SlBFRw=='}}]}]
+    inputs = _native_inputs(messages)
+    assert [item['type'] for item in inputs] == ['text', 'text', 'text', 'image', 'text', 'image']
+    assert inputs[3]['url'] == 'data:image/png;base64,UE5H'
+    assert 'base64' not in _flatten(messages)
+    assert all('base64' not in item.get('text', '') for item in inputs)
+    assert _native_inputs([{'role': 'user', 'content': 'Hello'}]) == [{'type': 'text', 'text': 'USER: Hello'}]
+
+
+def test_native_image_input_rejects_filesystem_and_remote_urls():
+    from bigbrain.llm.codex_provider import _native_inputs
+    for url in ('file:///private.png', '/private.png', 'https://example.com/image.png'):
+        with pytest.raises(ValueError, match='inline'):
+            _native_inputs([{'role': 'user', 'content': [{'type': 'image_url', 'image_url': {'url': url}}]}])
+
+
 @pytest.mark.asyncio
 async def test_native_large_source_notification_is_not_limited_to_64k(monkeypatch):
     from types import SimpleNamespace
@@ -206,6 +228,22 @@ async def test_run_turn_collects_text_and_usage(clean_state):
     assert usage.input_tokens == 12
     assert usage.output_tokens == 7
     assert usage.provider == "codex"
+
+
+@pytest.mark.asyncio
+async def test_turn_start_transports_the_image_outside_the_text_prompt(clean_state):
+    clean_state.notifications = [
+        {'method': 'item/agentMessage', 'params': {'item': {'type': 'agentMessage', 'text': 'Image received'}}},
+        {'method': 'turn/completed', 'params': {}},
+    ]
+    provider = CodexProvider('codex-sol-6.1')
+    text, _ = await provider.run_turn([{'role': 'user', 'content': [
+        {'type': 'text', 'text': 'Inspect this drawing'},
+        {'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,UE5H'}}]}])
+    packet = next(params for method, params in clean_state.calls if method == 'turn/start')
+    assert text == 'Image received'
+    assert packet['input'][-1] == {'type': 'image', 'url': 'data:image/png;base64,UE5H'}
+    assert all('base64' not in item.get('text', '') for item in packet['input'])
 
 
 @pytest.mark.asyncio

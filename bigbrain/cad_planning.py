@@ -95,9 +95,19 @@ class CadPlan(Contract):
                     bind(identity, criterion.expected[index])
             for section in self.sections:
                 for binding in section.bindings:
-                    bind(binding.dimension_id, section.quantity(binding))
-            if any(item.critical and item.id not in covered for item in self.drawing.dimensions):
-                raise ValueError('Every critical drawing dimension requires a geometric measurement binding')
+                    value = section.quantity(binding)
+                    if binding.subtract is not None:
+                        target = next((item for item in self.sections if item.id == binding.subtract.section_id), None)
+                        if target is None:
+                            raise ValueError('Dimension difference references an unknown measured section')
+                        if (target.id == section.id and binding.quantity == binding.subtract.quantity
+                                and binding.interval == binding.subtract.interval):
+                            raise ValueError('Dimension difference requires distinct measurements')
+                        value -= target.quantity(binding.subtract)
+                    bind(binding.dimension_id, value)
+            missing = [item.id for item in self.drawing.dimensions if item.critical and item.id not in covered]
+            if missing:
+                raise ValueError('Every critical drawing dimension requires a geometric measurement binding: ' + ', '.join(missing))
         identities = [item.id for item in (*self.criteria, *self.sections)]
         if len(set(identities)) != len(identities):
             raise ValueError('CAD criterion identifiers must be unique')
@@ -124,7 +134,7 @@ class CadRepair(Contract):
     commands: tuple[CadCommand, ...] = Field(min_length=1, max_length=32)
 
 
-async def draft_cad_repair(provider, plan, checks, *, model=None):
+async def draft_cad_repair(provider, plan, checks, *, model=None, command_diagnostic=None):
     """Propose a fresh candidate recipe against the unchanged measured contract."""
     if provider is None:
         raise ValueError('CAD repair requires a configured model')
@@ -132,9 +142,13 @@ async def draft_cad_repair(provider, plan, checks, *, model=None):
         'Repair the reproduced CAD geometry defect using SolidCraft 0.28.0 geometry commands. '
         'Return a complete replacement recipe applied to the original document, including '
         'all required original features. Preserve drawing requirements and measured targets. '
+        'The engine requires numeric radius/diameter for sketch.circle.center; use numeric '
+        'values or use a supported driving dimension afterward. Primitive solid operations '
+        'and parameters.change accept expressions according to their own command contracts. '
         'Return JSON matching: ' + json.dumps(CadRepair.model_json_schema())},
         {'role': 'user', 'content': json.dumps({'confirmed_plan': plan.model_dump(mode='json'),
-            'observations': [item.model_dump(mode='json') for item in checks]}, ensure_ascii=False)}],
+            'observations': [item.model_dump(mode='json') for item in checks],
+            'command_diagnostic': command_diagnostic}, ensure_ascii=False)}],
         model=model or 'default', stream=False, max_tokens=4000, temperature=0.1)
     response = response.strip()
     if response.startswith('```') and response.endswith('```'):
@@ -159,9 +173,12 @@ async def draft_cad_plan(provider, objective, *, context=None, model=None, drawi
         'Keep numeric criteria faithful to the request; measure volume where it verifies requested material removal. '
         'For drawings, bind every critical dimension to dimensions_mm.dimension_bindings '
         '(dimension ID to XYZ index) or sections.bindings (dimension ID, interval index, '
-        'start/end/length/gap quantity). Section intervals describe material along a full '
+        'start/end/length/gap/gap_center quantity). Section intervals describe material along a full '
         'world-axis line through point_mm. A hole gives a gap; a recess changes intervals '
         'at its interior. Use several sections to check position, size and depth. '
+        'For a dimension obtained by subtracting measured quantities (such as step rise '
+        '= total height minus base thickness), add binding.subtract with section_id, '
+        'quantity and interval of the other section. Both sections are checked independently. '
         'Expected values are millimetres, converted from inch when necessary. '
         'Describe criterion labels/title in the user language. List verification limitations explicitly. '
         'Use the supplied resolved drawing specification as the dimensional authority. '

@@ -51,7 +51,8 @@ Rendering failures remain visible alongside the geometry and delivery outcome.
 - Mutations use typed SolidCraft commands in bounded batches with strict parameter checks.
 - Save, export and render paths are allocated inside runtime-owned scratch storage.
   Attached-project publication remains a later integration with project grants.
-- Direct GUI handoff requires a platform adapter in the next CAD cycle.
+- Direct GUI handoff uses the native desktop adapter and an independent revision
+  copy. Linux is qualified; Windows native launcher qualification remains open.
 - Timeouts and Stop terminate owned work and trigger state reconciliation.
 - Linux and Windows use the same artifact, lifecycle and evidence contracts.
   Native launcher/isolation capabilities require separate platform qualification.

@@ -126,6 +126,7 @@ one browser journey per interaction family. Request a separate bounded budget fo
 any additional model-led live campaign. Native Windows qualification requires a
 Windows host; report its status independently from Linux.
 
-Photos, diagram interpretation, attached CAD imports, printer operation and
-broader workspace redesign remain later cycles. Track integration friction in
+Dimensioned diagram interpretation and bounded repair are covered by the
+[drawing cycle](CAD_DRAWINGS_PLAN.md). Unscaled photos, attached CAD imports,
+printer operation and broader workspace redesign remain later cycles. Track integration friction in
 the existing workspace redesign backlog.

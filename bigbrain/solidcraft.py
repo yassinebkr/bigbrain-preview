@@ -19,6 +19,14 @@ class CadError(RuntimeError):
     """An engine, transport or artifact diagnostic suitable for the run journal."""
 
 
+class CadCommandError(CadError):
+    """A completed engine response identifies a rejected geometry command."""
+
+    def __init__(self, result):
+        self.result = result
+        super().__init__('CAD tool failed: ' + json.dumps(result.get('failed', {}))[:1500])
+
+
 def solidcraft_executable() -> Path:
     """Resolve an explicit installation or the platform's executable search path."""
     configured = os.environ.get('BIGBRAIN_SOLIDCRAFT_CLI')
@@ -162,6 +170,8 @@ class SolidCraftSession:
         if len(self.observations) > 128:
             raise CadError('CAD session observation budget exhausted')
         if result.get('isError') or isinstance(value, dict) and value.get('ok') is False:
+            if name == 'batch' and isinstance(value, dict) and isinstance(value.get('failed'), dict):
+                raise CadCommandError(value)
             raise CadError('CAD tool failed: ' + json.dumps(value)[:2000])
         return value
 
