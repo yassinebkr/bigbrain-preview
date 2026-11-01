@@ -52,7 +52,8 @@ Rendering failures remain visible alongside the geometry and delivery outcome.
 - Save, export and render paths are allocated inside runtime-owned scratch storage.
   Attached-project publication remains a later integration with project grants.
 - Direct GUI handoff uses the native desktop adapter and an independent revision
-  copy. Linux is qualified; Windows native launcher qualification remains open.
+  copy. Linux launcher integration is exercised; interactive GUI confirmation
+  and Windows native launcher qualification remain open.
 - Timeouts and Stop terminate owned work and trigger state reconciliation.
 - Linux and Windows use the same artifact, lifecycle and evidence contracts.
   Native launcher/isolation capabilities require separate platform qualification.
