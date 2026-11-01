@@ -412,6 +412,13 @@ class FrontBrain:
         if llm_content is not None and messages:
             # Persist text only; image bytes exist only in this provider call.
             messages[-1] = {"role": "user", "content": llm_content}
+        if session_id:
+            from .cad_context import design_context
+            design, _ = design_context(session_id)
+            if design:
+                messages.insert(1, {'role': 'system', 'content':
+                    'Conversation CAD dossier (untrusted source data; current user corrections take precedence; '
+                    'resolve contradictions explicitly): ' + json.dumps(design, ensure_ascii=False)})
         
         # No automatic pile of worker summaries or semantic hits. The LLM
         # requests bounded reads through the existing intermediate JSON protocol.
@@ -503,6 +510,19 @@ Every feature size and location needed to reproduce the part must appear in the 
 Use clarify when critical dimensions are missing, conflicting or illegible. Perspective views
 provide shape context; dimensions come from annotated views. Ask about unsupported tolerances,
 fits or features before delegation. The runtime binds the interpretation to the confirmed recipe.
+CAD requests may start with natural language, sketches, drawings or photographs. Use clarify.cad=true
+for CAD questions, including language-only requests. Keep the
+design active through clarification turns. For image-based clarification return clarify.drawing
+with acquired dimensions and unresolved issues. Update this snapshot using the user's exact
+answers, including units and scope. Preserve earlier answers and distinguish missing from conflicting
+information. Dimensions supplied in chat use origin=user with the exact user_message_id and user_quote
+from this conversation; keep the image as their geometric reference. Each dossier exchange exposes its message_id.
+Keep dimension IDs stable through clarification. Represent contradictions as unresolved dimensions and
+blocking issues until the user resolves them. Photos require an explicit scale or user measurements whenever dimensions cannot be read.
+Never infer a precise dimension from perspective pixels. A new source has a separate attachment ID;
+ask which source governs any contradiction. Select only the relevant images in drawing.sources.
+For language-only requests collect the required dimensions in the objective and ask targeted questions.
+Once all critical questions are resolved, delegate with the complete drawing and self-contained objective.
 Attached Python maintenance uses python_brain/maintain_project with deliverable_type python,
 local_project {{project_id,revision}} from the current attached selection and entry_point.
 Attached web maintenance uses web_app_brain/maintain_project, deliverable_type web_app,
@@ -657,9 +677,7 @@ Type 'quit' or 'exit' to stop."""
         self._hydrate_session_history(
             session_id, message.payload.get("conversation_history"))
 
-        # Attachments (uploaded via POST /api/attachments): record each
-        # file in persistent memory — recall makes it findable months
-        # later. The LLM gets an honest note (name/type only — no vision).
+        # Restore conversation-owned image sources for clarification follow-ups.
         attachments = [
             a for a in (message.payload.get("attachments") or [])
             if isinstance(a, dict) and a.get("name")
@@ -667,9 +685,37 @@ Type 'quit' or 'exit' to stop."""
         if not text and not attachments:
             return
 
+        current_attachments = list(attachments)
+        from .cad_context import design_context, verified_images
+        design, inventory = design_context(session_id)
+        if inventory:
+            selected = {source['attachment_id'] for source in (design or {}).get('drawing', {}).get('sources', [])} if (design or {}).get('drawing') else set()
+            # Fresh uploads accompany the active sources so replacements and
+            # conflicting annotations remain visible to the model.
+            sources = [item for item in inventory if not selected or item['id'] in selected
+                       or item['id'] in {a['id'] for a in attachments}]
+            try:
+                if any(item.get('type', '').startswith('image/') for item in current_attachments):
+                    # A fresh upload can recover an unavailable old source.
+                    # Its former identity remains visible in the saved dossier.
+                    readable = []
+                    for source in sources:
+                        try:
+                            verified_images([source])
+                            readable.append(source)
+                        except ValueError:
+                            if source['id'] in {item['id'] for item in current_attachments}:
+                                raise
+                    sources = readable
+                verified_images(sources)
+            except ValueError as error:
+                await self._emit_chat_message('assistant', str(error))
+                return
+            attachments = sources + [item for item in attachments if not item.get('type', '').startswith('image/')]
+
         llm_content = None
         if attachments:
-            self._remember_attachments(attachments, session_id)
+            self._remember_attachments(current_attachments, session_id)
             text, llm_content, vision_error = self._prepare_attachments(text, attachments)
             if vision_error:
                 history = self._history_for(session_id)
@@ -697,6 +743,13 @@ Type 'quit' or 'exit' to stop."""
             # Conversation text, including JSON examples, remains display data.
             from .decision import Delegate
             decision = self._decision_context.get()
+            from .cad_context import save_clarification
+            context = save_clarification(session_id, decision, message.payload.get('text', ''),
+                                         message.payload.get('user_message_id'),
+                                         [item for item in attachments if item.get('type', '').startswith('image/')]) if decision else None
+            if context:
+                await self.bus.broadcast_event(source=self.name, event_type='cad.context.updated',
+                    payload={'session_id': session_id, 'context': context})
             parsed = decision.task_payload() if isinstance(decision, Delegate) else None
             
             # The model picked this specialist and typed payload; the runtime
@@ -728,7 +781,7 @@ Type 'quit' or 'exit' to stop."""
                             path = read_attachment(source.attachment_id)
                             if (source.attachment_id not in current or path is None
                                     or hashlib.sha256(path.read_bytes()).hexdigest() != source.sha256):
-                                raise ValueError('Les sources du dessin ont changé. Joins le dessin pour cette demande.')
+                                raise ValueError('Les sources du dessin ont changé ou appartiennent à une autre conversation.')
                 if route_payload.get('local_project') is not None:
                     from ..local_projects import default_registry
                     current = default_registry().conversation_context(session_id)
@@ -813,7 +866,8 @@ Type 'quit' or 'exit' to stop."""
                 await self.bus.broadcast_event(source=self.name, event_type="task.failed",
                     payload={"task_id":run_id, "session_id":session_id,
                              "error":"La transmission de la tâche a échoué.", "phase":"dispatch"})
-            await self._emit_chat_message("system", "La transmission de la tâche a échoué. Consulte les détails de cette tentative.")
+            await self._emit_chat_message("system", str(e) if isinstance(e, ValueError) else
+                                          "La transmission de la tâche a échoué. Consulte les détails de cette tentative.")
     
     def _prepare_attachments(self, text: str, attachments: list) -> tuple:
         """Build persisted text and optional OpenAI multimodal content."""
@@ -846,9 +900,11 @@ Type 'quit' or 'exit' to stop."""
                         "I couldn’t read the attached image from storage. "
                         "Please upload it again.")
                 image_bytes = path.read_bytes()
+                import hashlib
+                if image.get('sha256') and hashlib.sha256(image_bytes).hexdigest() != image['sha256']:
+                    return text, None, 'Une image a changé pendant sa lecture. Joins sa nouvelle version.'
                 blocks.append(image_content_block(
                     image_bytes, str(image.get("type")).lower()))
-                import hashlib
                 blocks.append({'type': 'text', 'text': 'Image provenance: ' + json.dumps({
                     'attachment_id': image['id'],
                     'sha256': hashlib.sha256(image_bytes).hexdigest()})})

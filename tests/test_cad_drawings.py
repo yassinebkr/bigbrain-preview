@@ -89,3 +89,22 @@ async def test_planner_cannot_replace_drawing_authority():
     plan = await draft_cad_plan(Planner(), 'Model this drawing', drawing=spec)
     assert plan.drawing == spec
     assert any('60 mm' in item for item in plan.contracts())
+
+
+@pytest.mark.asyncio
+async def test_recipe_cannot_reinterpret_drawing_or_bind_an_invented_dimension():
+    import json
+    from bigbrain.cad_planning import CadRecipe, draft_cad_plan
+    assert 'drawing' not in CadRecipe.model_json_schema()['properties']
+    spec = DrawingSpecification.model_validate(drawing())
+    base = {'title': 'Support', 'commands': [{'command': 'solid.box', 'params': {'length': 60, 'width': 40, 'height': 6}}],
+            'criteria': [{'id': 'bounds', 'label': 'Envelope', 'metric': 'dimensions_mm', 'expected': [60, 40, 6],
+                          'dimension_bindings': {'invented': 0}}]}
+    class Planner:
+        async def chat_complete(self, **kwargs):
+            return json.dumps(base)
+    with pytest.raises(ValueError, match='invented.*declared'):
+        await draft_cad_plan(Planner(), 'Model this drawing', drawing=spec)
+    base['drawing'] = drawing()
+    with pytest.raises(ValueError, match='invented a drawing'):
+        await draft_cad_plan(Planner(), 'Model this drawing', drawing=spec)

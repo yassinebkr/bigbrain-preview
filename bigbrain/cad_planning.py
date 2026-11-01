@@ -65,14 +65,20 @@ class CadCriterion(Contract):
             diagnostic=f'{self.label}: observed {values}; expected {self.expected}')
 
 
-class CadPlan(Contract):
+class CadRecipe(Contract):
+    """Model-authored construction commands and proposed measurement targets."""
     title: str = Field(min_length=1, max_length=160)
     commands: tuple[CadCommand, ...] = Field(min_length=1, max_length=32)
     criteria: tuple[CadCriterion, ...] = Field(min_length=1, max_length=16)
     limitations: tuple[Annotated[str, Field(min_length=1, max_length=500)], ...] = Field(default=(), max_length=6)
-    drawing: DrawingSpecification | None = None
     sections: tuple[CadSection, ...] = Field(default=(), max_length=16)
     max_repairs: int = Field(default=0, strict=True, ge=0, le=2)
+
+
+class CadPlan(CadRecipe):
+    """Runtime-bound recipe with the authoritative drawing interpretation."""
+
+    drawing: DrawingSpecification | None = None
 
     @model_validator(mode='after')
     def distinct_criteria(self):
@@ -84,7 +90,7 @@ class CadPlan(Contract):
             def bind(identity, value):
                 dimension = dimensions.get(identity)
                 if dimension is None or dimension.value is None or dimension.unit == 'degree':
-                    raise ValueError('Drawing measurement requires a resolved linear dimension')
+                    raise ValueError(f'Drawing measurement {identity!r} requires a declared, resolved linear dimension')
                 expected = dimension.value * (25.4 if dimension.unit == 'inch' else 1)
                 if not math.isclose(value, expected, abs_tol=1e-8, rel_tol=1e-10):
                     raise ValueError(f'Measurement target differs from drawing dimension {identity}')
@@ -163,7 +169,7 @@ async def draft_cad_plan(provider, objective, *, context=None, model=None, drawi
         raise ValueError('CAD planning requires a configured model')
     prompt = (
         'Plan a small mechanical CAD part using SolidCraft 0.28.0 headless, mm units. '
-        'Return one JSON object matching this schema: ' + json.dumps(CadPlan.model_json_schema())
+        'Return one JSON object matching this recipe schema: ' + json.dumps(CadRecipe.model_json_schema())
         + '\nUse parameter expressions when dimensions may change. Available primitives: '
         'parameters.change {name,expression}; solid.box {length,width,height,corner?,body_name?,operation?,targets?}; '
         'solid.cylinder {radius,height,base?,body_name?,operation?,targets?}. Operation: new, join, cut, intersect. '
@@ -180,8 +186,12 @@ async def draft_cad_plan(provider, objective, *, context=None, model=None, drawi
         '= total height minus base thickness), add binding.subtract with section_id, '
         'quantity and interval of the other section. Both sections are checked independently. '
         'Expected values are millimetres, converted from inch when necessary. '
-        'Describe criterion labels/title in the user language. List verification limitations explicitly. '
+        'Describe criterion labels/title in the user language. The title names the part concisely and remains valid '
+        'after completion; proposal/approval status is displayed separately by the runtime. List verification limitations explicitly. '
         'Use the supplied resolved drawing specification as the dimensional authority. '
+        'The runtime owns the drawing specification. Output only the recipe; keep every dimension ID exactly '
+        'as supplied. Bindings may reference only the supplied dimension IDs. Additional geometric samples '
+        'can use empty bindings. Preserve user clarification values and their converted units. '
         'Preserve every feature and dimension; declare unsupported geometry before execution. '
         'Uncertain dimensions, wall-thickness guarantees and arbitrary topology validation require clarification. '
         'For an existing document, edit its parameters or geometry and preserve unrelated geometry. '
@@ -196,11 +206,13 @@ async def draft_cad_plan(provider, objective, *, context=None, model=None, drawi
     raw = raw.strip()
     if raw.startswith('```') and raw.endswith('```'):
         raw = '\n'.join(raw.splitlines()[1:-1])
-    plan = CadPlan.model_validate_json(raw)
+    proposed = json.loads(raw)
+    if proposed.get('drawing') is not None:
+        raise ValueError('CAD planner invented a drawing outside the runtime-bound interpretation')
+    proposed.pop('drawing', None)
+    recipe = CadRecipe.model_validate(proposed)
     # Bind the source interpretation supplied by the runtime. Model output
     # cannot replace its dimensions while drafting the recipe.
     if drawing is not None:
-        return CadPlan.model_validate({**plan.model_dump(), 'drawing': drawing.model_dump(), 'max_repairs': 2})
-    if plan.drawing is not None:
-        raise ValueError('CAD planner invented a drawing without source interpretation')
-    return CadPlan.model_validate({**plan.model_dump(), 'max_repairs': 2})
+        return CadPlan.model_validate({**recipe.model_dump(), 'drawing': drawing.model_dump(), 'max_repairs': 2})
+    return CadPlan.model_validate({**recipe.model_dump(), 'max_repairs': 2})

@@ -132,7 +132,8 @@ class SessionStore:
         sessions.sort(key=lambda s: s["updated_at"], reverse=True)
         return sessions
 
-    def append_message(self, session_id: str, role: str, text: str) -> Dict[str, Any]:
+    def append_message(self, session_id: str, role: str, text: str,
+                       attachments: list | None = None) -> Dict[str, Any]:
         session = self.ensure(session_id)
         messages: List[Dict[str, Any]] = session.setdefault("messages", [])
         messages.append({
@@ -141,14 +142,43 @@ class SessionStore:
             "text": text,
             "timestamp": time.time(),
         })
+        if role == 'user' and attachments:
+            from .attachments import read_attachment
+            import hashlib
+            refs = []
+            for item in attachments:
+                path = read_attachment(item.get('id', ''))
+                if path is None:
+                    raise SessionError('Pièce jointe indisponible. Joins le fichier à nouveau.')
+                refs.append({key: item[key] for key in ('id', 'name', 'type') if key in item}
+                            | {'sha256': hashlib.sha256(path.read_bytes()).hexdigest()})
+            messages[-1]['attachments'] = refs
+            # The inventory survives the rolling message window. New uploads
+            # retain separate identities; the model explicitly chooses sources.
+            inventory = {item['id']: item for item in session.get('image_sources', [])}
+            for item in refs:
+                if item.get('type', '').startswith('image/'):
+                    inventory[item['id']] = item
+            session['image_sources'] = list(inventory.values())
         if len(messages) > MAX_MESSAGES:
             del messages[:len(messages) - MAX_MESSAGES]
         # Auto-title from the first user message.
         if role == "user" and not session.get('title_custom') and session.get("title") in (None, "", "New conversation"):
-            session["title"] = text.strip().splitlines()[0][:60] or "New conversation"
+            session["title"] = (text.strip().splitlines() or ['New conversation'])[0][:60]
         session["updated_at"] = time.time()
         self._atomic_write(self._path(session["id"]), session)
         return session
+
+    def set_cad_context(self, session_id: str, context: dict) -> dict:
+        """Persist a conversation-owned design snapshot beside its transcript."""
+        session = self.get(session_id)
+        if session is None:
+            raise SessionError('Conversation introuvable.')
+        previous = session.get('cad_context') or {}
+        context = dict(context, revision=previous.get('revision', 0) + 1)
+        session['cad_context'] = context
+        self._atomic_write(self._path(session_id), session)
+        return context
 
     def delete(self, session_id: str) -> bool:
         path = self._path(session_id)

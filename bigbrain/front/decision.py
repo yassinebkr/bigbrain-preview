@@ -136,6 +136,8 @@ class Respond(ClosedModel):
 class Clarify(ClosedModel):
     operation: Literal["clarify"]
     reply: str = Field(min_length=1)
+    cad: bool = False
+    drawing: DrawingSpecification | None = None
 
 
 class Delegate(ClosedModel):

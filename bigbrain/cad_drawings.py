@@ -30,20 +30,31 @@ class DrawingDimension(Contract):
     kind: Literal['length', 'diameter', 'radius', 'depth', 'position', 'angle']
     value: Finite | None = None
     unit: Literal['mm', 'inch', 'degree']
-    origin: Literal['explicit', 'derived', 'unresolved']
+    origin: Literal['explicit', 'derived', 'user', 'unresolved']
     sources: tuple[DrawingSource, ...] = Field(min_length=1, max_length=8)
     annotation: Text
     dependencies: tuple[Identity, ...] = Field(default=(), max_length=16)
     derivation: Text | None = None
     critical: bool = True
+    user_message_id: str | None = Field(default=None, max_length=100)
+    user_quote: Text | None = None
 
     @model_validator(mode='after')
     def evidence_shape(self):
+        if self.origin == 'user' and (not self.user_message_id or not self.user_quote):
+            raise ValueError('User dimensions require the exact message identity and quote')
+        if self.origin != 'user' and (self.user_message_id or self.user_quote):
+            raise ValueError('Only user dimensions carry clarification quotes')
         if (self.value is None) != (self.origin == 'unresolved'):
             raise ValueError('Resolved dimensions require a finite value')
         if self.origin == 'derived':
             if not self.dependencies or not self.derivation:
                 raise ValueError('Derived dimensions require dependencies and reasoning')
+        elif self.origin == 'user':
+            # A quoted user measurement may include a unit-normalization note.
+            # Geometric dependencies belong to a separate derived dimension.
+            if self.dependencies:
+                raise ValueError('User measurements cannot depend on other dimensions')
         elif self.dependencies or self.derivation:
             raise ValueError('Only derived dimensions carry dependencies')
         if self.kind == 'angle' and self.unit != 'degree':
