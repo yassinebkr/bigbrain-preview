@@ -512,6 +512,11 @@ Consult cad.list with empty arguments to find CAD document identities in this co
 then cad.read with {{id:document_id}} for current dimensions and revision before an edit.
 Use this dedicated route for CAD modeling; the runtime proposes its measured contract before execution.
 CAD work currently uses application-owned documents. Importing attached native CAD files requires a future scoped import path.
+Current CAD verification supports envelope dimensions, volume, closed bodies, material-line sections,
+angles from checked perpendicular rise/run sections, and analytic cylindrical-face radius and axis
+coordinates. Truncated cylindrical profiles combine analytic face checks with sections for endpoints
+and extent. Manufacturing fits, freeform surface certification and arbitrary topology remain outside
+this contract. Evaluate older unsupported issues against these current capabilities before asking again.
 For a dimensioned drawing, interpret the image into CadInput.drawing. Preserve exact annotations,
 units, source attachment IDs and SHA256 from the image metadata, views and dimension dependencies.
 Every feature size and location needed to reproduce the part must appear in the specification.
@@ -1410,6 +1415,9 @@ Type 'quit' or 'exit' to stop."""
         conversational answer to the user's original question.
         """
         result = message.payload
+        if result.get('result_kind') == 'cad_clarification':
+            await self._emit_chat_message('assistant', result['question'], session_id=result.get('session_id'))
+            return
         success = result.get("success", False)
         
         # Collect raw outputs and determine workspace hint

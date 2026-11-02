@@ -145,8 +145,12 @@ class Delegate(ClosedModel):
     reply: str = Field(min_length=1)
     objective: str = Field(min_length=2, max_length=8000)
     route: ResearchRoute | BoardRoute | PythonRoute | WebRoute | CadRoute | None = None
-    project_target: ProjectTarget | None = None
-    test_changes: list[ValidationChange] = Field(default_factory=list, max_length=10)
+    project_target: ProjectTarget | None = Field(default=None, description=
+        'Code-project destination only. For cad_brain this must be null: a new CAD '
+        'document is selected by null document_id and base_revision in its payload. '
+        'Attached maintenance also requires null here.')
+    test_changes: list[ValidationChange] = Field(default_factory=list, max_length=10,
+        description='Code test arbitration only. Must be empty for cad_brain and attached maintenance.')
 
     @model_validator(mode='after')
     def attached_destination(self):

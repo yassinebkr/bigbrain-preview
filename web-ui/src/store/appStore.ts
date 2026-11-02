@@ -59,12 +59,13 @@ export interface RunState {
   sessionId: string;
   id: string;
   description: string;
-  status: 'running' | 'done' | 'failed' | 'cancelled';
+  status: 'running' | 'done' | 'failed' | 'cancelled' | 'needs_input';
   startedAt: number;
   finishedAt?: number;
   steps: RunStep[];
   files: { path: string; ts: number }[];
   error?: string;
+  clarificationQuestion?: string;
   verification?: RunVerification;
   projectName?: string;
   projectPath?: string;
@@ -458,7 +459,7 @@ export const useAppStore = create<AppState>()(
         const taskId = d.task_id || d.plan_id;
         const byTask = taskId ? runsById[taskId] : null;
         const finished = taskId ? state.completedRuns.find((r) => r.id === taskId) : null;
-        const terminal = ['task.complete', 'task.failed', 'task.cancelled'].includes(activity.type);
+        const terminal = ['task.complete', 'task.failed', 'task.cancelled', 'task.clarification'].includes(activity.type);
         const sessionId = String(d.session_id || byTask?.sessionId || finished?.sessionId || state.activeRun?.sessionId || state.activeSessionKey);
         if (activity.type === 'task.routing' && taskId) {
           // Migrate pre-correlation cached placeholders during journal catch-up.
@@ -698,10 +699,11 @@ export const useAppStore = create<AppState>()(
           }
           case 'task.complete':
           case 'task.failed':
-          case 'task.cancelled': {
+          case 'task.cancelled':
+          case 'task.clarification': {
             if (!run) return {};
             const status: RunState['status'] =
-              d.delivery_status === 'incomplete' ? 'failed' : activity.type === 'task.complete' ? 'done'
+              activity.type === 'task.clarification' ? 'needs_input' : d.delivery_status === 'incomplete' ? 'failed' : activity.type === 'task.complete' ? 'done'
               : activity.type === 'task.cancelled' ? 'cancelled'
               : 'failed';
             return {
@@ -709,17 +711,19 @@ export const useAppStore = create<AppState>()(
               completedRuns: [...state.completedRuns.filter((item) => item.id !== run.id), {
                 ...run,
                 status,
+                ...(status === 'needs_input' ? { error: undefined, runnable: false,
+                  clarificationQuestion: String(d.question || '') } : {}),
                 steps: run.steps.map((step) => status === 'failed' && step.status === 'running'
                   ? { ...step, status: 'failed' as const } : step),
                 awaitingApproval: false,
                 finishedAt: activity.ts || run.finishedAt || Date.now(),
-                error: d.error ? String(d.error).slice(0, 200) : run.error,
+                error: status === 'needs_input' ? undefined : d.error ? String(d.error).slice(0, 200) : run.error,
                 projectName: d.project_name ? String(d.project_name) : run.projectName,
                 projectPath: d.project_path ? String(d.project_path) : run.projectPath,
                 entryPoint: d.entry_point ? String(d.entry_point) : run.entryPoint,
                 deliverableType: d.deliverable_type ? String(d.deliverable_type) : run.deliverableType,
                 previewUrl: d.preview_url ? String(d.preview_url) : run.previewUrl,
-                runnable: d.delivery_status === 'incomplete' ? false : typeof d.runnable === 'boolean' ? d.runnable : run.runnable,
+                runnable: status === 'needs_input' || d.delivery_status === 'incomplete' ? false : typeof d.runnable === 'boolean' ? d.runnable : run.runnable,
                 deliveryStatus: d.delivery_status === 'ready' || d.delivery_status === 'incomplete' ? d.delivery_status : run.deliveryStatus,
                 resultKind: d.result_kind || run.resultKind,
               }].slice(-100),
@@ -756,7 +760,7 @@ export const useAppStore = create<AppState>()(
             request: d.user_request || '', contracts: Array.isArray(d.contracts) ? d.contracts : [],
             ...(d.source_transmission ? { sourceTransmission: d.source_transmission } : {}),
             ...(d.project_target ? { target: d.project_target } : {}) };
-        } else if (['contracts.approved', 'contracts.rejected', 'task.cancelled', 'task.failed', 'task.complete'].includes(activity.type)) {
+        } else if (['contracts.approved', 'contracts.rejected', 'task.cancelled', 'task.failed', 'task.complete', 'task.clarification'].includes(activity.type)) {
           const proposal = sessionProposals[sessionId];
           const target = d.plan_id || d.task_id;
           if (!target || proposal?.planId === target) delete sessionProposals[sessionId];

@@ -8,7 +8,7 @@ from ..solidcraft import CadError
 from ..cad_desktop import CadDesktop
 
 
-def setup_cad_routes(app, *, store=None):
+def setup_cad_routes(app, *, store=None, bus=None):
     store = store or CadStore()
     desktop = CadDesktop()
 
@@ -22,6 +22,16 @@ def setup_cad_routes(app, *, store=None):
                 raise CadError('CAD artifact request object required')
             document_id, session_id = body.get('documentId'), body.get('sessionId')
             revision = body.get('revision')
+            if request.match_info['action'] == 'resume':
+                from ..cad_runs import confirmed_continuation
+                from ..bus.message import BusMessage, MessageType
+                if bus is None:
+                    raise CadError('CAD continuation service is unavailable')
+                confirmed_continuation(document_id, session_id)
+                await bus.send(BusMessage(type=MessageType.TASK, source='morphable_ui',
+                    target='orchestrator_default', payload={'type': 'cad.resume',
+                    'document_id': document_id, 'session_id': session_id}))
+                return web.json_response({'queued': True})
             if request.match_info['action'] in {'capability', 'open'}:
                 if (request.remote not in {'127.0.0.1', '::1'}
                         or urlsplit('//' + request.host).hostname not in {'127.0.0.1', 'localhost', '::1'}):
@@ -42,4 +52,4 @@ def setup_cad_routes(app, *, store=None):
         except (CadError, ValueError, TypeError) as error:
             return web.json_response({'error': str(error)[:1000]}, status=400)
 
-    app.router.add_post('/api/cad/{action:view|artifact|capability|open}', handle)
+    app.router.add_post('/api/cad/{action:view|artifact|capability|open|resume}', handle)

@@ -21,6 +21,9 @@ class DimensionBinding(Contract):
     quantity: Literal['start', 'end', 'length', 'gap', 'gap_center']
     interval: int = Field(ge=0, le=15, strict=True)
     subtract: SectionOperand | None = None
+    angle_denominator: SectionOperand | None = Field(default=None, description=
+        'For an angular drawing dimension, the independently checked run length. '
+        'The angle in degrees is atan2(the measured rise, this run).')
 
 
 class CadSection(Contract):
@@ -30,14 +33,15 @@ class CadSection(Contract):
     label: str = Field(min_length=1, max_length=500)
     axis: int = Field(strict=True, ge=0, le=2)
     point_mm: Vector
-    intervals_mm: tuple[tuple[Finite, Finite], ...] = Field(max_length=16)
+    intervals_mm: tuple[tuple[Finite, Finite], ...] | None = Field(default=None, max_length=16,
+        description='Expected material intervals for a fixed topology check. Omit for a raw probe consumed by requirement measurements.')
     absolute_tolerance_mm: Finite = Field(default=0.05, gt=0, le=0.1)
     bindings: tuple[DimensionBinding, ...] = Field(default=(), max_length=32)
 
     @model_validator(mode='after')
     def ordered_intervals(self):
         previous = -math.inf
-        for start, end in self.intervals_mm:
+        for start, end in self.intervals_mm or ():
             if start >= end or start <= previous:
                 raise ValueError('Section intervals must be positive and disjoint')
             previous = end
@@ -46,6 +50,8 @@ class CadSection(Contract):
         return self
 
     def quantity(self, binding):
+        if self.intervals_mm is None:
+            raise ValueError('Legacy bindings require explicit section targets; use requirement measurements for raw probes')
         index = binding.interval
         if index >= len(self.intervals_mm):
             raise ValueError('Dimension binding references an absent section interval')
@@ -126,10 +132,10 @@ def material_intervals(triangles, section: CadSection):
 def observe_section(section, triangles, *, source_sha256, evidence_ref):
     try:
         actual = material_intervals(triangles, section)
-        passed = (len(actual) == len(section.intervals_mm)
+        passed = (section.intervals_mm is None or (len(actual) == len(section.intervals_mm)
                   and all(abs(a - e) <= section.absolute_tolerance_mm
                           for observed, expected in zip(actual, section.intervals_mm)
-                          for a, e in zip(observed, expected)))
+                          for a, e in zip(observed, expected))))
         status = 'passed' if passed else 'failed'
         diagnostic = f'Material intervals (mm): observed {actual}; expected {section.intervals_mm}'
     except ValueError as error:

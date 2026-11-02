@@ -108,7 +108,7 @@ class WebServer:
         self._replay_max_size = 100
         self._REPLAY_TYPES = {"result", "progress"}
         self._REPLAY_EVENTS = {
-            "task.received", "task.complete", "task.failed", "task.cancelled",
+            "task.received", "task.complete", "task.failed", "task.cancelled", "task.clarification",
             "subtask.started", "subtask.complete", "subtask.failed",
             "brain.started", "brain.complete",
             "chat.message",  # Front brain summary / chat responses
@@ -274,7 +274,7 @@ class WebServer:
         from .local_projects_api import setup_local_project_routes
         setup_local_project_routes(self._app)
         from .cad_api import setup_cad_routes
-        setup_cad_routes(self._app)
+        setup_cad_routes(self._app, bus=self.bus)
 
         # Streaming manual runs: fs_api pushes fs.run_output / fs.run_result
         # through the bus so every connected browser sees them on its WS.
@@ -1209,7 +1209,7 @@ class WebServer:
 
     def _maybe_buffer(self, msg_type: str, event: str, data: dict) -> None:
         # A terminal task resolves only its own pending replay state.
-        if event in ("task.complete", "task.failed", "task.cancelled"):
+        if event in ("task.complete", "task.failed", "task.cancelled", "task.clarification"):
             current = data.get('payload') or {}
             session_id, task_id = current.get('session_id'), current.get('task_id')
             def pending_for_current(buffered):

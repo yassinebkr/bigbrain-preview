@@ -13,11 +13,11 @@ RUN_EVENTS = {
     "contracts.proposal", "contracts.approved", "contracts.rejected",
     "subtask.started", "subtask.complete", "subtask.failed",
     "workspace.file_written", "verification.run_recorded",
-    "task.complete", "task.failed", "task.cancelled",
+    "task.complete", "task.failed", "task.cancelled", "task.clarification",
     "task.progress",
     "workspace.proposal",
 }
-TERMINAL_EVENTS = {"task.complete", "task.failed", "task.cancelled"}
+TERMINAL_EVENTS = {"task.complete", "task.failed", "task.cancelled", "task.clarification"}
 
 
 def conversation_activity(log_dir: Path, session_id: str, started_at: float) -> list[dict]:

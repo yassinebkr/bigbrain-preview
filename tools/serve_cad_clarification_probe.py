@@ -15,9 +15,16 @@ import time
 
 async def main():
     maximum_calls = int(os.environ.get('CAD_PROBE_MAX_CALLS', '10'))
-    if not 1 <= maximum_calls <= 14:
-        raise ValueError('Qualification campaign supports at most fourteen explicitly authorized calls')
+    if not 1 <= maximum_calls <= 24:
+        raise ValueError('Qualification campaign supports at most twenty-four explicitly authorized calls')
+    maximum_seconds = float(os.environ.get('CAD_PROBE_MAX_INFERENCE_SECONDS', '600'))
+    if not 0 < maximum_seconds <= 1200:
+        raise ValueError('Qualification inference ceiling must be positive and at most twenty minutes')
     root = Path(os.environ['CAD_PROBE_ROOT']) if os.environ.get('CAD_PROBE_ROOT') else Path(tempfile.mkdtemp(prefix='cad-clarification-live-'))
+    ledger_name = os.environ.get('CAD_PROBE_LEDGER', 'calls.json')
+    if Path(ledger_name).name != ledger_name or not ledger_name.endswith('.json'):
+        raise ValueError('Campaign ledger must be a local JSON filename')
+    ledger = root / ledger_name
     for key, name in {'EVIDENCE_ROOT': 'evidence', 'SESSIONS_DIR': 'sessions',
         'MEMORY_DIR': 'memory', 'SOUL_FILE': 'soul.json', 'ATTACHMENTS_DIR': 'attachments',
         'LOCAL_PROJECTS_DIR': 'local', 'WORKSPACE_DIR': 'workspace',
@@ -41,30 +48,35 @@ async def main():
     class BoundedProvider:
         def __init__(self):
             self.provider = CodexProvider('codex-sol-6.1')
-            self.calls = json.loads((root / 'calls.json').read_text()) if (root / 'calls.json').exists() else []
+            self.calls = json.loads(ledger.read_text()) if ledger.exists() else []
             self.duration = sum(call.get('seconds', 0) for call in self.calls)
 
         def __getattr__(self, name):
             return getattr(self.provider, name)
 
         async def chat_complete(self, **arguments):
-            if len(self.calls) >= maximum_calls or self.duration >= 600:
-                raise RuntimeError(f'CAD qualification reached its {maximum_calls}-call / ten-minute inference limit')
-            call = {'phase': 'front' if arguments.get('tool_schema') else 'cad'}
+            if len(self.calls) >= maximum_calls or self.duration >= maximum_seconds:
+                raise RuntimeError(f'CAD qualification reached its {maximum_calls}-call / {maximum_seconds:g}-second inference limit')
+            call = {'phase': 'front' if arguments.get('tool_schema') else 'cad', 'status': 'running'}
             self.calls.append(call)
+            # Reserve the call durably before inference so an interrupted
+            # campaign retains its consumed allowance at the next startup.
+            ledger.write_text(json.dumps(self.calls, ensure_ascii=False, indent=2))
             started = time.monotonic()
             try:
                 response = await asyncio.wait_for(self.provider.chat_complete(**arguments),
-                                                  min(90, 600 - self.duration))
+                                                  maximum_seconds - self.duration)
                 call['response'] = response
+                call['status'] = 'completed'
                 return response
-            except Exception as error:
-                call['error'] = str(error)
+            except BaseException as error:
+                call['error'] = str(error) or type(error).__name__
+                call['status'] = 'cancelled' if isinstance(error, asyncio.CancelledError) else 'failed'
                 raise
             finally:
                 call['seconds'] = time.monotonic() - started
                 self.duration += call['seconds']
-                (root / 'calls.json').write_text(json.dumps(self.calls, ensure_ascii=False, indent=2))
+                ledger.write_text(json.dumps(self.calls, ensure_ascii=False, indent=2))
 
     provider = BoundedProvider()
     bus = MessageBus(root / 'logs', auth=None)

@@ -1,6 +1,7 @@
 """CAD contract, worker, durable artifacts and HTTP reads with the real engine."""
 
 import json
+from types import SimpleNamespace
 
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
@@ -34,6 +35,7 @@ class Provider:
     def __init__(self, plan):
         self.plan = plan
         self.calls = []
+        self.entry = SimpleNamespace(vision=True)
 
     async def chat_complete(self, **kwargs):
         self.calls.append(kwargs)
@@ -56,11 +58,11 @@ def test_native_front_route_preserves_cad_edit_identity():
     assert decision.decision.task_payload()['route']['payload']['user_request'].startswith('Créer une plaque')
 
 
-async def prepared(bus, plan_data, *, document_id=None, revision=None, drawing=None):
+async def prepared(bus, plan_data, *, document_id=None, revision=None, drawing=None, session_id='session-cad', precompiled=False):
     provider = Provider(plan_data)
     orchestrator = WorkspaceOrchestrator('default', bus, llm_provider=provider)
     orchestrator.register_brain('cad_brain', {'description': 'CAD'})
-    payload = {'brain': 'cad_brain', 'type': 'model_cad', 'session_id': 'session-cad',
+    payload = {'brain': 'cad_brain', 'type': 'model_cad', 'session_id': session_id,
                'user_request': 'Plaque mécanique ' + str(plan_data['criteria'][0]['expected'])}
     if document_id:
         payload.update(document_id=document_id, base_revision=revision)
@@ -69,14 +71,27 @@ async def prepared(bus, plan_data, *, document_id=None, revision=None, drawing=N
     message = BusMessage(type=MessageType.TASK, source='morphable_ui', target=orchestrator.name, payload=payload)
     plan = await orchestrator._create_task_plan(message)
     assert len(plan.subtasks) == 1 and plan.subtasks[0].brain_target == 'cad_brain'
-    spec = await orchestrator._propose_contracts(plan, payload['user_request'])
+    if precompiled or drawing is None:
+        # Explicit fixture path for existing geometry/check recipes. Fresh
+        # production proposals require design intent, including natural language.
+        from unittest.mock import patch
+        from bigbrain.brains.cad_brain import prepare_cad_plan
+        async def compile_fixture(*args, **kwargs):
+            if precompiled:
+                kwargs['defer_construction'] = False
+            kwargs['require_workflow'] = False
+            return await prepare_cad_plan(*args, **kwargs)
+        with patch('bigbrain.brains.cad_brain.prepare_cad_plan', compile_fixture):
+            spec = await orchestrator._propose_contracts(plan, payload['user_request'])
+    else:
+        spec = await orchestrator._propose_contracts(plan, payload['user_request'])
     return plan, spec, provider
 
 
 def task(plan, spec):
     return BusMessage(type=MessageType.TASK, source='orchestrator_default', target='cad_brain', payload={
         **plan.subtasks[0].payload, '_plan_id': plan.id, '_subtask_id': plan.subtasks[0].id,
-        'session_id': 'session-cad', 'contract_revision': {'design_id': spec.design_id, 'revision': spec.revision}})
+        'session_id': plan.original_task.payload['session_id'], 'contract_revision': {'design_id': spec.design_id, 'revision': spec.revision}})
 
 
 @pytest.mark.asyncio
@@ -249,8 +264,14 @@ async def test_bounded_repair_preserves_confirmed_targets(tmp_path, engine, repa
 async def test_dimensioned_stepped_support_runs_through_contract_and_local_checks(tmp_path, engine):
     from pathlib import Path
     import hashlib
-    source = {'attachment_id': 'att-012345abcdef',
-              'sha256': hashlib.sha256(Path('tests/fixtures/cad/stepped-support.svg').read_bytes()).hexdigest()}
+    from bigbrain.web.attachments import save_attachment
+    from bigbrain.web.sessions import SessionStore
+    source_bytes = Path('tests/fixtures/cad/stepped-support.svg').read_bytes()
+    record = save_attachment('stepped-support.svg', 'image/svg+xml', source_bytes)
+    sessions = SessionStore()
+    session_id = sessions.create()['id']
+    sessions.append_message(session_id, 'user', 'Create this stepped support', [record])
+    source = {'attachment_id': record['id'], 'sha256': hashlib.sha256(source_bytes).hexdigest()}
     dimensions = [('width', 80, 'length'), ('depth', 40, 'length'), ('height', 20, 'length'),
                   ('step', 20, 'length'), ('base', 8, 'depth'), ('diameter', 6, 'diameter'),
                   ('hole_x', 60, 'position'), ('hole_y', 20, 'position')]
@@ -278,7 +299,11 @@ async def test_dimensioned_stepped_support_runs_through_contract_and_local_check
             section('through', 2, [60, 20, 0], [])]}
     bus = MessageBus(tmp_path / 'bus', auth=None)
     try:
-        plan, spec, _ = await prepared(bus, data, drawing=drawing)
+        plan, spec, provider = await prepared(bus, data, drawing=drawing, session_id=session_id, precompiled=True)
+        # This provider supplies a deterministic recipe. Source interpretation
+        # is covered separately; this test exercises ownership and native checks.
+        blocks = provider.calls[0]['messages'][-1]['content']
+        assert blocks[-1]['type'] == 'image_url'
         assert spec.metadata['cad']['plan']['drawing']['sources'] == [dict(source, schema_version='1.0', region=[0, 0, 1, 1])]
         confirmed = default_repository().approve_spec(spec.design_id, plan_id=plan.id)
         result = await CadBrain('cad_brain', bus).handle_task(task(plan, confirmed))

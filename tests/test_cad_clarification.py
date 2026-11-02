@@ -46,6 +46,22 @@ def test_sources_and_thumbnail_refs_survive_reload():
     assert design_context(store.create()['id']) == (None, [])
 
 
+def test_cad_planner_images_preserve_exact_bytes_and_conversation_ownership():
+    import base64
+    from bigbrain.cad_drawings import DrawingSpecification
+    from bigbrain.front.cad_context import drawing_image_blocks
+    store, sid, record, data = fixture()
+    spec = DrawingSpecification.model_validate(data)
+    blocks = drawing_image_blocks(spec, sid)
+    assert record['id'] in blocks[0]['text']
+    assert base64.b64decode(blocks[1]['image_url']['url'].split(',', 1)[1]) == b'artificial drawing'
+    with pytest.raises(ValueError, match='outside this conversation'):
+        drawing_image_blocks(spec, store.create()['id'])
+    read_attachment(record['id']).write_bytes(b'replaced')
+    with pytest.raises(ValueError):
+        drawing_image_blocks(spec, sid)
+
+
 @pytest.mark.parametrize('missing', [False, True])
 def test_source_mutation_and_disappearance_are_explicit(missing):
     _, sid, record, _ = fixture()

@@ -300,7 +300,7 @@ export class BigBrainConnection implements ConnectionLike {
     // EXCEPTION: a replayed contracts.proposal is still PENDING live
     // state (the plan waits for the user) — the card must come back.
     const replayableLiveState = new Set([
-      'contracts.proposal', 'task.routing', 'task.received',
+      'contracts.proposal', 'task.routing', 'task.received', 'task.clarification',
       'subtask.started',
       'workspace.proposal',
     ]);
@@ -356,7 +356,7 @@ export class BigBrainConnection implements ConnectionLike {
     }
 
     const taskEvents = [
-      'task.received', 'task.complete', 'task.failed', 'task.cancelled',
+      'task.received', 'task.complete', 'task.failed', 'task.cancelled', 'task.clarification',
       'subtask.started', 'subtask.complete', 'subtask.failed',
       'brain.started', 'brain.complete',
       'task.progress',

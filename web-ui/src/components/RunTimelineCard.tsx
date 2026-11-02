@@ -38,7 +38,7 @@ export function RunTimelineCard({ run }: { run: RunState }) {
   const hasPreview = !!webEntryPath(run);
   const canRun = run.deliveryStatus !== 'incomplete' && run.runnable;
   const Icon = run.status === 'done' && run.deliveryStatus !== 'incomplete'
-    ? CheckCircle2 : run.status === 'cancelled' ? Ban : partialResearch ? CircleAlert : XCircle;
+    ? CheckCircle2 : run.status === 'cancelled' ? Ban : partialResearch || run.status === 'needs_input' ? CircleAlert : XCircle;
   const color = run.status === 'done' && run.deliveryStatus !== 'incomplete'
     ? 'var(--success, #34c759)' : 'var(--warning, #ff9500)';
 
@@ -93,7 +93,7 @@ export function RunTimelineCard({ run }: { run: RunState }) {
         >
           <Icon size={13} style={{ color }} className="flex-shrink-0" />
           <span className="truncate flex-1 text-left" style={{ color: 'var(--text-secondary)' }}>
-            {run.deliveryStatus === 'incomplete' ? 'Projet incomplet · non validé' : partialResearch ? 'Recherche incomplète' : run.status === 'done' ? 'Run complete' : run.status === 'cancelled' ? 'Run cancelled' : 'Run failed'}
+            {run.status === 'needs_input' ? 'Précision attendue' : run.deliveryStatus === 'incomplete' ? 'Projet incomplet · non validé' : partialResearch ? 'Recherche incomplète' : run.status === 'done' ? 'Run complete' : run.status === 'cancelled' ? 'Run cancelled' : 'Run failed'}
             {' — '}{runTitle(run)}
           </span>
           {run.files.length > 0 && (

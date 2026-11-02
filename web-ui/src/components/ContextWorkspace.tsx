@@ -14,7 +14,7 @@ import { isPartialResearch } from '@/lib/research';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from './ui/dropdown-menu';
 
 const labels = { preview: 'Aperçu', activity: 'Vue d’ensemble', files: 'Fichiers', verification: 'Tests', research: 'Recherche', cad: 'Pièce' };
-const statuses = { running: 'En cours', done: 'Terminé', failed: 'Échec', cancelled: 'Annulé' };
+const statuses = { running: 'En cours', done: 'Terminé', failed: 'Échec', cancelled: 'Annulé', needs_input: 'Précision attendue' };
 
 const wideQuery = '(min-width: 1440px)';
 const subscribeWidth = (notify: () => void) => {

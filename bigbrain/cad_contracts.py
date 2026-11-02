@@ -84,7 +84,7 @@ class CriterionObservation(Contract):
     evidence_ref: Identity
     diagnostic: str = Field(min_length=1, max_length=2000)
     label: str | None = Field(default=None, max_length=500)
-    metric: Literal['dimensions_mm', 'volume_mm3', 'body_count', 'closed_solid'] | None = None
+    metric: Literal['dimensions_mm', 'volume_mm3', 'body_count', 'closed_solid', 'cylindrical_surface_mm', 'length_mm', 'angle_degree', 'point_mm'] | None = None
     observed: tuple[Finite, ...] | None = Field(default=None, max_length=3)
     expected: tuple[Finite, ...] | None = Field(default=None, max_length=3)
     absolute_tolerance: Finite | None = None

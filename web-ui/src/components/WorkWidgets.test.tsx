@@ -6,6 +6,16 @@ import { projectRunKey, useProjectRunStore } from '@/store/projectRunStore';
 import { useWorkspaceStore } from '@/store/workspaceStore';
 import { ContractCard, ContractCriteria, StackSummary, SourceConsent } from './ContractCard';
 
+it('presents a specialist question as a definition step', () => {
+  const html = renderToStaticMarkup(<WorkOverview run={{ id: 'cad-question', sessionId: 's',
+    description: 'Drawing 117', status: 'needs_input', startedAt: 1, steps: [], files: [],
+    clarificationQuestion: 'Quelle surface pour R25 ?', runnable: false }} select={() => {}} journal={null} />);
+  expect(html).toContain('Une précision est nécessaire');
+  expect(html).toContain('Quelle surface pour R25 ?');
+  expect(html).not.toContain('Le résultat est disponible');
+  expect(html).not.toContain('Lancer le projet');
+});
+
 it('shows the approved source recipient, inventory and full source hashes', () => {
   const html = renderToStaticMarkup(<SourceConsent value={{ project_id: 'local-1', revision: 3,
     recipient: { provider: 'codex', endpoint: 'OpenAI ChatGPT subscription' },

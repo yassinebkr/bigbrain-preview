@@ -13,6 +13,31 @@ def design_context(session_id):
     return session.get('cad_context'), session.get('image_sources', [])
 
 
+def drawing_image_blocks(drawing, session_id):
+    """Read the exact conversation-owned source bytes for CAD interpretation."""
+    from ..llm.openai_compat_provider import image_content_block
+    _, inventory = design_context(session_id)
+    owned = {item['id']: item for item in inventory}
+    selected = []
+    for source in drawing.sources:
+        item = owned.get(source.attachment_id)
+        if item is None or item.get('sha256') != source.sha256:
+            raise ValueError('CAD image source is outside this conversation revision')
+        selected.append(item)
+    verified_images(selected)
+    blocks = []
+    for item in selected:
+        path = read_attachment(item['id'])
+        if path is None:
+            raise ValueError('CAD image source is unavailable')
+        data = path.read_bytes()
+        if hashlib.sha256(data).hexdigest() != item['sha256']:
+            raise ValueError('CAD image source changed during reading')
+        blocks.extend([{'type': 'text', 'text': 'Drawing source ' + item['id']},
+                       image_content_block(data, item['type'])])
+    return blocks
+
+
 def verified_images(inventory):
     """Bind each image shown to inference to its originally uploaded bytes."""
     if len(inventory) > 8:

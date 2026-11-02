@@ -13,6 +13,7 @@ import signal
 import subprocess
 
 from .cad_contracts import CadArtifact, CadPreview, CadRevision, GeometryObservation
+from .cad_workflow import allowed_cad_command
 
 
 class CadError(RuntimeError):
@@ -175,17 +176,44 @@ class SolidCraftSession:
             raise CadError('CAD tool failed: ' + json.dumps(value)[:2000])
         return value
 
-    async def batch(self, commands):
-        """Restrict model mutations to geometry and parameter operations."""
+    @staticmethod
+    def validate_commands(commands):
+        """Validate the complete mutation inventory before sending any command."""
         if not isinstance(commands, list) or not 1 <= len(commands) <= 32:
             raise CadError('CAD batch requires 1–32 commands')
         for item in commands:
             if (not isinstance(item, dict) or set(item) != {'command', 'params'}
                     or not isinstance(item['command'], str) or not isinstance(item['params'], dict)
-                    or not (item['command'].startswith(('solid.', 'sketch.', 'pattern.', 'construction.'))
-                            or item['command'] == 'parameters.change')):
+                    or not allowed_cad_command(item['command'])):
                 raise CadError('CAD command lies outside the geometry mutation contract')
+
+    async def batch(self, commands):
+        """Restrict model mutations to geometry and parameter operations."""
+        self.validate_commands(commands)
         return await self.tool('batch', {'commands': commands, 'rollback': True, 'verbose': False})
+
+    async def construct(self, commands, workflow=None):
+        """Inspect completed sketches before continuing on a private candidate."""
+        if workflow is None:
+            return await self.batch(commands)
+        self.validate_commands(commands)
+        pending = []
+        for item in commands:
+            pending.append(item)
+            if item['command'] != 'sketch.finish':
+                continue
+            await self.batch(pending)
+            pending = []
+            design = await self.tool('inspect_design')
+            sketches = design.get('sketches')
+            if not isinstance(sketches, list) or not sketches:
+                raise CadCommandError({'failed': {'stage': 'sketch_quality',
+                    'diagnostics': ['Sketch checkpoint returned no native profiles']}})
+            errors = [error for sketch in sketches for error in workflow.sketch_diagnostics(sketch)]
+            if errors:
+                raise CadCommandError({'failed': {'stage': 'sketch_quality', 'diagnostics': errors}})
+        if pending:
+            await self.batch(pending)
 
     def _artifact(self, path, format, source=None):
         if (path.resolve() != path.absolute() or not path.resolve().is_relative_to(self.scratch)

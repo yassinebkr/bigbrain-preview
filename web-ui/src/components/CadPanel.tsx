@@ -20,6 +20,7 @@ export function CadPanel({ run }: { run: RunState }) {
   const [downloading, setDownloading] = useState('');
   const [desktop, setDesktop] = useState<{ available?: boolean; diagnostic?: string }>({});
   const [launchMessage, setLaunchMessage] = useState('');
+  const [resuming, setResuming] = useState(false);
   const revision = cad?.snapshot?.document.revision;
   const imageHash = cad?.snapshot?.preview?.image.sha256;
   useEffect(() => {
@@ -104,6 +105,18 @@ export function CadPanel({ run }: { run: RunState }) {
         </li>;
       })}</ul></details>}
     {diagnostic && <p role="alert" className="mt-4 text-[12px] break-words" style={{ color: 'var(--warning)' }}>{diagnostic}</p>}
+    {['failed', 'cancelled'].includes(status) && <button className="work-secondary mt-4" disabled={resuming}
+      onClick={async () => {
+        setResuming(true); setActionError('');
+        try {
+          const response = await fetch('/api/cad/resume', { method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-BigBrain-CAD': '1' },
+            body: JSON.stringify({ documentId: cad.document_id, sessionId: run.sessionId }) });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error || 'Reprise indisponible');
+          setLaunchMessage('Reprise demandée depuis le travail conservé.');
+        } catch (error) { setActionError(String(error)); setResuming(false); }
+      }}>{resuming ? 'Reprise demandée…' : 'Reprendre le travail conservé'}</button>}
     {captured && <div className="flex flex-wrap gap-2 mt-5">
       <button className="work-secondary" disabled={!desktop.available || !!downloading} title={desktop.diagnostic || 'Ouvrir une copie éditable dans SolidCraft'}
         onClick={async () => {

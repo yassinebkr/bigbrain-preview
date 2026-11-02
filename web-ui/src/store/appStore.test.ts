@@ -41,6 +41,23 @@ function reset() {
 
 const ev = (type: string, detail: any) => ({ type, detail });
 
+it('settles a specialist question without marking a part complete or runnable', () => {
+  useAppStore.setState({ activeSessionKey: 'cad-question', activeRun: null, completedRuns: [], sessionRuns: {}, runsById: {} });
+  const apply = useAppStore.getState().applyRunEvent;
+  apply(ev('task.routing', { task_id: 'cad-question-run', session_id: 'cad-question', description: 'Drawing 117' }));
+  const frame = ev('task.clarification', { task_id: 'cad-question-run', session_id: 'cad-question',
+    question: 'Quelle surface pour R25 ?', runnable: true });
+  apply(frame);
+  apply(frame);
+  expect(useAppStore.getState().activeRun).toBeNull();
+  const records = useAppStore.getState().completedRuns.filter(run => run.id === 'cad-question-run');
+  expect(records).toHaveLength(1);
+  expect(records[0].status).toBe('needs_input');
+  expect(records[0].clarificationQuestion).toBe('Quelle surface pour R25 ?');
+  expect(records[0].runnable).toBe(false);
+  expect(records[0].awaitingApproval).toBe(false);
+});
+
 it('retains attached identity through approval and completion while clearing workspace paths', () => {
   useAppStore.setState({ activeSessionKey: 'local-session', activeRun: null, completedRuns: [] });
   const local = { project_id: 'attached-project', revision: 4 };

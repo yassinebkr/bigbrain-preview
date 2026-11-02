@@ -165,7 +165,7 @@ export function RunPanel() {
   const preparationWait = running?.brain === 'planner' && running.durationMs != null
     ? ` · ${(running.durationMs / 1000).toFixed(0)} s` : '';
   const summary =
-    run.deliveryStatus === 'incomplete' ? 'Projet incomplet · non validé' : isPartialResearch(run) ? 'Recherche incomplète' : run.status === 'running'
+    run.status === 'needs_input' ? 'Précision attendue' : run.deliveryStatus === 'incomplete' ? 'Projet incomplet · non validé' : isPartialResearch(run) ? 'Recherche incomplète' : run.status === 'running'
       ? run.awaitingApproval
         ? 'Awaiting contract approval'
         : running

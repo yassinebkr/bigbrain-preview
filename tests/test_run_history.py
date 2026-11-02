@@ -19,6 +19,19 @@ async def emit(bus, event, task_id, session_id="sess-demo", **data):
 
 
 @pytest.mark.asyncio
+async def test_restart_preserves_specialist_question_without_interruption(tmp_path):
+    bus = MessageBus(tmp_path / 'logs', auth=None)
+    await emit(bus, 'task.routing', 'cad-question')
+    await emit(bus, 'task.received', 'cad-question')
+    await emit(bus, 'task.clarification', 'cad-question', question='Quelle surface pour R25 ?')
+    await bus.close()
+    frames = conversation_activity(bus.logger.log_dir, 'sess-demo', float('inf'))
+    assert frames[-1]['payload']['event'] == 'task.clarification'
+    assert frames[-1]['payload']['question'] == 'Quelle surface pour R25 ?'
+    assert not any(frame['payload']['event'] == 'task.failed' for frame in frames)
+
+
+@pytest.mark.asyncio
 async def test_restored_file_progress_keeps_start_before_progress_and_completion(tmp_path):
     bus = MessageBus(tmp_path / 'logs', auth=None)
     await emit(bus, 'task.received', 'python')
