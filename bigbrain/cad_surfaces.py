@@ -52,7 +52,9 @@ class CadCylinder(Contract):
                 if any(abs(axis[i]) > 1e-6 for i in range(3) if i != self.axis):
                     continue
                 values = (radius, *(origin[i] for i in range(3) if i != self.axis))
-                if face.get('exact') is True:
+                # STEP inspection certifies analytic surfaces independently of
+                # SolidCraft's face-name reliability flag.
+                if face.get('analytic_surface') is True or face.get('exact') is True:
                     candidates.append(values)
                 else:
                     approximations.append(values)

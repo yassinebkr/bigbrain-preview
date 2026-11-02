@@ -45,6 +45,7 @@ class CadCapture:
     geometry: GeometryObservation
     preview: CadPreview | None
     preview_error: str | None
+    measurements: dict | None = None
 
 
 class SolidCraftSession:
@@ -257,6 +258,22 @@ class SolidCraftSession:
             exports.append(self._artifact(path, format, native.sha256))
         document = CadRevision(project_id=project_id, document_id=document_id, revision=revision,
                                engine_version=self.version, native=native, exports=tuple(exports))
+        from .cad_metrology import MeasurementRouter, MeasurementSource
+        step = next(item for item in exports if item.format == 'step')
+        try:
+            inspection = await MeasurementRouter().inspect(MeasurementSource(
+                native.sha256, self.scratch / step.path, step.sha256, bodies), self)
+        except ValueError as error:
+            raise CadError(f'CAD measurement inspection failed: {error}') from error
+        inspection.update(source_sha256=native.sha256, step_sha256=step.sha256)
+        inspection_path = folder / 'measurement-inspection.json'
+        inspection_path.write_text(json.dumps(inspection, allow_nan=False), encoding='utf-8')
+        exact_bodies = list(inspection['bodies'].values())
+        geometry = GeometryObservation.model_validate({**geometry.model_dump(),
+            'volume_mm3': inspection['volume_mm3'],
+            'bounds_min_mm': [min(body['bounds_min_mm'][i] for body in exact_bodies) for i in range(3)],
+            'bounds_max_mm': [max(body['bounds_max_mm'][i] for body in exact_bodies) for i in range(3)],
+            'evidence_ref': inspection_path.relative_to(self.scratch).as_posix()})
         preview, preview_error = None, None
         try:
             image_path = folder / 'preview.png'
@@ -269,7 +286,7 @@ class SolidCraftSession:
                                  image=image, width=960, height=600)
         except Exception as error:
             preview_error = str(error)[:1000]
-        return CadCapture(document, geometry, preview, preview_error)
+        return CadCapture(document, geometry, preview, preview_error, inspection)
 
     async def reopen(self, artifact: CadArtifact):
         """Reopen a captured native/export artifact after checking its exact bytes."""

@@ -1,5 +1,18 @@
 # CAD brain and Atelier integration
 
+Measurement milestone: prefer qualified native analytic capabilities and return
+STEP fallback capabilities to SolidCraft as its native tools become available.
+Keep provider selection behind the shared measurement interface and run the
+same reference and defect cases before each switch. See
+[measurement qualification](CAD_MEASUREMENT_QUALIFICATION.md) for current methods,
+evidence and Linux/Windows qualification boundaries.
+
+Standards knowledge is a later CAD milestone: versioned normative references,
+verified tolerance/fit tables, threads, surface finish and geometric dimensioning.
+Preserve drawing annotations and distinguish nominal geometry, tolerance limits
+and manufacturing evidence. Record the source and edition behind each derived
+limit. Qualification of drawing 117 remains nominal with its retained H8 boundary.
+
 Initial headless milestone: 30 October 2026. Interactive milestone: 31 October.
 Current implementation and follow-up qualification: [interactive CAD workspace](CAD_INTERACTIVE_PLAN.md).
 Drawing interpretation, local geometric criteria and bounded repair:

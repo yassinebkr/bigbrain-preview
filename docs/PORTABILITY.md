@@ -55,6 +55,13 @@ Initial inventory from the current source tree; extend it during each block audi
 
 ## Migration milestones
 
+CAD measurement providers share the capability interface in `cad_metrology.py`.
+Native analytic tools are preferred after qualification. STEP/OpenCascade supplies
+capabilities currently missing from the native API. Returning these capabilities
+to SolidCraft is a tracked milestone; it changes the provider selection and
+retains the same acceptance cases. Linux native evidence and the pending Windows
+gate are recorded in `CAD_MEASUREMENT_QUALIFICATION.md`.
+
 1. Audit platform dependencies and freeze the shared capability/test matrix.
 2. Implement common interfaces and qualify Linux/Windows filesystem, lock and
    publication adapters; preserve the existing transaction/evidence engine.

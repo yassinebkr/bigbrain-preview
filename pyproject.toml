@@ -19,6 +19,9 @@ authors = [
 readme = "README.md"
 
 [project.optional-dependencies]
+cad = [
+    "cadquery-ocp-novtk==7.8.1.1.post1",
+]
 research = [
     "trafilatura==2.3.1",
     "beautifulsoup4>=4.15,<5",

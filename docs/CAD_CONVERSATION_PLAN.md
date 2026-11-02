@@ -10,6 +10,41 @@ intent and prove coherent parameter edits on saved/reopened models. See
 [Parametric CAD workflow](CAD_PROFESSIONAL_WORKFLOW.md) for measured capabilities,
 the runtime sequence, qualification tests and remaining platform limits.
 
+The sketch checkpoint implementation is committed as `19a272d` on
+`feat/cad-drawings`. Phase 2 measurement qualification and its reference-solid
+results are recorded in [CAD measurement qualification](CAD_MEASUREMENT_QUALIFICATION.md).
+The reference sections satisfy the 0.05 mm nominal gate. Independent analytic
+STEP inspection resolves cylinder radius/axis and volumetric precision on the
+reference solids. SolidCraft's face `exact` flag refers to naming history;
+the runtime uses independently inspected analytic surfaces for acceptance.
+The next recorded probe applies these methods to drawing 117.
+
+The subsequent frontend resume produced revision 5 with 54/54 passing checks.
+One construction repair call took 20.375 seconds. A disposable parameter-edit
+check changed length to 180 mm while preserving solved sketches and active
+history. The evidence, provider choices and retained R25/H8 limits are recorded
+in the measurement qualification report. Windows native qualification remains open.
+
+### Second drawing probe: drawing 83
+
+The next frontend probe used the user-supplied drawing 83 in a new conversation.
+The front requested a higher-resolution source without identifying a specific
+unreadable annotation. A follow-up asked it to identify the uncertain label and
+local feature; the decision cycle timed out at 120 seconds. Neither turn
+dispatched CAD construction. This probe remains incomplete and establishes a
+reading/decision-path issue before any conclusion about modeling capability.
+
+The uploaded PNG and the user's original JPEG both measure 474 × 670 pixels.
+The application sends original image bytes through native Codex image inputs;
+no resize was found in that path. A generic resolution request does not establish
+which annotation is unavailable. Future clarification must identify the label,
+view and affected feature and preserve the dimensions already read.
+
+Evidence: `tests/cad-capability-live-20261102/drawing83-initial-result.png` under
+the external qualification workspace. The four subsequent user-supplied drawings
+are retained there as drawing42.png, pipe-with-flange.png, drawing90.png and
+rectangular-elbow.png. They define the next complex-part qualification campaign.
+
 ## Current recovery plan — 2 November 2026
 
 Objective: deliver drawing 117 through the normal BigBrain frontend workflow,

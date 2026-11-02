@@ -92,7 +92,8 @@ async def test_native_truncated_cylinder_check_controls_publication(tmp_path, en
         else:
             check = next(item for item in result['cad']['checks'] if item['criterion_id'] == 'arc')
             assert check['status'] == 'passed'
-            assert check['observed'] == pytest.approx([25, 0, 0])
+            # STEP import preserves analytic geometry within numerical roundoff.
+            assert check['observed'] == pytest.approx([25, 0, 0], abs=1e-9)
             assert check['evidence_ref'].endswith('/topology.json')
     finally:
         await bus.close()

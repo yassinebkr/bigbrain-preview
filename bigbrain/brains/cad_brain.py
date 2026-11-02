@@ -203,9 +203,7 @@ class CadBrain(BaseBrain):
                             # still derive from the confirmed definition.
                             await progress('checking', 'cad_inspection_planning')
                             evidence = root / f'revision-{revision}'
-                            measured = json.loads((evidence / 'measure.json').read_text(encoding='utf-8'))
-                            topology = {body['name']: await session.tool('body_topology', {'body': body['name']})
-                                        for body in measured['bodies']}
+                            topology = capture.measurements['bodies']
                             observations = {'source_sha256': capture.document.native.sha256,
                                 'geometry': capture.geometry.model_dump(mode='json'), 'topology': topology}
                             (evidence / 'inspection-input.json').write_text(
@@ -221,9 +219,12 @@ class CadBrain(BaseBrain):
                         if plan.cylinders or plan.vertices:
                             topology_evidence = {}
                             for body in dict.fromkeys(item.body for item in (*plan.cylinders, *plan.vertices)):
-                                topology_evidence[body] = await session.tool('body_topology', {'body': body})
+                                topology_evidence[body] = capture.measurements['bodies'][body]
                             (evidence / 'topology.json').write_text(json.dumps({
                                 'source_sha256': capture.document.native.sha256,
+                                'step_sha256': capture.measurements['step_sha256'],
+                                'method': capture.measurements['method'],
+                                'capabilities': capture.measurements['capabilities'],
                                 'bodies': topology_evidence}, allow_nan=False), encoding='utf-8')
                             measured_cylinders = {item.id: item.observe(topology_evidence[item.body],
                                 source_sha256=capture.document.native.sha256,
