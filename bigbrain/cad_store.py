@@ -21,7 +21,10 @@ class CadStore:
     """Keep application-owned CAD artifacts separate from attached user sources."""
 
     def __init__(self, root=None):
-        self.root = Path(root) if root is not None else cad_root()
+        # Pin the configured storage location once, including an intentional
+        # whole-store relocation. Document and artifact links remain forbidden.
+        configured = Path(root) if root is not None else cad_root()
+        self.root = configured.resolve()
 
     def directory(self, document_id):
         if not isinstance(document_id, str) or not DOCUMENT_ID.fullmatch(document_id):
@@ -120,6 +123,7 @@ class CadStore:
         if delivery and (delivery.document != document or delivery.geometry != geometry):
             raise CadError('CAD delivery evidence differs from its stored capture')
         return {'title': data.get('title', 'Pièce CAO'),
+                'delivery_status': 'ready' if delivery else 'incomplete',
                 'document': document.model_dump(mode='json'), 'geometry': geometry.model_dump(mode='json'),
                 'preview': preview.model_dump(mode='json') if preview else None,
                 'preview_state': 'current' if preview and preview.is_current(document)

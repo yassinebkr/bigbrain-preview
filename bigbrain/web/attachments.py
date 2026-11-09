@@ -1,13 +1,9 @@
-"""Persistent chat attachments (memory phase).
+"""Uploaded chat files and stable attachment-ID lookup.
 
-The user's files used to live only in the browser: the WS `send()`
-dropped them on the floor. Now every attachment is uploaded to
-``data/attachments/`` (env ``BIGBRAIN_ATTACHMENTS_DIR``) and recorded in
-persistent memory, so the agent can recall months later that the user
-shared this file — the openclaw image-memory lesson, without re-uploading
-anything to an LLM: recall works on the file NAME/type/context, not on
-content unless the selected front model declares vision support. Vision images
-are inlined only for the current provider call; they are never stored in chat history.
+Files live under BIGBRAIN_ATTACHMENTS_DIR. Session records retain their IDs,
+metadata and original hashes for conversation-owned vision and clarification.
+The front brain constructs transient image blocks for the selected vision
+provider; persisted chat records carry file references and design snapshots.
 """
 
 from __future__ import annotations

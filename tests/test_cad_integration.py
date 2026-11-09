@@ -1,6 +1,7 @@
 """CAD contract, worker, durable artifacts and HTTP reads with the real engine."""
 
 import json
+from types import SimpleNamespace
 
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
@@ -34,6 +35,7 @@ class Provider:
     def __init__(self, plan):
         self.plan = plan
         self.calls = []
+        self.entry = SimpleNamespace(vision=True)
 
     async def chat_complete(self, **kwargs):
         self.calls.append(kwargs)
@@ -56,25 +58,40 @@ def test_native_front_route_preserves_cad_edit_identity():
     assert decision.decision.task_payload()['route']['payload']['user_request'].startswith('Créer une plaque')
 
 
-async def prepared(bus, plan_data, *, document_id=None, revision=None):
+async def prepared(bus, plan_data, *, document_id=None, revision=None, drawing=None, session_id='session-cad', precompiled=False):
     provider = Provider(plan_data)
     orchestrator = WorkspaceOrchestrator('default', bus, llm_provider=provider)
     orchestrator.register_brain('cad_brain', {'description': 'CAD'})
-    payload = {'brain': 'cad_brain', 'type': 'model_cad', 'session_id': 'session-cad',
+    payload = {'brain': 'cad_brain', 'type': 'model_cad', 'session_id': session_id,
                'user_request': 'Plaque mécanique ' + str(plan_data['criteria'][0]['expected'])}
     if document_id:
         payload.update(document_id=document_id, base_revision=revision)
+    if drawing is not None:
+        payload['drawing'] = drawing
     message = BusMessage(type=MessageType.TASK, source='morphable_ui', target=orchestrator.name, payload=payload)
     plan = await orchestrator._create_task_plan(message)
     assert len(plan.subtasks) == 1 and plan.subtasks[0].brain_target == 'cad_brain'
-    spec = await orchestrator._propose_contracts(plan, payload['user_request'])
+    if precompiled or drawing is None:
+        # Explicit fixture path for existing geometry/check recipes. Fresh
+        # production proposals require design intent, including natural language.
+        from unittest.mock import patch
+        from bigbrain.brains.cad_brain import prepare_cad_plan
+        async def compile_fixture(*args, **kwargs):
+            if precompiled:
+                kwargs['defer_construction'] = False
+            kwargs['require_workflow'] = False
+            return await prepare_cad_plan(*args, **kwargs)
+        with patch('bigbrain.brains.cad_brain.prepare_cad_plan', compile_fixture):
+            spec = await orchestrator._propose_contracts(plan, payload['user_request'])
+    else:
+        spec = await orchestrator._propose_contracts(plan, payload['user_request'])
     return plan, spec, provider
 
 
 def task(plan, spec):
     return BusMessage(type=MessageType.TASK, source='orchestrator_default', target='cad_brain', payload={
         **plan.subtasks[0].payload, '_plan_id': plan.id, '_subtask_id': plan.subtasks[0].id,
-        'session_id': 'session-cad', 'contract_revision': {'design_id': spec.design_id, 'revision': spec.revision}})
+        'session_id': plan.original_task.payload['session_id'], 'contract_revision': {'design_id': spec.design_id, 'revision': spec.revision}})
 
 
 @pytest.mark.asyncio
@@ -130,6 +147,36 @@ async def test_real_contract_worker_atelier_artifacts_and_scope(tmp_path, engine
         native.write_bytes(b'changed native')
         with pytest.raises(CadError, match='identity changed|bytes changed'):
             store.artifact(document_id, 'session-cad', 1, 'native')
+    finally:
+        await bus.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('fingerprint', [None, 'f' * 64])
+async def test_retained_revision_requires_original_build(tmp_path, engine, fingerprint):
+    bus = MessageBus(tmp_path / 'bus', auth=None)
+    try:
+        plan, spec, _ = await prepared(bus, recipe())
+        confirmed = default_repository().approve_spec(spec.design_id, plan_id=plan.id)
+        worker = CadBrain('cad_brain', bus)
+        first = await worker.handle_task(task(plan, confirmed))
+        assert first['success'], first
+        document_id = first['cad']['document']['document_id']
+        root = CadStore().directory(document_id)
+        capture_path = root / 'revision-1/capture.json'
+        captured = json.loads(capture_path.read_text())
+        captured['document']['engine_sha256'] = fingerprint
+        captured['delivery']['document']['engine_sha256'] = fingerprint
+        capture_path.write_text(json.dumps(captured))
+        native = root / first['cad']['document']['native']['path']
+        before = native.read_bytes()
+        edit, spec, _ = await prepared(bus, recipe(80), document_id=document_id, revision=1)
+        confirmed = default_repository().approve_spec(spec.design_id, plan_id=edit.id)
+        result = await worker.handle_task(task(edit, confirmed))
+        assert result['success'] is False and result['delivery_status'] == 'incomplete'
+        assert 'original executable fingerprint' in str(result)
+        assert native.read_bytes() == before
+        assert CadStore().view(document_id, 'session-cad')['document']['revision'] == 1
     finally:
         await bus.close()
 
@@ -209,5 +256,170 @@ async def test_cad_confirmation_reaches_chat_without_another_inference(tmp_path)
                 's1': {'success': True, 'data': {'success': True, 'result_kind': 'cad',
                      'message': 'Pièce vérifiée dans l’Atelier.'}}}}))
         assert any(frame.get('text') == 'Pièce vérifiée dans l’Atelier.' for frame in frames), frames
+    finally:
+        await bus.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('repair_succeeds', [True, False])
+async def test_bounded_repair_preserves_confirmed_targets(tmp_path, engine, repair_succeeds):
+    initial = recipe()
+    initial['commands'][1]['params']['height'] = 5
+    repair = recipe()
+    if not repair_succeeds:
+        repair['commands'][1]['params']['height'] = 4
+    provider = Provider({'commands': repair['commands']})
+    bus = MessageBus(tmp_path / 'bus', auth=None)
+    try:
+        plan, spec, _ = await prepared(bus, initial)
+        confirmed = default_repository().approve_spec(spec.design_id, plan_id=plan.id)
+        worker = CadBrain('cad_brain', bus, llm_provider=provider)
+        result = await worker.handle_task(task(plan, confirmed))
+        assert result['success'] is repair_succeeds, result
+        assert len(provider.calls) == (1 if repair_succeeds else 2)
+        contract = json.loads(provider.calls[0]['messages'][1]['content'])['confirmed_plan']
+        assert contract['criteria'][0]['expected'] == [60, 40, 6]
+        assert contract['max_repairs'] == 2
+        if repair_succeeds:
+            assert result['cad']['document']['revision'] == 2
+            assert all(item['status'] == 'passed' for item in result['cad']['checks'])
+        else:
+            assert result['delivery_status'] == 'incomplete'
+            assert not list(CadStore().root.glob('*/current.json'))
+    finally:
+        await bus.close()
+
+
+@pytest.mark.asyncio
+async def test_dimensioned_stepped_support_runs_through_contract_and_local_checks(tmp_path, engine):
+    from pathlib import Path
+    import hashlib
+    from bigbrain.web.attachments import save_attachment
+    from bigbrain.web.sessions import SessionStore
+    source_bytes = Path('tests/fixtures/cad/stepped-support.svg').read_bytes()
+    record = save_attachment('stepped-support.svg', 'image/svg+xml', source_bytes)
+    sessions = SessionStore()
+    session_id = sessions.create()['id']
+    sessions.append_message(session_id, 'user', 'Create this stepped support', [record])
+    source = {'attachment_id': record['id'], 'sha256': hashlib.sha256(source_bytes).hexdigest()}
+    dimensions = [('width', 80, 'length'), ('depth', 40, 'length'), ('height', 20, 'length'),
+                  ('step', 20, 'length'), ('base', 8, 'depth'), ('diameter', 6, 'diameter'),
+                  ('hole_x', 60, 'position'), ('hole_y', 20, 'position')]
+    drawing = {'title': 'Stepped support', 'sources': [source], 'views': ['top', 'front'],
+        'dimensions': [{'id': identity, 'feature_id': identity, 'label': identity,
+            'kind': kind, 'value': value, 'unit': 'mm', 'origin': 'explicit',
+            'sources': [source], 'annotation': str(value)} for identity, value, kind in dimensions]}
+    def section(identity, axis, point, intervals, bindings=()):
+        return {'id': identity, 'label': identity, 'axis': axis, 'point_mm': point,
+                'intervals_mm': intervals, 'bindings': [
+                    {'dimension_id': dimension, 'quantity': quantity, 'interval': index}
+                    for dimension, quantity, index in bindings]}
+    data = {'title': 'Stepped support', 'commands': [
+        {'command': 'solid.box', 'params': {'length': 80, 'width': 40, 'height': 8, 'body_name': 'support'}},
+        {'command': 'solid.box', 'params': {'length': 20, 'width': 40, 'height': 12,
+            'corner': [0, 0, 8], 'operation': 'join', 'targets': ['support']}},
+        {'command': 'solid.cylinder', 'params': {'radius': 3, 'height': 8,
+            'base': [60, 20, 0], 'operation': 'cut', 'targets': ['support']}}],
+        'cut_intents': [{'id': 'bore', 'command_index': 2, 'feature_id': 'diameter',
+            'dimension_ids': ['diameter', 'base'], 'kind': 'through', 'targets': ['support'],
+            'boundaries': [
+                {'label': 'entry', 'origin_mm': [60, 20, 0], 'outward_normal': [0, 0, -1], 'role': 'opening'},
+                {'label': 'exit', 'origin_mm': [60, 20, 8], 'outward_normal': [0, 0, 1], 'role': 'opening'}]}],
+        'criteria': [{'id': 'envelope', 'label': 'Envelope', 'metric': 'dimensions_mm',
+            'expected': [80, 40, 20], 'dimension_bindings': {'width': 0, 'depth': 1, 'height': 2}}],
+        'sections': [section('step_length', 0, [0, 10, 12], [[0, 20]], [('step', 'length', 0)]),
+            section('base_thickness', 2, [30, 10, 0], [[0, 8]], [('base', 'length', 0)]),
+            section('hole_x', 0, [0, 20, 4], [[0, 57], [63, 80]], [('hole_x', 'gap_center', 0), ('diameter', 'gap', 0)]),
+            section('hole_y', 1, [60, 0, 4], [[0, 17], [23, 40]], [('hole_y', 'gap_center', 0)]),
+            section('through', 2, [60, 20, 0], [])]}
+    bus = MessageBus(tmp_path / 'bus', auth=None)
+    try:
+        plan, spec, provider = await prepared(bus, data, drawing=drawing, session_id=session_id, precompiled=True)
+        # This provider supplies a deterministic recipe. Source interpretation
+        # is covered separately; this test exercises ownership and native checks.
+        blocks = provider.calls[0]['messages'][-1]['content']
+        assert blocks[-1]['type'] == 'image_url'
+        assert spec.metadata['cad']['plan']['drawing']['sources'] == [dict(source, schema_version='1.0', region=[0, 0, 1, 1])]
+        confirmed = default_repository().approve_spec(spec.design_id, plan_id=plan.id)
+        result = await CadBrain('cad_brain', bus).handle_task(task(plan, confirmed))
+        assert result['success'], result
+        assert {item['criterion_id'] for item in result['cad']['checks']} == {
+            'envelope', 'step_length', 'base_thickness', 'hole_x', 'hole_y', 'through', 'cut-safety'}
+        assert all(item['status'] == 'passed' for item in result['cad']['checks'])
+        root = CadStore().directory(result['cad']['document']['document_id'])
+        sections = json.loads((root / 'revision-1/sections.json').read_text())
+        assert len(sections) == 5 and all(len(item['surface_sha256']) == 64 for item in sections)
+    finally:
+        await bus.close()
+
+
+@pytest.mark.asyncio
+async def test_native_command_rejection_enters_the_same_bounded_repair_loop(tmp_path, engine):
+    initial = recipe()
+    initial['commands'][0]['params']['expression'] = 'missing_parameter + 1'
+    provider = Provider({'commands': recipe()['commands']})
+    bus = MessageBus(tmp_path / 'bus', auth=None)
+    try:
+        plan, spec, _ = await prepared(bus, initial)
+        confirmed = default_repository().approve_spec(spec.design_id, plan_id=plan.id)
+        result = await CadBrain('cad_brain', bus, llm_provider=provider).handle_task(task(plan, confirmed))
+        assert result['success'], result
+        assert len(provider.calls) == 1
+        diagnosis = json.loads(provider.calls[0]['messages'][1]['content'])['command_diagnostic']
+        assert diagnosis['command'] == 'parameters.change' and diagnosis['index'] == 0
+        root = CadStore().directory(result['cad']['document']['document_id'])
+        assert len(list(root.glob('command-failure-*.json'))) == 1
+        assert all(item['status'] == 'passed' for item in result['cad']['checks'])
+    finally:
+        await bus.close()
+
+
+@pytest.mark.asyncio
+async def test_transport_uncertainty_stops_before_repair(tmp_path, engine, monkeypatch):
+    from bigbrain.solidcraft import SolidCraftSession
+    provider = Provider({'commands': recipe()['commands']})
+    bus = MessageBus(tmp_path / 'bus', auth=None)
+    try:
+        plan, spec, _ = await prepared(bus, recipe())
+        confirmed = default_repository().approve_spec(spec.design_id, plan_id=plan.id)
+        async def uncertain(*args, **kwargs):
+            raise CadError('CAD response identity mismatch')
+        monkeypatch.setattr(SolidCraftSession, 'batch', uncertain)
+        result = await CadBrain('cad_brain', bus, llm_provider=provider).handle_task(task(plan, confirmed))
+        assert not result['success'] and result['delivery_status'] == 'incomplete'
+        assert provider.calls == []
+        assert not list(CadStore().root.glob('*/current.json'))
+    finally:
+        await bus.close()
+
+
+@pytest.mark.asyncio
+async def test_closed_native_timeout_repairs_in_a_fresh_session(tmp_path, engine, monkeypatch):
+    from bigbrain.solidcraft import SolidCraftSession, CadTimeoutError
+    original_batch = SolidCraftSession.batch
+    timed_out = []
+
+    async def once(session, commands):
+        if not timed_out:
+            timed_out.append(session)
+            await session.close()
+            raise CadTimeoutError('Synthetic native timeout; session closed', {'name': 'batch'})
+        assert session is not timed_out[0]
+        assert timed_out[0].process is None
+        return await original_batch(session, commands)
+
+    provider = Provider({'commands': recipe()['commands']})
+    bus = MessageBus(tmp_path / 'bus', auth=None)
+    try:
+        plan, spec, _ = await prepared(bus, recipe())
+        confirmed = default_repository().approve_spec(spec.design_id, plan_id=plan.id)
+        monkeypatch.setattr(SolidCraftSession, 'batch', once)
+        result = await CadBrain('cad_brain', bus, llm_provider=provider).handle_task(task(plan, confirmed))
+        assert result['success'], result
+        assert len(provider.calls) == 1
+        diagnosis = json.loads(provider.calls[0]['messages'][1]['content'])['command_diagnostic']
+        assert diagnosis['stage'] == 'native_timeout'
+        assert diagnosis['session_closed'] is True
+        assert diagnosis['mutation_outcome'] == 'unverified'
     finally:
         await bus.close()

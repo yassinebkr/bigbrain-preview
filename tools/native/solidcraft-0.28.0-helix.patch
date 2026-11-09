@@ -1,0 +1,60 @@
+diff --git a/crates/kernel/src/helix.rs b/crates/kernel/src/helix.rs
+index 37b4a52..697de21 100644
+--- a/crates/kernel/src/helix.rs
++++ b/crates/kernel/src/helix.rs
+@@ -105,8 +105,10 @@ pub fn sweep_helix_mesh(plane: &Plane, polygon: &[Vec2], axis_origin: Vec3, axis
+ }
+ 
+ /// Samples per profile segment and stations per turn of the smooth helical walls.
+-const SEG_SAMPLES: usize = 12;
+-const STATIONS_PER_TURN: f64 = 12.0;
++// Both directions contribute interpolation error: refining only the helix
++// leaves the circular section approximate. Preserve the bounded station cap.
++const SEG_SAMPLES: usize = 24;
++const STATIONS_PER_TURN: f64 = 48.0;
+ 
+ /// Helical walls as B-spline surfaces: each profile segment, sampled at every station of the
+ /// screw motion, interpolated by cubics across the profile and then along the helix.
+@@ -233,6 +235,42 @@ mod tests {
+     use super::*;
+     use solidcraft_geom::Vec2;
+ 
++    #[test]
++    fn helical_interpolation_preserves_section_and_angular_area() {
++        use mt::ParametricCurve;
++
++        // The two independent fits used by smooth_helix must preserve circular
++        // section area and angular travel. Polygon quadrature here samples the
++        // fitted curve, rather than using its interpolation input points.
++        fn fitted_area(radius: f64, angle: f64, count: usize) -> f64 {
++            let pts: Vec<Vec3> = (0..count)
++                .map(|i| {
++                    let a = angle * i as f64 / (count - 1) as f64;
++                    Vec3::new(radius * a.cos(), radius * a.sin(), 0.0)
++                })
++                .collect();
++            let curve = crate::build::interpolate_cubic(&pts).unwrap();
++            let mut previous = curve.subs(0.0);
++            let mut area = 0.0;
++            for i in 1..=8192 {
++                let point = curve.subs(i as f64 / 8192.0);
++                area += previous.x * point.y - point.x * previous.y;
++                previous = point;
++            }
++            area * 0.5
++        }
++
++        let section = fitted_area(1.0, std::f64::consts::PI, SEG_SAMPLES);
++        let expected = std::f64::consts::PI * 0.5;
++        assert!((section - expected).abs() / expected < 1e-6, "section: {section} vs {expected}");
++        for turns in [0.5_f64, 1.25, 2.0, 3.0] {
++            let count = ((turns * STATIONS_PER_TURN).ceil() as usize).clamp(4, 4800) + 1;
++            let angular = fitted_area(10.0, std::f64::consts::TAU * turns, count);
++            let expected = 100.0 * std::f64::consts::PI * turns;
++            assert!((angular - expected).abs() / expected < 1e-5, "turns {turns}: {angular} vs {expected}");
++        }
++    }
++
+     #[test]
+     fn coil_volume_is_section_times_helix_length() {
+         // A 2 mm circle in a plane through the Z axis, 20 mm out, 3 turns, pitch 8: a screw

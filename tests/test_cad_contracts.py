@@ -37,6 +37,36 @@ def run():
                   specification_id='spec-1')
 
 
+def test_delivery_reserves_two_runtime_checks_after_64_proposed_checks(delivery):
+    ids = [f'check-{i}' for i in range(64)] + ['design-quality', 'cut-safety']
+    delivery['required_criteria'] = ids
+    delivery['checks'] = [{**delivery['checks'][0], 'criterion_id': name} for name in ids]
+    assert len(CadDelivery.model_validate(delivery).checks) == 66
+    delivery['checks'][-1]['status'] = 'failed'
+    with pytest.raises(ValidationError):
+        CadDelivery.model_validate(delivery)
+    delivery['checks'][-1]['status'] = 'passed'
+    delivery['required_criteria'].append('overflow')
+    delivery['checks'].append({**delivery['checks'][0], 'criterion_id': 'overflow'})
+    with pytest.raises(ValidationError):
+        CadDelivery.model_validate(delivery)
+
+
+def test_spacer_volume_discrepancy_preserves_the_confirmed_tolerance(delivery):
+    """Regression values transcribed from the bounded annular-spacer trial."""
+    from bigbrain.cad_contracts import GeometryObservation
+    from bigbrain.cad_planning import CadCriterion
+    geometry = GeometryObservation.model_validate({**delivery['geometry'],
+        'bounds_min_mm': [-12, -12, 0], 'bounds_max_mm': [12, 12, 6],
+        'volume_mm3': 2242.9876432870474})
+    criterion = CadCriterion(id='volume', label='Annular spacer volume', metric='volume_mm3',
+        expected=(2243.097154663112,), absolute_tolerance=0.001, relative_tolerance=0.00001)
+    observation = criterion.observe(geometry)
+    assert observation.status == 'failed'
+    assert observation.relative_tolerance == 0.00001
+    assert observation.expected == (2243.097154663112,)
+
+
 def test_delivery_serializes_and_remains_immutable(delivery):
     result = CadDelivery.model_validate(delivery)
     assert CadDelivery.model_validate_json(result.model_dump_json()) == result

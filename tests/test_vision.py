@@ -93,3 +93,47 @@ async def test_attachment_only_message_is_sent_to_vision_model(
     await front._handle_ui_message(message_for(record, text=""))
     content = provider.calls[0]["messages"][-1]["content"]
     assert content[0]["text"] == "Please describe the attached image."
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('alter_source', [False, True])
+async def test_cad_vision_handoff_verifies_source_bytes(monkeypatch, alter_source):
+    from tests.test_cad_drawings import drawing
+    record = save_attachment('drawing.png', 'image/png', b'SYNTHETIC_DRAWING')
+
+    class CadProvider(RecordingProvider):
+        async def chat_complete(self, messages=None, **kwargs):
+            blocks = messages[-1]['content']
+            metadata = next(block['text'] for block in blocks
+                            if block.get('type') == 'text' and block['text'].startswith('Image provenance: '))
+            source = json.loads(metadata.removeprefix('Image provenance: '))
+            if alter_source:
+                source['sha256'] = '0' * 64
+            spec = drawing()
+            spec['sources'] = [source]
+            spec['dimensions'][0]['sources'] = [source]
+            return json.dumps({'decision': {'operation': 'delegate', 'reply': 'Je prépare la pièce.',
+                'objective': 'Créer le support du dessin.', 'route': {'brain': 'cad_brain',
+                'payload': {'type': 'model_cad', 'drawing': spec}}}})
+
+    bus = MessageBus(auth=None)
+    front = FrontBrain(bus, llm_provider=CadProvider(vision=True))
+    front.register_brain('cad_brain', 'Mechanical CAD')
+    tasks = []
+
+    async def capture_task(**kwargs):
+        tasks.append(kwargs['task_data'])
+
+    async def capture_message(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(bus, 'send_task', capture_task)
+    monkeypatch.setattr(front, '_emit_chat_message', capture_message)
+    try:
+        await front._handle_ui_message(message_for(record, 'Créer cette pièce.'))
+        assert len(tasks) == (0 if alter_source else 1)
+        if tasks:
+            assert tasks[0]['drawing']['sources'][0]['attachment_id'] == record['id']
+            assert tasks[0]['brain'] == 'cad_brain'
+    finally:
+        await bus.close()

@@ -13,10 +13,31 @@ import signal
 import subprocess
 
 from .cad_contracts import CadArtifact, CadPreview, CadRevision, GeometryObservation
+from .cad_workflow import allowed_cad_command
 
 
 class CadError(RuntimeError):
     """An engine, transport or artifact diagnostic suitable for the run journal."""
+
+
+class CadTimeoutError(CadError, TimeoutError):
+    """A timed-out native operation leaves its private mutation unverified."""
+
+    def __init__(self, message, operation=None):
+        self.result = {'failed': {'stage': 'native_timeout', 'error': message,
+                                 'operation': operation, 'session_closed': True,
+                                 'mutation_outcome': 'unverified'}}
+        super().__init__(message)
+
+
+class CadCommandError(CadError):
+    """A completed engine response identifies a rejected geometry command."""
+
+    def __init__(self, result):
+        self.result = result
+        summary = {key: value for key, value in result.get('failed', {}).items()
+                   if key != 'actual_operand_geometry'}
+        super().__init__('CAD tool failed: ' + json.dumps(summary)[:1500])
 
 
 def solidcraft_executable() -> Path:
@@ -36,6 +57,7 @@ class CadCapture:
     geometry: GeometryObservation
     preview: CadPreview | None
     preview_error: str | None
+    measurements: dict | None = None
 
 
 class SolidCraftSession:
@@ -55,9 +77,17 @@ class SolidCraftSession:
         self._lock = asyncio.Lock()
         self._counter = 0
         self.version = None
+        self.engine_sha256 = None
         self.observations = []
+        self.cut_safety_reports = []
 
     async def __aenter__(self):
+        # Hash the selected executable on every launch, including recovery.
+        # This shared identity works with Linux binaries and Windows executables.
+        def executable_digest():
+            with self.executable.open('rb') as stream:
+                return hashlib.file_digest(stream, 'sha256').hexdigest()
+        self.engine_sha256 = await asyncio.to_thread(executable_digest)
         launch = ({'start_new_session': True} if os.name == 'posix'
                   else {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP})
         self.process = await asyncio.create_subprocess_exec(
@@ -72,6 +102,8 @@ class SolidCraftSession:
             self.version = result.get('serverInfo', {}).get('version')
             if result.get('serverInfo', {}).get('name') != 'solidcraft' or self.version != '0.28.0':
                 raise CadError('CAD adapter requires the qualified SolidCraft 0.28.0 engine')
+            if await asyncio.to_thread(executable_digest) != self.engine_sha256:
+                raise CadError('CAD executable changed during launch')
             # Server-provided instructions remain tool data. Product authority
             # and the user's contract stay with BigBrain.
             self.process.stdin.write(b'{"jsonrpc":"2.0","method":"notifications/initialized"}\n')
@@ -142,6 +174,14 @@ class SolidCraftSession:
 
             try:
                 result = await asyncio.wait_for(exchange(), self.timeout)
+            except asyncio.TimeoutError as error:
+                await self.close()
+                operation = params.get('name', method)
+                if operation == 'batch':
+                    operation = 'batch: ' + ', '.join(
+                        item.get('command', '?') for item in params.get('arguments', {}).get('commands', []))
+                raise CadTimeoutError(f'CAD engine exceeded {self.timeout:g} seconds during {operation}; '
+                               'candidate session closed; mutation outcome remains unverified', params) from error
             except BaseException:
                 # A timeout may have interrupted a mutation. Closing prevents
                 # an automatic retry against an unobserved live state.
@@ -162,20 +202,111 @@ class SolidCraftSession:
         if len(self.observations) > 128:
             raise CadError('CAD session observation budget exhausted')
         if result.get('isError') or isinstance(value, dict) and value.get('ok') is False:
+            if name == 'batch' and isinstance(value, dict) and isinstance(value.get('failed'), dict):
+                raise CadCommandError(value)
             raise CadError('CAD tool failed: ' + json.dumps(value)[:2000])
         return value
 
-    async def batch(self, commands):
-        """Restrict model mutations to geometry and parameter operations."""
-        if not isinstance(commands, list) or not 1 <= len(commands) <= 32:
-            raise CadError('CAD batch requires 1–32 commands')
+    @staticmethod
+    def validate_commands(commands):
+        """Validate the complete mutation inventory before sending any command."""
+        if not isinstance(commands, list) or not 1 <= len(commands) <= 64:
+            raise CadError('CAD batch requires 1–64 commands')
         for item in commands:
             if (not isinstance(item, dict) or set(item) != {'command', 'params'}
                     or not isinstance(item['command'], str) or not isinstance(item['params'], dict)
-                    or not (item['command'].startswith(('solid.', 'sketch.', 'pattern.', 'construction.'))
-                            or item['command'] == 'parameters.change')):
+                    or not allowed_cad_command(item['command'])):
                 raise CadError('CAD command lies outside the geometry mutation contract')
+        from .cad_native_compat import native_input_diagnostics
+        diagnostics = native_input_diagnostics(commands)
+        if diagnostics:
+            raise CadError('; '.join(diagnostics))
+
+    async def batch(self, commands):
+        """Restrict model mutations to geometry and parameter operations."""
+        self.validate_commands(commands)
         return await self.tool('batch', {'commands': commands, 'rollback': True, 'verbose': False})
+
+    async def construct(self, commands, workflow=None, *, cut_intents=(), enforce_cut_safety=False):
+        """Inspect completed sketches before continuing on a private candidate."""
+        if workflow is None and not enforce_cut_safety and not cut_intents:
+            return await self.batch(commands)
+        from .cad_resources import command_capacity
+        if not isinstance(commands, list) or not 1 <= len(commands) <= command_capacity.get():
+            raise CadError('CAD construction exceeds the runtime-authorized capacity')
+        for start in range(0, len(commands), 64):
+            self.validate_commands(commands[start:start + 64])
+        from .cad_cut_contracts import validate_cut_intents
+        from .cad_cut_safety import guarded_cut
+        if enforce_cut_safety or cut_intents:
+            try:
+                validate_cut_intents(commands, cut_intents)
+            except ValueError as error:
+                raise CadCommandError({'failed': {'stage': 'cut_safety', 'diagnostics': [str(error)]}}) from error
+        intents = {intent.command_index: intent for intent in cut_intents}
+        pending = []
+        for index, item in enumerate(commands):
+            if item['command'] in {'solid.fillet', 'solid.chamfer'}:
+                # Commit the preceding private construction independently so a
+                # rejected finish leaves its actual operand available to inspect.
+                if pending:
+                    await self.batch(pending)
+                    pending = []
+                try:
+                    await self.batch([item])
+                except CadCommandError as error:
+                    import uuid
+                    failed = dict(error.result.get('failed', {}))
+                    failed['recipe_command_index'] = index
+                    try:
+                        folder = self.scratch / '.construction-evidence' / uuid.uuid4().hex
+                        folder.mkdir(parents=True)
+                        native = folder / 'before-finish.sc'
+                        await self.tool('save', {'path': str(native)})
+                        geometry = {'source_sha256': hashlib.sha256(native.read_bytes()).hexdigest(),
+                                    'measurements': await self.tool('measure'),
+                                    'state': 'after failed finish rollback; preceding features retained'}
+                        geometry['topology'] = [await self.tool('body_topology', {'body': body['name']})
+                                                for body in geometry['measurements'].get('bodies', [])]
+                        evidence = folder / 'geometry.json'
+                        evidence.write_text(json.dumps(geometry, allow_nan=False), encoding='utf-8')
+                        failed['actual_operand_geometry'] = {
+                            **geometry, 'evidence_ref': evidence.relative_to(self.scratch).as_posix()}
+                    except (CadError, ValueError, OSError) as observation_error:
+                        failed['operand_observation_error'] = str(observation_error)
+                    raise CadCommandError({**error.result, 'failed': failed}) from error
+                continue
+            if index in intents:
+                if pending:
+                    await self.batch(pending)
+                    pending = []
+                names = ([parameter.name for parameter in workflow.parameters] if workflow else
+                         [parameter['name'] for parameter in (await self.tool('inspect_design', {
+                             'measure': False, 'sketches': False}))['params'] if not parameter.get('model')])
+                report = await guarded_cut(self, item, intents[index], names)
+                self.cut_safety_reports.append(report)
+                continue
+            pending.append(item)
+            if len(pending) == 64:
+                await self.batch(pending)
+                pending = []
+            if item['command'] != 'sketch.finish':
+                continue
+            if pending:
+                await self.batch(pending)
+            pending = []
+            if workflow is None:
+                continue
+            design = await self.tool('inspect_design')
+            sketches = design.get('sketches')
+            if not isinstance(sketches, list) or not sketches:
+                raise CadCommandError({'failed': {'stage': 'sketch_quality',
+                    'diagnostics': ['Sketch checkpoint returned no native profiles']}})
+            errors = [error for sketch in sketches for error in workflow.sketch_diagnostics(sketch)]
+            if errors:
+                raise CadCommandError({'failed': {'stage': 'sketch_quality', 'diagnostics': errors}})
+        if pending:
+            await self.batch(pending)
 
     def _artifact(self, path, format, source=None):
         if (path.resolve() != path.absolute() or not path.resolve().is_relative_to(self.scratch)
@@ -218,7 +349,24 @@ class SolidCraftSession:
             await self.tool('export', {'path': str(path), 'format': format})
             exports.append(self._artifact(path, format, native.sha256))
         document = CadRevision(project_id=project_id, document_id=document_id, revision=revision,
-                               engine_version=self.version, native=native, exports=tuple(exports))
+                               engine_version=self.version, engine_sha256=self.engine_sha256,
+                               native=native, exports=tuple(exports))
+        from .cad_metrology import MeasurementRouter, MeasurementSource
+        step = next(item for item in exports if item.format == 'step')
+        try:
+            inspection = await MeasurementRouter().inspect(MeasurementSource(
+                native.sha256, self.scratch / step.path, step.sha256, bodies), self)
+        except ValueError as error:
+            raise CadError(f'CAD measurement inspection failed: {error}') from error
+        inspection.update(source_sha256=native.sha256, step_sha256=step.sha256)
+        inspection_path = folder / 'measurement-inspection.json'
+        inspection_path.write_text(json.dumps(inspection, allow_nan=False), encoding='utf-8')
+        exact_bodies = list(inspection['bodies'].values())
+        geometry = GeometryObservation.model_validate({**geometry.model_dump(),
+            'volume_mm3': inspection['volume_mm3'],
+            'bounds_min_mm': [min(body['bounds_min_mm'][i] for body in exact_bodies) for i in range(3)],
+            'bounds_max_mm': [max(body['bounds_max_mm'][i] for body in exact_bodies) for i in range(3)],
+            'evidence_ref': inspection_path.relative_to(self.scratch).as_posix()})
         preview, preview_error = None, None
         try:
             image_path = folder / 'preview.png'
@@ -231,7 +379,7 @@ class SolidCraftSession:
                                  image=image, width=960, height=600)
         except Exception as error:
             preview_error = str(error)[:1000]
-        return CadCapture(document, geometry, preview, preview_error)
+        return CadCapture(document, geometry, preview, preview_error, inspection)
 
     async def reopen(self, artifact: CadArtifact):
         """Reopen a captured native/export artifact after checking its exact bytes."""

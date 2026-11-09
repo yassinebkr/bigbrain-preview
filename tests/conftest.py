@@ -10,6 +10,16 @@ inject ~150 mock-LLM manifests into it.
 import pytest
 
 
+@pytest.fixture
+def cad_native_engine():
+    """Keep native CAD qualification explicit on machines without SolidCraft."""
+    from bigbrain.solidcraft import CadError, solidcraft_executable
+    try:
+        return solidcraft_executable()
+    except CadError:
+        pytest.skip('SolidCraft 0.28.0 is required for this native CAD case')
+
+
 @pytest.fixture(autouse=True)
 def _isolate_evidence(tmp_path, monkeypatch):
     monkeypatch.setenv("BIGBRAIN_EVIDENCE_ROOT", str(tmp_path / "evidence"))

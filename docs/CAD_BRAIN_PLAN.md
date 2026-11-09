@@ -1,7 +1,22 @@
 # CAD brain and Atelier integration
 
+Measurement milestone: prefer qualified native analytic capabilities and return
+STEP fallback capabilities to SolidCraft as its native tools become available.
+Keep provider selection behind the shared measurement interface and run the
+same reference and defect cases before each switch. See
+[measurement qualification](CAD_MEASUREMENT_QUALIFICATION.md) for current methods,
+evidence and Linux/Windows qualification boundaries.
+
+Standards knowledge is a later CAD milestone: versioned normative references,
+verified tolerance/fit tables, threads, surface finish and geometric dimensioning.
+Preserve drawing annotations and distinguish nominal geometry, tolerance limits
+and manufacturing evidence. Record the source and edition behind each derived
+limit. Qualification of drawing 117 remains nominal with its retained H8 boundary.
+
 Initial headless milestone: 30 October 2026. Interactive milestone: 31 October.
 Current implementation and follow-up qualification: [interactive CAD workspace](CAD_INTERACTIVE_PLAN.md).
+Drawing interpretation, local geometric criteria and bounded repair:
+[CAD from dimensioned drawings](CAD_DRAWINGS_PLAN.md).
 
 ## First deliverable
 
@@ -27,7 +42,8 @@ native and STEP/STL downloads, and GUI handoff to an independent working copy.
 - Every preview references its document revision; pending or failed updates remain visible.
 - Native platform operations use adapters under the shared Linux/Windows contract.
   Qualify each supported capability on its target operating system.
-- Photos and diagrams require a later scale/uncertainty contract. Printer control,
+- Dimensioned drawings use the source/uncertainty contract in the drawing cycle.
+  Unscaled photos require additional interpretation support. Printer control,
   continuous GUI mirroring and broader shared-focus architecture remain deferred.
 
 Existing engine evidence: [SolidCraft qualification](SOLIDCRAFT_QUALIFICATION_20261029.md).
@@ -104,9 +120,11 @@ production bus behavior remains covered separately by the backend suite.
 Qualification covers Linux and small dimensioned solids. Windows subprocess
 support requires native qualification. The current document store owns newly
 created CAD projects; importing attached CAD documents requires a separate access
-contract. Photos, uncertain dimensions, wall-thickness analysis and physical
-strength checks require additional capabilities. Failed jobs stop with evidence;
-automatic CAD repair, storage quotas and capture cleanup remain future work.
+contract. Dimensioned drawings and bounded CAD repair are implemented on
+`feat/cad-drawings`, with staged native/model evidence and a fresh browser
+qualification remaining. Unscaled photos, cross-turn image inventory,
+wall-thickness analysis, physical strength checks, storage quotas and capture
+cleanup require additional capabilities.
 
 ## Deferred workspace redesign
 

@@ -163,6 +163,7 @@ export class BigBrainConnection implements ConnectionLike {
           id: m.id,
           role: m.role === 'user' ? 'user' : 'assistant',
           content: m.text,
+          attachments: m.attachments,
           timestamp: typeof m.timestamp === 'number'
             ? m.timestamp * 1000
             : Date.parse(m.timestamp) || Date.now(),
@@ -176,6 +177,8 @@ export class BigBrainConnection implements ConnectionLike {
       // Also surface as catch-up so App can wire it later.
       if (responseSession === this.sessionKey && !frame.error) {
         this.callbacks.onResumeCatchUp?.(messages, responseSession, asOf);
+        this.callbacks.onAgentActivity?.({ type: 'cad.context.updated', detail: {
+          session_id: responseSession, context: frame.payload?.cad_context || null } });
         for (const activity of frame.payload?.activities || []) {
           if (activity.payload?.session_id !== responseSession) continue;
           this.callbacks.onAgentActivity?.({ type: activity.payload.event,
@@ -297,7 +300,7 @@ export class BigBrainConnection implements ConnectionLike {
     // EXCEPTION: a replayed contracts.proposal is still PENDING live
     // state (the plan waits for the user) — the card must come back.
     const replayableLiveState = new Set([
-      'contracts.proposal', 'task.routing', 'task.received',
+      'contracts.proposal', 'task.routing', 'task.received', 'task.clarification',
       'subtask.started',
       'workspace.proposal',
     ]);
@@ -353,7 +356,7 @@ export class BigBrainConnection implements ConnectionLike {
     }
 
     const taskEvents = [
-      'task.received', 'task.complete', 'task.failed', 'task.cancelled',
+      'task.received', 'task.complete', 'task.failed', 'task.cancelled', 'task.clarification',
       'subtask.started', 'subtask.complete', 'subtask.failed',
       'brain.started', 'brain.complete',
       'task.progress',

@@ -6,6 +6,16 @@ import { projectRunKey, useProjectRunStore } from '@/store/projectRunStore';
 import { useWorkspaceStore } from '@/store/workspaceStore';
 import { ContractCard, ContractCriteria, StackSummary, SourceConsent } from './ContractCard';
 
+it('presents a specialist question as a definition step', () => {
+  const html = renderToStaticMarkup(<WorkOverview run={{ id: 'cad-question', sessionId: 's',
+    description: 'Drawing 117', status: 'needs_input', startedAt: 1, steps: [], files: [],
+    clarificationQuestion: 'Quelle surface pour R25 ?', runnable: false }} select={() => {}} journal={null} />);
+  expect(html).toContain('Une précision est nécessaire');
+  expect(html).toContain('Quelle surface pour R25 ?');
+  expect(html).not.toContain('Le résultat est disponible');
+  expect(html).not.toContain('Lancer le projet');
+});
+
 it('shows the approved source recipient, inventory and full source hashes', () => {
   const html = renderToStaticMarkup(<SourceConsent value={{ project_id: 'local-1', revision: 3,
     recipient: { provider: 'codex', endpoint: 'OpenAI ChatGPT subscription' },
@@ -49,7 +59,7 @@ it('does not call an incomplete delivery verified even when old checks passed', 
 });
 beforeEach(() => {
   useWorkspaceStore.setState({ sessions: {} });
-  useProjectRunStore.setState({ launches: {} }); useAppStore.setState({ liveRuns: {}, sessionProposals: {}, contractProposal: null });
+  useProjectRunStore.setState({ launches: {} }); useAppStore.setState({ liveRuns: {}, sessionProposals: {}, contractProposal: null, cadBriefs: {}, runsById: {} });
 });
 
 it('has one full approval surface only when the Atelier shows this exact contract', () => {
@@ -63,6 +73,23 @@ it('has one full approval surface only when the Atelier shows this exact contrac
   useWorkspaceStore.setState({ sessions: { s: { selectedId: 's/other/activity' } } });
   expect(renderToStaticMarkup(<ContractCard compact />)).toContain('A real acceptance criterion');
   expect(renderToStaticMarkup(<ContractCard />)).toContain('A real acceptance criterion');
+});
+
+it('binds a CAD definition to its exact contract and keeps the chat compact', () => {
+  const cadRun = { ...run, id: 'cad-run', resultKind: 'cad', awaitingApproval: true };
+  const proposal = { planId: cadRun.id, designId: 'design', request: 'Create support', contracts: ['Measured criterion'] };
+  const brief = { revision: 2, run_id: cadRun.id, status: 'proposed' as const, sources: [], exchanges: [],
+    drawing: { title: 'Current support', dimensions: [], issues: [] } };
+  useAppStore.setState({ activeSessionKey: 's', contractProposal: proposal,
+    sessionProposals: { s: proposal }, runsById: { [cadRun.id]: cadRun }, cadBriefs: { s: brief } });
+  const chat = renderToStaticMarkup(<ContractCard />);
+  expect(chat).toContain('Examiner le contrat dans l’Atelier');
+  expect(chat).not.toContain('Measured criterion');
+  expect(overview(cadRun)).toContain('Current support');
+  useAppStore.setState({ cadBriefs: { s: { ...brief, run_id: 'another-run',
+    drawing: { ...brief.drawing, title: 'Unrelated design' } } } });
+  expect(renderToStaticMarkup(<ContractCard />)).toContain('Measured criterion');
+  expect(overview(cadRun)).not.toContain('Unrelated design');
 });
 
 it('keeps full long criteria accessible, with technical prose collapsed by default', () => {

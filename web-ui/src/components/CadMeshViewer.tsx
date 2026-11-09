@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 import { cadArtifact, type CadView } from '@/lib/cad';
 import { inspectStl } from '@/lib/cadMesh';
@@ -43,20 +43,31 @@ export default function CadMeshViewer({ cad, sessionId, fallback }: { cad: CadVi
         scene.add(new THREE.Mesh(geometry, material));
         scene.add(new THREE.HemisphereLight(0xffffff, 0x243446, 2.5));
         const light = new THREE.DirectionalLight(0xffffff, 3); light.position.set(radius, -radius, radius * 3); scene.add(light);
-        const controls = new OrbitControls(camera, renderer.domElement);
+        const controls = new TrackballControls(camera, renderer.domElement);
+        controls.staticMoving = true;
         controls.minDistance = radius * 0.15; controls.maxDistance = radius * 20;
         let visible = true;
         const render = () => { if (visible && !document.hidden) renderer?.render(scene, camera); };
+        let frame = 0;
+        const update = () => {
+          if (frame) return;
+          frame = requestAnimationFrame(() => { frame = 0; controls.update(); });
+        };
+        // Trackball controls update on demand, including captured drags outside
+        // the canvas, so idle and hidden previews need no animation loop.
+        renderer.domElement.addEventListener('pointermove', update);
+        renderer.domElement.addEventListener('wheel', update);
         const fit = () => {
           const distance = radius / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2)) * Math.max(1, 1 / camera.aspect) * 1.15;
           camera.position.set(distance, -distance, distance * 0.75); camera.position.setLength(distance);
+          camera.up.set(0, 0, 1);
           controls.target.set(0, 0, 0); controls.update(); render();
         };
         reset.current = fit;
         const resize = new ResizeObserver(() => {
           const width = node.clientWidth, height = node.clientHeight;
           if (!width || !height) return;
-          renderer?.setSize(width, height); camera.aspect = width / height; camera.updateProjectionMatrix(); render();
+          renderer?.setSize(width, height); camera.aspect = width / height; camera.updateProjectionMatrix(); controls.handleResize(); render();
         });
         resize.observe(node);
         const intersection = new IntersectionObserver(entries => { visible = entries[0].isIntersecting; render(); });
@@ -67,6 +78,9 @@ export default function CadMeshViewer({ cad, sessionId, fallback }: { cad: CadVi
         controls.addEventListener('change', render);
         fit(); setReady(true);
         dispose = () => {
+          cancelAnimationFrame(frame);
+          renderer?.domElement.removeEventListener('pointermove', update);
+          renderer?.domElement.removeEventListener('wheel', update);
           resize.disconnect(); intersection.disconnect(); controls.dispose(); material.dispose(); geometry.dispose();
           document.removeEventListener('visibilitychange', render);
           renderer?.domElement.removeEventListener('webglcontextlost', lost);

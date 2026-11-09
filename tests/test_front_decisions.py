@@ -26,6 +26,55 @@ def message(session="s"):
         payload={"text":"réessaie","session_id":session,"turn_id":"turn-"+session})
 
 
+def test_visual_decision_limits_follow_inputs_and_persisted_dossier(monkeypatch):
+    from bigbrain.front import cad_context, decision_runtime
+    monkeypatch.setattr(cad_context, 'design_context', lambda session: (None, []))
+    plain = [{'role': 'user', 'content': 'Describe a drawing'}]
+    assert decision_runtime.decision_limits(plain, 's') == (60, 4096)
+    visual = [{'role': 'user', 'content': [{'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,AA=='}}]}]
+    assert decision_runtime.decision_limits(visual, 's') == (120, 8192)
+    monkeypatch.setattr(cad_context, 'design_context', lambda session: ({'revision': 2}, []))
+    assert decision_runtime.decision_limits(plain, 's') == (120, 8192)
+
+
+def test_cad_destination_constraint_is_exposed_and_enforced():
+    from bigbrain.front.decision import Delegate
+    schema = Delegate.model_json_schema()
+    assert 'cad_brain' in schema['properties']['project_target']['description']
+    value = {'operation': 'delegate', 'reply': 'Je prépare la pièce.',
+             'objective': 'Create a new CAD document',
+             'route': {'brain': 'cad_brain', 'payload': {'type': 'model_cad'}},
+             'project_target': {'mode': 'new'}}
+    with pytest.raises(ValidationError, match='document identity'):
+        Delegate.model_validate(value)
+    value['project_target'] = None
+    assert Delegate.model_validate(value).route.brain == 'cad_brain'
+
+
+@pytest.mark.asyncio
+async def test_visual_decision_still_times_out_and_reports_actual_limit(tmp_path, monkeypatch):
+    from bigbrain.front import decision_runtime
+    monkeypatch.setattr(decision_runtime, 'VISUAL_DECISION_TIMEOUT_SECONDS', .02)
+    bus = MessageBus(tmp_path / 'logs', auth=None)
+    events = []
+    async def observe(frame):
+        events.append(frame.payload)
+    bus.subscribe('*', observe)
+    provider = AsyncMock()
+    async def stalled(**kwargs):
+        assert kwargs['max_tokens'] == 8192
+        await asyncio.Event().wait()
+    provider.chat_complete.side_effect = stalled
+    front = FrontBrain(bus, llm_provider=provider)
+    result = await asyncio.wait_for(front._consult_and_respond([
+        {'role': 'user', 'content': [{'type': 'image_url'}]}], None), 1)
+    await bus.close()
+    assert 'tentative est arrêtée' in result
+    assert [e['timeout_seconds'] for e in events if e.get('event') in {
+        'front.decision_started', 'front.decision_failed'}] == [.02, .02]
+    assert not any(e.get('event') == 'task.routing' for e in events)
+
+
 @pytest.mark.asyncio
 async def test_cancelled_front_turn_emits_correlated_chat_done(tmp_path):
     bus = MessageBus(tmp_path / 'logs', auth=None)

@@ -48,6 +48,7 @@ class TaskStatus(str, Enum):
     COMPLETE = "complete"     # Successfully finished
     FAILED = "failed"         # Failed with error
     CANCELLED = "cancelled"   # Cancelled by user or system
+    NEEDS_INPUT = "needs_input"
 
 
 @dataclass
@@ -362,6 +363,36 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         print(f"[ORCH] _handle_task_request from {message.source} type={message.payload.get('type','?')}")
         task_data = message.payload
 
+        if task_data.get('type') == 'cad.resume':
+            from ..cad_runs import confirmed_continuation
+            from ..solidcraft import CadError
+            try:
+                spec, state = confirmed_continuation(task_data.get('document_id'), task_data.get('session_id'))
+                if 'cad_brain' not in self.registered_brains:
+                    raise ValueError('CAD specialist is unavailable')
+                for existing in self.task_plans.values():
+                    if existing.status == TaskStatus.RUNNING and any(
+                            sub.payload.get('_resume_document_id') == state['document_id'] for sub in existing.subtasks):
+                        raise ValueError('CAD continuation is already running')
+                identity = str(uuid.uuid4())
+                request = BusMessage(type=MessageType.TASK, source=message.source, target=self.name,
+                    payload={'session_id': task_data['session_id'], 'user_request': spec.user_request})
+                subtask = SubTask(id=f'{identity}_s0', description='Reprendre la pièce CAO', brain_target='cad_brain',
+                    payload={'type': 'model_cad', 'contract_revision': state['contract_revision'],
+                        '_resume_approval_plan': state['approval_plan_id'], '_resume_document_id': state['document_id']})
+                plan = TaskPlan(id=identity, original_task=request, subtasks=[subtask], status=TaskStatus.RUNNING,
+                    execution_mode='todo', project_spec=spec)
+                self.task_plans[identity] = plan
+                await self.bus.broadcast_event(source=self.name, event_type='task.received',
+                    payload={'task_id': identity, 'session_id': task_data['session_id'],
+                        'description': spec.user_request, 'subtasks_count': 1, 'workspace': self.workspace}, workspace=self.workspace)
+                await self._execute_ready_subtasks(plan)
+            except (CadError, ValueError, OSError) as error:
+                await self.bus.broadcast_event(source=self.name, event_type='cad.resume_failed',
+                    payload={'session_id': task_data.get('session_id'), 'document_id': task_data.get('document_id'),
+                             'error': str(error)[:500]}, workspace=self.workspace)
+            return
+
         # Contract approval verdict from the UI (approve/reject buttons)
         if task_data.get("type") == "contracts.approval":
             await self._handle_contracts_approval(task_data)
@@ -413,11 +444,19 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             started = time.monotonic()
             await self._planning_progress("contracts", "running", task_data.get("session_id"), task_id=plan.id)
             try:
-                proposal_timeout = 60 if any(st.payload.get('type') == 'model_cad' for st in plan.subtasks) else 20
+                proposal_timeout = 120 if any(st.payload.get('type') == 'model_cad' for st in plan.subtasks) else 20
                 spec = await asyncio.wait_for(self._propose_contracts(plan, user_request), timeout=proposal_timeout)
                 if spec is None:
                     raise ValueError("Proposal was not recorded")
             except Exception as exc:
+                from ..cad_planning import CadClarificationRequired
+                if isinstance(exc, CadClarificationRequired):
+                    try:
+                        await self._request_cad_clarification(plan, exc.clarification)
+                    except Exception as clarification_error:
+                        await self._report_planning_failure(message, PlanningError(
+                            'clarification', str(clarification_error), plan.id))
+                    return
                 await self._report_planning_failure(message, PlanningError(
                     "contracts", str(exc) or type(exc).__name__, plan.id))
                 return
@@ -427,6 +466,38 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         # Start executing ready subtasks
         plan.status = TaskStatus.RUNNING
         await self._execute_ready_subtasks(plan)
+
+    async def _request_cad_clarification(self, plan, clarification):
+        """Persist the specialist question against its exact conversation run."""
+        from ..web.sessions import SessionStore
+        session_id = plan.original_task.payload.get('session_id')
+        store = SessionStore()
+        context = (store.get(session_id) or {}).get('cad_context') or {}
+        if context.get('run_id') != plan.id:
+            raise ValueError('CAD clarification belongs to a superseded design run')
+        drawing = context.get('drawing')
+        if drawing:
+            from ..cad_drawings import DrawingSpecification
+            drawing = {**drawing, 'issues': [*drawing.get('issues', []), {
+                'id': 'specialist-' + plan.id[:8], 'question': clarification.question,
+                'dimension_ids': list(clarification.dimension_ids),
+                'reason': clarification.reason, 'blocking': True}]}
+            DrawingSpecification.model_validate(drawing)
+        updated = store.set_cad_context(session_id, {**context, 'status': 'clarifying',
+            'question': clarification.question, 'drawing': drawing},
+            expected_revision=context['revision'])
+        plan.status = TaskStatus.NEEDS_INPUT
+        plan.awaiting_approval = False
+        await self.bus.broadcast_event(source=self.name, event_type='cad.context.updated',
+            payload={'session_id': session_id, 'context': updated}, workspace=self.workspace)
+        await self.bus.broadcast_event(source=self.name, event_type='task.clarification',
+            payload={'session_id': session_id, 'task_id': plan.id,
+                     'question': clarification.question, 'runnable': False}, workspace=self.workspace)
+        await self.bus.send_result(source=self.name, target=plan.original_task.source,
+            reply_to=plan.original_task.id, result_data={'success': False,
+                'session_id': session_id, 'task_id': plan.id,
+                'result_kind': 'cad_clarification', 'question': clarification.question},
+            workspace=self.workspace)
 
     async def _propose_contracts(self, plan: TaskPlan,
                                  user_request: str):
@@ -442,8 +513,9 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         if len(plan.subtasks) == 1 and plan.subtasks[0].payload.get('type') == 'model_cad':
             from ..brains.cad_brain import prepare_cad_plan
             task = plan.subtasks[0]
-            recipe = await prepare_cad_plan(self.llm_provider, task.payload, model=self.planner_model)
-            cad = {'plan': recipe.model_dump(mode='json'),
+            recipe = await prepare_cad_plan(self.llm_provider, task.payload, model=self.planner_model, defer_construction=True)
+            from ..cad_stages import CadDefinition
+            cad = {'definition' if isinstance(recipe, CadDefinition) else 'plan': recipe.model_dump(mode='json'),
                    'document_id': task.payload.get('document_id'),
                    'base_revision': task.payload.get('base_revision'),
                    'session_id': plan.original_task.payload.get('session_id')}
@@ -1561,7 +1633,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         Deferred subtasks (brain busy) are retried on next _execute_ready_subtasks call.
         """
         # Don't dispatch if plan is already complete/failed
-        if plan.status in (TaskStatus.COMPLETE, TaskStatus.FAILED, TaskStatus.CANCELLED):
+        if plan.status in (TaskStatus.COMPLETE, TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.NEEDS_INPUT):
             print(f"[ORCH] Skipping _execute_ready_subtasks: plan {plan.id[-8:]} is {plan.status.value}")
             return
         

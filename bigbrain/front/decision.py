@@ -2,6 +2,7 @@
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from ..cad_drawings import DrawingSpecification
 
 
 class ClosedModel(BaseModel):
@@ -91,11 +92,14 @@ class CadInput(ClosedModel):
     type: Literal['model_cad']
     document_id: str | None = Field(default=None, pattern=r'^[a-f0-9]{32}$')
     base_revision: int | None = Field(default=None, strict=True, ge=1)
+    drawing: DrawingSpecification | None = None
 
     @model_validator(mode='after')
     def edit_revision(self):
         if (self.document_id is None) != (self.base_revision is None):
             raise ValueError('CAD edits require both document identity and observed revision')
+        if self.drawing is not None:
+            self.drawing.require_resolved()
         return self
 
 
@@ -132,6 +136,8 @@ class Respond(ClosedModel):
 class Clarify(ClosedModel):
     operation: Literal["clarify"]
     reply: str = Field(min_length=1)
+    cad: bool = False
+    drawing: DrawingSpecification | None = None
 
 
 class Delegate(ClosedModel):
@@ -139,8 +145,12 @@ class Delegate(ClosedModel):
     reply: str = Field(min_length=1)
     objective: str = Field(min_length=2, max_length=8000)
     route: ResearchRoute | BoardRoute | PythonRoute | WebRoute | CadRoute | None = None
-    project_target: ProjectTarget | None = None
-    test_changes: list[ValidationChange] = Field(default_factory=list, max_length=10)
+    project_target: ProjectTarget | None = Field(default=None, description=
+        'Code-project destination only. For cad_brain this must be null: a new CAD '
+        'document is selected by null document_id and base_revision in its payload. '
+        'Attached maintenance also requires null here.')
+    test_changes: list[ValidationChange] = Field(default_factory=list, max_length=10,
+        description='Code test arbitration only. Must be empty for cad_brain and attached maintenance.')
 
     @model_validator(mode='after')
     def attached_destination(self):

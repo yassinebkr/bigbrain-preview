@@ -8,6 +8,7 @@ import { composeWidgets, parseWidgetProposal } from '@/lib/widgetPolicy';
 import { useWorkspaceStore } from '@/store/workspaceStore';
 import { ResearchActivity } from './ResearchPanel';
 import { CadPanel } from './CadPanel';
+import { CadDesignBrief } from './CadDesignBrief';
 
 const stageLabels: Record<string, string> = { syntax: 'Syntaxe', compile: 'Compilation', run: 'Exécution', contracts: 'Fichiers attendus', tests: 'Tests', entry_point: 'Point d’entrée', semantics: 'Revue indépendante', attached_delivery: 'Livraison du dossier local' };
 
@@ -31,6 +32,7 @@ export function VerificationWidget({ run }: { run: RunState }) {
 }
 
 function ProposalWidget({ run }: { run: RunState }) {
+  const brief = useAppStore((s) => s.cadBriefs[run.sessionId]);
   const proposal = useAppStore((s) => s.sessionProposals[run.sessionId]);
   const activeProposal = useAppStore((s) => s.contractProposal);
   const sending = useAppStore((s) => s.contractSending);
@@ -44,7 +46,10 @@ function ProposalWidget({ run }: { run: RunState }) {
     <h3 className="work-heading">{proposal.target?.mode === 'existing' ? 'Valider les changements proposés' : 'Voici ce qui sera livré'}</h3>
     {proposal.target && <code className="block text-[11px] break-all mt-3 work-muted">{proposal.target.path}</code>}
     {stack && <StackSummary value={stack} />}
-    <ContractCriteria contracts={proposal.contracts} />
+    {brief?.status === 'proposed' && brief.run_id === run.id && <CadDesignBrief brief={brief} />}
+    {brief?.status === 'proposed' && brief.run_id === run.id
+      ? <details className="mt-4"><summary className="work-link text-xs">Examiner les vérifications et limites · {proposal.contracts.length}</summary><ContractCriteria contracts={proposal.contracts} /></details>
+      : <ContractCriteria contracts={proposal.contracts} />}
     <SourceConsent value={proposal.sourceTransmission} />
     <div className="mt-5 flex flex-wrap gap-2"><button disabled={sending || !canDecide} className="work-primary" onClick={() => void decide(true)}>{sending ? <Loader2 size={14} className="animate-spin motion-reduce:animate-none" /> : <Check size={14} />} Approuver et lancer</button>
       <button disabled={sending || !canDecide} className="work-secondary" onClick={() => void decide(false)}><X size={13} /> Refuser</button></div>
@@ -121,8 +126,9 @@ export function WorkOverview({ run, select, journal }: { run: RunState; select: 
   };
   return <div className="work-overview">
     {run.awaitingApproval ? <ProposalWidget run={run} /> : run.cad ? <CadPanel run={run} /> : <section className="work-widget" aria-label="Objet du travail">
-      <div className="work-eyebrow">{running && <span className="work-pulse" aria-hidden="true" />}{board ? 'Organisation' : running ? 'En construction' : 'Livrable'}</div>
-      <h3 className="work-heading">{run.deliveryStatus === 'incomplete' ? 'Projet incomplet · non validé' : running ? 'Le travail prend forme' : run.status === 'done' ? 'Le résultat est disponible' : run.status === 'failed' ? 'Le travail a rencontré un obstacle' : 'Travail arrêté'}</h3>
+      <div className="work-eyebrow">{running && <span className="work-pulse" aria-hidden="true" />}{run.status === 'needs_input' ? 'Définition de la pièce' : board ? 'Organisation' : running ? 'En construction' : 'Livrable'}</div>
+      <h3 className="work-heading">{run.status === 'needs_input' ? 'Une précision est nécessaire' : run.deliveryStatus === 'incomplete' ? 'Projet incomplet · non validé' : running ? 'Le travail prend forme' : run.status === 'done' ? 'Le résultat est disponible' : run.status === 'failed' ? 'Le travail a rencontré un obstacle' : 'Travail arrêté'}</h3>
+      {run.clarificationQuestion && <p className="mt-3 text-sm work-muted">{run.clarificationQuestion}</p>}
       {run.error && <p role="alert" className="mt-3 text-[12px] leading-relaxed break-words" style={{ color: 'var(--warning)' }}>{run.error}</p>}
       {running && <div className="mt-5 space-y-4">{current.length ? current.map((step) => <div key={`${step.id}:${step.description}`} className="work-live-step flex gap-3"><span className="work-pulse mt-1" /><div className="min-w-0"><p className="text-[13px] leading-relaxed break-words">{step.description}</p><p className="work-muted text-[11px] mt-1">{step.brain}{step.durationMs != null ? ` · ${(step.durationMs / 1000).toFixed(0)} s écoulées` : ''}</p></div></div>) : <p className="work-muted text-[12px]">{run.steps.length ? 'Préparation de la prochaine étape…' : 'Préparation du plan…'}</p>}</div>}
       {running && !!run.steps.length && <p className="work-muted text-[11px] mt-4" aria-label="Avancement observé">{run.steps.filter((step) => step.status === 'done').length} étapes terminées · {current.length} actives{run.files.length ? ` · ${run.files.length} fichiers enregistrés` : ''}</p>}

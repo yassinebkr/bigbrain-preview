@@ -108,7 +108,7 @@ class WebServer:
         self._replay_max_size = 100
         self._REPLAY_TYPES = {"result", "progress"}
         self._REPLAY_EVENTS = {
-            "task.received", "task.complete", "task.failed", "task.cancelled",
+            "task.received", "task.complete", "task.failed", "task.cancelled", "task.clarification",
             "subtask.started", "subtask.complete", "subtask.failed",
             "brain.started", "brain.complete",
             "chat.message",  # Front brain summary / chat responses
@@ -274,7 +274,7 @@ class WebServer:
         from .local_projects_api import setup_local_project_routes
         setup_local_project_routes(self._app)
         from .cad_api import setup_cad_routes
-        setup_cad_routes(self._app)
+        setup_cad_routes(self._app, bus=self.bus)
 
         # Streaming manual runs: fs_api pushes fs.run_output / fs.run_result
         # through the bus so every connected browser sees them on its WS.
@@ -939,8 +939,6 @@ class WebServer:
             for item in (session.get("messages") or [])[-20:]
             if item.get("role") in ("user", "assistant") and item.get("text")
         ]
-        session = self._sessions.append_message(session["id"], "user", text)
-
         from ..bus.message import BusMessage, MessageType, Priority
 
         # Attachment refs uploaded via POST /api/attachments travel with
@@ -950,6 +948,7 @@ class WebServer:
             for a in (payload.get("attachments") or [])
             if isinstance(a, dict) and a.get("id")
         ]
+        session = self._sessions.append_message(session['id'], 'user', text, attachments)
 
         await self.bus.send(BusMessage(
             type=MessageType.TASK,
@@ -957,6 +956,8 @@ class WebServer:
             target="front_brain",
             payload={"type": "user_message", "text": text,
                      "attachments": attachments,
+                     "image_sources": session.get('image_sources', []),
+                     "cad_context": session.get('cad_context'),
                      "session_id": session["id"],
                      "user_message_id": session['messages'][-1]['id'],
                      "turn_id": payload.get('turn_id'),
@@ -997,6 +998,7 @@ class WebServer:
                     "activities": activities,
                     "as_of": as_of,
                     "activity_error": activity_error,
+                    "cad_context": (session or {}).get('cad_context'),
                 },
             })
             return
@@ -1207,7 +1209,7 @@ class WebServer:
 
     def _maybe_buffer(self, msg_type: str, event: str, data: dict) -> None:
         # A terminal task resolves only its own pending replay state.
-        if event in ("task.complete", "task.failed", "task.cancelled"):
+        if event in ("task.complete", "task.failed", "task.cancelled", "task.clarification"):
             current = data.get('payload') or {}
             session_id, task_id = current.get('session_id'), current.get('task_id')
             def pending_for_current(buffered):

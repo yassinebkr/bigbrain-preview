@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1000" viewBox="0 0 1200 1000">
+  <rect width="1200" height="1000" fill="white"/>
+  <g fill="#111" font-family="sans-serif" font-size="24">
+    <text x="60" y="45" font-size="30">STEPPED SUPPORT — ALL DIMENSIONS IN mm</text>
+    <text x="60" y="85">One solid. Sharp corners. Hole passes through the base.</text>
+    <text x="60" y="135">TOP VIEW (X horizontal, Y upward)</text>
+    <text x="60" y="640">FRONT VIEW (X horizontal, Z upward)</text>
+  </g>
+  <g fill="none" stroke="#111" stroke-width="3">
+    <rect x="150" y="200" width="640" height="320"/>
+    <path d="M310 200V520"/>
+    <circle cx="630" cy="360" r="24"/>
+    <path d="M150 850H790V786H310V690H150Z"/>
+    <path d="M150 185V165H790V185 M150 165H790 M150 535V560H630V535 M150 560H630
+             M120 200H90V520H120 M90 200V520 M820 360H850V520H820 M850 360V520
+             M150 875V900H310V875 M150 900H310 M120 690H90V850H120 M90 690V850
+             M820 786H850V850H820 M850 786V850" stroke-width="1.5"/>
+    <path d="M630 320V400 M590 360H670 M606 786V850 M654 786V850" stroke-dasharray="7 5" stroke-width="1.5"/>
+    <path d="M650 345L740 290H815" stroke-width="1.5"/>
+  </g>
+  <g fill="#111" font-family="sans-serif" font-size="26">
+    <text x="455" y="155">80</text>
+    <text x="280" y="595">60 (hole centre X)</text>
+    <text x="40" y="375">40</text>
+    <text x="865" y="445">20 (hole centre Y)</text>
+    <text x="750" y="280">Ø6 THRU</text>
+    <text x="165" y="940">20 (step length)</text>
+    <text x="40" y="780">20</text>
+    <text x="865" y="830">8 (base thickness)</text>
+  </g>
+</svg>

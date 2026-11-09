@@ -554,10 +554,10 @@ class CodexProvider(LLMProvider):
             trace_stage("codex.turn.starting", native_thread_id=thread_id)
             started = await client.call("turn/start", {
                 "threadId": thread_id, 'model': model_id,
-                "input": [{"type": "text", "text": _flatten(messages) + (
-                    '\nSubmit the decision using bigbrain_submit_decision with decision_json containing the JSON object. '
+                "input": _native_inputs(messages) + ([{'type': 'text', 'text':
+                    'Submit the decision using bigbrain_submit_decision with decision_json containing the JSON object. '
                     'The external runtime validates it and returns observations next turn. Current decision schema: '
-                    + json.dumps(output_schema) if action_bridge else '')}],
+                    + json.dumps(output_schema)}] if action_bridge else []),
                 "effort": self.reasoning_effort,
                 **({"outputSchema": output_schema} if output_schema and not action_bridge else {}),
             })
@@ -782,8 +782,36 @@ class CodexProvider(LLMProvider):
 def _flatten(messages: list[dict]) -> str:
     """Render the selected message suffix as one attributed turn input."""
     return "\n\n".join(
-        f"{m.get('role', 'user').upper()}: {m.get('content', '')}" for m in messages
+        f"{m.get('role', 'user').upper()}: " + (
+            '\n'.join(block.get('text', '[image attachment]') for block in m['content'])
+            if isinstance(m.get('content'), list) else str(m.get('content', '')))
+        for m in messages
     )
+
+
+def _native_inputs(messages):
+    """Send image content through app-server image inputs alongside attributed text."""
+    if not any(isinstance(message.get('content'), list) for message in messages):
+        return [{'type': 'text', 'text': _flatten(messages)}]
+    inputs = []
+    for message in messages:
+        content = message.get('content', '')
+        if not isinstance(content, list):
+            inputs.append({'type': 'text', 'text': _flatten([message])})
+            continue
+        inputs.append({'type': 'text', 'text': message.get('role', 'user').upper() + ':'})
+        for block in content:
+            if block.get('type') == 'text' and isinstance(block.get('text'), str):
+                inputs.append({'type': 'text', 'text': block['text']})
+            elif block.get('type') == 'image_url':
+                url = (block.get('image_url') or {}).get('url')
+                if not isinstance(url, str) or not url.startswith(('data:image/png;base64,',
+                        'data:image/jpeg;base64,', 'data:image/webp;base64,', 'data:image/gif;base64,')):
+                    raise ValueError('Codex image inputs require an inline supported image')
+                inputs.append({'type': 'image', 'url': url})
+            else:
+                raise ValueError('Unsupported Codex multimodal input block')
+    return inputs
 
 
 def _account_usage(native, state):

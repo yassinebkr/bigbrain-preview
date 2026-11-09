@@ -8,6 +8,19 @@ from pydantic import ValidationError
 from .decision import ConsultMemory, Delegate, FrontDecision, FRONT_TOOL_SCHEMA
 
 FRONT_DECISION_TIMEOUT_SECONDS = 60.0
+VISUAL_DECISION_TIMEOUT_SECONDS = 120.0
+
+
+def decision_limits(messages, session_id):
+    """Allow bounded dossier construction for visual and continuing CAD turns."""
+    visual = any(isinstance(message.get('content'), list) and any(
+        isinstance(block, dict) and block.get('type') in {'image_url', 'input_image'}
+        for block in message['content']) for message in messages)
+    from .cad_context import design_context
+    design, _ = design_context(session_id) if session_id else (None, [])
+    if visual or design:
+        return VISUAL_DECISION_TIMEOUT_SECONDS, 8192
+    return FRONT_DECISION_TIMEOUT_SECONDS, 4096
 
 
 async def consult_front(front, messages, session_id):
@@ -17,27 +30,29 @@ async def consult_front(front, messages, session_id):
     entry = getattr(provider, "entry", None)
     model = getattr(provider, "default_model", None) or getattr(entry, "model_id", None)
     effort = getattr(provider, "reasoning_effort", None) or getattr(entry, "reasoning_effort_default", None)
+    timeout_seconds, output_tokens = decision_limits(messages, session_id)
     await front.bus.broadcast_event(source=front.name, event_type="front.decision_started",
         payload={"session_id": session_id, "turn_id": front._turn_context.get(),
                  "model": model if isinstance(model, str) else None,
                  "effort": effort if isinstance(effort, str) else None,
-                 "timeout_seconds": FRONT_DECISION_TIMEOUT_SECONDS})
+                 "timeout_seconds": timeout_seconds})
     try:
-        async with asyncio.timeout(FRONT_DECISION_TIMEOUT_SECONDS):
+        async with asyncio.timeout(timeout_seconds):
             return await _consult_front(front, messages, session_id,
-                                        deadline=time.monotonic() + FRONT_DECISION_TIMEOUT_SECONDS)
+                                        deadline=time.monotonic() + timeout_seconds,
+                                        output_tokens=output_tokens)
     except TimeoutError:
         # No validated decision means no dispatch, including after a memory read.
         # Return through the normal chat path so its pending bubble is finalized.
         front._decision_context.set(None)
         await front.bus.broadcast_event(source=front.name, event_type="front.decision_failed",
             payload={"session_id": session_id, "turn_id": front._turn_context.get(),
-                     "code": "decision_timeout", "timeout_seconds": FRONT_DECISION_TIMEOUT_SECONDS})
+                     "code": "decision_timeout", "timeout_seconds": timeout_seconds})
         return ("Le front brain n’a pas obtenu de décision dans le délai imparti. "
                 "Cette tentative est arrêtée ; aucune nouvelle tâche n’a été envoyée.")
 
 
-async def _consult_front(front, messages, session_id, deadline):
+async def _consult_front(front, messages, session_id, deadline, output_tokens=4096):
     """Obtain one complete decision; memory operations may precede the final one."""
     front._decision_context.set(None)
     front._stream_context.set(False)
@@ -52,7 +67,7 @@ async def _consult_front(front, messages, session_id, deadline):
                     correlation={"session_id": session_id, "turn_id": front._turn_context.get()},
                     deadline_seconds=max(0, deadline-time.monotonic()), records=records):
                 raw = await front.llm_provider.chat_complete(messages=messages, stream=False,
-                    max_tokens=4096, tool_schema=FRONT_TOOL_SCHEMA)
+                    max_tokens=output_tokens, tool_schema=FRONT_TOOL_SCHEMA)
                 if time.monotonic() >= deadline:
                     # A transport that suppresses cancellation must not revive
                     # dispatch with a result received after the turn deadline.

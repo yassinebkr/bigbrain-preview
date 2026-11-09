@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { CadBrief } from '@/lib/cadBrief';
 import { persist } from 'zustand/middleware';
 import type { Message, Attachment, Session, Settings, Theme, View, ConnectionStatus, SidebarPanel, User, CanvasOp, Task } from '@/types';
 import type { ConnectionLike } from '@/lib/connection';
@@ -58,12 +59,13 @@ export interface RunState {
   sessionId: string;
   id: string;
   description: string;
-  status: 'running' | 'done' | 'failed' | 'cancelled';
+  status: 'running' | 'done' | 'failed' | 'cancelled' | 'needs_input';
   startedAt: number;
   finishedAt?: number;
   steps: RunStep[];
   files: { path: string; ts: number }[];
   error?: string;
+  clarificationQuestion?: string;
   verification?: RunVerification;
   projectName?: string;
   projectPath?: string;
@@ -130,6 +132,7 @@ interface AppState {
 
   // Attachments
   attachments: Attachment[];
+  cadBriefs: Record<string, CadBrief | null>;
   addAttachment: (attachment: Attachment) => void;
   removeAttachment: (id: string) => void;
   clearAttachments: () => void;
@@ -364,6 +367,7 @@ export const useAppStore = create<AppState>()(
 
       // Attachments
       attachments: [],
+      cadBriefs: {},
       addAttachment: (attachment) => set((state) => ({ attachments: [...state.attachments, attachment] })),
       removeAttachment: (id) => set((state) => ({ attachments: state.attachments.filter((a) => a.id !== id) })),
       clearAttachments: () => set({ attachments: [] }),
@@ -441,6 +445,11 @@ export const useAppStore = create<AppState>()(
       // docks the finished record into its conversation timeline.
       applyRunEvent: (activity) => set((state) => {
         const d = activity.detail || {};
+        if (activity.type === 'cad.context.updated' && typeof d.session_id === 'string') {
+          const previous = state.cadBriefs[d.session_id];
+          if (d.context && previous && d.context.revision < previous.revision) return {};
+          return { cadBriefs: { ...state.cadBriefs, [d.session_id]: d.context || null } };
+        }
         const sessionRuns = { ...state.sessionRuns };
         if (state.activeRun && !sessionRuns[state.activeRun.sessionId]) {
           sessionRuns[state.activeRun.sessionId] = state.activeRun;
@@ -450,7 +459,7 @@ export const useAppStore = create<AppState>()(
         const taskId = d.task_id || d.plan_id;
         const byTask = taskId ? runsById[taskId] : null;
         const finished = taskId ? state.completedRuns.find((r) => r.id === taskId) : null;
-        const terminal = ['task.complete', 'task.failed', 'task.cancelled'].includes(activity.type);
+        const terminal = ['task.complete', 'task.failed', 'task.cancelled', 'task.clarification'].includes(activity.type);
         const sessionId = String(d.session_id || byTask?.sessionId || finished?.sessionId || state.activeRun?.sessionId || state.activeSessionKey);
         if (activity.type === 'task.routing' && taskId) {
           // Migrate pre-correlation cached placeholders during journal catch-up.
@@ -690,10 +699,11 @@ export const useAppStore = create<AppState>()(
           }
           case 'task.complete':
           case 'task.failed':
-          case 'task.cancelled': {
+          case 'task.cancelled':
+          case 'task.clarification': {
             if (!run) return {};
             const status: RunState['status'] =
-              d.delivery_status === 'incomplete' ? 'failed' : activity.type === 'task.complete' ? 'done'
+              activity.type === 'task.clarification' ? 'needs_input' : d.delivery_status === 'incomplete' ? 'failed' : activity.type === 'task.complete' ? 'done'
               : activity.type === 'task.cancelled' ? 'cancelled'
               : 'failed';
             return {
@@ -701,17 +711,19 @@ export const useAppStore = create<AppState>()(
               completedRuns: [...state.completedRuns.filter((item) => item.id !== run.id), {
                 ...run,
                 status,
+                ...(status === 'needs_input' ? { error: undefined, runnable: false,
+                  clarificationQuestion: String(d.question || '') } : {}),
                 steps: run.steps.map((step) => status === 'failed' && step.status === 'running'
                   ? { ...step, status: 'failed' as const } : step),
                 awaitingApproval: false,
                 finishedAt: activity.ts || run.finishedAt || Date.now(),
-                error: d.error ? String(d.error).slice(0, 200) : run.error,
+                error: status === 'needs_input' ? undefined : d.error ? String(d.error).slice(0, 200) : run.error,
                 projectName: d.project_name ? String(d.project_name) : run.projectName,
                 projectPath: d.project_path ? String(d.project_path) : run.projectPath,
                 entryPoint: d.entry_point ? String(d.entry_point) : run.entryPoint,
                 deliverableType: d.deliverable_type ? String(d.deliverable_type) : run.deliverableType,
                 previewUrl: d.preview_url ? String(d.preview_url) : run.previewUrl,
-                runnable: d.delivery_status === 'incomplete' ? false : typeof d.runnable === 'boolean' ? d.runnable : run.runnable,
+                runnable: status === 'needs_input' || d.delivery_status === 'incomplete' ? false : typeof d.runnable === 'boolean' ? d.runnable : run.runnable,
                 deliveryStatus: d.delivery_status === 'ready' || d.delivery_status === 'incomplete' ? d.delivery_status : run.deliveryStatus,
                 resultKind: d.result_kind || run.resultKind,
               }].slice(-100),
@@ -748,7 +760,7 @@ export const useAppStore = create<AppState>()(
             request: d.user_request || '', contracts: Array.isArray(d.contracts) ? d.contracts : [],
             ...(d.source_transmission ? { sourceTransmission: d.source_transmission } : {}),
             ...(d.project_target ? { target: d.project_target } : {}) };
-        } else if (['contracts.approved', 'contracts.rejected', 'task.cancelled', 'task.failed', 'task.complete'].includes(activity.type)) {
+        } else if (['contracts.approved', 'contracts.rejected', 'task.cancelled', 'task.failed', 'task.complete', 'task.clarification'].includes(activity.type)) {
           const proposal = sessionProposals[sessionId];
           const target = d.plan_id || d.task_id;
           if (!target || proposal?.planId === target) delete sessionProposals[sessionId];
@@ -801,6 +813,7 @@ export const useAppStore = create<AppState>()(
           localStorage.removeItem('aplot_messages');
         }
         set((s) => ({ sessions: s.sessions.filter((session) => session.key !== key),
+          cadBriefs: Object.fromEntries(Object.entries(s.cadBriefs).filter(([id]) => id !== key)),
           runsById: Object.fromEntries(Object.entries(s.runsById).filter(([, run]) => run.sessionId !== key)),
           completedRuns: s.completedRuns.filter((run) => run.sessionId !== key),
           sessionRuns: Object.fromEntries(Object.entries(s.sessionRuns).filter(([id]) => id !== key)),
@@ -903,6 +916,7 @@ export const useAppStore = create<AppState>()(
                 id: m.id || `hist-${Date.now()}-${Math.random()}`,
                 role: m.role === 'user' ? 'user' : 'assistant',
                 content: m.content,
+                attachments: m.attachments,
                 timestamp: m.timestamp
                   ? (m.timestamp < 1e12 ? m.timestamp * 1000 : m.timestamp)
                   : Date.now(),
@@ -1063,10 +1077,8 @@ export const useAppStore = create<AppState>()(
           isStreaming: true,
           streamingText: '',
         }));
-        // Attachments: upload the files first (POST /api/attachments),
-        // then send the message with server refs — the front brain
-        // records them in persistent memory. Offline: the message goes
-        // out without the files (upload failure never blocks the text).
+        // Complete every upload before inference: a missing drawing changes
+        // the meaning of the request and must produce a visible send failure.
         (async () => {
           const targetSession = sessionReady ? await sessionReady : sessionKey;
           if (cancellation !== cancelledSends) return;
@@ -1074,20 +1086,29 @@ export const useAppStore = create<AppState>()(
             set({ isStreaming: false });
             return;
           }
-          const refs: { id: string; name: string; type: string }[] = [];
+          const refs: Attachment[] = [];
           for (const att of state.attachments) {
-            if (!att.file) continue;
+            if (!att.file) { refs.push(att); continue; }
             try {
               const body = new FormData();
               body.append('file', att.file, att.name);
               const r = await fetch('/api/attachments', { method: 'POST', body });
               if (r.ok) {
                 const rec = await r.json();
-                refs.push({ id: rec.id, name: rec.name, type: rec.type });
+                refs.push({ id: rec.id, name: rec.name, type: rec.type, size: rec.size });
+              } else throw new Error('upload failed');
+            } catch {
+              if (cancellation === cancelledSends && get().activeSessionKey === targetSession) {
+                set({ historyError: `Impossible de joindre ${att.name}. Le message n’a pas été envoyé.`,
+                  isStreaming: false, inputText: text, attachments: state.attachments });
+                set(s => ({ messages: s.messages.filter(item => item.id !== userMessage.id) }));
               }
-            } catch { /* offline: text still sends */ }
+              return;
+            }
           }
           if (cancellation !== cancelledSends) return;
+          if (get().activeSessionKey === targetSession) set(s => ({ messages: s.messages.map(item =>
+            item.id === userMessage.id ? { ...item, attachments: refs.length ? refs : undefined } : item) }));
           state.connection?.send(text, refs,
                                   targetSession || undefined, state.currentProject);
         })();
