@@ -39,6 +39,13 @@ outside the repository.
 
 ## Remaining qualification limits
 
+The complete local pre-merge suite ran 2,396 selected cases: 2,385 passed,
+eight skipped, and three native operation cases failed. These are the retained
+curved pipe/flange union and the flush/extended R60 bore routes in
+`test_cad_operation_qualification.py`. Their assertions remain active and their
+capabilities remain unqualified. GitHub runners have no SolidCraft installation;
+native cases use the explicit installation prerequisite and are reported skipped.
+
 - Drawing 42 completion included operator-led diagnosis, response replay and
   inspection-scope correction. This establishes this candidate's measured
   outcome; unattended completion of arbitrary drawings remains unqualified.

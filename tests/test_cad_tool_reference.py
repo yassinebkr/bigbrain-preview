@@ -155,7 +155,7 @@ async def test_repair_receives_previously_read_native_reference():
 
 
 @pytest.mark.asyncio
-async def test_failed_finish_retains_actual_operand_for_repair(tmp_path):
+async def test_failed_finish_retains_actual_operand_for_repair(tmp_path, cad_native_engine):
     from bigbrain.solidcraft import SolidCraftSession, CadCommandError
     async with SolidCraftSession(tmp_path) as session:
         with pytest.raises(CadCommandError) as caught:
