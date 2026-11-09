@@ -19,7 +19,7 @@ ORGANIZATION_COMMANDS = frozenset({
 
 
 def allowed_cad_command(name):
-    return isinstance(name, str) and (name.startswith(('solid.', 'sketch.', 'pattern.', 'construction.'))
+    return isinstance(name, str) and (name.startswith(('solid.', 'sketch.', 'pattern.', 'construct.'))
                                      or name == 'parameters.change' or name in ORGANIZATION_COMMANDS)
 
 
@@ -115,7 +115,13 @@ class CadWorkflow(Contract):
                 sketch.get('dof') != intent.expected_dof or
                 (intent.expected_dof == 0 and sketch.get('fully_constrained') is not True)):
             errors.append(f'{name}: solver status or degrees of freedom differ from design intent')
-        if any(curve.get('fixed') for curve in sketch.get('curves', [])):
+        projected_links = {link.get('id') for link in sketch.get('links', [])
+                           if link.get('kind') == 'project' and isinstance(link.get('source'), dict)
+                           and link['source'].get('type') and link.get('id')}
+        # Native dimension placement projects a fixed construction axis. Its
+        # source link distinguishes a reference from a fixed functional curve.
+        if any(curve.get('fixed') and not (curve.get('construction')
+                and curve.get('link') in projected_links) for curve in sketch.get('curves', [])):
             errors.append(f'{name}: blanket curve fixation replaces dimensional intent')
         dimensional = {'length', 'diameter', 'radius', 'distance_x', 'distance_y', 'angle'}
         if not intent.expected_dof and not sketch.get('links') and not any(

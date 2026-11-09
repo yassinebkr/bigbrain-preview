@@ -7,6 +7,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 Hash = Annotated[str, Field(pattern=r'^[a-f0-9]{64}$')]
 Identity = Annotated[str, Field(min_length=1, max_length=160)]
+
+# Model-authored checks and mandatory runtime checks have separate capacity.
+MAX_PROPOSED_CHECKS = 64
+MAX_DELIVERY_CHECKS = MAX_PROPOSED_CHECKS + 2
 Finite = Annotated[float, Field(allow_inf_nan=False)]
 Vector = tuple[Finite, Finite, Finite]
 
@@ -44,6 +48,7 @@ class CadRevision(Contract):
     revision: int = Field(strict=True, ge=1)
     engine: Literal['solidcraft'] = 'solidcraft'
     engine_version: Identity
+    engine_sha256: Hash | None = None
     units: Literal['mm'] = 'mm'
     native: CadArtifact
     exports: tuple[CadArtifact, ...] = Field(default=(), max_length=16)
@@ -97,11 +102,11 @@ class CadDelivery(Contract):
     """Closed-part result assembled after measurements and contract checks."""
 
     specification_id: Identity
-    required_criteria: tuple[Identity, ...] = Field(min_length=1, max_length=64)
+    required_criteria: tuple[Identity, ...] = Field(min_length=1, max_length=MAX_DELIVERY_CHECKS)
     required_exports: tuple[Literal['step', 'stl'], ...] = Field(default=(), max_length=2)
     document: CadRevision
     geometry: GeometryObservation
-    checks: tuple[CriterionObservation, ...] = Field(min_length=1, max_length=64)
+    checks: tuple[CriterionObservation, ...] = Field(min_length=1, max_length=MAX_DELIVERY_CHECKS)
 
     @model_validator(mode='after')
     def delivery_gate(self):

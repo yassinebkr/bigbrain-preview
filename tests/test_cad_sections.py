@@ -140,3 +140,28 @@ def test_step_rise_binds_the_difference_of_two_measured_sections():
     data['sections'][1]['intervals_mm'] = [[0, 9]]
     with pytest.raises(ValidationError, match='differs'):
         CadPlan.model_validate(data)
+@pytest.mark.parametrize('material,expected', [
+    (((296., 447.),), 'passed'),
+    (((10., 11.), (296., 447.)), 'failed'),
+    (((-10., 10.),), 'failed'),
+])
+def test_local_empty_span_preserves_remote_material_and_detects_local_blockage(monkeypatch, material, expected):
+    from bigbrain.cad_sections import CadSection, observe_section
+    monkeypatch.setattr('bigbrain.cad_sections.material_intervals', lambda *args: material)
+    section = CadSection(id='hole', label='Flange through hole', axis=2, point_mm=(0, 0, 25),
+                         intervals_mm=(), empty_span_mm=(0, 50))
+    check, actual = observe_section(section, [], source_sha256='a' * 64, evidence_ref='section.json')
+    assert check.status == expected
+    assert 'full-line intervals' in check.diagnostic
+    if expected == 'passed':
+        assert actual == ()
+    global_check, _ = observe_section(section.model_copy(update={'empty_span_mm': None}), [],
+        source_sha256='a' * 64, evidence_ref='section.json')
+    assert global_check.status == 'failed'
+
+
+@pytest.mark.parametrize('target,span', [(None, (0, 50)), (((0, 10),), (0, 50)), ((), (50, 0)), ((), (0, 0))])
+def test_local_empty_span_cannot_replace_dimension_probes_or_reverse_bounds(target, span):
+    with pytest.raises(ValidationError):
+        CadSection(id='hole', label='Local topology', axis=2, point_mm=(0, 0, 25),
+                   intervals_mm=target, empty_span_mm=span)

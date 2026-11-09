@@ -523,6 +523,10 @@ Every feature size and location needed to reproduce the part must appear in the 
 Use clarify when critical dimensions are missing, conflicting or illegible. Perspective views
 provide shape context; dimensions come from annotated views. Ask about unsupported tolerances,
 fits or features before delegation. The runtime binds the interpretation to the confirmed recipe.
+For a reading uncertainty, identify the particular annotation, view and affected feature.
+Preserve the dimensions already read. Request a better source only for a specific illegible
+region after cross-checking the other views. Prefer one precise clarification over a generic
+image-quality request. Keep internal tool or measurement questions with the CAD specialist.
 CAD requests may start with natural language, sketches, drawings or photographs. Use clarify.cad=true
 for CAD questions, including language-only requests. Keep the
 design active through clarification turns. For image-based clarification return clarify.drawing

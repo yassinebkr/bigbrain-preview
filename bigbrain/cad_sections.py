@@ -37,9 +37,15 @@ class CadSection(Contract):
         description='Expected material intervals for a fixed topology check. Omit for a raw probe consumed by requirement measurements.')
     absolute_tolerance_mm: Finite = Field(default=0.05, gt=0, le=0.1)
     bindings: tuple[DimensionBinding, ...] = Field(default=(), max_length=32)
+    empty_span_mm: tuple[Finite, Finite] | None = Field(default=None, description=
+        'World-axis interval for a local empty-through check, such as one flange thickness. '
+        'Requires intervals_mm=[]; full-line material remains in the diagnostic.')
 
     @model_validator(mode='after')
     def ordered_intervals(self):
+        if self.empty_span_mm is not None:
+            if self.intervals_mm != () or self.bindings or self.empty_span_mm[0] >= self.empty_span_mm[1]:
+                raise ValueError('A local empty span requires an ordered interval, empty targets and no dimension bindings')
         previous = -math.inf
         for start, end in self.intervals_mm or ():
             if start >= end or start <= previous:
@@ -132,12 +138,19 @@ def material_intervals(triangles, section: CadSection):
 def observe_section(section, triangles, *, source_sha256, evidence_ref):
     try:
         actual = material_intervals(triangles, section)
+        full_line = actual
+        if section.empty_span_mm is not None:
+            low, high = section.empty_span_mm
+            actual = tuple((max(start, low), min(end, high)) for start, end in actual
+                           if max(start, low) < min(end, high))
         passed = (section.intervals_mm is None or (len(actual) == len(section.intervals_mm)
                   and all(abs(a - e) <= section.absolute_tolerance_mm
                           for observed, expected in zip(actual, section.intervals_mm)
                           for a, e in zip(observed, expected))))
         status = 'passed' if passed else 'failed'
         diagnostic = f'Material intervals (mm): observed {actual}; expected {section.intervals_mm}'
+        if section.empty_span_mm is not None:
+            diagnostic += f'; local empty span {section.empty_span_mm}; full-line intervals {full_line}'
     except ValueError as error:
         actual, status, diagnostic = None, 'inconclusive', str(error)
     observation = CriterionObservation(criterion_id=section.id, label=section.label,

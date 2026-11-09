@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { cadUpdate, currentCadPreview } from '@/lib/cad';
+import { cadUpdate, currentCadPreview, publishedCadView } from '@/lib/cad';
 import { surfaceRegistry } from '@/lib/morphable';
 import { useAppStore, type RunState } from '@/store/appStore';
 import { CadPanel } from './CadPanel';
@@ -28,6 +28,46 @@ beforeEach(() => useAppStore.setState({ activeSessionKey: run.sessionId, activeR
   runsById: {}, completedRuns: [], sessionProposals: {} }));
 
 describe('CAD piece surface', () => {
+  it('reconciles a published delivery without reviving the failed task event', () => {
+    const failed = cadUpdate(checkpoint(3, 'failed'))!;
+    const source = { ...checkpoint().snapshot, delivery_status: 'ready' };
+    const display = publishedCadView(failed, source)!;
+    expect(display.status).toBe('ready');
+    expect(display.snapshot?.checks).toHaveLength(1);
+    expect(failed.status).toBe('failed');
+    expect(cadUpdate(checkpoint(4), failed)).toBe(failed);
+    expect(publishedCadView(failed, { ...source, delivery_status: 'incomplete' })).toBeUndefined();
+    expect(publishedCadView(failed, { ...source, checks: [] })).toBeUndefined();
+    expect(publishedCadView(failed, { ...source, document: { ...source.document, document_id: 'f'.repeat(32) } })).toBeUndefined();
+    expect(publishedCadView(failed, { ...source, checks: [{ ...source.checks[0], status: 'failed' }] })).toBeUndefined();
+    expect(publishedCadView(failed, { ...source, geometry: { ...source.geometry, source_sha256: 'c'.repeat(64) } })).toBeUndefined();
+  });
+  it('renders 64 proposed checks and the two mandatory runtime checks', () => {
+    const value = checkpoint();
+    value.snapshot.checks = Array.from({ length: 66 }, (_, i) => ({
+      ...value.snapshot.checks[0], criterion_id: `check-${i}`, diagnostic: `Measured check ${i}`,
+    }));
+    const cad = cadUpdate(value)!;
+    expect(cad.snapshot?.checks).toHaveLength(66);
+    const html = renderToStaticMarkup(<CadPanel run={{ ...run, status: 'done', cad }} />);
+    expect(html).toContain('66/66 conformes');
+    expect(html).toContain('Measured check 65');
+  });
+  it('shows the observed construction step and retained count during work', () => {
+    const cad = cadUpdate({ ...checkpoint(1, 'modeling'), execution: {
+      phase: 'observing', current_step: 'Esquisse du perçage', accepted_steps: 2,
+      checkpoint: 'e'.repeat(32), decisions: 4,
+    } })!;
+    const html = renderToStaticMarkup(<CadPanel run={{ ...run, cad }} />);
+    expect(html).toContain('Inspection de la géométrie');
+    expect(html).toContain('Esquisse du perçage');
+    expect(html).toContain('2 étapes');
+    expect(html).toContain('vérifications de la pièce complète');
+    expect(html).not.toContain('e'.repeat(32));
+    expect(cadUpdate({ ...checkpoint(2, 'modeling'), execution: {
+      phase: 'ready', accepted_steps: 3,
+    } }, cad)).toBe(cad);
+  });
   it('presents actual dimensions, native and STEP actions, and measured checks', () => {
     const cad = cadUpdate(checkpoint())!;
     const html = renderToStaticMarkup(<CadPanel run={{ ...run, status: 'done', cad }} />);
@@ -77,5 +117,21 @@ describe('CAD piece surface', () => {
     expect(useAppStore.getState().completedRuns[0].cad?.status).toBe('ready');
     store.applyRunEvent(event('task.progress', { ...detail, session_id: 'another' }));
     expect(useAppStore.getState().completedRuns[0].sessionId).toBe(run.sessionId);
+  });
+  it('updates the Atelier construction phase through actual run event handling', () => {
+    const store = useAppStore.getState();
+    store.applyRunEvent(event('task.received', { task_id: run.id, session_id: run.sessionId, description: run.description }));
+    for (const [index, phase] of ['deciding', 'executing', 'checkpoint', 'observing'].entries()) {
+      store.applyRunEvent(event('task.progress', { task_id: run.id, session_id: run.sessionId,
+        subtask_id: 'cad-step', brain: 'cad_brain', cad: { ...checkpoint(index + 1, 'modeling'),
+          execution: { phase, current_step: 'Socle', accepted_steps: phase === 'checkpoint' || phase === 'observing' ? 1 : 0,
+            checkpoint: phase === 'checkpoint' || phase === 'observing' ? 'e'.repeat(32) : null, decisions: index + 1 } } }));
+      expect(useAppStore.getState().runsById[run.id].cad?.execution?.phase).toBe(phase);
+    }
+    const cad = useAppStore.getState().runsById[run.id].cad!;
+    const html = renderToStaticMarkup(<CadPanel run={{ ...run, cad }} />);
+    expect(html).toContain('Inspection de la géométrie');
+    expect(html).toContain('Socle');
+    expect(cad.execution?.accepted_steps).toBe(1);
   });
 });

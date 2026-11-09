@@ -15,11 +15,15 @@ import time
 
 async def main():
     maximum_calls = int(os.environ.get('CAD_PROBE_MAX_CALLS', '10'))
-    if not 1 <= maximum_calls <= 24:
-        raise ValueError('Qualification campaign supports at most twenty-four explicitly authorized calls')
+    if not 1 <= maximum_calls <= 128:
+        raise ValueError('Qualification campaign supports at most 128 explicitly authorized cumulative calls')
+    baseline_calls = int(os.environ.get('CAD_PROBE_BASE_CALLS', '0'))
+    inspection_reserve = int(os.environ.get('CAD_PROBE_INSPECTION_RESERVE', '0'))
+    if not 0 <= baseline_calls < maximum_calls or not 0 <= inspection_reserve < maximum_calls - baseline_calls:
+        raise ValueError('Campaign reserve and baseline must fit its call envelope')
     maximum_seconds = float(os.environ.get('CAD_PROBE_MAX_INFERENCE_SECONDS', '600'))
-    if not 0 < maximum_seconds <= 1200:
-        raise ValueError('Qualification inference ceiling must be positive and at most twenty minutes')
+    if not 0 < maximum_seconds <= 3600:
+        raise ValueError('Qualification inference ceiling must be positive and at most one hour')
     root = Path(os.environ['CAD_PROBE_ROOT']) if os.environ.get('CAD_PROBE_ROOT') else Path(tempfile.mkdtemp(prefix='cad-clarification-live-'))
     ledger_name = os.environ.get('CAD_PROBE_LEDGER', 'calls.json')
     if Path(ledger_name).name != ledger_name or not ledger_name.endswith('.json'):
@@ -55,9 +59,14 @@ async def main():
             return getattr(self.provider, name)
 
         async def chat_complete(self, **arguments):
+            from bigbrain.cad_resources import inference_phase, CadBudgetExceeded
+            phase = inference_phase.get()
             if len(self.calls) >= maximum_calls or self.duration >= maximum_seconds:
-                raise RuntimeError(f'CAD qualification reached its {maximum_calls}-call / {maximum_seconds:g}-second inference limit')
+                raise CadBudgetExceeded(f'CAD qualification reached its {maximum_calls}-call / {maximum_seconds:g}-second inference limit')
+            if phase != 'inspection' and len(self.calls) >= maximum_calls - inspection_reserve:
+                raise CadBudgetExceeded('CAD construction allowance reached; final inspection calls remain reserved')
             call = {'phase': 'front' if arguments.get('tool_schema') else 'cad', 'status': 'running'}
+            call['cad_phase'] = phase
             self.calls.append(call)
             # Reserve the call durably before inference so an interrupted
             # campaign retains its consumed allowance at the next startup.

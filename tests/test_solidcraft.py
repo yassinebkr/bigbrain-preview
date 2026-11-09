@@ -33,6 +33,9 @@ async def test_real_plate_edit_exports_and_failed_batch_preserve_revision(tmp_pa
                     operation='cut', targets=['Plate']),
         ])
         first = await session.capture('synthetic', 'plate', 1)
+        import hashlib
+        with engine.open('rb') as stream:
+            assert first.document.engine_sha256 == hashlib.file_digest(stream, 'sha256').hexdigest()
         assert first.geometry.closed_solid and first.geometry.body_count == 1
         assert first.geometry.bounds_max_mm == pytest.approx((60, 40, 6))
         # Reuse the analytic-volume tolerance from the engine qualification.
@@ -107,8 +110,11 @@ for line in sys.stdin:
 @pytest.mark.asyncio
 async def test_timeout_retires_uncertain_session_and_drains_stderr(tmp_path, stalled_engine):
     async with SolidCraftSession(tmp_path, executable=stalled_engine, timeout=0.3) as session:
-        with pytest.raises(TimeoutError):
+        with pytest.raises(TimeoutError, match='exceeded 0.3 seconds during measure') as caught:
             await asyncio.wait_for(session.tool('measure'), 3)
+        assert caught.value.result['failed']['session_closed'] is True
+        assert caught.value.result['failed']['mutation_outcome'] == 'unverified'
+        assert caught.value.result['failed']['operation']['name'] == 'measure'
         assert session.process is None
         assert len(session.stderr) <= 32_000
         with pytest.raises(CadError, match='closed'):

@@ -11,7 +11,7 @@ from .base import BaseBrain
 from ..cad_contracts import CadDelivery, CriterionObservation
 from ..cad_planning import CadPlan, draft_cad_plan, draft_cad_repair, refine_cad_sampling
 from ..cad_store import CadStore
-from ..solidcraft import CadError, CadCommandError, SolidCraftSession, solidcraft_executable
+from ..solidcraft import CadError, CadCommandError, CadTimeoutError, SolidCraftSession, solidcraft_executable
 from ..cad_stages import CadDefinition, CadConstruction, draft_construction, inspect_candidate, reproduced_defect_is_repairable
 
 
@@ -51,6 +51,7 @@ async def prepare_cad_plan(provider, payload, *, model=None, defer_construction=
 
 
 async def cad_command_reference():
+    from ..cad_tool_reference import CadCommandCatalog
     commands = {'solid.box', 'solid.cylinder', 'solid.extrude', 'solid.chamfer', 'solid.fillet',
                 'sketch.create', 'sketch.line', 'sketch.arc.three_point', 'sketch.circle.center',
                 'sketch.rectangle.two_point', 'sketch.rectangle.rounded', 'sketch.finish', 'parameters.change',
@@ -60,11 +61,19 @@ async def cad_command_reference():
             catalog = await session.tool('list_commands')
             reference = [{'id': item['id'], 'params': item['params']}
                          for item in catalog if item['id'] in commands or item['id'].startswith('sketch.constraint.')]
-    return reference
+    async def load_native_reference(names, skills):
+        # Keep discovery read-only and separate from the candidate's design state.
+        with tempfile.TemporaryDirectory(prefix='bigbrain-cad-reference-') as scratch:
+            async with SolidCraftSession(Path(scratch)) as session:
+                descriptions = [await session.tool('describe_command', {'id': name}) for name in names]
+                guides = {name: await session.tool('skill_reference', {'skill': name, 'file': 'SKILL.md'})
+                          for name in skills}
+        return {'command_reference': descriptions, 'skill_reference': guides}
+    return CadCommandCatalog(reference, catalog, loader=load_native_reference)
 
 
 class CadBrain(BaseBrain):
-    """Execute the recipe recorded in the user's immutable contract revision."""
+    """Construct and measure owned CAD against the confirmed contract revision."""
 
     def __init__(self, name, bus, workspace=None, *, llm_provider=None, model=None):
         super().__init__(name, bus, workspace)
@@ -109,6 +118,7 @@ class CadBrain(BaseBrain):
                 raise CadError('CAD piece changed after contract confirmation')
         base = previous['document']['revision'] if previous else 0
         sequence, started = 0, time.monotonic()
+        execution_state = None
 
         async def progress(status, stage, view=None, diagnostic=None):
             nonlocal sequence
@@ -116,20 +126,58 @@ class CadBrain(BaseBrain):
             await self.send_progress({'stage': stage, 'cad': {
                 'schema_version': '1.0', 'document_id': document_id, 'title': plan.title if plan else definition.title,
                 'sequence': sequence, 'status': status, 'elapsed_seconds': time.monotonic() - started,
-                'snapshot': view, 'diagnostic': diagnostic}})
+                'snapshot': view, 'diagnostic': diagnostic, 'execution': execution_state}})
 
         execution_lock = root / '.cad-execution'
         try:
+            driver = None
+            progressive = bool(definition and (not retained or retained['kind'] == 'progressive'
+                or (root / 'execution-checkpoints/head.json').exists()))
             execution_lock.mkdir()
         except FileExistsError as error:
             raise CadError('CAD execution is active or requires interrupted-state inspection') from error
         try:
+            from ..cad_resources import authorized_capacity, command_capacity, inference_phase
+            capacity_token = command_capacity.set(authorized_capacity(root, checkpoint.digest, definition) if definition else 64)
+            phase_token = inference_phase.set('construction')
+        except BaseException:
+            execution_lock.rmdir()
+            raise
+        try:
+            history = []
+            for path in sorted(root.glob('command-failure-*.json'), key=lambda item: item.stat().st_mtime)[-8:]:
+                if path.stat().st_size > 2_000_000:
+                    continue
+                failure = json.loads(path.read_text())['engine_result']['failed']
+                compact = {key: value for key, value in failure.items() if key != 'actual_operand_geometry'}
+                history.append({'evidence_ref': path.name, 'observed_failure': compact})
             async with asyncio.timeout(definition.execution_seconds if definition else 120):
                 if definition is not None:
                     from ..front.cad_context import drawing_image_blocks
                     images = drawing_image_blocks(definition.drawing, session_id)
                     reference = await cad_command_reference()
-                    if retained:
+                    if progressive:
+                        from ..cad_execution import CadExecutionStore, digest
+                        from ..cad_controller import CadConstructionDriver
+                        async def step_progress(stage, detail):
+                            nonlocal execution_state
+                            chain = driver.store.active()
+                            execution_state = {
+                                'phase': detail.get('phase', 'checkpoint' if stage == 'cad_group_checkpoint' else 'executing'),
+                                'current_step': (None if stage == 'cad_revising' else
+                                    detail.get('purpose', (execution_state or {}).get('current_step'))),
+                                'accepted_steps': len(chain), 'checkpoint': chain[-1].id if chain else None,
+                                'decisions': driver.state['decisions']}
+                            await progress('modeling', stage, previous, detail.get('diagnostic'))
+                        driver = CadConstructionDriver(self.llm_provider, definition, reference, images,
+                            CadExecutionStore(root, checkpoint.digest), model=self.model, progress=step_progress,
+                            authorization={'status': 'confirmed', 'contract_sha256': checkpoint.digest,
+                                'definition_sha256': digest(definition.model_dump(mode='json')),
+                                'design_id': spec.design_id, 'revision': spec.revision,
+                                'approval_plan_id': approval['plan_id'], 'document_id': document_id})
+                        checkpoint.save(document_id, definition, kind='progressive')
+                        await progress('modeling', 'cad_construction_planning')
+                    elif retained:
                         model = CadConstruction if retained['kind'] == 'construction' else CadPlan
                         plan = model.model_validate(retained['recipe'])
                         if isinstance(plan, CadPlan) and plan.drawing != definition.drawing:
@@ -139,19 +187,37 @@ class CadBrain(BaseBrain):
                         await progress('modeling', 'cad_construction_planning')
                         plan = await draft_construction(self.llm_provider, definition, reference, images, model=self.model)
                         checkpoint.save(document_id, plan, kind='construction')
-                for attempt in range(plan.max_repairs + 1):
+                for attempt in range((definition.max_repairs if progressive else plan.max_repairs) + 1):
+                    inference_phase.set('construction')
                     await progress('modeling', 'cad_modeling' if attempt == 0 else 'cad_repairing', previous)
-                    # Each repair starts from the approved original. Failed
-                    # candidates remain separate captured evidence revisions.
-                    async with SolidCraftSession(root) as session:
+                    # Progressive repairs recover their accepted prefix. Legacy
+                    # edits reopen the retained revision; failed evidence stays separate.
+                    async with SolidCraftSession(root, timeout=120) as session:
                         if previous:
                             from ..cad_contracts import CadRevision
-                            await session.reopen(CadRevision.model_validate(previous['document']).native)
+                            previous_document = CadRevision.model_validate(previous['document'])
+                            if previous_document.engine_sha256 != session.engine_sha256:
+                                raise CadError('CAD retained revision requires its original executable fingerprint; '
+                                               'preserve it and start a new candidate')
+                            await session.reopen(previous_document.native)
                         try:
-                            if plan.workflow and plan.workflow.parameters:
-                                await session.batch([plan.workflow.parameter_command()])
-                            await session.construct(
-                                [item.model_dump(exclude={'schema_version'}) for item in plan.commands], plan.workflow)
+                            if progressive:
+                                plan = await driver.run(session)
+                                checkpoint.save(document_id, plan, kind='construction')
+                            else:
+                                if plan.workflow and plan.workflow.parameters:
+                                    await session.batch([plan.workflow.parameter_command()])
+                                await session.construct(
+                                    [item.model_dump(exclude={'schema_version'}) for item in plan.commands], plan.workflow,
+                                    cut_intents=plan.cut_intents, enforce_cut_safety=True)
+                            retained_cut_safety = None
+                            if previous:
+                                old_revision = previous['document']['revision']
+                                old_safety = root / f'revision-{old_revision}' / 'cut-safety.json'
+                                if old_safety.exists():
+                                    from ..cad_cut_safety import revalidate_parameter_edit
+                                    retained_cut_safety = await revalidate_parameter_edit(
+                                        session, previous['document']['native']['sha256'], old_safety)
                             if plan.workflow:
                                 design = await session.tool('inspect_design')
                                 graph = await session.tool('execute', {'command': 'parameters.graph', 'params': {}})
@@ -161,12 +227,15 @@ class CadBrain(BaseBrain):
                                     raise CadCommandError({'failed': {'stage': 'design_quality', 'diagnostics': issues}})
                                 old_native = root / previous['document']['native']['path'] if previous else None
                                 await plan.workflow.arrange(session, design, existing_native=old_native)
-                        except CadCommandError as error:
+                        except (CadCommandError, CadTimeoutError) as error:
                             diagnostic = {'attempt': attempt, 'engine_result': error.result,
                                           'observations': session.observations}
-                            (root / f'command-failure-{uuid.uuid4().hex}.json').write_text(
-                                json.dumps(diagnostic, allow_nan=False), encoding='utf-8')
-                            if attempt == plan.max_repairs or self.llm_provider is None:
+                            failure_path = root / f'command-failure-{uuid.uuid4().hex}.json'
+                            failure_path.write_text(json.dumps(diagnostic, allow_nan=False), encoding='utf-8')
+                            history.append({'evidence_ref': failure_path.name, 'observed_failure': {
+                                key: value for key, value in error.result.get('failed', {}).items()
+                                if key != 'actual_operand_geometry'}})
+                            if progressive or attempt == plan.max_repairs or self.llm_provider is None:
                                 raise
                             # The next attempt opens a new isolated session from
                             # the approved original, regardless of batch rollback.
@@ -174,7 +243,8 @@ class CadBrain(BaseBrain):
                             await progress('checking', 'cad_repair_diagnosis', previous, str(error))
                             if isinstance(plan, CadConstruction):
                                 plan = await draft_construction(self.llm_provider, definition, reference, images,
-                                    model=self.model, previous=plan, diagnostic=error.result.get('failed'))
+                                    model=self.model, previous=plan, diagnostic=error.result.get('failed'),
+                                    diagnostic_history=history[-8:])
                                 checkpoint.save(document_id, plan, kind='construction')
                             else:
                                 plan = await draft_cad_repair(self.llm_provider, plan, (), model=self.model,
@@ -199,6 +269,7 @@ class CadBrain(BaseBrain):
                                 'workflow': plan.workflow.model_dump(mode='json'), 'design': design, 'parameter_graph': graph,
                                 'diagnostics': issues}, allow_nan=False), encoding='utf-8')
                         if isinstance(plan, CadConstruction):
+                            inference_phase.set('inspection')
                             # Inspection uses the captured geometry. Its targets
                             # still derive from the confirmed definition.
                             await progress('checking', 'cad_inspection_planning')
@@ -208,10 +279,29 @@ class CadBrain(BaseBrain):
                                 'geometry': capture.geometry.model_dump(mode='json'), 'topology': topology}
                             (evidence / 'inspection-input.json').write_text(
                                 json.dumps(observations, allow_nan=False), encoding='utf-8')
-                            plan = await inspect_candidate(self.llm_provider, definition, plan, observations, model=self.model)
+                            plan = await inspect_candidate(self.llm_provider, definition, plan, observations,
+                                model=self.model, stop_on_error=bool(progressive and driver.active_allowance
+                                    and driver.active_allowance.stop_on_new_error))
                             checkpoint.save(document_id, plan, kind='inspection')
                             (evidence / 'inspection-plan.json').write_text(plan.model_dump_json(), encoding='utf-8')
                         checks = tuple(item.observe(capture.geometry) for item in plan.criteria)
+                        cut_safety = session.cut_safety_reports
+                        if cut_safety or retained_cut_safety:
+                            safety = {'source_sha256': capture.document.native.sha256,
+                                'construction_commands': [item.model_dump(exclude={'schema_version'}) for item in plan.commands],
+                                'cut_intents': [item.model_dump(mode='json') for item in plan.cut_intents],
+                                'reports': cut_safety, 'retained_validation': retained_cut_safety}
+                            if retained_cut_safety:
+                                prefix = retained_cut_safety['construction_commands']
+                                safety['construction_commands'] = prefix + safety['construction_commands']
+                                safety['cut_intents'] = retained_cut_safety['cut_intents'] + [
+                                    {**item, 'command_index': item['command_index'] + len(prefix)}
+                                    for item in safety['cut_intents']]
+                            (root / f'revision-{revision}' / 'cut-safety.json').write_text(
+                                json.dumps(safety, allow_nan=False), encoding='utf-8')
+                            checks += (CriterionObservation(criterion_id='cut-safety', label='Préservation autour des découpes',
+                                source_sha256=capture.document.native.sha256, evidence_ref=f'revision-{revision}/cut-safety.json',
+                                status='passed', diagnostic='Dépassements des outils vérifiés sur la matière et les paramètres de cette révision.'),)
                         if quality is not None:
                             checks += (quality,)
                         evidence = root / f'revision-{revision}'
@@ -283,17 +373,23 @@ class CadBrain(BaseBrain):
                         raise CadError('Critères CAO non satisfaits : ' + ' ; '.join(item.diagnostic for item in failed)[:800])
                     await progress('checking', 'cad_repair_diagnosis', previous,
                                    'Correction de géométrie à partir des mesures, critères conservés.')
-                    plan = await draft_cad_repair(self.llm_provider, plan, checks, model=self.model,
-                        candidate_context={'source_sha256': capture.document.native.sha256,
+                    candidate_context = {'source_sha256': capture.document.native.sha256,
                             'geometry': capture.geometry.model_dump(mode='json'),
                             'native_design': design if plan.workflow else None,
                             'topology': topology_evidence if plan.cylinders or plan.vertices else {},
-                            'sections': measured_sections})
-                    if definition:
+                            'sections': measured_sections}
+                    if progressive:
+                        driver.request_repair(checks, candidate_context)
+                        checkpoint.save(document_id, definition, kind='progressive')
+                    else:
+                        plan = await draft_cad_repair(self.llm_provider, plan, checks, model=self.model,
+                            candidate_context=candidate_context)
+                    if definition and not progressive:
                         checkpoint.save(document_id, plan, kind='inspection')
                 delivery = CadDelivery(specification_id=f'{spec.design_id}:{spec.revision}',
                     required_criteria=tuple(item.id for item in (*plan.criteria, *plan.sections, *plan.cylinders, *plan.vertices, *plan.measurements))
-                                      + (('design-quality',) if plan.workflow else ()), required_exports=('step', 'stl'),
+                                      + (('design-quality',) if plan.workflow else ())
+                                      + (('cut-safety',) if any(item.criterion_id == 'cut-safety' for item in checks) else ()), required_exports=('step', 'stl'),
                     document=capture.document, geometry=capture.geometry, checks=checks)
                 view = store.publish(session_id, capture, delivery=delivery, base_revision=base, title=plan.title)
                 await progress('ready', 'cad_ready', view)
@@ -301,12 +397,23 @@ class CadBrain(BaseBrain):
                     'delivery_status': 'ready', 'cad': view,
                     'message': f'Pièce créée et vérifiée : {plan.title}. L’aperçu, les dimensions et les exports sont disponibles dans l’Atelier.'}
         except asyncio.CancelledError:
+            if driver is not None:
+                chain = driver.store.active()
+                driver.state['recovery'] = {'kind': 'inspection' if driver.state.get('completed') else 'interrupted',
+                    'checkpoint': chain[-1].id if chain else None}
+                driver.save()
             await progress('cancelled', 'cad_cancelled', previous, 'Travail CAO arrêté ; la révision précédente est conservée.')
             raise
         except Exception as error:
+            if driver is not None and driver.state.get('completed'):
+                chain = driver.store.active()
+                driver.state['recovery'] = {'kind': 'inspection', 'checkpoint': chain[-1].id if chain else None}
+                driver.save()
             diagnostic = str(error)[:1000] or type(error).__name__
             await progress('failed', 'cad_failed', previous, diagnostic)
             return {'success': False, 'result_kind': 'cad', 'delivery_status': 'incomplete',
                     'runnable': False, 'error': diagnostic}
         finally:
+            command_capacity.reset(capacity_token)
+            inference_phase.reset(phase_token)
             execution_lock.rmdir()

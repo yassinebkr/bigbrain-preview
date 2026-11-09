@@ -4,15 +4,17 @@ import json
 import math
 from typing import Annotated, Any, Literal
 
-from pydantic import Field, model_validator, field_validator
+from pydantic import AfterValidator, Field, model_validator, field_validator
+from .cad_resources import check_commands
 
-from .cad_contracts import Contract, CriterionObservation, Finite, GeometryObservation, Identity, Vector
+from .cad_contracts import Contract, CriterionObservation, Finite, GeometryObservation, Identity, Vector, MAX_PROPOSED_CHECKS
 from .cad_drawings import DrawingSpecification
 from .cad_sections import CadSection
 from .cad_surfaces import CadCylinder, CadVertex
 from .cad_measurements import RequirementMeasurement
 from .cad_preflight import measurement_diagnostics, command_diagnostics
 from .cad_workflow import CadWorkflow, allowed_cad_command
+from .cad_cut_contracts import CutIntent, validate_cut_intents
 
 
 class CadCommand(Contract):
@@ -79,7 +81,7 @@ class CadCriterion(Contract):
 class CadRecipe(Contract):
     """Model-authored construction commands and proposed measurement targets."""
     title: str = Field(min_length=1, max_length=160)
-    commands: tuple[CadCommand, ...] = Field(min_length=1, max_length=32)
+    commands: Annotated[tuple[CadCommand, ...], AfterValidator(check_commands)] = Field(min_length=1, max_length=96)
     criteria: tuple[CadCriterion, ...] = Field(min_length=1, max_length=16)
     limitations: tuple[Annotated[str, Field(min_length=1, max_length=500)], ...] = Field(default=(), max_length=6)
     sections: tuple[CadSection, ...] = Field(default=(), max_length=32)
@@ -91,6 +93,7 @@ class CadRecipe(Contract):
     vertices: tuple[CadVertex, ...] = Field(default=(), max_length=16,
         description='Native edge endpoints selected by full world point. Use for exact arc or chamfer endpoints on boundaries.')
     workflow: CadWorkflow | None = None
+    cut_intents: tuple[CutIntent, ...] = Field(default=(), max_length=16)
 
 
 class CadPlan(CadRecipe):
@@ -108,9 +111,9 @@ class CadPlan(CadRecipe):
             diagnostics.append('CAD criterion identifiers must be unique')
         if 'dimensions_mm' not in {item.metric for item in self.criteria}:
             diagnostics.append('CAD plan requires explicit measured dimensions')
-        if self.workflow and 'design-quality' in identities:
-            diagnostics.append('The design-quality identity belongs to the runtime workflow check')
-        if len(identities) + int(self.workflow is not None) > 64:
+        if set(identities) & {'design-quality', 'cut-safety'}:
+            diagnostics.append('Design-quality and cut-safety identities belong to runtime checks')
+        if len(identities) > MAX_PROPOSED_CHECKS:
             diagnostics.append('CAD verification requires at most 64 checks')
         if len(self.model_dump_json().encode()) > 64_000:
             diagnostics.append('CAD recipe exceeds its byte budget')
@@ -146,7 +149,8 @@ class CadPlan(CadRecipe):
 
 
 class CadRepair(Contract):
-    commands: tuple[CadCommand, ...] = Field(min_length=1, max_length=32)
+    commands: Annotated[tuple[CadCommand, ...], AfterValidator(check_commands)] = Field(min_length=1, max_length=96)
+    cut_intents: tuple[CutIntent, ...] | None = Field(default=None, max_length=16)
 
 
 class CadSamplingAdjustment(Contract):
@@ -223,7 +227,10 @@ async def draft_cad_repair(provider, plan, checks, *, model=None, command_diagno
     if response.startswith('```') and response.endswith('```'):
         response = '\n'.join(response.splitlines()[1:-1])
     repair = CadRepair.model_validate_json(response)
-    return CadPlan.model_validate({**plan.model_dump(), 'commands': [item.model_dump() for item in repair.commands]})
+    intents = repair.cut_intents if repair.cut_intents is not None else plan.cut_intents
+    validate_cut_intents(repair.commands, intents, plan.drawing)
+    return CadPlan.model_validate({**plan.model_dump(), 'commands': [item.model_dump() for item in repair.commands],
+                                   'cut_intents': [item.model_dump() for item in intents]})
 
 
 async def draft_cad_plan(provider, objective, *, context=None, model=None, drawing=None, command_reference=None, images=None, require_workflow=False):
@@ -256,7 +263,7 @@ async def draft_cad_plan(provider, objective, *, context=None, model=None, drawi
         'solid.cylinder {radius,height,base?,body_name?,operation?,targets?}. Operation: new, join, cut, intersect. '
         'A cut needs targets with the existing body name. Use dimensions_mm in world XYZ. '
         'Create new parameters individually with name/expression. The changes map updates '
-        'existing parameters only. Keep the recipe within 32 commands; use a concise set '
+        'existing parameters only. Keep the recipe within 64 commands; use a concise set '
         'of driving parameters and numeric constants where appropriate. '
         'The command_reference contains installed engine documentation for sketches, '
         'extrusions, rounded profiles, chamfers and fillets. Use their exact parameters. '

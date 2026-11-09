@@ -28,6 +28,16 @@ def construction_commands():
             'operation': 'cut', 'targets': ['Mount_plate'], 'name': 'Through_hole'}}]
 
 
+def construction_cut_intents(dimension='width'):
+    return [{'id': 'through_hole', 'feature_id': 'body', 'dimension_ids': [dimension],
+             'command_index': 7, 'kind': 'through', 'targets': ['Mount_plate'],
+             'boundaries': [
+                 {'label': 'top', 'origin_mm': ['length/2', 'width/2', 'thickness'],
+                  'outward_normal': [0, 0, 1], 'role': 'opening'},
+                 {'label': 'bottom', 'origin_mm': ['length/2', 'width/2', 0],
+                  'outward_normal': [0, 0, -1], 'role': 'opening'}]}]
+
+
 def workflow(length=60, diameter=8):
     parameters = [('length', f'{length} mm'), ('width', '40 mm'),
                   ('thickness', '6 mm'), ('diameter', f'{diameter} mm')]
@@ -106,6 +116,22 @@ async def test_invalid_sketch_stops_before_extrusion():
     assert candidate.commands == []
 
 
+def test_fixed_projected_construction_axis_preserves_dimensional_intent():
+    intent = workflow()
+    profile = {'name':'Base_profile','status':'solved','dof':0,'fully_constrained':True,
+        'failing':[], 'constraints':[{'type':'length'}],
+        'curves':[{'fixed':False}, {'fixed':True,'construction':True,'link':'axis-ref'}],
+        'links':[{'id':'axis-ref','kind':'project','source':{'type':'sketch_axis','name':'y'}}]}
+    assert intent.sketch_diagnostics(profile) == []
+    for change in ({'construction':False}, {'link':'missing'}, {'link':None}):
+        rejected = copy.deepcopy(profile)
+        rejected['curves'][1].update(change)
+        assert any('fixation' in issue for issue in intent.sketch_diagnostics(rejected))
+    rejected = copy.deepcopy(profile)
+    rejected['links'][0]['kind'] = 'unknown'
+    assert any('fixation' in issue for issue in intent.sketch_diagnostics(rejected))
+
+
 @pytest.mark.asyncio
 async def test_fresh_proposal_cannot_omit_professional_design_intent():
     from tests.test_cad_integration import Provider, recipe
@@ -122,7 +148,8 @@ async def test_construction_preflight_corrects_once_with_definition_preserved():
     from tests.test_cad_drawings import drawing
     from bigbrain.cad_stages import CadDefinition, draft_construction
     definition = CadDefinition.model_validate({'title': 'Plate', 'objective': 'Build the confirmed plate', 'drawing': drawing()})
-    good = {'title': 'Plate', 'workflow': workflow().model_dump(mode='json'), 'commands': construction_commands()}
+    good = {'title': 'Plate', 'workflow': workflow().model_dump(mode='json'), 'commands': construction_commands(),
+            'cut_intents': construction_cut_intents()}
     bad = copy.deepcopy(good)
     bad['workflow']['features'] = [f for f in bad['workflow']['features'] if f['name'] != 'Base_profile']
     bad['workflow']['groups'][0]['features'].remove('Base_profile')
@@ -311,7 +338,7 @@ async def test_worker_delivery_and_existing_edit_keep_quality_evidence(tmp_path)
     worker = CadBrain('cad_brain', bus)
     def recipe(length, diameter, commands):
         return {'title': 'Editable plate', 'workflow': workflow(length, diameter).model_dump(mode='json'),
-            'commands': commands, 'criteria': [
+            'commands': commands, 'cut_intents': construction_cut_intents() if len(commands) > 1 else [], 'criteria': [
                 {'id': 'envelope', 'label': 'Envelope', 'metric': 'dimensions_mm', 'expected': [length, 40, 6]},
                 {'id': 'closed', 'label': 'Closed solid', 'metric': 'closed_solid', 'expected': [1]}]}
     try:
@@ -332,6 +359,10 @@ async def test_worker_delivery_and_existing_edit_keep_quality_evidence(tmp_path)
         assert view['geometry']['bounds_max_mm'] == pytest.approx([80, 40, 6])
         quality = next(c for c in view['checks'] if c['criterion_id'] == 'design-quality')
         assert quality['status'] == 'passed'
+        safety_check = next(c for c in view['checks'] if c['criterion_id'] == 'cut-safety')
+        safety_evidence = json.loads((root / safety_check['evidence_ref']).read_text())
+        assert safety_evidence['source_sha256'] == view['document']['native']['sha256']
+        assert safety_evidence['retained_validation']['previous_source_sha256'] == first['cad']['document']['native']['sha256']
         evidence = json.loads((root / quality['evidence_ref']).read_text())
         assert evidence['source_sha256'] == view['document']['native']['sha256']
         assert evidence['diagnostics'] == []
@@ -375,7 +406,8 @@ async def test_confirmed_drawing_constructs_then_inspects_actual_candidate(tmp_p
     drawing['dimensions'][0].update(id='length', kind='length', value=60, unit='mm')
     intent = workflow().model_dump(mode='json')
     intent['parameters'][0]['source_dimension'] = 'length'
-    construction = {'title': 'Constrained plate', 'commands': construction_commands(), 'workflow': intent}
+    construction = {'title': 'Constrained plate', 'commands': construction_commands(), 'workflow': intent,
+                    'cut_intents': construction_cut_intents('length')}
     inspection = {'title': 'Constrained plate', 'criteria': [
         {'id': 'bounds', 'label': 'Envelope', 'metric': 'dimensions_mm',
          'expected': [60, 40, 6], 'dimension_bindings': {'length': 0}}]}
@@ -385,8 +417,11 @@ async def test_confirmed_drawing_constructs_then_inspects_actual_candidate(tmp_p
             self.calls = []
         async def chat_complete(self, **kwargs):
             self.calls.append(kwargs)
-            assert len(self.calls) <= 2
-            return json.dumps(construction if len(self.calls) == 1 else inspection)
+            assert len(self.calls) <= 6
+            if isinstance(kwargs['messages'][-1]['content'], list):
+                from tests.test_cad_controller import fixture_decision
+                return json.dumps(fixture_decision(kwargs, construction))
+            return json.dumps(inspection)
     provider = StagedProvider()
     bus = MessageBus(tmp_path / 'bus', auth=None)
     try:
@@ -396,9 +431,16 @@ async def test_confirmed_drawing_constructs_then_inspects_actual_candidate(tmp_p
         confirmed = default_repository().approve_spec(spec.design_id, plan_id=plan.id)
         result = await CadBrain('cad_brain', bus, llm_provider=provider).handle_task(task(plan, confirmed))
         assert result['success'], result
-        assert len(provider.calls) == 2
+        assert len(provider.calls) == 6
+        for call in provider.calls[:5]:
+            authority = json.loads(call['messages'][-1]['content'][0]['text'])['execution_authorization']
+            assert authority['status'] == 'confirmed'
+            assert authority['design_id'] == confirmed.design_id
+            assert authority['revision'] == confirmed.revision
+            assert authority['approval_plan_id'] == plan.id
+            assert authority['document_id'] == result['cad']['document']['document_id']
         assert any(b.get('type') == 'image_url' for b in provider.calls[0]['messages'][-1]['content'])
-        packet = json.loads(provider.calls[1]['messages'][-1]['content'])
+        packet = json.loads(provider.calls[-1]['messages'][-1]['content'])
         view = result['cad']
         assert packet['candidate_observations']['source_sha256'] == view['document']['native']['sha256']
         assert packet['candidate_observations']['topology']['Mount_plate']
@@ -432,7 +474,8 @@ async def test_interrupted_inspection_resumes_owned_recipe_without_front_or_cons
         pytest.skip('SolidCraft 0.28.0 native installation is required')
     _, sid, _, drawing = fixture()
     drawing['dimensions'][0].update(id='length', value=60)
-    construction = {'title': 'Plate', 'commands': construction_commands(), 'workflow': workflow().model_dump(mode='json')}
+    construction = {'title': 'Plate', 'commands': construction_commands(), 'workflow': workflow().model_dump(mode='json'),
+                    'cut_intents': construction_cut_intents('length')}
     inspection = {'title': 'Plate', 'criteria': [{'id': 'bounds', 'label': 'Envelope',
         'metric': 'dimensions_mm', 'expected': [60, 40, 6], 'dimension_bindings': {'length': 0}}]}
     class Provider:
@@ -444,8 +487,9 @@ async def test_interrupted_inspection_resumes_owned_recipe_without_front_or_cons
             if self.resumed:
                 assert 'candidate_observations' in kwargs['messages'][-1]['content']
                 return json.dumps(inspection)
-            if len(self.calls) == 1:
-                return json.dumps(construction)
+            if isinstance(kwargs['messages'][-1]['content'], list):
+                from tests.test_cad_controller import fixture_decision
+                return json.dumps(fixture_decision(kwargs, construction))
             raise TimeoutError('Interrupted inspection')
     bus = MessageBus(tmp_path / 'bus', auth=None)
     try:
@@ -453,7 +497,7 @@ async def test_interrupted_inspection_resumes_owned_recipe_without_front_or_cons
         confirmed = default_repository().approve_spec(spec.design_id, plan_id=plan.id)
         provider = Provider()
         failed = await CadBrain('cad_brain', bus, llm_provider=provider).handle_task(task(plan, confirmed))
-        assert failed['success'] is False and len(provider.calls) == 2
+        assert failed['success'] is False and len(provider.calls) == 6
         checkpoint = CadRunCheckpoint(CadStore(), confirmed, sid)
         state = checkpoint.load()
         assert state['kind'] == 'construction'
@@ -495,5 +539,68 @@ async def test_interrupted_inspection_resumes_owned_recipe_without_front_or_cons
         assert all(item['status'] == 'passed' for item in result['cad']['checks'])
         with pytest.raises(CadError, match='already has a delivered revision'):
             confirmed_continuation(document, sid)
+    finally:
+        await bus.close()
+
+
+@pytest.mark.asyncio
+async def test_progressive_measurement_interruption_keeps_native_prefix(tmp_path, monkeypatch, cad_native_engine):
+    from types import SimpleNamespace
+    from tests.test_cad_clarification import fixture
+    from tests.test_cad_controller import fixture_decision
+    from tests.test_cad_integration import prepared, task
+    from bigbrain.brains.cad_brain import CadBrain
+    from bigbrain.bus.bus import MessageBus
+    from bigbrain.cad_execution import CadExecutionStore
+    from bigbrain.cad_planning import CadCriterion
+    from bigbrain.cad_runs import CadRunCheckpoint
+    from bigbrain.cad_store import CadStore
+    from bigbrain.verification.evidence import default_repository
+
+    _, sid, _, drawing = fixture()
+    drawing['dimensions'][0].update(id='length', kind='length', value=60, unit='mm')
+    construction = {'title': 'Plate', 'commands': construction_commands(),
+        'workflow': workflow().model_dump(mode='json'), 'cut_intents': construction_cut_intents('length')}
+    inspection = {'title': 'Plate', 'criteria': [{'id': 'bounds', 'label': 'Envelope',
+        'metric': 'dimensions_mm', 'expected': [60, 40, 6], 'dimension_bindings': {'length': 0}}]}
+
+    class Provider:
+        entry = SimpleNamespace(vision=True)
+
+        def __init__(self):
+            self.calls = []
+
+        async def chat_complete(self, **kwargs):
+            self.calls.append(kwargs)
+            if isinstance(kwargs['messages'][-1]['content'], list):
+                return json.dumps(fixture_decision(kwargs, construction))
+            return json.dumps(inspection)
+
+    bus = MessageBus(tmp_path / 'bus', auth=None)
+    try:
+        plan, spec, _ = await prepared(bus, inspection, drawing=drawing, session_id=sid)
+        confirmed = default_repository().approve_spec(spec.design_id, plan_id=plan.id)
+        provider = Provider()
+        original = CadCriterion.observe
+
+        def interrupted(*args, **kwargs):
+            raise RuntimeError('Synthetic measurement interruption')
+
+        with monkeypatch.context() as patch:
+            patch.setattr(CadCriterion, 'observe', interrupted)
+            failed = await CadBrain('cad_brain', bus, llm_provider=provider).handle_task(task(plan, confirmed))
+        assert not failed['success'] and failed['delivery_status'] == 'incomplete'
+        checkpoint = CadRunCheckpoint(CadStore(), confirmed, sid)
+        state = checkpoint.load()
+        assert state['kind'] == 'inspection'
+        root = CadStore().directory(state['document_id'])
+        prefix = [c.id for c in CadExecutionStore(root, checkpoint.digest).active()]
+        assert len(prefix) == 4 and len(provider.calls) == 6
+        assert CadCriterion.observe is original
+        result = await CadBrain('cad_brain', bus, llm_provider=provider).handle_task(task(plan, confirmed))
+        assert result['success'], result
+        assert len(provider.calls) == 7
+        assert [c.id for c in CadExecutionStore(root, checkpoint.digest).active()] == prefix
+        assert result['cad']['document']['revision'] == 2
     finally:
         await bus.close()

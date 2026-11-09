@@ -29,9 +29,10 @@ class CadRunCheckpoint:
         return value
 
     def save(self, document_id, recipe, *, kind):
-        from .cad_stages import CadConstruction
+        from .cad_stages import CadConstruction, CadDefinition
         from .cad_planning import CadPlan
-        model = CadConstruction if kind == 'construction' else CadPlan if kind == 'inspection' else None
+        model = (CadConstruction if kind == 'construction' else CadPlan if kind == 'inspection'
+                 else CadDefinition if kind == 'progressive' else None)
         if model is None:
             raise CadError('Unknown CAD continuation stage')
         model.model_validate(recipe.model_dump())

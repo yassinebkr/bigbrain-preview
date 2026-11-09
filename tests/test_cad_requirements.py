@@ -38,6 +38,15 @@ def data():
             'first': operand('envelope', None, 'end', 2), 'second': operand()}]}
 
 
+def cut_limits(dimension, y=20, bottom=0, top=10, *, blind=False):
+    return [{'id': 'cut', 'command_index': 1, 'feature_id': 'body', 'dimension_ids': [dimension],
+        'kind': 'blind' if blind else 'through', 'targets': ['plate'],
+        'boundaries': [
+            {'label': 'top', 'origin_mm': [30, y, top], 'outward_normal': [0, 0, 1], 'role': 'opening'},
+            {'label': 'bottom', 'origin_mm': [30, y, bottom], 'outward_normal': [0, 0, -1],
+             'role': 'stop' if blind else 'opening'}]}]
+
+
 def geometry():
     return GeometryObservation(source_sha256='a'*64, evidence_ref='geometry.json',
         bounds_min_mm=(0, 0, 0), bounds_max_mm=(60, 40, 10), volume_mm3=1000,
@@ -66,7 +75,10 @@ async def test_native_missing_hole_repairs_despite_dependent_inconclusive_measur
                     'corner': [0, -40, -10], 'body_name': 'plate'}},
                 {'command': 'solid.cylinder', 'params': {'radius': 4, 'height': 10,
                     'base': [30, y, -10], 'operation': 'cut', 'targets': ['plate']}}]
+    # The limits retain the intended opening planes. The misplaced cutter
+    # removes nothing; independent local checks must still diagnose and repair it.
     plan_data = {'title': 'Plate', 'commands': commands(20), 'max_repairs': 1,
+        'cut_intents': cut_limits('hole-diameter', y=-20, bottom=-10, top=0),
         'criteria': [{'id': 'bounds', 'label': 'Envelope', 'metric': 'dimensions_mm', 'expected': [60, 40, 10]}],
         'cylinders': [{'id': 'hole', 'label': 'Through hole', 'body': 'plate', 'axis': 2,
             'center_mm': [30, -20, 0], 'radius_mm': 4}],
@@ -187,6 +199,7 @@ async def test_native_local_requirement_controls_delivery_with_same_envelope(tmp
         {'command': 'solid.box', 'params': {'length': 60, 'width': 40, 'height': 10, 'body_name': 'plate'}},
         {'command': 'solid.cylinder', 'params': {'radius': 5 if wrong else 4, 'height': 10,
             'base': [30, 20, 0], 'operation': 'cut', 'targets': ['plate']}}],
+        'cut_intents': cut_limits('hole-diameter'),
         'criteria': [{'id': 'bounds', 'label': 'Envelope', 'metric': 'dimensions_mm', 'expected': [60, 40, 10]}],
         'cylinders': [{'id': 'hole', 'label': 'Hole surface', 'body': 'plate', 'axis': 2,
                        'center_mm': [30, 20, 0], 'radius_mm': 5 if wrong else 4}],
@@ -237,6 +250,7 @@ async def test_native_boundary_refinement_remeasures_same_candidate(tmp_path, en
         {'command': 'solid.box', 'params': {'length': 20, 'width': 20, 'height': 5,
             'corner': [20, 10, 5], 'operation': 'cut', 'targets': ['plate']}}]
     plan_data['sections'][0]['point_mm'] = [20, 20, 0]
+    plan_data['cut_intents'] = cut_limits('depth', bottom=5, top=10, blind=True)
     plan_data['sections'][0].pop('intervals_mm')
     provider = Provider({'points': {'depth': [20.0001, 20, 0]}})
     bus = MessageBus(tmp_path / 'logs', auth=None)

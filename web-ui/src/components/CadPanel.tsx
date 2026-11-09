@@ -1,17 +1,33 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { Box, CheckCircle2, CircleHelp, Download, Expand, ExternalLink, Loader2, Ruler, XCircle } from 'lucide-react';
 import { presentCadCheck } from '@/lib/cadChecks';
-import { cadArtifact, cadDesktop, currentCadPreview } from '@/lib/cad';
+import { cadArtifact, cadDesktop, currentCadPreview, readPublishedCad, type CadView } from '@/lib/cad';
 import { useAppStore, type RunState } from '@/store/appStore';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './ui/dropdown-menu';
 
 const phases = { modeling: 'Modélisation de la pièce', checking: 'Mesures et vérifications',
   ready: 'Pièce vérifiée', failed: 'Modélisation à reprendre', cancelled: 'Travail arrêté' };
+const executionPhases = { deciding: 'Préparation de la prochaine étape', discovering: 'Consultation des outils',
+  observing: 'Inspection de la géométrie', executing: 'Construction en cours', checkpoint: 'Étape conservée',
+  repairing: 'Correction de l’étape', revising: 'Reprise de la construction' };
 const CadMeshViewer = lazy(() => import('./CadMeshViewer'));
 
 export function CadPanel({ run }: { run: RunState }) {
-  const cad = run.cad;
+  const recordedCad = run.cad;
+  const [publication, setPublication] = useState<{ cad: CadView; sessionId: string }>();
+  const publishedCad = publication?.sessionId === run.sessionId && run.status !== 'running'
+    && publication.cad.document_id === recordedCad?.document_id ? publication.cad : undefined;
+  const cad = publishedCad || recordedCad;
+  useEffect(() => {
+    setPublication(undefined);
+    if (!recordedCad || run.status === 'running' || recordedCad.status === 'ready') return;
+    const controller = new AbortController();
+    readPublishedCad(recordedCad, run.sessionId, controller.signal).then(value => {
+      if (!controller.signal.aborted && value) setPublication({ cad: value, sessionId: run.sessionId });
+    }).catch(() => {});
+    return () => controller.abort();
+  }, [recordedCad?.document_id, recordedCad?.sequence, run.sessionId, run.status]);
   const theme = useAppStore(state => state.theme);
   const [image, setImage] = useState('');
   const [imageError, setImageError] = useState('');
@@ -21,6 +37,22 @@ export function CadPanel({ run }: { run: RunState }) {
   const [desktop, setDesktop] = useState<{ available?: boolean; diagnostic?: string }>({});
   const [launchMessage, setLaunchMessage] = useState('');
   const [resuming, setResuming] = useState(false);
+  const [recovery, setRecovery] = useState<{ label: string; enabled: boolean } | null>(null);
+  useEffect(() => {
+    setRecovery(null); setResuming(false);
+    if (!cad) return;
+    const controller = new AbortController();
+    fetch('/api/cad/recovery', { method: 'POST', signal: controller.signal,
+      headers: { 'Content-Type': 'application/json', 'X-BigBrain-CAD': '1' },
+      body: JSON.stringify({ documentId: cad.document_id, sessionId: run.sessionId }) })
+      .then(async response => {
+        if (!response.ok) throw new Error('État de reprise indisponible');
+        const value = await response.json();
+        if (typeof value.label !== 'string' || typeof value.enabled !== 'boolean') throw new Error('État de reprise invalide');
+        if (!controller.signal.aborted) setRecovery(value);
+      }).catch(() => { if (!controller.signal.aborted) setRecovery({ label: 'Examiner le blocage', enabled: false }); });
+    return () => controller.abort();
+  }, [cad?.document_id, cad?.sequence, run.sessionId, run.status]);
   const revision = cad?.snapshot?.document.revision;
   const imageHash = cad?.snapshot?.preview?.image.sha256;
   useEffect(() => {
@@ -48,7 +80,7 @@ export function CadPanel({ run }: { run: RunState }) {
   const interrupted = run.status !== 'running' && ['modeling', 'checking'].includes(cad.status);
   const status = interrupted ? run.status === 'cancelled' ? 'cancelled' : 'failed' : cad.status;
   const diagnostic = cad.diagnostic || (interrupted ? run.error || 'Cette opération a été interrompue avant sa validation.' : '');
-  const current = currentCadPreview(cad) && run.status !== 'failed' && run.deliveryStatus !== 'incomplete';
+  const current = currentCadPreview(cad) && (!!publishedCad || (run.status !== 'failed' && run.deliveryStatus !== 'incomplete'));
   const dimensions = captured?.geometry.bounds_max_mm.map((maximum, index) => maximum - captured.geometry.bounds_min_mm[index]);
   const number = (value: number) => value.toLocaleString('fr-FR', { maximumFractionDigits: 3 });
   const download = async (kind: string) => {
@@ -71,7 +103,19 @@ export function CadPanel({ run }: { run: RunState }) {
     <div className="flex items-center justify-between gap-3"><div className="work-eyebrow"><Box size={14} /> SolidCraft {captured?.document.engine_version} · CAO</div>
       {revision && <span className="work-muted text-[11px]">Révision {revision}</span>}</div>
     <h3 className="work-heading">{cad.title}</h3>
+    {publishedCad && <p className="work-muted mt-2 text-[11px]">Résultat publié · la tentative précédente reste conservée dans l’historique.</p>}
     <p className="flex gap-2 items-center mt-2 text-[12px] work-muted">{busy && <span className="work-pulse" />}{phases[status]}</p>
+    {cad.execution && <div className="mt-3 rounded-2xl border border-white/5 bg-white/[0.02] p-3.5" aria-label="Progression de la construction">
+      <div className="flex items-center justify-between gap-3 text-[11px] work-muted">
+        <span className="flex items-center gap-2">{busy && <Loader2 size={13} className="animate-spin motion-reduce:animate-none" />}
+          {busy ? executionPhases[cad.execution.phase] : status === 'ready' ? 'Construction vérifiée' : 'Construction conservée'}</span>
+        <span className="tabular-nums shrink-0">{cad.execution.accepted_steps} étape{cad.execution.accepted_steps > 1 ? 's' : ''}</span>
+      </div>
+      {cad.execution.current_step && <p className="mt-2 text-[12px] font-medium break-words">{cad.execution.current_step}</p>}
+      <p className="mt-2 text-[10px] work-muted">{status === 'ready'
+        ? 'La pièce et son historique ont passé les contrôles de cette révision.'
+        : 'Les étapes conservées restent soumises aux vérifications de la pièce complète.'}</p>
+    </div>}
     <div className="relative w-full mt-4 overflow-hidden rounded-2xl border border-white/5 bg-gradient-to-b from-slate-900/60 to-transparent aspect-[8/5]">
       {!expanded && piece}{(image || hasMesh) && <button onClick={() => setExpanded(true)} aria-label="Agrandir la pièce"
         className="absolute right-3 top-3 flex items-center gap-1 text-[11px] rounded-full px-2 py-1 bg-black/60 text-white"><Expand size={12} /> Agrandir</button>}
@@ -105,7 +149,7 @@ export function CadPanel({ run }: { run: RunState }) {
         </li>;
       })}</ul></details>}
     {diagnostic && <p role="alert" className="mt-4 text-[12px] break-words" style={{ color: 'var(--warning)' }}>{diagnostic}</p>}
-    {['failed', 'cancelled'].includes(status) && <button className="work-secondary mt-4" disabled={resuming}
+    {['failed', 'cancelled'].includes(status) && <button className="work-secondary mt-4" disabled={resuming || !recovery?.enabled}
       onClick={async () => {
         setResuming(true); setActionError('');
         try {
@@ -116,7 +160,7 @@ export function CadPanel({ run }: { run: RunState }) {
           if (!response.ok) throw new Error(result.error || 'Reprise indisponible');
           setLaunchMessage('Reprise demandée depuis le travail conservé.');
         } catch (error) { setActionError(String(error)); setResuming(false); }
-      }}>{resuming ? 'Reprise demandée…' : 'Reprendre le travail conservé'}</button>}
+      }}>{resuming ? 'Reprise demandée…' : recovery?.label || 'Vérification de la reprise…'}</button>}
     {captured && <div className="flex flex-wrap gap-2 mt-5">
       <button className="work-secondary" disabled={!desktop.available || !!downloading} title={desktop.diagnostic || 'Ouvrir une copie éditable dans SolidCraft'}
         onClick={async () => {

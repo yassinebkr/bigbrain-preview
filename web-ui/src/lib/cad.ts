@@ -4,7 +4,8 @@ const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const artifact = z.object({ path: z.string(), format: z.enum(['solidcraft', 'step', 'stl', 'png']),
   sha256: hash, size_bytes: z.number().int().positive(), source_sha256: hash.nullable() });
 const document = z.object({ project_id: z.string(), document_id: z.string(), revision: z.number().int().positive(),
-  engine_version: z.string(), units: z.literal('mm'), native: artifact, exports: z.array(artifact) });
+  engine_version: z.string(), engine_sha256: hash.nullable().optional(),
+  units: z.literal('mm'), native: artifact, exports: z.array(artifact) });
 const vector = z.tuple([z.number().finite(), z.number().finite(), z.number().finite()]);
 const snapshot = z.object({ document,
   geometry: z.object({ source_sha256: hash, body_count: z.number().int().nonnegative(), closed_solid: z.boolean(),
@@ -19,13 +20,41 @@ const snapshot = z.object({ document,
     absolute_tolerance: z.number().finite().nullable().optional(), relative_tolerance: z.number().finite().nullable().optional(),
     observed_intervals_mm: z.array(z.tuple([z.number().finite(), z.number().finite()])).max(16).nullable().optional(),
     expected_intervals_mm: z.array(z.tuple([z.number().finite(), z.number().finite()])).max(16).nullable().optional(),
-  })).max(64).default([]) });
+  })).max(66).default([]) });
 const view = z.object({ schema_version: z.literal('1.0'), document_id: z.string().regex(/^[a-f0-9]{32}$/),
   title: z.string(), sequence: z.number().int().positive(),
   status: z.enum(['modeling', 'checking', 'ready', 'failed', 'cancelled']),
-  elapsed_seconds: z.number().finite().nonnegative(), snapshot: snapshot.nullable(), diagnostic: z.string().nullable() });
+  elapsed_seconds: z.number().finite().nonnegative(), snapshot: snapshot.nullable(), diagnostic: z.string().nullable(),
+  execution: z.object({
+    phase: z.enum(['deciding', 'discovering', 'observing', 'executing', 'checkpoint', 'repairing', 'revising']),
+    current_step: z.string().nullable(), accepted_steps: z.number().int().nonnegative(),
+    checkpoint: z.string().regex(/^[a-f0-9]{32}$/).nullable(), decisions: z.number().int().nonnegative(),
+  }).nullable().optional(),
+});
 
 export type CadView = z.infer<typeof view>;
+
+/** Display a separately published delivery while retaining the original task history. */
+export function publishedCadView(cad: CadView, raw: unknown): CadView | undefined {
+  const parsed = snapshot.safeParse(raw);
+  if (!parsed.success || (raw as { delivery_status?: string })?.delivery_status !== 'ready') return;
+  const result = parsed.data;
+  const doc = result.document;
+  if (doc.document_id !== cad.document_id || doc.project_id !== cad.document_id
+    || (cad.snapshot && (doc.revision < cad.snapshot.document.revision
+      || (doc.revision === cad.snapshot.document.revision && doc.native.sha256 !== cad.snapshot.document.native.sha256)))
+    || result.geometry.source_sha256 !== doc.native.sha256 || !result.checks.length
+    || result.checks.some(check => check.status !== 'passed' || check.source_sha256 !== doc.native.sha256)) return;
+  return { ...cad, snapshot: result, status: 'ready', diagnostic: null };
+}
+
+export async function readPublishedCad(cad: CadView, sessionId: string, signal?: AbortSignal) {
+  const response = await fetch('/api/cad/view', { method: 'POST', signal,
+    headers: { 'Content-Type': 'application/json', 'X-BigBrain-CAD': '1' },
+    body: JSON.stringify({ documentId: cad.document_id, sessionId }) });
+  if (!response.ok) return;
+  return publishedCadView(cad, await response.json());
+}
 
 /** Retain exact CAD identity and monotonic checkpoints through live/replay events. */
 export function cadUpdate(raw: unknown, previous?: CadView): CadView | undefined {
