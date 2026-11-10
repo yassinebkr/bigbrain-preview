@@ -73,6 +73,9 @@ class BrowserCadBridge:
         if not native or len(native) > 96 * 1024**2:
             raise ValueError('Native checkpoint size outside browser bridge limits')
         with self.transaction() as db:
+            existing = db.execute('SELECT native FROM checkpoint WHERE revision=0').fetchone()
+            if existing is not None and digest(existing['native']) != digest(native):
+                raise BridgeConflict('La révision publiée a changé ; la copie de travail conservée doit être réconciliée.')
             db.execute('INSERT OR IGNORE INTO document VALUES (1,0,?,?,?,NULL,0,?)',
                        (digest(native), native, 'user', '{}'))
             row = self.row(db)

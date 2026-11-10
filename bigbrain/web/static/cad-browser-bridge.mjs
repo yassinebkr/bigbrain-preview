@@ -44,13 +44,14 @@ export class CadBrowserExecutor {
     this.ready = false;
     this.engine.setLocked(true);
     // Restoring before claiming makes uncertain executions safe to repeat.
-    await this.engine.restore(await this.transport.call('checkpoint'));
+    const initialBytes = await this.transport.call('checkpoint');
+    await this.engine.restore(initialBytes);
     const capabilities = await this.engine.capabilities();
     const state = await this.transport.call('connect', { capabilities });
     // Read again after obtaining the generation: a previous client may have
     // committed while this browsing context was loading the first checkpoint.
     const bytes = await this.transport.call('checkpoint');
-    await this.engine.restore(bytes);
+    if (await sha256(bytes) !== await sha256(initialBytes)) await this.engine.restore(bytes);
     this.ready = true;
     this.dirty = false;
     const current = await this.transport.call('state');
@@ -160,6 +161,7 @@ export class SolidCraftBrowserEngine {
     // A scoped single-use server ticket supplies the immutable checkpoint.
     const url = await this.loadCheckpoint(bytes);
     const frame = document.createElement('iframe');
+    frame.dataset.cadInstance = crypto.randomUUID();
     frame.title = 'SolidCraft CAD document';
     frame.style.cssText = 'width:100%;height:100%;border:0';
     const loaded = new Promise(resolve => frame.addEventListener('load', resolve, { once: true }));

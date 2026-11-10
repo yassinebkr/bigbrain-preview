@@ -82,6 +82,8 @@ recovery of the last accepted checkpoint under injected interruption cases.
 
 ## Phase 3 — Embed SolidCraft in the Atelier
 
+Implementation and qualification boundaries: [Atelier browser editor](CAD_ATELIER_BROWSER.md).
+
 Provide a compact switch between the Atelier preview and the full editor within
 BigBrain. Preserve document, camera and UI state during normal switches. Load the
 web application on demand and retain the initialized instance within an explicit

@@ -3,6 +3,7 @@ import { Box, CheckCircle2, CircleHelp, Download, Expand, ExternalLink, Loader2,
 import { presentCadCheck } from '@/lib/cadChecks';
 import { cadArtifact, cadDesktop, currentCadPreview, readPublishedCad } from '@/lib/cad';
 import { useAppStore, type RunState } from '@/store/appStore';
+import { editorWasOpen, selectEditor } from '@/lib/cadBrowser';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './ui/dropdown-menu';
 
@@ -12,6 +13,7 @@ const executionPhases = { deciding: 'Préparation de la prochaine étape', disco
   observing: 'Inspection de la géométrie', executing: 'Construction en cours', checkpoint: 'Étape conservée',
   repairing: 'Correction de l’étape', revising: 'Reprise de la construction' };
 const CadMeshViewer = lazy(() => import('./CadMeshViewer'));
+const CadBrowserEditor = lazy(() => import('./CadBrowserEditor'));
 
 export function CadPanel({ run }: { run: RunState }) {
   const recordedCad = run.cad;
@@ -30,6 +32,11 @@ export function CadPanel({ run }: { run: RunState }) {
   const [imageError, setImageError] = useState('');
   const [actionError, setActionError] = useState('');
   const [expanded, setExpanded] = useState(false);
+  const [editing, setEditing] = useState(false);
+  useEffect(() => { setEditing(cad ? editorWasOpen(cad.document_id, run.sessionId) : false); }, [cad?.document_id, run.sessionId]);
+  useEffect(() => {
+    if (run.status === 'running') setEditing(false);
+  }, [run.status]);
   const [downloading, setDownloading] = useState('');
   const [desktop, setDesktop] = useState<{ available?: boolean; diagnostic?: string }>({});
   const [launchMessage, setLaunchMessage] = useState('');
@@ -113,11 +120,21 @@ export function CadPanel({ run }: { run: RunState }) {
         ? 'La pièce et son historique ont passé les contrôles de cette révision.'
         : 'Les étapes conservées restent soumises aux vérifications de la pièce complète.'}</p>
     </div>}
-    <div className="relative w-full mt-4 overflow-hidden rounded-2xl border border-white/5 bg-gradient-to-b from-slate-900/60 to-transparent aspect-[8/5]">
+    {captured && <div className="inline-flex gap-1 rounded-full p-1 mt-4" style={{background:'var(--bg-primary)'}} aria-label="Vue de la pièce">
+      <button className="rounded-full px-3 py-1.5 text-[11px]" aria-pressed={!editing} style={{background:!editing ? 'var(--bg-surface)' : undefined}} onClick={() => {selectEditor(cad.document_id, run.sessionId, false); setEditing(false);}}>Aperçu</button>
+      <button className="rounded-full px-3 py-1.5 text-[11px] disabled:opacity-40" aria-pressed={editing} disabled={busy}
+        title={busy ? 'La construction native doit se terminer avant l’ouverture de sa copie éditable.' : 'Modifier la copie de travail dans l’Atelier'}
+        style={{background:editing ? 'var(--bg-surface)' : undefined}} onClick={() => {selectEditor(cad.document_id, run.sessionId, true); setEditing(true);}}>SolidCraft</button>
+    </div>}
+    {editing && captured && <Suspense fallback={<p role="status" className="work-muted mt-3 text-[12px]">Préparation de l’éditeur…</p>}>
+      <CadBrowserEditor documentId={cad.document_id} sessionId={run.sessionId} revision={captured.document.revision} onClose={() => {selectEditor(cad.document_id, run.sessionId, false); setEditing(false);}} />
+    </Suspense>}
+    <div className={`${editing ? 'hidden' : ''} relative w-full mt-4 overflow-hidden rounded-2xl border border-white/5 bg-gradient-to-b from-slate-900/60 to-transparent aspect-[8/5]`}>
       {!expanded && piece}{(image || hasMesh) && <button onClick={() => setExpanded(true)} aria-label="Agrandir la pièce"
         className="absolute right-3 top-3 flex items-center gap-1 text-[11px] rounded-full px-2 py-1 bg-black/60 text-white"><Expand size={12} /> Agrandir</button>}
     </div>
-    {captured?.preview && !current && <p className="mt-2 text-[11px] text-amber-200">Révision conservée · aperçu antérieur</p>}
+    {!editing && captured?.preview && !current && <p className="mt-2 text-[11px] text-amber-200">Révision conservée · aperçu antérieur</p>}
+    {editing && <p className="work-muted text-[11px] mt-4">Mesures de la révision publiée {revision}</p>}
     {dimensions && captured && <dl className="grid grid-cols-2 gap-3 mt-4 text-[12px]">
       <div className="col-span-2"><dt className="work-muted flex gap-1 items-center"><Ruler size={12} /> Dimensions</dt><dd className="mt-1 font-medium">{dimensions.map(number).join(' × ')} mm</dd></div>
       <div><dt className="work-muted">Volume mesuré</dt><dd className="mt-1">{number(captured.geometry.volume_mm3)} mm³</dd></div>
