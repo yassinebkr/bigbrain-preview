@@ -9,6 +9,7 @@ import { usePreview } from '@/lib/usePreview';
 import { WorkOverview } from './WorkWidgets';
 import { ResearchPanel } from './ResearchPanel';
 import { CadPanel } from './CadPanel';
+import { RunAttemptHistory } from './RunAttemptHistory';
 import { CadDesignBrief } from './CadDesignBrief';
 import { isPartialResearch } from '@/lib/research';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from './ui/dropdown-menu';
@@ -49,8 +50,10 @@ export function SurfaceContent({ surface, select = () => {} }: { surface: WorkSu
   const content = <div className={`${kind === 'activity' ? 'work-journal-content' : 'space-y-5 p-5'} text-[12px]`}>
     {run.error && <p role="alert" className="whitespace-pre-wrap break-words" style={{ color: 'var(--warning)' }}>{run.error}</p>}
     {kind === 'activity' && <>
-      <p style={{ color: 'var(--text-secondary)' }}>{run.awaitingApproval ? 'En attente de ton accord dans le chat.' : `${done.length} étape${done.length > 1 ? 's' : ''} terminée${done.length > 1 ? 's' : ''} sur ${run.steps.length}`}</p>
-      {!run.steps.length && <p style={{ color: 'var(--text-tertiary)' }}>{run.status === 'running' ? 'Préparation du plan…' : 'Aucune étape enregistrée.'}</p>}
+      {!run.publishedRevision && <p style={{ color: 'var(--text-secondary)' }}>{run.awaitingApproval ? 'En attente de ton accord dans le chat.' : `${done.length} étape${done.length > 1 ? 's' : ''} terminée${done.length > 1 ? 's' : ''} sur ${run.steps.length}`}</p>}
+      {run.publishedRevision ? <p>Résultat actuellement validé · révision {run.publishedRevision} · {run.cad?.snapshot?.checks.length} contrôles réussis</p>
+        : !run.steps.length && <p style={{ color: 'var(--text-tertiary)' }}>{run.status === 'running' ? 'Préparation du plan…' : 'Aucune étape enregistrée.'}</p>}
+      <RunAttemptHistory run={run} />
       {running.map((step) => <div key={step.id} className="flex gap-2 items-start"><Loader2 size={14} className="animate-spin shrink-0 mt-0.5" /><div><p>{step.description}</p><p className="mt-1 text-[11px]" style={{ color: 'var(--text-tertiary)' }}>{step.brain}</p></div></div>)}
       {!!agents.length && <p className="text-[11px] break-words" style={{ color: 'var(--text-tertiary)' }}>Agents : {agents.join(' · ')}</p>}
       {!!run.steps.length && <>

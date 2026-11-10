@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { Box, CheckCircle2, CircleHelp, Download, Expand, ExternalLink, Loader2, Ruler, XCircle } from 'lucide-react';
 import { presentCadCheck } from '@/lib/cadChecks';
-import { cadArtifact, cadDesktop, currentCadPreview, readPublishedCad, type CadView } from '@/lib/cad';
+import { cadArtifact, cadDesktop, currentCadPreview, readPublishedCad } from '@/lib/cad';
 import { useAppStore, type RunState } from '@/store/appStore';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './ui/dropdown-menu';
@@ -15,19 +15,16 @@ const CadMeshViewer = lazy(() => import('./CadMeshViewer'));
 
 export function CadPanel({ run }: { run: RunState }) {
   const recordedCad = run.cad;
-  const [publication, setPublication] = useState<{ cad: CadView; sessionId: string }>();
-  const publishedCad = publication?.sessionId === run.sessionId && run.status !== 'running'
-    && publication.cad.document_id === recordedCad?.document_id ? publication.cad : undefined;
-  const cad = publishedCad || recordedCad;
+  const reconcilePublication = useAppStore(state => state.reconcileCadPublication);
+  const cad = recordedCad;
   useEffect(() => {
-    setPublication(undefined);
-    if (!recordedCad || run.status === 'running' || recordedCad.status === 'ready') return;
+    if (!recordedCad || run.status === 'running' || (recordedCad.status === 'ready' && run.status === 'done' && run.deliveryStatus !== 'incomplete')) return;
     const controller = new AbortController();
     readPublishedCad(recordedCad, run.sessionId, controller.signal).then(value => {
-      if (!controller.signal.aborted && value) setPublication({ cad: value, sessionId: run.sessionId });
+      if (!controller.signal.aborted && value) reconcilePublication(run.id, run.sessionId, value);
     }).catch(() => {});
     return () => controller.abort();
-  }, [recordedCad?.document_id, recordedCad?.sequence, run.sessionId, run.status]);
+  }, [recordedCad?.document_id, recordedCad?.sequence, run.id, run.sessionId, run.status, run.deliveryStatus, reconcilePublication]);
   const theme = useAppStore(state => state.theme);
   const [image, setImage] = useState('');
   const [imageError, setImageError] = useState('');
@@ -80,7 +77,7 @@ export function CadPanel({ run }: { run: RunState }) {
   const interrupted = run.status !== 'running' && ['modeling', 'checking'].includes(cad.status);
   const status = interrupted ? run.status === 'cancelled' ? 'cancelled' : 'failed' : cad.status;
   const diagnostic = cad.diagnostic || (interrupted ? run.error || 'Cette opération a été interrompue avant sa validation.' : '');
-  const current = currentCadPreview(cad) && (!!publishedCad || (run.status !== 'failed' && run.deliveryStatus !== 'incomplete'));
+  const current = currentCadPreview(cad) && run.status !== 'failed' && run.deliveryStatus !== 'incomplete';
   const dimensions = captured?.geometry.bounds_max_mm.map((maximum, index) => maximum - captured.geometry.bounds_min_mm[index]);
   const number = (value: number) => value.toLocaleString('fr-FR', { maximumFractionDigits: 3 });
   const download = async (kind: string) => {
@@ -103,7 +100,7 @@ export function CadPanel({ run }: { run: RunState }) {
     <div className="flex items-center justify-between gap-3"><div className="work-eyebrow"><Box size={14} /> SolidCraft {captured?.document.engine_version} · CAO</div>
       {revision && <span className="work-muted text-[11px]">Révision {revision}</span>}</div>
     <h3 className="work-heading">{cad.title}</h3>
-    {publishedCad && <p className="work-muted mt-2 text-[11px]">Résultat publié · la tentative précédente reste conservée dans l’historique.</p>}
+    {run.publishedRevision && <p className="work-muted mt-2 text-[11px]">Résultat actuellement validé · révision {run.publishedRevision}</p>}
     <p className="flex gap-2 items-center mt-2 text-[12px] work-muted">{busy && <span className="work-pulse" />}{phases[status]}</p>
     {cad.execution && <div className="mt-3 rounded-2xl border border-white/5 bg-white/[0.02] p-3.5" aria-label="Progression de la construction">
       <div className="flex items-center justify-between gap-3 text-[11px] work-muted">
@@ -119,8 +116,8 @@ export function CadPanel({ run }: { run: RunState }) {
     <div className="relative w-full mt-4 overflow-hidden rounded-2xl border border-white/5 bg-gradient-to-b from-slate-900/60 to-transparent aspect-[8/5]">
       {!expanded && piece}{(image || hasMesh) && <button onClick={() => setExpanded(true)} aria-label="Agrandir la pièce"
         className="absolute right-3 top-3 flex items-center gap-1 text-[11px] rounded-full px-2 py-1 bg-black/60 text-white"><Expand size={12} /> Agrandir</button>}
-      {captured?.preview && !current && <span className="absolute left-3 top-3 rounded-full px-2 py-1 text-[10px] bg-black/70 text-amber-200">Révision conservée · aperçu antérieur</span>}
     </div>
+    {captured?.preview && !current && <p className="mt-2 text-[11px] text-amber-200">Révision conservée · aperçu antérieur</p>}
     {dimensions && captured && <dl className="grid grid-cols-2 gap-3 mt-4 text-[12px]">
       <div className="col-span-2"><dt className="work-muted flex gap-1 items-center"><Ruler size={12} /> Dimensions</dt><dd className="mt-1 font-medium">{dimensions.map(number).join(' × ')} mm</dd></div>
       <div><dt className="work-muted">Volume mesuré</dt><dd className="mt-1">{number(captured.geometry.volume_mm3)} mm³</dd></div>
