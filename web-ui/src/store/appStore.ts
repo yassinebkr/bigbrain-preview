@@ -5,7 +5,7 @@ import type { Message, Attachment, Session, Settings, Theme, View, ConnectionSta
 import type { ConnectionLike } from '@/lib/connection';
 import { parseWidgetProposal, type WidgetProposal } from '@/lib/widgetPolicy';
 import { researchUpdate, type ResearchView } from '@/lib/research';
-import { cadUpdate, type CadView } from '@/lib/cad';
+import { cadUpdate, publishedCadView, type CadView } from '@/lib/cad';
 
 // A first message can arrive before sessions.create answers. Never send it
 // with the previous conversation's id (or the server's implicit fallback).
@@ -53,6 +53,8 @@ export interface RunVerification {
 }
 
 export interface RunState {
+  previousAttempt?: { status: RunState['status']; error?: string; steps: RunStep[]; finishedAt?: number };
+  publishedRevision?: number;
   cad?: CadView;
   researches?: Record<string, ResearchView>;
   widgetProposal?: WidgetProposal;
@@ -80,6 +82,7 @@ export interface RunState {
 }
 
 interface AppState {
+  reconcileCadPublication: (runId: string, sessionId: string, publication: CadView) => void;
   // Auth
   isAuthenticated: boolean;
   isAuthLoading: boolean;
@@ -439,6 +442,24 @@ export const useAppStore = create<AppState>()(
         }
       },
 
+      reconcileCadPublication: (runId, sessionId, publication) => set(state => {
+        // Reconcile every persisted mirror against its own document identity.
+        const reconcile = (run: RunState): RunState => {
+          if (run.id !== runId || run.sessionId !== sessionId || !run.cad || run.status === 'running') return run;
+          const cad = publishedCadView(run.cad, { ...publication.snapshot, delivery_status: publication.status });
+          if (!cad || (run.publishedRevision === cad.snapshot?.document.revision
+            && run.status === 'done' && run.deliveryStatus === 'ready' && !run.error)) return run;
+          return { ...run, cad, status: 'done', deliveryStatus: 'ready', error: undefined,
+            awaitingApproval: false, publishedRevision: cad.snapshot!.document.revision,
+            previousAttempt: run.previousAttempt || { status: run.status, error: run.error, steps: run.steps, finishedAt: run.finishedAt },
+            steps: [], verification: { runId: run.id, verdict: 'passed', stages: cad.snapshot!.checks.map(check => ({ name: check.criterion_id, status: check.status })) } };
+        };
+        return { activeRun: state.activeRun ? reconcile(state.activeRun) : null,
+          sessionRuns: Object.fromEntries(Object.entries(state.sessionRuns).map(([id, run]) => [id, reconcile(run)])),
+          runsById: Object.fromEntries(Object.entries(state.runsById).map(([id, run]) => [id, reconcile(run)])),
+          completedRuns: state.completedRuns.map(reconcile) };
+      }),
+
       // Fold bus events into the current run. Pure state machine:
       // task.routing opens a run immediately; subtask.* upsert steps;
       // workspace.file_written collects files; task.complete/failed
@@ -474,6 +495,8 @@ export const useAppStore = create<AppState>()(
         const pendingRouting = Object.values(runsById).find((r) => r.sessionId === sessionId && r.id.startsWith('routing-'));
         const run = byTask || (terminal ? finished : null) || (activity.type === 'task.received' ? pendingRouting :
           !taskId ? sessionRuns[sessionId] : null) || null;
+        if (run?.publishedRevision && run.sessionId === sessionId && terminal
+          && activity.type !== 'task.clarification') return {};
         // Replays/snapshots are idempotent. A finished run never becomes live again.
         if (finished && activity.type === 'task.progress') {
           if (d.cad && d.brain === 'cad_brain' && d.subtask_id && d.session_id === finished.sessionId && d.task_id === finished.id) {

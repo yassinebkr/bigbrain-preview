@@ -13,6 +13,7 @@
 
 import { useEffect, useRef } from 'react';
 import { isPartialResearch } from '@/lib/research';
+import { RunAttemptHistory } from './RunAttemptHistory';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Loader2,
@@ -257,6 +258,7 @@ export function RunPanel() {
             </button>
           </div>
 
+          <RunAttemptHistory run={run} />
           {/* Expanded: the plan */}
           <AnimatePresence initial={false}>
             {expanded && (

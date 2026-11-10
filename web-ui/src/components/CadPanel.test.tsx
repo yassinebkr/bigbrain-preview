@@ -28,6 +28,34 @@ beforeEach(() => useAppStore.setState({ activeSessionKey: run.sessionId, activeR
   runsById: {}, completedRuns: [], sessionProposals: {} }));
 
 describe('CAD piece surface', () => {
+  it('shares a verified publication across mirrors while retaining the failed attempt', () => {
+    const failed: RunState = { ...run, status: 'failed', deliveryStatus: 'incomplete',
+      error: 'Old preflight failure', cad: cadUpdate(checkpoint(3, 'failed'))!,
+      steps: [{ id: 'step', status: 'failed', description: 'Construire' }] };
+    useAppStore.setState({ activeRun: failed, sessionRuns: { [run.sessionId]: failed },
+      runsById: { [run.id]: failed }, completedRuns: [failed] });
+    const publish = publishedCadView(failed.cad!, { ...checkpoint().snapshot, delivery_status: 'ready' })!;
+    const reconcile = useAppStore.getState().reconcileCadPublication;
+    reconcile(run.id, 'other-session', publish);
+    expect(useAppStore.getState().activeRun).toBe(failed);
+    reconcile(run.id, run.sessionId, publish);
+    const state = useAppStore.getState();
+    for (const current of [state.activeRun, state.sessionRuns[run.sessionId], state.runsById[run.id], state.completedRuns[0]]) {
+      expect(current?.status).toBe('done');
+      expect(current?.deliveryStatus).toBe('ready');
+      expect(current?.error).toBeUndefined();
+      expect(current?.previousAttempt?.error).toBe('Old preflight failure');
+      expect(current?.previousAttempt?.steps[0].status).toBe('failed');
+      expect(current?.verification?.verdict).toBe('passed');
+    }
+    reconcile(run.id, run.sessionId, publish);
+    expect(useAppStore.getState().activeRun?.previousAttempt).toBe(state.activeRun?.previousAttempt);
+    useAppStore.getState().applyRunEvent(event('task.failed', {
+      task_id: run.id, session_id: run.sessionId, error: 'Old preflight failure', delivery_status: 'incomplete',
+    }));
+    expect(useAppStore.getState().sessionRuns[run.sessionId].deliveryStatus).toBe('ready');
+    expect(useAppStore.getState().sessionRuns[run.sessionId].status).toBe('done');
+  });
   it('reconciles a published delivery without reviving the failed task event', () => {
     const failed = cadUpdate(checkpoint(3, 'failed'))!;
     const source = { ...checkpoint().snapshot, delivery_status: 'ready' };
@@ -80,6 +108,15 @@ describe('CAD piece surface', () => {
     expect(html).not.toContain('Lancer le projet');
     expect(surfaceRegistry(run.sessionId, [{ ...run, cad }]).map(item => item.kind)).toEqual(['cad', 'activity']);
     expect(surfaceRegistry('another', [{ ...run, cad }])).toEqual([]);
+  });
+  it('reserves the editor selector for the expanded Atelier', () => {
+    const completed = { ...run, status: 'done' as const, cad: cadUpdate(checkpoint())! };
+    const compact = renderToStaticMarkup(<CadPanel run={completed} />);
+    const expanded = renderToStaticMarkup(<CadPanel run={completed} expanded />);
+    expect(compact).not.toContain('aria-label="Vue de la pièce"');
+    expect(expanded).toContain('aria-label="Vue de la pièce"');
+    expect(compact).not.toContain('role="dialog"');
+    expect(expanded).not.toContain('role="dialog"');
   });
   it('keeps older geometry visibly distinct while a new revision is modeled', () => {
     const cad = cadUpdate(checkpoint(1, 'modeling'))!;

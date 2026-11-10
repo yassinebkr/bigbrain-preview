@@ -9,6 +9,7 @@ import { usePreview } from '@/lib/usePreview';
 import { WorkOverview } from './WorkWidgets';
 import { ResearchPanel } from './ResearchPanel';
 import { CadPanel } from './CadPanel';
+import { RunAttemptHistory } from './RunAttemptHistory';
 import { CadDesignBrief } from './CadDesignBrief';
 import { isPartialResearch } from '@/lib/research';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from './ui/dropdown-menu';
@@ -35,7 +36,7 @@ function PreviewSurface({ surface }: { surface: WorkSurface }) {
   </div>;
 }
 
-export function SurfaceContent({ surface, select = () => {} }: { surface: WorkSurface; select?: (kind: WorkSurface['kind']) => void }) {
+export function SurfaceContent({ surface, select = () => {}, expanded = false }: { surface: WorkSurface; select?: (kind: WorkSurface['kind']) => void; expanded?: boolean }) {
   const openFile = useAppStore((s) => s.openFileViewer);
   const setView = useAppStore((s) => s.setView);
   const { run, kind } = surface;
@@ -44,13 +45,15 @@ export function SurfaceContent({ surface, select = () => {} }: { surface: WorkSu
   const agents = [...new Set(run.steps.map((step) => step.brain).filter(Boolean))];
   if (kind === 'preview') return <PreviewSurface surface={surface} />;
   if (kind === 'research') return <ResearchPanel run={run} />;
-  if (kind === 'cad') return <div className="p-4"><CadPanel run={run} /></div>;
+  if (kind === 'cad') return <div className="p-4"><CadPanel run={run} expanded={expanded} /></div>;
   if (kind === 'activity' && Object.keys(run.researches || {}).length > 0 && !run.projectPath && !run.files.length) return <ResearchPanel run={run} compact inspect={() => select('research')} />;
   const content = <div className={`${kind === 'activity' ? 'work-journal-content' : 'space-y-5 p-5'} text-[12px]`}>
     {run.error && <p role="alert" className="whitespace-pre-wrap break-words" style={{ color: 'var(--warning)' }}>{run.error}</p>}
     {kind === 'activity' && <>
-      <p style={{ color: 'var(--text-secondary)' }}>{run.awaitingApproval ? 'En attente de ton accord dans le chat.' : `${done.length} étape${done.length > 1 ? 's' : ''} terminée${done.length > 1 ? 's' : ''} sur ${run.steps.length}`}</p>
-      {!run.steps.length && <p style={{ color: 'var(--text-tertiary)' }}>{run.status === 'running' ? 'Préparation du plan…' : 'Aucune étape enregistrée.'}</p>}
+      {!run.publishedRevision && <p style={{ color: 'var(--text-secondary)' }}>{run.awaitingApproval ? 'En attente de ton accord dans le chat.' : `${done.length} étape${done.length > 1 ? 's' : ''} terminée${done.length > 1 ? 's' : ''} sur ${run.steps.length}`}</p>}
+      {run.publishedRevision ? <p>Résultat actuellement validé · révision {run.publishedRevision} · {run.cad?.snapshot?.checks.length} contrôles réussis</p>
+        : !run.steps.length && <p style={{ color: 'var(--text-tertiary)' }}>{run.status === 'running' ? 'Préparation du plan…' : 'Aucune étape enregistrée.'}</p>}
+      <RunAttemptHistory run={run} />
       {running.map((step) => <div key={step.id} className="flex gap-2 items-start"><Loader2 size={14} className="animate-spin shrink-0 mt-0.5" /><div><p>{step.description}</p><p className="mt-1 text-[11px]" style={{ color: 'var(--text-tertiary)' }}>{step.brain}</p></div></div>)}
       {!!agents.length && <p className="text-[11px] break-words" style={{ color: 'var(--text-tertiary)' }}>Agents : {agents.join(' · ')}</p>}
       {!!run.steps.length && <>
@@ -163,7 +166,7 @@ export function ContextWorkspace({ children }: { children: (ownsActivity: boolea
             {surfaces.filter((s) => s.run.id === state.selected?.run.id).sort((a, b) => ['activity', 'cad', 'research', 'preview', 'files', 'verification'].indexOf(a.kind) - ['activity', 'cad', 'research', 'preview', 'files', 'verification'].indexOf(b.kind)).map((surface) => <button key={surface.id} aria-pressed={state.selected?.id === surface.id} className="text-[11px] shrink-0" onClick={() => change({ selectedId: surface.id })}>{labels[surface.kind]}</button>)}
           </nav>}
           <div className="flex-1 overflow-y-auto min-h-0" ref={contentRef} onScroll={(event) => { if (state.selected) positions.current[state.selected.id] = event.currentTarget.scrollTop; }}>
-            {visible && (clarifying && brief ? <div className="p-4"><CadDesignBrief brief={brief} /></div> : state.selected ? <SurfaceContent key={state.selected.id} surface={state.selected} select={(kind) => { const surface = surfaces.find((item) => item.run.id === state.selected?.run.id && item.kind === kind); if (surface) change({ selectedId: surface.id }); }} /> : <p className="p-5 text-[12px]" role="status">Historique en cours de restauration ou résultat indisponible. Les autres travaux restent accessibles.</p>)}
+            {visible && (clarifying && brief ? <div className="p-4"><CadDesignBrief brief={brief} /></div> : state.selected ? <SurfaceContent key={state.selected.id} surface={state.selected} expanded={expanded} select={(kind) => { const surface = surfaces.find((item) => item.run.id === state.selected?.run.id && item.kind === kind); if (surface) change({ selectedId: surface.id }); }} /> : <p className="p-5 text-[12px]" role="status">Historique en cours de restauration ou résultat indisponible. Les autres travaux restent accessibles.</p>)}
           </div>
           <footer className="context-footer px-4 py-3 text-[11px] shrink-0 flex justify-between gap-2" style={{ color: 'var(--text-tertiary)' }}>
             <span>{clarifying ? 'Sources et précisions conservées dans cette conversation' : state.selected?.run.awaitingApproval ? 'Ton accord est nécessaire' : state.selected?.run.status === 'running' ? 'Activité en direct' : 'Résultat conservé dans la conversation'}</span>

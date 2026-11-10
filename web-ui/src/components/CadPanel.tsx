@@ -1,9 +1,10 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { Box, CheckCircle2, CircleHelp, Download, Expand, ExternalLink, Loader2, Ruler, XCircle } from 'lucide-react';
 import { presentCadCheck } from '@/lib/cadChecks';
-import { cadArtifact, cadDesktop, currentCadPreview, readPublishedCad, type CadView } from '@/lib/cad';
+import { cadArtifact, cadDesktop, currentCadPreview, readPublishedCad } from '@/lib/cad';
 import { useAppStore, type RunState } from '@/store/appStore';
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/dialog';
+import { editorWasOpen, selectEditor } from '@/lib/cadBrowser';
+import { useWorkspaceStore } from '@/store/workspaceStore';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './ui/dropdown-menu';
 
 const phases = { modeling: 'Modélisation de la pièce', checking: 'Mesures et vérifications',
@@ -12,27 +13,34 @@ const executionPhases = { deciding: 'Préparation de la prochaine étape', disco
   observing: 'Inspection de la géométrie', executing: 'Construction en cours', checkpoint: 'Étape conservée',
   repairing: 'Correction de l’étape', revising: 'Reprise de la construction' };
 const CadMeshViewer = lazy(() => import('./CadMeshViewer'));
+const CadBrowserEditor = lazy(() => import('./CadBrowserEditor'));
 
-export function CadPanel({ run }: { run: RunState }) {
+export function CadPanel({ run, expanded = false }: { run: RunState; expanded?: boolean }) {
   const recordedCad = run.cad;
-  const [publication, setPublication] = useState<{ cad: CadView; sessionId: string }>();
-  const publishedCad = publication?.sessionId === run.sessionId && run.status !== 'running'
-    && publication.cad.document_id === recordedCad?.document_id ? publication.cad : undefined;
-  const cad = publishedCad || recordedCad;
+  const reconcilePublication = useAppStore(state => state.reconcileCadPublication);
+  const cad = recordedCad;
   useEffect(() => {
-    setPublication(undefined);
-    if (!recordedCad || run.status === 'running' || recordedCad.status === 'ready') return;
+    if (!recordedCad || run.status === 'running' || (recordedCad.status === 'ready' && run.status === 'done' && run.deliveryStatus !== 'incomplete')) return;
     const controller = new AbortController();
     readPublishedCad(recordedCad, run.sessionId, controller.signal).then(value => {
-      if (!controller.signal.aborted && value) setPublication({ cad: value, sessionId: run.sessionId });
+      if (!controller.signal.aborted && value) reconcilePublication(run.id, run.sessionId, value);
     }).catch(() => {});
     return () => controller.abort();
-  }, [recordedCad?.document_id, recordedCad?.sequence, run.sessionId, run.status]);
+  }, [recordedCad?.document_id, recordedCad?.sequence, run.id, run.sessionId, run.status, run.deliveryStatus, reconcilePublication]);
   const theme = useAppStore(state => state.theme);
   const [image, setImage] = useState('');
   const [imageError, setImageError] = useState('');
   const [actionError, setActionError] = useState('');
-  const [expanded, setExpanded] = useState(false);
+  const [editing, setEditing] = useState(false);
+  useEffect(() => { setEditing(cad ? editorWasOpen(cad.document_id, run.sessionId) : false); }, [cad?.document_id, run.sessionId]);
+  useEffect(() => {
+    if (run.status === 'running') setEditing(false);
+  }, [run.status]);
+  // Expansion transfers the existing workspace to the native editor. The
+  // compact surface keeps its lightweight observation view mounted.
+  useEffect(() => {
+    if (expanded && run.status !== 'running') setEditing(true);
+  }, [expanded, run.status]);
   const [downloading, setDownloading] = useState('');
   const [desktop, setDesktop] = useState<{ available?: boolean; diagnostic?: string }>({});
   const [launchMessage, setLaunchMessage] = useState('');
@@ -80,7 +88,7 @@ export function CadPanel({ run }: { run: RunState }) {
   const interrupted = run.status !== 'running' && ['modeling', 'checking'].includes(cad.status);
   const status = interrupted ? run.status === 'cancelled' ? 'cancelled' : 'failed' : cad.status;
   const diagnostic = cad.diagnostic || (interrupted ? run.error || 'Cette opération a été interrompue avant sa validation.' : '');
-  const current = currentCadPreview(cad) && (!!publishedCad || (run.status !== 'failed' && run.deliveryStatus !== 'incomplete'));
+  const current = currentCadPreview(cad) && run.status !== 'failed' && run.deliveryStatus !== 'incomplete';
   const dimensions = captured?.geometry.bounds_max_mm.map((maximum, index) => maximum - captured.geometry.bounds_min_mm[index]);
   const number = (value: number) => value.toLocaleString('fr-FR', { maximumFractionDigits: 3 });
   const download = async (kind: string) => {
@@ -103,7 +111,7 @@ export function CadPanel({ run }: { run: RunState }) {
     <div className="flex items-center justify-between gap-3"><div className="work-eyebrow"><Box size={14} /> SolidCraft {captured?.document.engine_version} · CAO</div>
       {revision && <span className="work-muted text-[11px]">Révision {revision}</span>}</div>
     <h3 className="work-heading">{cad.title}</h3>
-    {publishedCad && <p className="work-muted mt-2 text-[11px]">Résultat publié · la tentative précédente reste conservée dans l’historique.</p>}
+    {run.publishedRevision && <p className="work-muted mt-2 text-[11px]">Résultat actuellement validé · révision {run.publishedRevision}</p>}
     <p className="flex gap-2 items-center mt-2 text-[12px] work-muted">{busy && <span className="work-pulse" />}{phases[status]}</p>
     {cad.execution && <div className="mt-3 rounded-2xl border border-white/5 bg-white/[0.02] p-3.5" aria-label="Progression de la construction">
       <div className="flex items-center justify-between gap-3 text-[11px] work-muted">
@@ -116,11 +124,21 @@ export function CadPanel({ run }: { run: RunState }) {
         ? 'La pièce et son historique ont passé les contrôles de cette révision.'
         : 'Les étapes conservées restent soumises aux vérifications de la pièce complète.'}</p>
     </div>}
-    <div className="relative w-full mt-4 overflow-hidden rounded-2xl border border-white/5 bg-gradient-to-b from-slate-900/60 to-transparent aspect-[8/5]">
-      {!expanded && piece}{(image || hasMesh) && <button onClick={() => setExpanded(true)} aria-label="Agrandir la pièce"
+    {captured && expanded && <div className="inline-flex gap-1 rounded-full p-1 mt-4" style={{background:'var(--bg-primary)'}} aria-label="Vue de la pièce">
+      <button className="rounded-full px-3 py-1.5 text-[11px]" aria-pressed={!editing} style={{background:!editing ? 'var(--bg-surface)' : undefined}} onClick={() => {selectEditor(cad.document_id, run.sessionId, false); setEditing(false);}}>Aperçu</button>
+      <button className="rounded-full px-3 py-1.5 text-[11px] disabled:opacity-40" aria-pressed={editing} disabled={busy}
+        title={busy ? 'La construction native doit se terminer avant l’ouverture de sa copie éditable.' : 'Modifier la copie de travail dans l’Atelier'}
+        style={{background:editing ? 'var(--bg-surface)' : undefined}} onClick={() => {selectEditor(cad.document_id, run.sessionId, true); setEditing(true);}}>SolidCraft</button>
+    </div>}
+    {editing && expanded && captured && <Suspense fallback={<p role="status" className="work-muted mt-3 text-[12px]">Préparation de l’éditeur…</p>}>
+      <CadBrowserEditor documentId={cad.document_id} sessionId={run.sessionId} revision={captured.document.revision} onClose={() => {selectEditor(cad.document_id, run.sessionId, false); setEditing(false);}} />
+    </Suspense>}
+    <div className={`${editing && expanded ? 'hidden' : ''} relative w-full mt-4 overflow-hidden rounded-2xl border border-white/5 bg-gradient-to-b from-slate-900/60 to-transparent aspect-[8/5]`}>
+      {piece}{!expanded && (image || hasMesh) && <button onClick={() => {setEditing(true); useWorkspaceStore.getState().update(run.sessionId, {mode:'expanded'});}} aria-label="Agrandir la pièce"
         className="absolute right-3 top-3 flex items-center gap-1 text-[11px] rounded-full px-2 py-1 bg-black/60 text-white"><Expand size={12} /> Agrandir</button>}
-      {captured?.preview && !current && <span className="absolute left-3 top-3 rounded-full px-2 py-1 text-[10px] bg-black/70 text-amber-200">Révision conservée · aperçu antérieur</span>}
     </div>
+    {!(editing && expanded) && captured?.preview && !current && <p className="mt-2 text-[11px] text-amber-200">Révision conservée · aperçu antérieur</p>}
+    {editing && expanded && <p className="work-muted text-[11px] mt-4">Mesures de la révision publiée {revision}</p>}
     {dimensions && captured && <dl className="grid grid-cols-2 gap-3 mt-4 text-[12px]">
       <div className="col-span-2"><dt className="work-muted flex gap-1 items-center"><Ruler size={12} /> Dimensions</dt><dd className="mt-1 font-medium">{dimensions.map(number).join(' × ')} mm</dd></div>
       <div><dt className="work-muted">Volume mesuré</dt><dd className="mt-1">{number(captured.geometry.volume_mm3)} mm³</dd></div>
@@ -182,10 +200,5 @@ export function CadPanel({ run }: { run: RunState }) {
     </div>}
     {launchMessage && <p role="status" className="mt-3 text-[11px] work-muted">{launchMessage}</p>}
     {actionError && <p role="alert" className="mt-3 text-[12px]" style={{ color: 'var(--warning)' }}>{actionError}</p>}
-    <Dialog open={expanded} onOpenChange={setExpanded}><DialogContent data-theme={theme} className="sm:max-w-5xl rounded-3xl"
-      style={{ background: 'var(--bg-surface)', color: 'var(--text-primary)', borderColor: 'var(--border-subtle)' }}>
-      <DialogTitle>{cad.title}</DialogTitle><DialogDescription style={{ color: 'var(--text-secondary)' }}>Révision {revision} · {current ? 'Aperçu de la pièce vérifiée' : 'Aperçu de la révision conservée'}</DialogDescription>
-      <div className="h-[min(65vh,650px)]">{expanded && piece}</div>
-    </DialogContent></Dialog>
   </section>;
 }
