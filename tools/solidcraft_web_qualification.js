@@ -60,9 +60,14 @@ async function run(kind) {
   const record = report.cases[kind] = { stages: [], requestedBackend: document.querySelector('#webgl').checked ? 'webgl' : 'default', started: new Date().toISOString() };
   async function stage(name, action) {
     show(`${kind}: ${name}`);
+    // Persist entry before synchronous WASM work can block this page. A closed
+    // or stalled tab then leaves an explicit operation boundary in the report.
+    record.pendingStage = {name, started:new Date().toISOString()};
+    await persist();
     const start = performance.now();
     const value = await action();
     record.stages.push({name, ms: performance.now() - start, value});
+    delete record.pendingStage;
     if (frame.contentWindow?.wasmBindings) {
       const exports = await frame.contentWindow.wasmBindings.default();
       record.wasmMemoryBytes = exports.memory?.buffer.byteLength;
@@ -74,6 +79,19 @@ async function run(kind) {
   try {
     let api = await stage('load', () => load(`/fixture/${kind}.sc`, record));
     record.runtime = await stage('runtime', () => api.request('ui.inspect', {}));
+    if (window.requireWebGpu && !record.runtime.adapter?.startsWith('BrowserWebGpu'))
+      throw new Error(`WebGPU qualification requires BrowserWebGpu; observed ${record.runtime.adapter}`);
+    // Standard views exercise camera updates on the loaded retained geometry.
+    // Save their observations before geometric edits to separate rendering failures.
+    record.views = {};
+    for (const view of ['front', 'right', 'home']) {
+      await stage(`view ${view}`, () => api.request('ui.view', {view}));
+      await delay(250);
+      record.views[view] = await api.request('ui.inspect', {});
+      if (window.requireWebGpu && !(record.views[view].draw?.triangles > 0))
+        throw new Error(`No rendered triangles observed in ${view} view`);
+    }
+    await persist();
     const initial = await stage('inspect initial', () => api.inspect({measure:true}));
     record.initial = initial;
     const parameter = kind === 'plate' ? initial.params.find(p => p.name === 'width') : initial.params.find(p => p.name === 'flange_thickness');

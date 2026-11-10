@@ -101,15 +101,16 @@ export function attachEditor(runtime: EditorRuntime, slot: HTMLElement) {
     if (!visible) { runtime.host.style.visibility = 'hidden'; return; }
     let top = Math.max(0, -rect.top), bottom = Math.max(0, rect.bottom - innerHeight);
     let left = Math.max(0, -rect.left), right = Math.max(0, rect.right - innerWidth);
-    const expanded = !!slot.closest('[data-cad-expanded="true"]');
-    for (let parent = expanded ? null : slot.parentElement; parent; parent = parent.parentElement) {
+    // The full editor belongs to the workspace scroll area as well. Clipping
+    // keeps its stable iframe below the Atelier header and above its footer.
+    for (let parent = slot.parentElement; parent; parent = parent.parentElement) {
       if (!/(auto|scroll|hidden|clip)/.test(getComputedStyle(parent).overflow)) continue;
       const bounds = parent.getBoundingClientRect();
       top = Math.max(top, bounds.top - rect.top); bottom = Math.max(bottom, rect.bottom - bounds.bottom);
       left = Math.max(left, bounds.left - rect.left); right = Math.max(right, rect.right - bounds.right);
     }
     Object.assign(runtime.host.style, { left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.width}px`,
-      height: `${rect.height}px`, visibility: 'visible', zIndex:expanded ? '80' : '60',
+      height: `${rect.height}px`, visibility: 'visible', zIndex:'60',
       clipPath: `inset(${top}px ${right}px ${bottom}px ${left}px)` });
   };
   const observer = new ResizeObserver(position); observer.observe(slot);

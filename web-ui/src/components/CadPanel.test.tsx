@@ -109,6 +109,15 @@ describe('CAD piece surface', () => {
     expect(surfaceRegistry(run.sessionId, [{ ...run, cad }]).map(item => item.kind)).toEqual(['cad', 'activity']);
     expect(surfaceRegistry('another', [{ ...run, cad }])).toEqual([]);
   });
+  it('reserves the editor selector for the expanded Atelier', () => {
+    const completed = { ...run, status: 'done' as const, cad: cadUpdate(checkpoint())! };
+    const compact = renderToStaticMarkup(<CadPanel run={completed} />);
+    const expanded = renderToStaticMarkup(<CadPanel run={completed} expanded />);
+    expect(compact).not.toContain('aria-label="Vue de la pièce"');
+    expect(expanded).toContain('aria-label="Vue de la pièce"');
+    expect(compact).not.toContain('role="dialog"');
+    expect(expanded).not.toContain('role="dialog"');
+  });
   it('keeps older geometry visibly distinct while a new revision is modeled', () => {
     const cad = cadUpdate(checkpoint(1, 'modeling'))!;
     expect(currentCadPreview(cad)).toBe(false);

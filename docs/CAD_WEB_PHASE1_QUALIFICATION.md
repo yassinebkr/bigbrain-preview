@@ -1,5 +1,10 @@
 # SolidCraft 0.28.0 browser qualification
 
+Subsequent cache, GPU and integration findings:
+[Integration reassessment](CAD_WEB_INTEGRATION_REASSESSMENT.md).
+The archive-built browser runtime embeds an unknown evaluation identity, which
+disables native model-cache reuse. Its external source manifest needs this caveat.
+
 ## Outcome
 
 The browser round trip passes on the retained plate and drawing 42 revision 14.

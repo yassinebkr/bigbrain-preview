@@ -1,0 +1,12 @@
+[package]
+name = "bigbrain-worker-probe"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+[lib]
+crate-type = ["cdylib"]
+[dependencies]
+solidcraft-engine.workspace = true
+solidcraft-io.workspace = true
+serde_json.workspace = true
+wasm-bindgen = "0.2"

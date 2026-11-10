@@ -1,5 +1,9 @@
 # CAD web integration and qualification
 
+The corrected observation/editor contract and newly established blocking causes
+are recorded in [Integration reassessment](CAD_WEB_INTEGRATION_REASSESSMENT.md).
+Phase 3 remains open under that corrected contract.
+
 ## Scope and order
 
 1. Integrate the pinned SolidCraft 0.28.0 browser application into BigBrain.
