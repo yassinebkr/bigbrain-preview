@@ -62,8 +62,13 @@ export class CadBrowserExecutor {
     }
     return this.update(current);
   }
-  async step() {
-    if (!this.ready || this.busy) return null;
+  step() {
+    if (!this.ready || this.busy || this.stopping) return Promise.resolve(null);
+    const task = this.executeStep();
+    this.activeStep = task;
+    return task.finally(() => { if (this.activeStep === task) this.activeStep = undefined; });
+  }
+  async executeStep() {
     this.busy = true;
     this.engine.setLocked(true);
     let operation;
@@ -75,17 +80,23 @@ export class CadBrowserExecutor {
         try {
           result = await this.engine.execute(operation.command, operation.params);
         } catch (error) {
+          if (this.stopping || this.interruptedGeneration === operation.generation) return null;
           await this.transport.call('fail', { generation: operation.generation,
             operationId: operation.id, error: String(error) });
           await this.connect();
           throw error;
         }
         // The saved document and observations belong to this exact operation.
-        const native = base64(await this.engine.save());
-        return await this.transport.call('accept', {
-          generation: operation.generation, operationId: operation.id, native, result,
+        const bytes = await this.engine.save();
+        const receipt = await this.transport.call('accept', {
+          generation: operation.generation, operationId: operation.id, native: base64(bytes), result,
         });
+        // A separate viewer receives only the server-accepted revision. Its
+        // failure leaves the committed checkpoint available on reconnect.
+        await this.engine.presentAccepted?.(bytes, receipt);
+        return receipt;
       } catch (error) {
+        if (this.stopping || this.interruptedGeneration === operation.generation) return null;
         // A transport error after execution leaves the receipt uncertain. A new
         // connection restores the committed checkpoint and reconciles the journal.
         this.ready = false;
@@ -101,8 +112,10 @@ export class CadBrowserExecutor {
     // The host owns reconnection policy and presents failures. One serial pump
     // prevents overlapping engine commands while a tab is suspended or slow.
     try {
-      while (!signal.aborted && this.ready) {
+      while (!signal.aborted && (this.ready || this.stopping)) {
+        if (this.stopping) { await sleep(50); continue; }
         const state = await this.transport.call('state');
+        if (this.stopping) continue;
         if (state.generation !== this.state.generation) {
           throw new Error('This CAD editor was replaced by another connection');
         }
@@ -122,12 +135,31 @@ export class CadBrowserExecutor {
     // Freeze input before requesting the lease so a click cannot change the
     // local document between the saved revision check and its server response.
     this.engine.setLocked(true);
+    if (action === 'stop' && this.engine.interrupt) {
+      this.stopping = true;
+      try {
+        const generation = this.state.generation;
+        const stop = state => this.transport.call('stop', { revision: state.revision, hash: state.hash });
+        try { await stop(this.state); }
+        catch (error) {
+          const current = await this.transport.call('state');
+          if (current.generation !== generation || current.revision === this.state.revision) throw error;
+          await stop(current);
+        }
+        this.interruptedGeneration = generation;
+        this.ready = false;
+        this.engine.interrupt();
+        await this.activeStep?.catch(() => {});
+        return await this.connect();
+      } finally { this.stopping = false; }
+    }
     const state = await this.transport.call(action, { revision: this.state.revision, hash: this.state.hash });
     this.update(state);
     if (action === 'stop') return this.connect();
     return state;
   }
   async saveManual() {
+    if (this.engine.hosted) throw new Error('Hosted CAD uses the worker as its editing session');
     if (this.busy || this.state.owner !== 'user') throw new Error('Pause CAD construction before editing');
     this.engine.setLocked(true);
     try {
@@ -155,6 +187,128 @@ export class SolidCraftBrowserEngine {
       this.frame.inert = value;
       this.frame.style.pointerEvents = value ? 'none' : 'auto';
     }
+  }
+  async presentCached(bytes) {
+    if (bytes.length > 3 * 1024**2) throw new Error('Hosted checkpoint exceeds the viewer transport limit');
+    if (!this.hostedReady) {
+      const frame = document.createElement('iframe');
+      frame.title = 'SolidCraft · checkpoint';
+      frame.style.cssText = 'width:100%;height:100%;border:0';
+      const address = new URL(this.appUrl, location.href);
+      address.searchParams.set('bigbrain-hosted', '1');
+      frame.src = address.href;
+      this.container.replaceChildren(frame);
+      this.frame = frame;
+      this.setLocked(true);
+      const deadline = performance.now() + 30000;
+      while (!frame.contentWindow?.solidcraft && performance.now() < deadline) await sleep(50);
+      if (!frame.contentWindow?.solidcraft) throw new Error('Hosted SolidCraft API unavailable');
+      this.api = frame.contentWindow.solidcraft;
+      // Docked panels reserve their own area, giving camera input an explicit
+      // viewport rectangle that excludes native toolbars and the document tree.
+      await this.api.request('ui.set', { layout: 'docked' });
+      this.hostedReady = true;
+    }
+    const camera = this.hostedReady && this.presented ? (await this.api.request('ui.inspect', {})).camera : null;
+    const result = await this.api.request('bigbrain.present_cached', { bytes: Array.from(bytes) });
+    if (result?.cacheAdopted !== true) throw new Error('Hosted viewer did not confirm cache adoption');
+    if (camera) await this.api.request('ui.camera', camera);
+    this.presented = true;
+    await this.configurePresentation();
+    await this.enableCameraNavigation();
+  }
+  async presentation(mode, sketches) {
+    this.presentationMode = mode;
+    if (sketches) this.previewSketches = sketches;
+    if (this.api) {
+      await this.configurePresentation();
+      await this.enableCameraNavigation();
+    }
+  }
+  async configurePresentation() {
+    if (!this.presentationMode) return;
+    const construction = this.presentationMode === 'construction';
+    const full = this.presentationMode === 'full';
+    await this.api.request('ui.set', { showBrowser:full, showTimeline:full,
+      showNavigationBar:full, showSketches:construction || full, showOrigin:construction || full,
+      shownSketches:construction ? this.previewSketches || [] : [], hiddenSketches:[],
+      shownDims:construction ? this.previewSketches || [] : [] });
+    // The compact surface displays the native viewport. The complete ribbon
+    // remains available through the separate full-editor surface.
+    this.frame.style.height = '100%';
+    this.frame.style.transform = '';
+    this.cropTop = 0;
+    if (full) return;
+    await sleep(30);
+    const state = await this.api.request('ui.inspect', {});
+    const viewport = state.viewport;
+    if (viewport) {
+      const top = viewport[1];
+      const bottom = Math.max(0, this.container.clientHeight - top - viewport[3]);
+      this.cropTop = top;
+      this.frame.style.height = `calc(100% + ${top + bottom}px)`;
+      this.frame.style.transform = `translateY(-${top}px)`;
+    }
+  }
+  dispose() {
+    this.navigationResize?.disconnect();
+    this.navigation?.remove();
+    this.frame?.remove();
+  }
+  async camera(view) {
+    if (!this.api) throw new Error('SolidCraft est en cours de chargement');
+    this.cameraState = await this.api.request('ui.view', { view });
+  }
+  async enableCameraNavigation() {
+    // The native editor remains inert. Only camera state is forwarded through
+    // this viewport overlay, so observation cannot change the geometry session.
+    const layout = async () => {
+      const state = await this.api.request('ui.inspect', {});
+      this.cameraState = state.camera;
+      const bounds = state.viewport;
+      if (bounds && this.navigation) Object.assign(this.navigation.style, {
+        left:`${bounds[0]}px`, top:`${bounds[1] - (this.cropTop || 0)}px`, width:`${bounds[2]}px`, height:`${bounds[3]}px`,
+      });
+    };
+    if (!this.navigation) {
+      const area = document.createElement('div');
+      area.setAttribute('aria-label', 'Navigation 3D SolidCraft : glisser pour tourner, molette pour zoomer');
+      area.style.cssText = 'position:absolute;touch-action:none;cursor:grab';
+      this.container.append(area); this.navigation = area;
+      let drag;
+      let pending, sending = false;
+      const send = async value => {
+        pending = value;
+        if (sending) return;
+        sending = true;
+        try {
+          while (pending) {
+            const value = pending; pending = undefined;
+            this.cameraState = await this.api.request('ui.camera', value);
+          }
+        } catch (error) { area.setAttribute('aria-description', String(error)); }
+        finally { sending = false; }
+      };
+      area.onpointerdown = event => {
+        if (event.button !== 0 || !this.cameraState) return;
+        drag = {x:event.clientX, y:event.clientY, ...this.cameraState};
+        area.setPointerCapture(event.pointerId);
+      };
+      area.onpointermove = event => {
+        if (drag) void send({yaw:drag.yaw-(event.clientX-drag.x)*0.008,
+          pitch:Math.max(-Math.PI/2+0.000001,Math.min(Math.PI/2-0.000001,drag.pitch+(event.clientY-drag.y)*0.008))});
+      };
+      area.onpointerup = area.onpointercancel = () => { drag = undefined; };
+      area.addEventListener('wheel', event => {
+        event.preventDefault();
+        if (this.cameraState) void send({distance:Math.max(0.001,this.cameraState.distance*Math.exp(Math.max(-1,Math.min(1,event.deltaY*0.001))))});
+      }, {passive:false});
+      this.navigationResize = new ResizeObserver(() => { void layout(); });
+      this.navigationResize.observe(this.container);
+    }
+    // First presentation needs a rendered frame before the native viewport is known.
+    await sleep(50);
+    await layout();
   }
   async restore(bytes) {
     // SolidCraft's pinned URL loader accepts HTTPS or same-origin HTTP files.

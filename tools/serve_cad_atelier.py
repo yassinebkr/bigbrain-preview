@@ -45,6 +45,10 @@ def main():
     async def fixture(request):
         return web.json_response(run)
     app.router.add_get('/cad-qualification-fixture', fixture)
+    async def report(request):
+        (root / 'worker-atelier-report.json').write_text(json.dumps(await request.json(), indent=2))
+        return web.json_response({'saved': True})
+    app.router.add_post('/cad-qualification-fixture/report', report)
     print(f'Atelier evidence: {root}', flush=True)
     web.run_app(app, host='127.0.0.1', port=args.port)
 

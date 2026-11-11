@@ -1,10 +1,11 @@
 /** Retain browser CAD instances while React switches Atelier surfaces. */
+import { CadHostedEngine } from './cadHostedEngine';
 export interface BrowserCadState {
   revision: number; hash: string; owner: 'agent' | 'user'; pause: number;
   generation: string; operations: {id: string; status: string}[];
 }
 interface Transport { call(action: string, data?: Record<string, unknown>): Promise<unknown> }
-interface Engine { setLocked(value: boolean): void; frame?: HTMLIFrameElement }
+interface Engine { setLocked(value: boolean): void; hosted?: boolean; interrupt?(): void; camera?(view: string): Promise<void> }
 interface Executor {
   ready: boolean; dirty: boolean; busy: boolean;
   connect(): Promise<BrowserCadState>;
@@ -14,7 +15,7 @@ interface Executor {
 }
 interface BridgeModule {
   CadBrowserTransport: new (documentId: string, sessionId: string) => Transport;
-  SolidCraftBrowserEngine: new (host: HTMLElement, url: string, build: string) => Engine;
+  SolidCraftBrowserEngine: new (host: HTMLElement, url: string, build: string) => Engine & { presentCached(bytes: Uint8Array): Promise<void>; camera(view: string): Promise<void> };
   CadBrowserExecutor: new (transport: Transport, engine: Engine, onState: (state: BrowserCadState) => void) => Executor;
 }
 export interface EditorRuntime {
@@ -28,7 +29,7 @@ const cache = new Map<string, EditorRuntime>();
 if (import.meta.hot) import.meta.hot.dispose(() => {
   // Development replacements release their old execution loops and iframes.
   // Production view switches continue to retain the module-owned instances.
-  for (const runtime of cache.values()) { runtime.stop?.abort(); runtime.host.remove(); }
+  for (const runtime of cache.values()) { runtime.stop?.abort(); runtime.engine?.interrupt?.(); runtime.host.remove(); }
   cache.clear();
 });
 const notify = (runtime: EditorRuntime) => runtime.listeners.forEach(listener => listener());
@@ -50,7 +51,7 @@ export function editorRuntime(documentId: string, sessionId: string): EditorRunt
       && !item.executor?.dirty && !item.executor?.busy && item.state?.owner !== 'agent')
       .sort((a, b) => a[1].touched - b[1].touched)[0];
     if (!victim) throw new Error('Deux éditeurs sont actifs. Enregistre et ferme une pièce avant d’en ouvrir une autre.');
-    victim[1].stop?.abort(); victim[1].host.remove(); cache.delete(victim[0]);
+    victim[1].stop?.abort(); victim[1].engine?.interrupt?.(); victim[1].host.remove(); cache.delete(victim[0]);
   }
   const host = document.createElement('div');
   host.dataset.cadEditor = key;
@@ -70,14 +71,16 @@ export async function openEditor(runtime: EditorRuntime, documentId: string, ses
   runtime.pending = (async () => {
     runtime.loading = true; runtime.error = ''; notify(runtime);
     try {
-      const path = '/static/cad-browser-bridge.mjs';
+      const path = '/static/cad-browser-bridge.mjs?v=hosted-camera-2';
       const bridge = await import(/* @vite-ignore */ path) as BridgeModule;
       const transport = new bridge.CadBrowserTransport(documentId, sessionId);
-      const capability = await transport.call('capability') as {available: boolean; url: string; build: string; diagnostic?: string};
+      const capability = await transport.call('capability') as {available: boolean; url: string; build: string; worker?: string; diagnostic?: string};
       if (!capability.available) throw new Error(capability.diagnostic || 'Éditeur navigateur indisponible');
       await transport.call('initialize', { revision });
       runtime.stop?.abort();
-      runtime.engine = new bridge.SolidCraftBrowserEngine(runtime.host, capability.url, capability.build);
+      runtime.engine?.interrupt?.();
+      const viewer = new bridge.SolidCraftBrowserEngine(runtime.host, capability.url, capability.build);
+      runtime.engine = capability.worker ? new CadHostedEngine(viewer, capability.worker, capability.build) : viewer;
       const executor = new bridge.CadBrowserExecutor(transport, runtime.engine, state => {
         runtime.state = state; notify(runtime);
       });
@@ -128,7 +131,7 @@ export function attachEditor(runtime: EditorRuntime, slot: HTMLElement) {
   };
 }
 
-export async function editorAction(runtime: EditorRuntime, action: 'save' | 'pause' | 'stop') {
+export async function editorAction(runtime: EditorRuntime, action: 'save' | 'pause' | 'stop' | 'resume') {
   runtime.error = '';
   try {
     if (!runtime.executor) throw new Error('L’éditeur est en préparation');

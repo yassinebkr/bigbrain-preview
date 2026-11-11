@@ -20,7 +20,7 @@ RUN_EVENTS = {
 TERMINAL_EVENTS = {"task.complete", "task.failed", "task.cancelled", "task.clarification"}
 
 
-def conversation_activity(log_dir: Path, session_id: str, started_at: float) -> list[dict]:
+def conversation_activity(log_dir: Path, session_id: str, started_at: float, *, cad_store=None) -> list[dict]:
     """Latest state per step/file of the last 100 runs, in journal order.
 
 Legacy routing events lacked a plan id. Bind their preparation to the next
@@ -89,6 +89,34 @@ An unfinished plan from a previous process is interrupted, not live work.
                 if old and event.startswith("subtask."):
                     frame["payload"] = {**old["payload"], **data}
                 records[key] = frame
+    from ..cad_live import retained_activities
+    from ..cad_store import CadStore
+    for retained in retained_activities(cad_store or CadStore(), session_id):
+        context = retained['context']
+        run_id = context.get('task_id')
+        if not run_id or not context.get('subtask_id'):
+            continue
+        progress = retained['progress']
+        cad = progress['cad']
+        timestamp = retained['updated_at']
+        records = runs.setdefault(run_id, {})
+        if not records:
+            records[('task.received', None, None, None)] = {
+                'type': 'event', 'timestamp': timestamp - .002, 'source': 'cad_brain',
+                'payload': {**context, 'event': 'task.received', 'description': cad['title']}}
+        # The document record survives journal rotation. Restore its precise
+        # presentation identity before the terminal state is projected below.
+        records[('task.progress', context['subtask_id'], None, 'cad_retained')] = {
+            'type': 'event', 'timestamp': timestamp - .001, 'source': 'cad_brain',
+            'payload': {**context, **progress, 'event': 'task.progress', 'brain': 'cad_brain'}}
+        if cad['status'] in {'ready', 'failed', 'cancelled'} and not any(
+                frame['payload']['event'] in TERMINAL_EVENTS for frame in records.values()):
+            event = {'ready': 'task.complete', 'failed': 'task.failed', 'cancelled': 'task.cancelled'}[cad['status']]
+            records[(event, None, None, None)] = {
+                'type': 'event', 'timestamp': timestamp, 'source': 'cad_brain',
+                'payload': {**context, 'event': event, 'result_kind': 'cad',
+                    'delivery_status': 'ready' if cad['status'] == 'ready' else 'incomplete',
+                    'runnable': False, 'error': cad.get('diagnostic')}}
     output = []
     ordered = sorted(runs.items(), key=lambda item: max(f.get("timestamp", 0) for f in item[1].values()))
     closed = [item for item in ordered if any(f["payload"]["event"] in TERMINAL_EVENTS for f in item[1].values())]

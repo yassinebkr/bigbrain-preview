@@ -25,6 +25,14 @@ const view = z.object({ schema_version: z.literal('1.0'), document_id: z.string(
   title: z.string(), sequence: z.number().int().positive(),
   status: z.enum(['modeling', 'checking', 'ready', 'failed', 'cancelled']),
   elapsed_seconds: z.number().finite().nonnegative(), snapshot: snapshot.nullable(), diagnostic: z.string().nullable(),
+  working: z.object({
+    checkpoint_id: z.string().regex(/^[a-f0-9]{32}$/),
+    parent: z.string().regex(/^[a-f0-9]{32}$/).nullable(),
+    contract_sha256: hash, engine_version: z.string(), engine_sha256: hash,
+    native: artifact, accepted_steps: z.number().int().positive(),
+    design: z.object({ params: z.array(z.unknown()), timeline: z.array(z.unknown()),
+      sketches: z.array(z.unknown()), bodies: z.array(z.unknown()) }),
+  }).nullable().optional(),
   execution: z.object({
     phase: z.enum(['deciding', 'discovering', 'observing', 'executing', 'checkpoint', 'repairing', 'revising']),
     current_step: z.string().nullable(), accepted_steps: z.number().int().nonnegative(),

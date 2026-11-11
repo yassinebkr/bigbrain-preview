@@ -14,6 +14,7 @@ const executionPhases = { deciding: 'Préparation de la prochaine étape', disco
   repairing: 'Correction de l’étape', revising: 'Reprise de la construction' };
 const CadMeshViewer = lazy(() => import('./CadMeshViewer'));
 const CadBrowserEditor = lazy(() => import('./CadBrowserEditor'));
+const CadLivePreview = lazy(() => import('./CadLivePreview'));
 
 export function CadPanel({ run, expanded = false }: { run: RunState; expanded?: boolean }) {
   const recordedCad = run.cad;
@@ -32,15 +33,11 @@ export function CadPanel({ run, expanded = false }: { run: RunState; expanded?: 
   const [imageError, setImageError] = useState('');
   const [actionError, setActionError] = useState('');
   const [editing, setEditing] = useState(false);
+  const [previewMode, setPreviewMode] = useState<'solid' | 'construction'>('solid');
   useEffect(() => { setEditing(cad ? editorWasOpen(cad.document_id, run.sessionId) : false); }, [cad?.document_id, run.sessionId]);
   useEffect(() => {
     if (run.status === 'running') setEditing(false);
   }, [run.status]);
-  // Expansion transfers the existing workspace to the native editor. The
-  // compact surface keeps its lightweight observation view mounted.
-  useEffect(() => {
-    if (expanded && run.status !== 'running') setEditing(true);
-  }, [expanded, run.status]);
   const [downloading, setDownloading] = useState('');
   const [desktop, setDesktop] = useState<{ available?: boolean; diagnostic?: string }>({});
   const [launchMessage, setLaunchMessage] = useState('');
@@ -124,17 +121,18 @@ export function CadPanel({ run, expanded = false }: { run: RunState; expanded?: 
         ? 'La pièce et son historique ont passé les contrôles de cette révision.'
         : 'Les étapes conservées restent soumises aux vérifications de la pièce complète.'}</p>
     </div>}
-    {captured && expanded && <div className="inline-flex gap-1 rounded-full p-1 mt-4" style={{background:'var(--bg-primary)'}} aria-label="Vue de la pièce">
-      <button className="rounded-full px-3 py-1.5 text-[11px]" aria-pressed={!editing} style={{background:!editing ? 'var(--bg-surface)' : undefined}} onClick={() => {selectEditor(cad.document_id, run.sessionId, false); setEditing(false);}}>Aperçu</button>
-      <button className="rounded-full px-3 py-1.5 text-[11px] disabled:opacity-40" aria-pressed={editing} disabled={busy}
-        title={busy ? 'La construction native doit se terminer avant l’ouverture de sa copie éditable.' : 'Modifier la copie de travail dans l’Atelier'}
-        style={{background:editing ? 'var(--bg-surface)' : undefined}} onClick={() => {selectEditor(cad.document_id, run.sessionId, true); setEditing(true);}}>SolidCraft</button>
+    {(captured || cad.working) && <div className="relative z-[61] inline-flex gap-1 rounded-full p-1 mt-4" style={{background:'var(--bg-primary)'}} aria-label="Vue de la pièce">
+      <button className="rounded-full px-3 py-1.5 text-[11px]" aria-pressed={!editing && previewMode === 'solid'} onClick={() => {selectEditor(cad.document_id, run.sessionId, false); setEditing(false); setPreviewMode('solid');}}>3D</button>
+      {cad.working && <button className="rounded-full px-3 py-1.5 text-[11px]" aria-pressed={!editing && previewMode === 'construction'} onClick={() => {setEditing(false); setPreviewMode('construction');}}>Construction</button>}
+      <button className="rounded-full px-3 py-1.5 text-[11px] disabled:opacity-40" aria-pressed={editing && expanded}
+        title="Ouvrir SolidCraft Web dans l’Atelier"
+        style={{background:editing && expanded ? 'var(--bg-surface)' : undefined}} onClick={() => {selectEditor(cad.document_id, run.sessionId, true); setEditing(true); useWorkspaceStore.getState().update(run.sessionId, {mode:'expanded'});}}>SolidCraft Web</button>
     </div>}
-    {editing && expanded && captured && <Suspense fallback={<p role="status" className="work-muted mt-3 text-[12px]">Préparation de l’éditeur…</p>}>
-      <CadBrowserEditor documentId={cad.document_id} sessionId={run.sessionId} revision={captured.document.revision} onClose={() => {selectEditor(cad.document_id, run.sessionId, false); setEditing(false);}} />
+    {editing && expanded && captured && !busy && <Suspense fallback={<p role="status" className="work-muted mt-3 text-[12px]">Préparation de l’éditeur…</p>}>
+      <CadBrowserEditor documentId={cad.document_id} sessionId={run.sessionId} revision={captured.document.revision} />
     </Suspense>}
-    <div className={`${editing && expanded ? 'hidden' : ''} relative w-full mt-4 overflow-hidden rounded-2xl border border-white/5 bg-gradient-to-b from-slate-900/60 to-transparent aspect-[8/5]`}>
-      {piece}{!expanded && (image || hasMesh) && <button onClick={() => {setEditing(true); useWorkspaceStore.getState().update(run.sessionId, {mode:'expanded'});}} aria-label="Agrandir la pièce"
+    <div className={`${editing && expanded && captured && !busy ? 'hidden' : ''} relative w-full mt-4 overflow-hidden rounded-2xl border border-white/5 bg-gradient-to-b from-slate-900/60 to-transparent ${editing && expanded ? 'h-[65dvh]' : 'aspect-[8/5]'}`}>
+      {cad.working ? <Suspense fallback={piece}><CadLivePreview cad={cad} sessionId={run.sessionId} mode={editing && expanded ? 'full' : previewMode} /></Suspense> : piece}{!expanded && (image || hasMesh || cad.working) && <button onClick={() => useWorkspaceStore.getState().update(run.sessionId, {mode:'expanded'})} aria-label="Agrandir la pièce"
         className="absolute right-3 top-3 flex items-center gap-1 text-[11px] rounded-full px-2 py-1 bg-black/60 text-white"><Expand size={12} /> Agrandir</button>}
     </div>
     {!(editing && expanded) && captured?.preview && !current && <p className="mt-2 text-[11px] text-amber-200">Révision conservée · aperçu antérieur</p>}
@@ -180,22 +178,20 @@ export function CadPanel({ run, expanded = false }: { run: RunState; expanded?: 
         } catch (error) { setActionError(String(error)); setResuming(false); }
       }}>{resuming ? 'Reprise demandée…' : recovery?.label || 'Vérification de la reprise…'}</button>}
     {captured && <div className="flex flex-wrap gap-2 mt-5">
-      <button className="work-secondary" disabled={!desktop.available || !!downloading} title={desktop.diagnostic || 'Ouvrir une copie éditable dans SolidCraft'}
-        onClick={async () => {
-          setActionError(''); setDownloading('gui');
-          try { const result = await cadDesktop(cad, run.sessionId, 'open'); setLaunchMessage(result.message || 'Ouverture demandée.'); }
-          catch (error) { setActionError(String(error)); }
-          finally { setDownloading(''); }
-        }}><ExternalLink size={13} /> Ouvrir dans SolidCraft</button>
       <DropdownMenu><DropdownMenuTrigger asChild>
         <button className="work-secondary !px-2.5" aria-label="Télécharger la pièce" title="Télécharger la pièce" disabled={!!downloading}>
           {downloading && downloading !== 'gui' ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
         </button>
-      </DropdownMenuTrigger><DropdownMenuContent data-theme={theme} align="end" className="rounded-xl p-1.5"
+      </DropdownMenuTrigger><DropdownMenuContent data-theme={theme} align="end" className="z-[80] rounded-xl p-1.5"
         style={{ background: 'var(--bg-surface)', color: 'var(--text-primary)', borderColor: 'var(--border-subtle)' }}>
         <DropdownMenuItem onSelect={() => void download('native')}>Document éditable · .sc</DropdownMenuItem>
         {captured.document.exports.map(item => <DropdownMenuItem key={item.path} onSelect={() => void download(item.format)}>
           {item.format.toUpperCase()}</DropdownMenuItem>)}
+        <DropdownMenuItem disabled={!desktop.available || !!downloading} onSelect={() => {
+          setActionError(''); setDownloading('gui');
+          void cadDesktop(cad, run.sessionId, 'open').then(result => setLaunchMessage(result.message || 'Ouverture demandée.'))
+            .catch(error => setActionError(String(error))).finally(() => setDownloading(''));
+        }}><ExternalLink size={13} /> Ouvrir une copie dans l’application de bureau</DropdownMenuItem>
       </DropdownMenuContent></DropdownMenu>
     </div>}
     {launchMessage && <p role="status" className="mt-3 text-[11px] work-muted">{launchMessage}</p>}

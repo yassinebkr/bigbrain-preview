@@ -102,18 +102,20 @@ describe('CAD piece surface', () => {
     expect(html).toContain('60 × 40 × 6');
     expect(html).toContain('Révision 1');
     expect(html).toContain('Télécharger la pièce');
-    expect(html).toContain('Ouvrir dans SolidCraft');
+    expect(html).toContain('SolidCraft Web');
+    expect(html).not.toContain('Ouvrir dans SolidCraft</button>');
     expect(html).not.toContain('>STEP</button>');
     expect(html).toContain('Dimensions vérifiées');
     expect(html).not.toContain('Lancer le projet');
     expect(surfaceRegistry(run.sessionId, [{ ...run, cad }]).map(item => item.kind)).toEqual(['cad', 'activity']);
     expect(surfaceRegistry('another', [{ ...run, cad }])).toEqual([]);
   });
-  it('reserves the editor selector for the expanded Atelier', () => {
+  it('keeps the web switch available in compact and expanded Atelier', () => {
     const completed = { ...run, status: 'done' as const, cad: cadUpdate(checkpoint())! };
     const compact = renderToStaticMarkup(<CadPanel run={completed} />);
     const expanded = renderToStaticMarkup(<CadPanel run={completed} expanded />);
-    expect(compact).not.toContain('aria-label="Vue de la pièce"');
+    expect(compact).toContain('aria-label="Vue de la pièce"');
+    expect(compact).toContain('SolidCraft Web');
     expect(expanded).toContain('aria-label="Vue de la pièce"');
     expect(compact).not.toContain('role="dialog"');
     expect(expanded).not.toContain('role="dialog"');

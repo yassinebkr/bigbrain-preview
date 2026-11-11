@@ -70,6 +70,9 @@ and editor integration still require implementation and tests.
 
 ## Handoff
 
+The subsequent [hosted Atelier qualification](CAD_HOSTED_WORKER_ATELIER.md)
+records the integrated Worker and cached viewer path.
+
 The current branch records qualification and the workspace presentation changes.
 Worker-to-Atelier integration is deferred until the next explicit implementation
 request. The configured engine remains unchanged in the meantime. Pending work

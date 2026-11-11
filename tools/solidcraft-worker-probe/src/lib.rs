@@ -32,9 +32,9 @@ pub fn save() -> Result<Vec<u8>, JsValue> {
     SESSION.with(|slot| {
         let slot = slot.borrow();
         let session = slot.as_ref().ok_or_else(|| failure("Document unavailable"))?;
-        let saved = session.model.saved(&session.doc);
+        let saved = session.model.saved(&session.doc).ok_or_else(|| failure("Evaluated checkpoint cache unavailable"))?;
         solidcraft_io::write_design_container_with_cache(
-            &session.doc, solidcraft_io::DesignCompression::Fast, None, saved.as_ref(),
+            &session.design(), solidcraft_io::DesignCompression::Fast, None, Some(&saved),
         ).map_err(failure)
     })
 }

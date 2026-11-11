@@ -93,5 +93,12 @@ def setup_browser_cad_routes(app, *, store=None):
     app.router.add_get('/cad-engine/{asset:.*}', assets_build.serve)
     assets = Path(__file__).parent / 'static'
     async def script(request):
-        return web.FileResponse(assets / 'cad-browser-bridge.mjs')
+        return web.FileResponse(assets / 'cad-browser-bridge.mjs', headers={'Cache-Control': 'no-store'})
     app.router.add_get('/static/cad-browser-bridge.mjs', script)
+
+    async def worker_script(request):
+        capability = assets_build.capability()
+        if not capability.get('worker') or request.query.get('build') != capability['build']:
+            raise web.HTTPNotFound()
+        return web.FileResponse(assets / 'cad-geometry-worker.mjs')
+    app.router.add_get('/static/cad-geometry-worker.mjs', worker_script)

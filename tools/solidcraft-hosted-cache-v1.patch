@@ -1,0 +1,116 @@
+diff --git a/apps/solidcraft-web/src/main.rs b/apps/solidcraft-web/src/main.rs
+index 6ebe145..52f8d5a 100644
+--- a/apps/solidcraft-web/src/main.rs
++++ b/apps/solidcraft-web/src/main.rs
+@@ -40,6 +40,7 @@ fn query_flag(query: &str, name: &str) -> bool {
+ struct Launch {
+     open: Option<String>,
+     embed: bool,
++    hosted: bool,
+ }
+ 
+ #[cfg(any(target_arch = "wasm32", test))]
+@@ -51,15 +52,17 @@ impl Launch {
+             match key.as_ref() {
+                 "open" if launch.open.is_none() => launch.open = Some(value.into_owned()),
+                 "embed" => embed = true,
++                "bigbrain-hosted" => launch.hosted = true,
+                 _ => {}
+             }
+         }
+         launch.embed = embed && launch.open.is_some();
++        if launch.hosted { launch.open = None; }
+         launch
+     }
+ 
+     fn persists(&self) -> bool {
+-        !self.embed
++        !self.embed && !self.hosted
+     }
+ 
+     fn full_app_url(&self, mut url: url::Url) -> String {
+diff --git a/crates/engine/src/lib.rs b/crates/engine/src/lib.rs
+index 3b0380a..eb72f27 100644
+--- a/crates/engine/src/lib.rs
++++ b/crates/engine/src/lib.rs
+@@ -619,7 +619,16 @@ impl Session {
+     /// `doc`'s evaluation ([`Model::adopt`]); otherwise the timeline is evaluated.
+     /// Use [`Self::opened_at`] when the document's file location is known.
+     /// `SOLIDCRAFT_NO_MODEL_CACHE` set always evaluates.
+-    pub fn opened(mut doc: Document, saved: Option<&solidcraft_doc::SavedModel>) -> Self {
++    pub fn opened(doc: Document, saved: Option<&solidcraft_doc::SavedModel>) -> Self {
++        Self::opened_with_policy(doc, saved, false).expect("ordinary opens can evaluate")
++    }
++
++    /// Admit a hosted viewer checkpoint only when its evaluated model is usable.
++    pub fn opened_cached(doc: Document, saved: &solidcraft_doc::SavedModel) -> std::result::Result<Self, String> {
++        Self::opened_with_policy(doc, Some(saved), true)
++    }
++
++    fn opened_with_policy(mut doc: Document, saved: Option<&solidcraft_doc::SavedModel>, cache_required: bool) -> std::result::Result<Self, String> {
+         // A design's font files are checked like its other paths before it is evaluated.
+         solidcraft_io::vfs::install_checks();
+         // The session keeps what is hidden (an undo step of its own); the design file carries it.
+@@ -628,12 +637,15 @@ impl Session {
+         let adopted = saved
+             .filter(|_| solidcraft_geom::env::var_os("NO_MODEL_CACHE").is_none())
+             .and_then(|saved| Model::adopt(&doc, saved).map_err(|e| log::info!("the saved model is not used: {e}")).ok());
++        if cache_required && adopted.is_none() {
++            return Err("Hosted checkpoint cache rejected".into());
++        }
+         let model = adopted.unwrap_or_else(|| {
+             let mut model = Model::new();
+             model.evaluate_shared(&doc);
+             model
+         });
+-        Session {
++        Ok(Session {
+             saved: doc.clone(),
+             doc,
+             model,
+@@ -695,7 +707,7 @@ impl Session {
+             evaluations: 0,
+             motion_traces: Default::default(),
+             crash_journal: false,
+-        }
++        })
+     }
+ 
+     /// Become `fresh` (another design opened, recovered or started), keeping the settings that
+diff --git a/crates/ui-egui/src/control.rs b/crates/ui-egui/src/control.rs
+index 17c43cc..c2c6767 100644
+--- a/crates/ui-egui/src/control.rs
++++ b/crates/ui-egui/src/control.rs
+@@ -596,6 +596,32 @@ fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) ->
+         }
+         "engine.commands" => wrap(app.session.execute("engine.commands", &json!({})).map_err(|e| e.to_string())),
+         "document.inspect" => wrap(app.session.execute("document.inspect", p).map_err(|e| e.to_string())),
++        #[cfg(target_arch = "wasm32")]
++        "bigbrain.present_cached" => {
++            let load = || -> Result<solidcraft_engine::Session, String> {
++                let bytes: Vec<u8> = serde_json::from_value(p.get("bytes").cloned().ok_or("Missing checkpoint bytes")?)
++                    .map_err(|e| e.to_string())?;
++                let mut reader = solidcraft_engine::io::DesignContainerReader::new(std::io::Cursor::new(bytes))
++                    .map_err(|e| e.to_string())?;
++                let saved = reader.geometry().ok_or("Hosted checkpoint has no trusted evaluated geometry")?;
++                let doc = reader.read_document().map_err(|e| e.to_string())?;
++                solidcraft_engine::Session::opened_cached(doc, &saved)
++            };
++            match load() {
++                Ok(session) => {
++                    if crate::documents::active_is_blank(app) {
++                        crate::documents::adopt(app, session);
++                    } else {
++                        let revision = app.session.revision;
++                        app.session.replace_design(session);
++                        app.session.invalidate_view(revision);
++                    }
++                    app.home.open = false;
++                    ok(json!({"cacheAdopted":true}))
++                }
++                Err(error) => err(error),
++            }
++        }
+         "document.revision" => wrap(app.session.execute("document.revision", p).map_err(|e| e.to_string())),
+         // The connection already counts as subscribed (`DesignWatch::join`), and its events start
+         // from this answer: published first, so no event repeats it and none older follows.

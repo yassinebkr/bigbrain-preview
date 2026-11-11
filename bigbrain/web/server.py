@@ -985,10 +985,11 @@ class WebServer:
             activity_error = None
             if session:
                 from .run_history import conversation_activity
+                from ..solidcraft import CadError
                 try:
                     activities = await asyncio.to_thread(
                         conversation_activity, self.bus.logger.log_dir, session_id, self._started_at)
-                except OSError:
+                except (OSError, ValueError, KeyError, CadError):
                     logger.exception("Unable to restore conversation activity")
                     activity_error = "Le suivi des activités n’a pas pu être restauré."
             await ws.send_json({

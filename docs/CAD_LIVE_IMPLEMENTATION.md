@@ -33,9 +33,22 @@ state. Accepted checkpoint resolution validates the engine and contract lineage
 and verifies observation hashes. The working artifact endpoint requires the
 explicit current checkpoint and uses the existing owned-artifact reader.
 
-Local verification currently covers presentation persistence across store
-recreation, conversation isolation, checkpoint identity protection and existing
-native CAD integration. Live rendering and restart qualification remain pending.
+The compact viewer prepares native checkpoints through the qualified worker and
+retains its iframe and camera. Its presentation queue coalesces intermediate
+requests while geometry is prepared. Solid and construction modes share this
+viewer. Construction mode explicitly shows accepted sketches and dimensions.
+The expanded observation mode exposes the full SolidCraft shell during agent work.
+
+Each run has a retained presentation record. Conversation history supplements
+the bus journal from these records and marks pre-restart work interrupted.
+Terminal CAD outcomes publish immutable manifests into the common evidence
+repository with their source hashes and measured criteria.
+
+Local verification covers presentation persistence across store recreation,
+conversation isolation, checkpoint identity protection, superseded presentation
+requests, native CAD integration and shared evidence records. The current check
+set passes 179 frontend tests and 28 focused backend tests. Browser rendering,
+construction visibility and a complete process restart remain qualification work.
 
 The existing hosted viewer and worker changes are prerequisites already present
 in this worktree. The completed branch will receive one final push. Merge follows

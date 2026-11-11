@@ -24,19 +24,26 @@ class BrowserCadAssets:
                 manifest = json.loads(data)
                 if (manifest.get('source_tag') != 'v0.28.0'
                         or manifest.get('source_commit') != 'ee6b85605a32948bcbd9ae437a564cab826689ec'
-                        or manifest.get('patches') != []):
+                        or manifest.get('patches') not in ([], ['bigbrain-hosted-cache-v1'])):
                     raise ValueError('Cette compilation SolidCraft attend sa qualification navigateur.')
                 assets = manifest['assets']
                 if 'index.html' not in assets or not any(name.endswith('.wasm') for name in assets):
                     raise ValueError('Le manifeste web SolidCraft est incomplet.')
+                if manifest['patches'] and not {
+                    'worker/bigbrain_worker_probe.js', 'worker/bigbrain_worker_probe_bg.wasm',
+                }.issubset(assets):
+                    raise ValueError('Le moteur Worker qualifié manque dans la distribution.')
                 for name, expected in assets.items():
                     path = (self.root / name).resolve()
                     if not path.is_relative_to(self.root) or hashlib.sha256(path.read_bytes()).hexdigest() != expected:
                         raise ValueError('Les fichiers web SolidCraft diffèrent de la compilation qualifiée.')
                 self.manifest = manifest
                 self.identity = hashlib.sha256(data).hexdigest()
-            return {'available': True, 'version': '0.28.0', 'build': self.identity,
-                    'url': f'/cad-engine/index.html?build={self.identity}'}
+            result = {'available': True, 'version': '0.28.0', 'build': self.identity,
+                      'url': f'/cad-engine/index.html?build={self.identity}'}
+            if self.manifest['patches']:
+                result['worker'] = f'/static/cad-geometry-worker.mjs?build={self.identity}'
+            return result
         except (OSError, ValueError, KeyError) as error:
             return {'available': False, 'diagnostic': str(error)}
 

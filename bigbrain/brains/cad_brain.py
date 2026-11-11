@@ -119,9 +119,13 @@ class CadBrain(BaseBrain):
         base = previous['document']['revision'] if previous else 0
         sequence, started = 0, time.monotonic()
         execution_state = None
+        evidence_manifest = None
+        presentation_context = {'session_id': session_id,
+            **{target: payload[source] for target, source in (
+                ('task_id', '_plan_id'), ('subtask_id', '_subtask_id')) if payload.get(source)}}
 
         async def progress(status, stage, view=None, diagnostic=None):
-            nonlocal sequence
+            nonlocal sequence, evidence_manifest
             sequence += 1
             from ..cad_live import retain_progress, working_checkpoint
             state = {'stage': stage, 'cad': {
@@ -129,7 +133,16 @@ class CadBrain(BaseBrain):
                 'sequence': sequence, 'status': status, 'elapsed_seconds': time.monotonic() - started,
                 'snapshot': view, 'diagnostic': diagnostic, 'execution': execution_state,
                 'working': working_checkpoint(store, document_id, session_id)}}
-            retain_progress(store, document_id, session_id, self._event_context(), state)
+            retain_progress(store, document_id, session_id, presentation_context, state)
+            from ..cad_evidence import begin_evidence, finish_evidence
+            repository = default_repository()
+            if evidence_manifest is None:
+                evidence_manifest = begin_evidence(repository, spec, presentation_context, document_id)
+            if status in {'ready', 'failed', 'cancelled'}:
+                evidence_manifest = finish_evidence(repository, evidence_manifest, state)
+                await self.send_event('verification.run_recorded', {
+                    'run_id': evidence_manifest.run_id, 'verdict': evidence_manifest.verdict,
+                    'stages': [{'name': item.name, 'status': item.status} for item in evidence_manifest.stages]})
             await self.send_progress(state)
 
         execution_lock = root / '.cad-execution'

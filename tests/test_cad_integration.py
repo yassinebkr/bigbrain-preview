@@ -121,6 +121,11 @@ async def test_real_contract_worker_atelier_artifacts_and_scope(tmp_path, engine
         assert len(view['checks']) == 2 and all(check['status'] == 'passed' for check in view['checks'])
         assert [event['cad']['status'] for event in events] == ['modeling', 'checking', 'ready']
         assert CadStore().view(document_id, 'session-cad') == view
+        manifests = list(default_repository().iter_manifests())
+        evidence = next(item for item in manifests if item.metadata.get('document_id') == document_id)
+        assert evidence.status == 'completed' and evidence.verdict == 'passed'
+        assert evidence.metadata['native_sha256'] == view['document']['native']['sha256']
+        assert default_repository().get_artifact(evidence.artifacts[0].sha256)
 
         app = web.Application()
         setup_cad_routes(app, store=store)
