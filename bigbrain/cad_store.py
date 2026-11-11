@@ -165,6 +165,10 @@ class CadStore:
             artifact = None
         if artifact is None:
             raise CadError('Requested CAD artifact is unavailable')
+        return artifact, self.read_artifact(document_id, session_id, artifact)
+
+    def read_artifact(self, document_id, session_id, artifact):
+        """Read an exact recorded artifact within its conversation-owned document."""
         root = self.authorize(document_id, session_id)
         path = root / artifact.path
         if (path.resolve() != path.absolute() or path.is_symlink() or not path.resolve().is_relative_to(root.resolve())
@@ -174,4 +178,4 @@ class CadStore:
         data = path.read_bytes()
         if hashlib.sha256(data).hexdigest() != artifact.sha256:
             raise CadError('CAD artifact bytes changed')
-        return artifact, data
+        return data

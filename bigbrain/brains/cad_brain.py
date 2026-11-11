@@ -123,10 +123,14 @@ class CadBrain(BaseBrain):
         async def progress(status, stage, view=None, diagnostic=None):
             nonlocal sequence
             sequence += 1
-            await self.send_progress({'stage': stage, 'cad': {
+            from ..cad_live import retain_progress, working_checkpoint
+            state = {'stage': stage, 'cad': {
                 'schema_version': '1.0', 'document_id': document_id, 'title': plan.title if plan else definition.title,
                 'sequence': sequence, 'status': status, 'elapsed_seconds': time.monotonic() - started,
-                'snapshot': view, 'diagnostic': diagnostic, 'execution': execution_state}})
+                'snapshot': view, 'diagnostic': diagnostic, 'execution': execution_state,
+                'working': working_checkpoint(store, document_id, session_id)}}
+            retain_progress(store, document_id, session_id, self._event_context(), state)
+            await self.send_progress(state)
 
         execution_lock = root / '.cad-execution'
         try:

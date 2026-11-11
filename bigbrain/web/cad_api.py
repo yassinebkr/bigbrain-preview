@@ -22,6 +22,19 @@ def setup_cad_routes(app, *, store=None, bus=None):
                 raise CadError('CAD artifact request object required')
             document_id, session_id = body.get('documentId'), body.get('sessionId')
             revision = body.get('revision')
+            if request.match_info['action'] in {'working', 'working-artifact'}:
+                from ..cad_live import working_checkpoint
+                from ..cad_contracts import CadArtifact
+                checkpoint = working_checkpoint(store, document_id, session_id)
+                if request.match_info['action'] == 'working':
+                    return web.json_response({'working': checkpoint})
+                if checkpoint is None or checkpoint['checkpoint_id'] != body.get('checkpointId'):
+                    raise CadError('CAD working checkpoint changed; refresh the presentation')
+                native = CadArtifact.model_validate(checkpoint['native'])
+                return web.Response(body=store.read_artifact(document_id, session_id, native),
+                    content_type='application/octet-stream',
+                    headers={'Cache-Control': 'private, no-store',
+                             'X-BigBrain-CAD-SHA256': native.sha256})
             if request.match_info['action'] == 'recovery':
                 from ..cad_recovery import retained_recovery
                 root = store.authorize(document_id, session_id)
@@ -60,4 +73,4 @@ def setup_cad_routes(app, *, store=None, bus=None):
         except (CadError, ValueError, TypeError) as error:
             return web.json_response({'error': str(error)[:1000]}, status=400)
 
-    app.router.add_post('/api/cad/{action:view|artifact|capability|open|resume|recovery}', handle)
+    app.router.add_post('/api/cad/{action:view|artifact|capability|open|resume|recovery|working|working-artifact}', handle)
