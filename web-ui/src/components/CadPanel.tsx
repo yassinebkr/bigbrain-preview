@@ -38,8 +38,12 @@ export function CadPanel({ run, expanded = false }: { run: RunState; expanded?: 
   const [previewMode, setPreviewMode] = useState<'solid' | 'construction'>(() => cad ? retainedPreviewMode(cad.document_id, run.sessionId) : 'solid');
   useEffect(() => { setEditing(cad ? editorWasOpen(cad.document_id, run.sessionId) : false); }, [cad?.document_id, run.sessionId]);
   useEffect(() => {
-    if (run.status === 'running') setEditing(false);
-  }, [run.status]);
+    // Collapsing the full shell restores the selected compact preview mode.
+    if (!expanded && editing && cad) {
+      selectEditor(cad.document_id, run.sessionId, false);
+      setEditing(false);
+    }
+  }, [expanded, editing, cad?.document_id, run.sessionId]);
   const [downloading, setDownloading] = useState('');
   const [desktop, setDesktop] = useState<{ available?: boolean; diagnostic?: string }>({});
   const [launchMessage, setLaunchMessage] = useState('');
@@ -123,12 +127,12 @@ export function CadPanel({ run, expanded = false }: { run: RunState; expanded?: 
         ? 'La pièce et son historique ont passé les contrôles de cette révision.'
         : 'Les étapes conservées restent soumises aux vérifications de la pièce complète.'}</p>
     </div>}
-    {(captured || cad.working) && <div className="relative z-[61] inline-flex gap-1 rounded-full p-1 mt-4" style={{background:'var(--bg-primary)'}} aria-label="Vue de la pièce">
-      <button className="rounded-full px-3 py-1.5 text-[11px]" aria-pressed={!editing && previewMode === 'solid'} onClick={() => {selectEditor(cad.document_id, run.sessionId, false); setEditing(false); setPreviewMode('solid');}}>3D</button>
-      {cad.working && <button className="rounded-full px-3 py-1.5 text-[11px]" aria-pressed={!editing && previewMode === 'construction'} onClick={() => {selectEditor(cad.document_id, run.sessionId, false); setEditing(false); setPreviewMode('construction');}}>Construction</button>}
+    {(captured || cad.working) && <div className="cad-view-modes relative z-[61] inline-flex gap-1 rounded-full p-1 mt-4" style={{background:'var(--bg-primary)'}} aria-label="Vue de la pièce">
+      <button className="rounded-full px-3 py-1.5 text-[11px]" aria-pressed={(!editing || !expanded) && previewMode === 'solid'} onClick={() => {selectEditor(cad.document_id, run.sessionId, false); setEditing(false); setPreviewMode('solid');}}>3D</button>
+      {cad.working && <button className="rounded-full px-3 py-1.5 text-[11px]" aria-pressed={(!editing || !expanded) && previewMode === 'construction'} onClick={() => {selectEditor(cad.document_id, run.sessionId, false); setEditing(false); setPreviewMode('construction');}}>Construction</button>}
       <button className="rounded-full px-3 py-1.5 text-[11px] disabled:opacity-40" aria-pressed={editing && expanded}
         title="Ouvrir SolidCraft Web dans l’Atelier"
-        style={{background:editing && expanded ? 'var(--bg-surface)' : undefined}} onClick={() => {selectEditor(cad.document_id, run.sessionId, true); setEditing(true); useWorkspaceStore.getState().update(run.sessionId, {mode:'expanded', selectedId:surfaceId(run, 'cad')});}}>SolidCraft Web</button>
+        onClick={() => {selectEditor(cad.document_id, run.sessionId, true); setEditing(true); useWorkspaceStore.getState().update(run.sessionId, {mode:'expanded', selectedId:surfaceId(run, 'cad')});}}>SolidCraft Web</button>
     </div>}
     {editing && expanded && captured && !busy && !cad.working && <Suspense fallback={<p role="status" className="work-muted mt-3 text-[12px]">Préparation de l’éditeur…</p>}>
       <CadBrowserEditor documentId={cad.document_id} sessionId={run.sessionId} revision={captured.document.revision} />

@@ -19,6 +19,24 @@ export interface WorkSurface {
 export const surfaceId = (run: RunState, kind: SurfaceKind) =>
   `${encodeURIComponent(run.sessionId)}/${encodeURIComponent(run.id)}/${kind}`;
 
+/** Present one primary CAD tab for both retained piece and overview routes. */
+export function workspaceTabs(surfaces: WorkSurface[], selected?: WorkSurface) {
+  const labels = { preview:'Aperçu', activity:'Vue d’ensemble', files:'Fichiers',
+    verification:'Tests', research:'Recherche', cad:'Pièce' };
+  const order: SurfaceKind[] = ['activity', 'cad', 'research', 'preview', 'files', 'verification'];
+  const selectedId = selected?.run.cad && selected.kind === 'cad'
+    ? surfaceId(selected.run, 'activity') : selected?.id;
+  return surfaces.filter(surface => surface.run.id === selected?.run.id
+      && !(surface.run.cad && surface.kind === 'cad'))
+    .sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind))
+    .map(surface => {
+      let label = labels[surface.kind];
+      if (surface.run.cad && surface.kind === 'activity') label = 'Pièce';
+      if (surface.run.cad && surface.kind === 'verification') label = 'Vérifications';
+      return { ...surface, label, selected:surface.id === selectedId };
+    });
+}
+
 export const isBoardRun = (run: RunState) => run.resultKind === 'taskboard' || run.steps.some((step) => step.brain === 'taskboard');
 export function nextProjectAttempt(selected: RunState | undefined, surfaces: WorkSurface[], inspectedAt = 0) {
   if (!selected) return undefined;

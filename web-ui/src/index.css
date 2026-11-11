@@ -35,6 +35,8 @@
 .context-tabs button { padding: 8px 10px; border-radius: 10px; color: var(--text-secondary); transition: background 160ms, color 160ms; flex: 1; white-space: nowrap; }
 .context-tabs button[aria-pressed=true] { background: var(--bg-button); color: var(--text-primary); box-shadow: 0 2px 5px #0002; }
 .context-tabs button:hover { color: var(--text-primary); }
+.cad-view-modes button { color: var(--text-secondary); }
+.cad-view-modes button[aria-pressed=true] { background: var(--bg-button); color: var(--text-primary); box-shadow: 0 2px 5px #0002; }
 .context-footer { margin: 0 12px 10px; border-radius: 12px; background: var(--bg-primary); }
 .work-overview { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .work-widget { padding: 18px; border-radius: 18px; background: var(--bg-surface); border: 1px solid var(--border-subtle); min-width: 0; animation: work-reveal 200ms ease-out; }

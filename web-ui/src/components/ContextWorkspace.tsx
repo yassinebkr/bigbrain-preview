@@ -4,17 +4,15 @@ import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { ArrowLeft, ChevronDown, ExternalLink, Loader2, Maximize2, Minimize2, PanelRight, Layers, X } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 import { useWorkspaceStore } from '@/store/workspaceStore';
-import { isBoardRun, nextProjectAttempt, reconcileWorkspace, runTitle, surfaceRegistry, webEntryPath, type WorkSurface } from '@/lib/morphable';
+import { isBoardRun, nextProjectAttempt, reconcileWorkspace, runTitle, surfaceRegistry, webEntryPath, workspaceTabs, type WorkSurface } from '@/lib/morphable';
 import { usePreview } from '@/lib/usePreview';
 import { WorkOverview } from './WorkWidgets';
 import { ResearchPanel } from './ResearchPanel';
-import { CadPanel } from './CadPanel';
 import { RunAttemptHistory } from './RunAttemptHistory';
 import { CadDesignBrief } from './CadDesignBrief';
 import { isPartialResearch } from '@/lib/research';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from './ui/dropdown-menu';
 
-const labels = { preview: 'Aperçu', activity: 'Vue d’ensemble', files: 'Fichiers', verification: 'Tests', research: 'Recherche', cad: 'Pièce' };
 const statuses = { running: 'En cours', done: 'Terminé', failed: 'Échec', cancelled: 'Annulé', needs_input: 'Précision attendue' };
 
 const wideQuery = '(min-width: 1440px)';
@@ -39,13 +37,14 @@ function PreviewSurface({ surface }: { surface: WorkSurface }) {
 export function SurfaceContent({ surface, select = () => {}, expanded = false }: { surface: WorkSurface; select?: (kind: WorkSurface['kind']) => void; expanded?: boolean }) {
   const openFile = useAppStore((s) => s.openFileViewer);
   const setView = useAppStore((s) => s.setView);
-  const { run, kind } = surface;
+  const { run } = surface;
+  // Both retained CAD routes share the primary piece surface and its journal.
+  const kind = surface.kind === 'cad' ? 'activity' : surface.kind;
   const running = run.status === 'running' ? run.steps.filter((step) => step.status === 'running') : [];
   const done = run.steps.filter((step) => step.status === 'done');
   const agents = [...new Set(run.steps.map((step) => step.brain).filter(Boolean))];
   if (kind === 'preview') return <PreviewSurface surface={surface} />;
   if (kind === 'research') return <ResearchPanel run={run} />;
-  if (kind === 'cad') return <div className="p-4"><CadPanel run={run} expanded={expanded} /></div>;
   if (kind === 'activity' && Object.keys(run.researches || {}).length > 0 && !run.projectPath && !run.files.length) return <ResearchPanel run={run} compact inspect={() => select('research')} />;
   const content = <div className={`${kind === 'activity' ? 'work-journal-content' : 'space-y-5 p-5'} text-[12px]`}>
     {run.error && <p role="alert" className="whitespace-pre-wrap break-words" style={{ color: 'var(--warning)' }}>{run.error}</p>}
@@ -163,7 +162,11 @@ export function ContextWorkspace({ children }: { children: (ownsActivity: boolea
             <button className="p-1" aria-label="Fermer la surface" onClick={close}><X size={16} /></button>
           </header>
           {!clarifying && <nav className="context-tabs flex shrink-0 overflow-x-auto" aria-label="Contenu de la surface">
-            {surfaces.filter((s) => s.run.id === state.selected?.run.id).sort((a, b) => ['activity', 'cad', 'research', 'preview', 'files', 'verification'].indexOf(a.kind) - ['activity', 'cad', 'research', 'preview', 'files', 'verification'].indexOf(b.kind)).map((surface) => <button key={surface.id} aria-pressed={state.selected?.id === surface.id} className="text-[11px] shrink-0" onClick={() => change({ selectedId: surface.id })}>{labels[surface.kind]}</button>)}
+            {workspaceTabs(surfaces, state.selected).map((surface) => <button
+              key={surface.id} aria-pressed={surface.selected} className="text-[11px] shrink-0"
+              onClick={() => { if (!surface.selected) change({ selectedId:surface.id }); }}>
+              {surface.label}
+            </button>)}
           </nav>}
           <div className="flex-1 overflow-y-auto min-h-0" ref={contentRef} onScroll={(event) => { if (state.selected) positions.current[state.selected.id] = event.currentTarget.scrollTop; }}>
             {visible && (clarifying && brief ? <div className="p-4"><CadDesignBrief brief={brief} /></div> : state.selected ? <SurfaceContent key={state.selected.id} surface={state.selected} expanded={expanded} select={(kind) => { const surface = surfaces.find((item) => item.run.id === state.selected?.run.id && item.kind === kind); if (surface) change({ selectedId: surface.id }); }} /> : <p className="p-5 text-[12px]" role="status">Historique en cours de restauration ou résultat indisponible. Les autres travaux restent accessibles.</p>)}

@@ -47,6 +47,10 @@ repository with their source hashes and measured criteria.
 The preview host remains mounted across overview, part and full observation
 surfaces. Its camera and compact mode survive these transitions. CAD overview
 widgets use one full-width column, with verification following the model.
+CAD navigation exposes one primary Piece tab and a Verification tab when checks
+are available. Previously retained CAD and overview routes resolve to the same
+piece presentation. Preview mode selection stays visible in compact and expanded
+layouts, including a return from the full observation shell.
 
 ## Qualification
 
