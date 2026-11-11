@@ -192,6 +192,7 @@ export class SolidCraftBrowserEngine {
     if (bytes.length > 3 * 1024**2) throw new Error('Hosted checkpoint exceeds the viewer transport limit');
     if (!this.hostedReady) {
       const frame = document.createElement('iframe');
+      frame.dataset.cadInstance = crypto.randomUUID();
       frame.title = 'SolidCraft · checkpoint';
       frame.style.cssText = 'width:100%;height:100%;border:0';
       const address = new URL(this.appUrl, location.href);
@@ -216,6 +217,7 @@ export class SolidCraftBrowserEngine {
     this.presented = true;
     await this.configurePresentation();
     await this.enableCameraNavigation();
+    if (!camera) await this.camera('fit');
   }
   async presentation(mode, sketches) {
     this.presentationMode = mode;
@@ -226,6 +228,10 @@ export class SolidCraftBrowserEngine {
     }
   }
   async configurePresentation() {
+    this.configuration = (this.configuration || Promise.resolve()).catch(() => {}).then(() => this.applyPresentation());
+    return this.configuration;
+  }
+  async applyPresentation() {
     if (!this.presentationMode) return;
     const construction = this.presentationMode === 'construction';
     const full = this.presentationMode === 'full';

@@ -36,7 +36,7 @@ const notify = (runtime: EditorRuntime) => runtime.listeners.forEach(listener =>
 const keyFor = (documentId: string, sessionId: string) => `${sessionId}:${documentId}`;
 export const editorWasOpen = (documentId: string, sessionId: string) => cache.get(keyFor(documentId, sessionId))?.selected || false;
 export function selectEditor(documentId: string, sessionId: string, selected: boolean) {
-  const runtime = cache.get(keyFor(documentId, sessionId));
+  const runtime = selected ? editorRuntime(documentId, sessionId) : cache.get(keyFor(documentId, sessionId));
   if (runtime) runtime.selected = selected;
 }
 
@@ -95,9 +95,10 @@ export async function openEditor(runtime: EditorRuntime, documentId: string, ses
   return runtime.pending;
 }
 
-export function attachEditor(runtime: EditorRuntime, slot: HTMLElement) {
+export function attachEditor(runtime: Pick<EditorRuntime, 'host' | 'attached' | 'touched'>, slot: HTMLElement) {
   const started = performance.now();
   runtime.attached = true; runtime.touched = Date.now();
+  runtime.host.inert = false;
   const position = () => {
     const rect = slot.getBoundingClientRect();
     const visible = rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < innerHeight;

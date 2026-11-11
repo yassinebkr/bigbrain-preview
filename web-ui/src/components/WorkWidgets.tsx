@@ -80,7 +80,7 @@ export function PythonConsole({ run }: { run: RunState }) {
   </section>;
 }
 
-export function WorkOverview({ run, select, journal }: { run: RunState; select: (kind: SurfaceKind) => void; journal: React.ReactNode }) {
+export function WorkOverview({ run, select, journal, expanded = false }: { run: RunState; select: (kind: SurfaceKind) => void; journal: React.ReactNode; expanded?: boolean }) {
   const setView = useAppStore((s) => s.setView);
   const setFile = useAppStore((s) => s.setPendingOpenFile);
   const setProject = useAppStore((s) => s.setCurrentProject);
@@ -124,8 +124,8 @@ export function WorkOverview({ run, select, journal }: { run: RunState; select: 
       setFile(entry); setView('workspace');
     } catch (error) { setOpenError(String(error)); }
   };
-  return <div className="work-overview">
-    {run.awaitingApproval ? <ProposalWidget run={run} /> : run.cad ? <CadPanel run={run} /> : <section className="work-widget" aria-label="Objet du travail">
+  return <div className="work-overview" data-cad={run.cad ? 'true' : undefined}>
+    {run.awaitingApproval ? <ProposalWidget run={run} /> : run.cad ? <CadPanel run={run} expanded={expanded} /> : <section className="work-widget" aria-label="Objet du travail">
       <div className="work-eyebrow">{running && <span className="work-pulse" aria-hidden="true" />}{run.status === 'needs_input' ? 'Définition de la pièce' : board ? 'Organisation' : running ? 'En construction' : 'Livrable'}</div>
       <h3 className="work-heading">{run.status === 'needs_input' ? 'Une précision est nécessaire' : run.deliveryStatus === 'incomplete' ? 'Projet incomplet · non validé' : running ? 'Le travail prend forme' : run.status === 'done' ? 'Le résultat est disponible' : run.status === 'failed' ? 'Le travail a rencontré un obstacle' : 'Travail arrêté'}</h3>
       {run.clarificationQuestion && <p className="mt-3 text-sm work-muted">{run.clarificationQuestion}</p>}

@@ -55,6 +55,8 @@
   .context-island[data-expanded=true] .work-overview { display: grid; grid-template-columns: minmax(240px, .8fr) minmax(0, 1.2fr); align-content: start; align-items: start; width: 100%; margin: 0; padding: 20px; gap: 16px; }
   .context-island[data-expanded=true] .work-overview > :first-child { grid-column: 1; grid-row: 1; }
   .context-island[data-expanded=true] .work-overview > .work-widget:not(:first-child) { grid-column: 2; }
+  /* Keep CAD geometry full-width as verification widgets arrive. */
+  .context-island[data-expanded=true] .work-overview[data-cad=true] { display: flex; flex-direction: column; align-items: stretch; }
   .context-island[data-expanded=true] .work-journal { grid-column: 1 / -1; }
   .context-island[data-expanded=true] .work-console { min-height: 240px; max-height: 60vh; }
   .context-island[data-expanded=true] .context-tabs { align-self: flex-start; }

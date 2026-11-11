@@ -5,6 +5,8 @@ import { cadArtifact, cadDesktop, currentCadPreview, readPublishedCad } from '@/
 import { useAppStore, type RunState } from '@/store/appStore';
 import { editorWasOpen, selectEditor } from '@/lib/cadBrowser';
 import { useWorkspaceStore } from '@/store/workspaceStore';
+import { surfaceId } from '@/lib/morphable';
+import { retainedPreviewMode } from '@/lib/cadLiveRuntime';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './ui/dropdown-menu';
 
 const phases = { modeling: 'Modélisation de la pièce', checking: 'Mesures et vérifications',
@@ -33,7 +35,7 @@ export function CadPanel({ run, expanded = false }: { run: RunState; expanded?: 
   const [imageError, setImageError] = useState('');
   const [actionError, setActionError] = useState('');
   const [editing, setEditing] = useState(false);
-  const [previewMode, setPreviewMode] = useState<'solid' | 'construction'>('solid');
+  const [previewMode, setPreviewMode] = useState<'solid' | 'construction'>(() => cad ? retainedPreviewMode(cad.document_id, run.sessionId) : 'solid');
   useEffect(() => { setEditing(cad ? editorWasOpen(cad.document_id, run.sessionId) : false); }, [cad?.document_id, run.sessionId]);
   useEffect(() => {
     if (run.status === 'running') setEditing(false);
@@ -123,16 +125,16 @@ export function CadPanel({ run, expanded = false }: { run: RunState; expanded?: 
     </div>}
     {(captured || cad.working) && <div className="relative z-[61] inline-flex gap-1 rounded-full p-1 mt-4" style={{background:'var(--bg-primary)'}} aria-label="Vue de la pièce">
       <button className="rounded-full px-3 py-1.5 text-[11px]" aria-pressed={!editing && previewMode === 'solid'} onClick={() => {selectEditor(cad.document_id, run.sessionId, false); setEditing(false); setPreviewMode('solid');}}>3D</button>
-      {cad.working && <button className="rounded-full px-3 py-1.5 text-[11px]" aria-pressed={!editing && previewMode === 'construction'} onClick={() => {setEditing(false); setPreviewMode('construction');}}>Construction</button>}
+      {cad.working && <button className="rounded-full px-3 py-1.5 text-[11px]" aria-pressed={!editing && previewMode === 'construction'} onClick={() => {selectEditor(cad.document_id, run.sessionId, false); setEditing(false); setPreviewMode('construction');}}>Construction</button>}
       <button className="rounded-full px-3 py-1.5 text-[11px] disabled:opacity-40" aria-pressed={editing && expanded}
         title="Ouvrir SolidCraft Web dans l’Atelier"
-        style={{background:editing && expanded ? 'var(--bg-surface)' : undefined}} onClick={() => {selectEditor(cad.document_id, run.sessionId, true); setEditing(true); useWorkspaceStore.getState().update(run.sessionId, {mode:'expanded'});}}>SolidCraft Web</button>
+        style={{background:editing && expanded ? 'var(--bg-surface)' : undefined}} onClick={() => {selectEditor(cad.document_id, run.sessionId, true); setEditing(true); useWorkspaceStore.getState().update(run.sessionId, {mode:'expanded', selectedId:surfaceId(run, 'cad')});}}>SolidCraft Web</button>
     </div>}
-    {editing && expanded && captured && !busy && <Suspense fallback={<p role="status" className="work-muted mt-3 text-[12px]">Préparation de l’éditeur…</p>}>
+    {editing && expanded && captured && !busy && !cad.working && <Suspense fallback={<p role="status" className="work-muted mt-3 text-[12px]">Préparation de l’éditeur…</p>}>
       <CadBrowserEditor documentId={cad.document_id} sessionId={run.sessionId} revision={captured.document.revision} />
     </Suspense>}
-    <div className={`${editing && expanded && captured && !busy ? 'hidden' : ''} relative w-full mt-4 overflow-hidden rounded-2xl border border-white/5 bg-gradient-to-b from-slate-900/60 to-transparent ${editing && expanded ? 'h-[65dvh]' : 'aspect-[8/5]'}`}>
-      {cad.working ? <Suspense fallback={piece}><CadLivePreview cad={cad} sessionId={run.sessionId} mode={editing && expanded ? 'full' : previewMode} /></Suspense> : piece}{!expanded && (image || hasMesh || cad.working) && <button onClick={() => useWorkspaceStore.getState().update(run.sessionId, {mode:'expanded'})} aria-label="Agrandir la pièce"
+    <div className={`${editing && expanded && captured && !busy && !cad.working ? 'hidden' : ''} relative w-full mt-4 overflow-hidden rounded-2xl border border-white/5 bg-gradient-to-b from-slate-900/60 to-transparent ${editing && expanded ? 'h-[65dvh]' : 'aspect-[8/5]'}`}>
+      {cad.working ? <Suspense fallback={piece}><CadLivePreview cad={cad} sessionId={run.sessionId} mode={editing && expanded ? 'full' : previewMode} /></Suspense> : piece}{!expanded && (image || hasMesh || cad.working) && <button onClick={() => useWorkspaceStore.getState().update(run.sessionId, {mode:'expanded', selectedId:surfaceId(run, 'cad')})} aria-label="Agrandir la pièce"
         className="absolute right-3 top-3 flex items-center gap-1 text-[11px] rounded-full px-2 py-1 bg-black/60 text-white"><Expand size={12} /> Agrandir</button>}
     </div>
     {!(editing && expanded) && captured?.preview && !current && <p className="mt-2 text-[11px] text-amber-200">Révision conservée · aperçu antérieur</p>}

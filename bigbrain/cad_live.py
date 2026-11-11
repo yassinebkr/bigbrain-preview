@@ -17,12 +17,20 @@ def working_checkpoint(store, document_id, session_id):
     if head.is_symlink() or head.parent.is_symlink():
         raise CadError('CAD construction head identity changed')
     value = json.loads(head.read_text(encoding='utf-8'))
-    execution = CadExecutionStore(root, value['contract_sha256'], value['engine_version'])
+    if not isinstance(value, dict):
+        raise CadError('CAD construction head is invalid')
+    execution = CadExecutionStore(root, value.get('contract_sha256'), value.get('engine_version'))
     chain = execution.active()
     if not chain:
         return None
     checkpoint = chain[-1]
     observations = execution.observations(checkpoint)
+    # The native document carries curves and constraints. Progress needs only
+    # their inventory and sketch identities to configure the observation view.
+    fields = {'id', 'name', 'status', 'dof', 'fully_constrained', 'plane'}
+    inventory = {kind: [{key: value for key, value in item.items() if key in fields}
+                        for item in items]
+                 for kind, items in observations['design'].items()}
     # Keep the checkpoint distinct from the independently verified delivery.
     # Consumers use its hash when accepting asynchronous presentation results.
     return {'checkpoint_id': checkpoint.id, 'parent': checkpoint.parent,
@@ -30,7 +38,7 @@ def working_checkpoint(store, document_id, session_id):
             'engine_version': checkpoint.engine_version,
             'engine_sha256': checkpoint.engine_sha256,
             'native': checkpoint.native.model_dump(mode='json'),
-            'accepted_steps': len(chain), 'design': observations['design']}
+            'accepted_steps': len(chain), 'design': inventory}
 
 
 def retain_progress(store, document_id, session_id, context, progress):

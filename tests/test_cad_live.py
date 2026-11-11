@@ -63,3 +63,38 @@ def test_retained_activity_reopens_cad_after_journal_rotation(tmp_path):
     assert frames[1]['payload']['brain'] == 'cad_brain'
     assert 'redémarrage' in frames[2]['payload']['error']
     assert conversation_activity(logs, 'foreign', float('inf'), cad_store=store) == []
+
+
+@pytest.mark.asyncio
+async def test_native_working_artifact_is_bound_to_the_accepted_head(tmp_path, cad_native_engine):
+    from aiohttp import web
+    from aiohttp.test_utils import TestClient, TestServer
+    from bigbrain.cad_execution import CadExecutionStore
+    from bigbrain.solidcraft import SolidCraftSession
+    from bigbrain.web.cad_api import setup_cad_routes
+    from tests.test_cad_execution import group, accept
+
+    store = CadStore(tmp_path / 'cad')
+    document = store.create('conversation')
+    root = store.authorize(document, 'conversation')
+    execution = CadExecutionStore(root, 'a' * 64)
+    async with SolidCraftSession(root) as session:
+        record = await execution.execute(session, group(), validate=accept)
+    working = working_checkpoint(CadStore(store.root), document, 'conversation')
+    assert working['checkpoint_id'] == record.id
+    assert working['native']['sha256'] == record.native.sha256
+    assert working['design']['bodies'][0]['name'] == 'Base'
+    app = web.Application()
+    setup_cad_routes(app, store=store)
+    async with TestClient(TestServer(app)) as client:
+        headers = {'Origin':str(client.make_url('')).rstrip('/'), 'X-BigBrain-CAD':'1'}
+        body = {'documentId':document, 'sessionId':'conversation', 'checkpointId':record.id}
+        response = await client.post('/api/cad/working-artifact', json=body, headers=headers)
+        assert response.status == 200
+        assert await response.read() == (root / record.native.path).read_bytes()
+        for changed in ({'checkpointId':'f' * 32}, {'sessionId':'foreign'}):
+            response = await client.post('/api/cad/working-artifact', json={**body, **changed}, headers=headers)
+            assert response.status == 400
+        (root / record.native.path).write_bytes(b'replaced')
+        response = await client.post('/api/cad/working-artifact', json=body, headers=headers)
+        assert response.status == 400

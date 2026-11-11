@@ -44,11 +44,47 @@ the bus journal from these records and marks pre-restart work interrupted.
 Terminal CAD outcomes publish immutable manifests into the common evidence
 repository with their source hashes and measured criteria.
 
-Local verification covers presentation persistence across store recreation,
-conversation isolation, checkpoint identity protection, superseded presentation
-requests, native CAD integration and shared evidence records. The current check
-set passes 179 frontend tests and 28 focused backend tests. Browser rendering,
-construction visibility and a complete process restart remain qualification work.
+The preview host remains mounted across overview, part and full observation
+surfaces. Its camera and compact mode survive these transitions. CAD overview
+widgets use one full-width column, with verification following the model.
+
+## Qualification
+
+The normal web application was exercised with an artificial constrained plate
+and recorded provider decisions. CadBrain executed four native groups, including
+the hole sketch and through cut. The browser displayed the third accepted group
+while construction was still running, including the sketch and driving dimensions.
+The resulting delivery passed its envelope, cut-safety and design-quality checks.
+This campaign exercised transport and presentation with recorded decisions.
+Model interpretation quality remains covered by the earlier CAD qualification.
+
+After the server process ended, a new process opened the same retained stores.
+The conversation reopened its Atelier and the Evidence page displayed the CAD
+run and checks. Switching overview, part and full observation preserved the same
+native iframe identity. The selected Construction mode survived the round trip.
+DOM measurements confirmed equal model/verification widths and a verification
+card below the model. Browser screenshots are retained locally under
+`/tmp/cad-live-intermediate.png`, `/tmp/cad-live-construction-after-restart.png`
+and `/tmp/cad-atelier-stacked-verification.png`.
+
+The frontend suite passes 179 tests and its production build completes. The
+expanded CAD/backend campaign passes 392 of 396 tests. Four native operation
+qualifications retain the previously observed limits in the unchanged geometry
+adapter and qualification cases.
+
+| Native case | Observed failure |
+| --- | --- |
+| Quarter-bend pipe/flange union | Native union returns no result |
+| Parameterized coil | Volume 394.772099729 versus 394.784176044 mm³ at the existing tolerance |
+| Flush cutting tool at 60° | Native pipe cut returns no result |
+| Extended cutting tool at 60° | The inlet opening fails the outward material boundary check |
+
+## Remaining integration boundaries
+
+The full observation shell retains read-only geometry ownership. Interactive
+manual editing and its transfer back to the worker require their own qualified
+handoff. The browser campaign was observed on Linux. Windows execution remains
+to be qualified against the shared behavior and storage contracts.
 
 The existing hosted viewer and worker changes are prerequisites already present
 in this worktree. The completed branch will receive one final push. Merge follows

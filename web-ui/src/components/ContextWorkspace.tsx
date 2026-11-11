@@ -76,7 +76,7 @@ export function SurfaceContent({ surface, select = () => {}, expanded = false }:
     </>}
     {isBoardRun(run) && <button className="underline underline-offset-4" onClick={() => setView('tasks')}>Ouvrir la taskboard</button>}
   </div>;
-  return kind === 'activity' ? <WorkOverview run={run} select={select} journal={content} /> : content;
+  return kind === 'activity' ? <WorkOverview run={run} select={select} journal={content} expanded={expanded} /> : content;
 }
 
 export function ContextWorkspace({ children }: { children: (ownsActivity: boolean) => ReactNode }) {
