@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { SurfaceContent } from './ContextWorkspace';
+import { ContextWorkspace, SurfaceContent } from './ContextWorkspace';
+import { useAppStore } from '@/store/appStore';
 import type { RunState } from '@/store/appStore';
 import { surfaceRegistry, workspaceTabs } from '@/lib/morphable';
 
@@ -41,5 +42,21 @@ describe('bounded contextual catalog', () => {
     expect(html).toContain('failed');
     expect(html).toContain('browser');
     expect(html).not.toContain('passed');
+  });
+});
+
+
+describe('conversation space without Atelier content', () => {
+  it('keeps the chat at full width when a new conversation has no run', () => {
+    const previous = useAppStore.getState();
+    useAppStore.setState({ activeSessionKey: 'empty-conversation', runsById: {}, completedRuns: [], cadBriefs: {} });
+    try {
+      const html = renderToStaticMarkup(<ContextWorkspace>{() => <p>Conversation</p>}</ContextWorkspace>);
+      expect(html).toContain('data-mode="closed"');
+      expect(html).toContain('Conversation');
+      expect(html).not.toContain('data-mode="reserved"');
+    } finally {
+      useAppStore.setState(previous);
+    }
   });
 });

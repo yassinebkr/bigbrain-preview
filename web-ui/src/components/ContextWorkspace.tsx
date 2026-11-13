@@ -128,7 +128,7 @@ export function ContextWorkspace({ children }: { children: (ownsActivity: boolea
       onClick={() => change({ mode: 'workspace' })} aria-label="Ouvrir l’espace de travail">
       <PanelRight size={14} className="inline mr-2" />{clarifying ? 'Conception de la pièce' : `Travaux · ${runs.length}`}
     </button>}
-    <div className="context-layout flex-1 min-h-0 min-w-0" data-mode={visible ? expanded ? 'expanded' : 'open' : !open && preference?.mode !== 'focus' ? 'reserved' : 'closed'} style={{ '--context-width': `${state.width}px` } as CSSProperties}>
+    <div className="context-layout flex-1 min-h-0 min-w-0" data-mode={visible ? expanded ? 'expanded' : 'open' : 'closed'} style={{ '--context-width': `${state.width}px` } as CSSProperties}>
       <div className="context-chat min-w-0 h-full">{children(visible)}</div>
       {/* Reserve room for the first activity, but explicit closing returns
           that room to the chat. Later events respect the user's focus choice. */}
