@@ -50,7 +50,34 @@ OpenRouter provider, any OpenRouter id works per call:
 - `BIGBRAIN_PLANNER_MODEL` — orchestrator planning
 - `BIGBRAIN_SUBAGENT_MODEL` — sub-brains / sub-agents
 
-Current default for every role: GPT-6.1 Sol. Roles remain independently configurable for future cost/latency tuning.
+The header selects the Front Brain model. Its settings action opens the
+specialist model page under Settings. The global Back action returns from that
+page to general settings, then to the underlying view.
+
+The model controls persist registry keys in `data/model_roles.json`. An explicit
+selection controls both the provider and the model at startup and after runtime
+changes. Roles without a selection use the automatic provider selection above.
+The menu reports the providers held by running components through
+`GET /api/models/roles`, and flags a mismatch with the persisted selection.
+
+| Menu role | Runtime components |
+| --- | --- |
+| Front Brain | Conversation routing and responses |
+| Planner | Orchestrator and contract planning |
+| Code | Python worker pool |
+| Web App Brain | Web application worker pool |
+| Web Search Brain | Researcher |
+| CAO / autres | CAD construction, voice responses and general verification |
+
+Provider reconnection reapplies every role. A rejected runtime assignment restores
+the previous saved choice and reports its error in the menu. Each execution's
+`brain.started` event records the worker's provider, registry key and model.
+
+The CAD qualification servers instantiate Codex explicitly. Interface checks
+using recorded decisions exercise geometry and presentation. Runtime assignment
+tests assemble the normal system from three mixed provider configurations. Their
+assertions read the isolated persisted settings and cover startup, every role's
+reassignment, changed settings after assembly, failure rollback and reconnection.
 
 ## Reasoning models
 

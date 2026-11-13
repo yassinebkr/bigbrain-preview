@@ -165,11 +165,11 @@ class BigBrainSystem:
         print("    Or set OPENAI_API_KEY / ANTHROPIC_API_KEY in .env")
         return MockLLMProvider(token_delay_ms=50, realistic_responses=True)
 
-    def _provider_for_role(self, role):
-        """Build an explicit role without changing the legacy global fallback."""
+    def _provider_for_role(self, role, registry_key=None):
+        """Resolve the provider selected for a runtime role."""
         from .web.model_roles import configured_key
         from .auth.registry import build_provider
-        key = configured_key(role)
+        key = registry_key or configured_key(role)
         if not key:
             return self.llm_provider
         cache = getattr(self, "_role_providers", None)
@@ -179,13 +179,69 @@ class BigBrainSystem:
             cache[role] = (key, build_provider(key))
         return cache[role][1]
 
+    def _holders_for_model_role(self, role):
+        """Components governed by each selector in the model menu."""
+        holders = []
+        if role == 'front':
+            holders = [self.front_brain]
+        elif role == 'planner':
+            holders = [self.orchestrator]
+        elif role == 'code':
+            holders = [brain for name, brain in self.brains.items() if name.startswith('python_brain')]
+        elif role == 'web':
+            holders = [brain for name, brain in self.brains.items() if name.startswith('web_app_brain')]
+        elif role == 'research':
+            holders = [self.brains.get('researcher')]
+        elif role == 'subagent':
+            # CAD construction, spoken responses and general review share the
+            # Sub-agents selector in the existing model menu.
+            holders = [self.brains.get('cad_brain'), self.voice_brain]
+            if self.verification is not None:
+                holders.extend(self.verification.verifiers.values())
+        return [holder for holder in holders if holder is not None and hasattr(holder, 'llm_provider')]
+
+    def runtime_model_roles(self):
+        """Expose provider identities held by the running components."""
+        from .web.model_roles import ROLES
+        result = {}
+        for role in ROLES:
+            result[role] = []
+            for holder in self._holders_for_model_role(role):
+                provider = holder.llm_provider
+                entry = getattr(provider, 'entry', None)
+                result[role].append({
+                    'component': getattr(holder, 'name', type(holder).__name__),
+                    'registry_key': getattr(provider, 'registry_key', None),
+                    'provider': getattr(entry, 'provider', type(provider).__name__),
+                    'model_id': getattr(entry, 'model_id', None),
+                })
+        return result
+
+    def _wire_model_role(self, role, provider):
+        """Apply one role to every component that performs its inference."""
+        holders = self._holders_for_model_role(role)
+        for holder in holders:
+            holder.llm_provider = provider
+            if hasattr(holder, 'model'):
+                holder.model = None
+            if hasattr(holder, 'voice_model'):
+                holder.voice_model = getattr(getattr(provider, 'entry', None), 'model_id', None) or 'default'
+        if role == 'planner' and self.orchestrator is not None:
+            # A retained override from another provider must follow the role.
+            self.orchestrator.planner_model = None
+        if role == 'web':
+            import os
+            from .web.model_roles import configured_key
+            from .llm.model_registry import get_model
+            cached_key = getattr(self, '_role_providers', {}).get(role, (None,))[0]
+            key = getattr(provider, 'registry_key', None) or cached_key or configured_key(role)
+            if key:
+                os.environ['BIGBRAIN_WEB_MODEL'] = get_model(key).model_id
+
     def apply_model_role(self, role, registry_key):
-        """Apply front/research assignments to the actual runtime holders."""
-        self._role_providers = {k: v for k, v in getattr(self, "_role_providers", {}).items() if k != role}
-        if role == "front" and self.front_brain is not None:
-            self.front_brain.llm_provider = self._provider_for_role("front")
-        if role == "research" and "researcher" in self.brains:
-            self.brains["researcher"].llm_provider = self._provider_for_role("research")
+        """Update the selected provider on the corresponding live components."""
+        provider = self._provider_for_role(role, registry_key)
+        self._wire_model_role(role, provider)
 
     def reload_llm_provider(self) -> dict:
         """Rebuild the LLM provider at runtime and rewire every holder.
@@ -195,23 +251,30 @@ class BigBrainSystem:
         provider built at system start (often the mock).
         """
         new_provider = self._create_llm_provider()
+        previous_provider = self.llm_provider
+        previous_cache = getattr(self, '_role_providers', {})
         self.llm_provider = new_provider
+        self._role_providers = {}
+        from .web.model_roles import ROLES
+        try:
+            providers = {role: self._provider_for_role(role) for role in ROLES}
+        except Exception:
+            self.llm_provider = previous_provider
+            self._role_providers = previous_cache
+            raise
 
         holders = [self.orchestrator, self.voice_brain,
                    *[brain for name, brain in self.brains.items() if name != "researcher"]]
         # Verification pipeline: V3 cross-check holds the provider too.
         if self.verification is not None:
-            holders.extend(getattr(self.verification, "verifiers", []) or [])
+            holders.extend(self.verification.verifiers.values())
         rewired = 0
         for holder in holders:
             if holder is not None and hasattr(holder, "llm_provider"):
                 holder.llm_provider = new_provider
                 rewired += 1
-        self._role_providers = {}
-        if self.front_brain is not None:
-            self.front_brain.llm_provider = self._provider_for_role("front")
-        if "researcher" in self.brains:
-            self.brains["researcher"].llm_provider = self._provider_for_role("research")
+        for role in ROLES:
+            self._wire_model_role(role, providers[role])
 
         print(f"🔁 LLM provider reloaded: {type(new_provider).__name__} "
               f"({rewired} holders rewired)")
@@ -331,8 +394,8 @@ class BigBrainSystem:
         self.orchestrator = WorkspaceOrchestrator(
             self.workspace,
             self.bus,
-            llm_provider=self.llm_provider,
-            planner_model=app_config.effective_planner_model,
+            llm_provider=self._provider_for_role('planner'),
+            planner_model=None,
         )
         self._configure_execution_modes()
         planner_model = app_config.effective_planner_model
@@ -350,7 +413,8 @@ class BigBrainSystem:
         
         # 8b. Voice Brain — fast conversational LLM for natural speech
         self.voice_brain = VoiceBrain(
-            llm_provider=self.llm_provider,
+            llm_provider=self._provider_for_role('subagent'),
+            voice_model='default',
             bus=self.bus,
         )
         voice_model = self.voice_brain.voice_model
@@ -393,6 +457,7 @@ class BigBrainSystem:
             from .web import server as web_server_module
             web_server_module.PROVIDER_RELOAD_HOOK = self.reload_llm_provider
             web_server_module.MODEL_ROLE_CHANGE_HOOK = self.apply_model_role
+            web_server_module.MODEL_ROLE_STATUS_HOOK = self.runtime_model_roles
             web_server_module.PROJECT_CHANGE_HOOK = self.apply_current_project
             web_server_module.PLUGINS_CHANGE_HOOK = self.apply_plugin_change
             web_server_module.CANCEL_HOOK = self.cancel_current
@@ -419,7 +484,7 @@ class BigBrainSystem:
         
         # V3: Cross-provider LLM review — costs money, uses different provider
         try:
-            v3 = CrossProviderVerifier(llm_provider=self.llm_provider)
+            v3 = CrossProviderVerifier(llm_provider=self._provider_for_role('subagent'))
             pipeline.add_verifier(v3)
         except Exception:
             pass
@@ -481,7 +546,6 @@ class BigBrainSystem:
             self.front_brain.focus_manager = self.focus_manager
     
     async def _create_brains(self) -> None:
-        from .config import config as app_config
         """Create and register execution brains."""
         import os
         
@@ -509,7 +573,7 @@ class BigBrainSystem:
                 workspace=self.workspace,
                 timeout=30,
                 work_dir=shared_work_dir,
-                llm_provider=self.llm_provider
+                llm_provider=self._provider_for_role('code')
             )
             self.brains[worker_name] = worker
             python_pool_names.append(worker_name)
@@ -539,8 +603,8 @@ class BigBrainSystem:
             worker_name = f"web_app_brain_{i}"
             self.brains[worker_name] = WebAppBrain(
                 name=worker_name, bus=self.bus, workspace=self.workspace,
-                work_dir=shared_work_dir, llm_provider=self.llm_provider,
-                model=app_config.effective_web_model,
+                work_dir=shared_work_dir, llm_provider=self._provider_for_role('web'),
+                model=None,
             )
             web_pool_names.append(worker_name)
         self.orchestrator.register_brain_pool("web_app_brain", web_pool_names)
@@ -548,7 +612,8 @@ class BigBrainSystem:
 
         from .brains.cad_brain import CadBrain
         self.brains['cad_brain'] = CadBrain('cad_brain', self.bus, self.workspace,
-                                          llm_provider=self.llm_provider)
+                                          llm_provider=self._provider_for_role('subagent'))
+        self._wire_model_role('web', self._provider_for_role('web'))
         
         # Research brain — real Brave search + shared LLM
         try:

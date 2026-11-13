@@ -41,6 +41,7 @@ WEBUI_DIST = Path(__file__).resolve().parents[2] / "web-ui" / "dist"
 # class for convenient access in tests.
 PROVIDER_RELOAD_HOOK = None
 MODEL_ROLE_CHANGE_HOOK = None
+MODEL_ROLE_STATUS_HOOK = None
 
 # Navigation selection hook — must never retarget active workers.
 PROJECT_CHANGE_HOOK = None
@@ -394,7 +395,12 @@ class WebServer:
         """Current per-role model lineup (front/planner/code/subagent)."""
         from .model_roles import current_lineup
 
-        return web.json_response({"roles": current_lineup()})
+        roles = current_lineup()
+        if MODEL_ROLE_STATUS_HOOK is not None:
+            runtime = MODEL_ROLE_STATUS_HOOK()
+            for role, value in roles.items():
+                value['runtime'] = runtime.get(role, [])
+        return web.json_response({"roles": roles})
 
     async def _handle_model_role_set(self, request: web.Request) -> web.Response:
         """Assign a registry key to a role; persisted + mirrored to env."""
@@ -402,10 +408,8 @@ class WebServer:
 
         body = await request.json()
         try:
-            result = set_role(body.get("role", ""), body.get("key", ""))
-            if MODEL_ROLE_CHANGE_HOOK is not None:
-                MODEL_ROLE_CHANGE_HOOK(body["role"], body["key"])
-        except (ValueError, KeyError) as exc:
+            result = set_role(body.get("role", ""), body.get("key", ""), apply=MODEL_ROLE_CHANGE_HOOK)
+        except (ValueError, KeyError, RuntimeError, OSError) as exc:
             return web.json_response({"error": str(exc)}, status=400)
         return web.json_response(result)
 

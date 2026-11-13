@@ -15,7 +15,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List
 
-from ..llm.model_registry import get_model, role_default_key
+from ..llm.model_registry import get_model
 
 logger = logging.getLogger(__name__)
 
@@ -53,10 +53,13 @@ def _persist(mapping: Dict[str, str]) -> None:
 
 def current_lineup() -> Dict[str, Any]:
     """Roles → current registry key, model id and display name."""
-    persisted = _persisted()
+    from ..auth.registry import select_registry_key
     lineup: Dict[str, Any] = {}
     for role in ROLES:
-        key = persisted.get(role) or role_default_key(role)
+        key = configured_key(role) or select_registry_key()
+        if key is None:
+            lineup[role] = {'key': '', 'model_id': None, 'display_name': 'Aucun modèle connecté', 'reasoning_effort': None}
+            continue
         try:
             entry = get_model(key)
             model_id, display = entry.model_id, entry.display_name
@@ -76,15 +79,28 @@ def configured_key(role: str) -> str | None:
     return _persisted().get(role) or os.environ.get(f"BIGBRAIN_{role.upper()}_MODEL_KEY") or None
 
 
-def set_role(role: str, registry_key: str) -> Dict[str, Any]:
+def set_role(role: str, registry_key: str, *, apply=None) -> Dict[str, Any]:
     """Assign a registry key to a role; persists and mirrors into env."""
     if role not in ROLES:
         raise ValueError(f"unknown role '{role}' (known: {list(ROLES)})")
     entry = get_model(registry_key)  # KeyError on unknown key
     persisted = _persisted()
+    previous = dict(persisted)
+    previous_env = os.environ.get(_ENV_VAR_BY_ROLE[role])
     persisted[role] = registry_key
     _persist(persisted)
     # Mirror into env so providers/config built from here on pick it up.
     os.environ[_ENV_VAR_BY_ROLE[role]] = entry.model_id
+    try:
+        if apply is not None:
+            apply(role, registry_key)
+    except Exception:
+        # A rejected provider selection retains the previous persisted choice.
+        _persist(previous)
+        if previous_env is None:
+            os.environ.pop(_ENV_VAR_BY_ROLE[role], None)
+        else:
+            os.environ[_ENV_VAR_BY_ROLE[role]] = previous_env
+        raise
     logger.info("model role '%s' set to '%s' (%s)", role, registry_key, entry.model_id)
     return {"ok": True, "role": role, "key": registry_key, "model_id": entry.model_id}
