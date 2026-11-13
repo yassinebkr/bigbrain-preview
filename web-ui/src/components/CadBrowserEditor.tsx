@@ -1,3 +1,4 @@
+/** Present a native CAD editing session with its ownership and save controls. */
 import { useEffect, useRef, useState } from 'react';
 import { Loader2, Pause, Save, Square, Video } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './ui/dropdown-menu';
@@ -51,7 +52,7 @@ export default function CadBrowserEditor({ documentId, sessionId, revision }: {
         }}>{label}</DropdownMenuItem>)}
       </DropdownMenuContent></DropdownMenu>}
     </div>
-    <div data-cad-expanded="true" className="relative rounded-xl overflow-hidden border flex-1" style={{borderColor:'var(--border-subtle)', height:'calc(100dvh - 330px)', minHeight:400}}>
+    <div data-cad-expanded="true" className="relative rounded-xl overflow-hidden border shrink-0" style={{borderColor:'var(--border-subtle)', height:'calc(100dvh - 330px)', minHeight:500}}>
       <div ref={slot} className="absolute inset-0" />
       {runtime?.loading && <p role="status" className="absolute inset-0 grid place-content-center text-[12px] pointer-events-none"><Loader2 size={22} className="animate-spin mb-3" />Chargement de SolidCraft…</p>}
     </div>
