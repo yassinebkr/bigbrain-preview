@@ -119,6 +119,7 @@ class CadBrain(BaseBrain):
         base = previous['document']['revision'] if previous else 0
         sequence, started = 0, time.monotonic()
         execution_state = None
+        execution_deadline = None
         evidence_manifest = None
         presentation_context = {'session_id': session_id,
             **{target: payload[source] for target, source in (
@@ -168,7 +169,9 @@ class CadBrain(BaseBrain):
                 failure = json.loads(path.read_text())['engine_result']['failed']
                 compact = {key: value for key, value in failure.items() if key != 'actual_operand_geometry'}
                 history.append({'evidence_ref': path.name, 'observed_failure': compact})
-            async with asyncio.timeout(definition.execution_seconds if definition else 120):
+            execution_seconds = definition.execution_seconds if definition else 120
+            execution_deadline = asyncio.timeout(execution_seconds)
+            async with execution_deadline:
                 if definition is not None:
                     from ..front.cad_context import drawing_image_blocks
                     images = drawing_image_blocks(definition.drawing, session_id)
@@ -427,6 +430,14 @@ class CadBrain(BaseBrain):
                 driver.state['recovery'] = {'kind': 'inspection', 'checkpoint': chain[-1].id if chain else None}
                 driver.save()
             diagnostic = str(error)[:1000] or type(error).__name__
+            if isinstance(error, TimeoutError) and execution_deadline is not None and execution_deadline.expired():
+                # The enclosing deadline has a distinct recovery meaning from a
+                # provider or native command timing out inside a healthy session.
+                accepted = len(driver.store.active()) if driver is not None else 0
+                phase = (execution_state or {}).get('phase', 'construction')
+                diagnostic = (f'Délai global CAO de {execution_seconds:g} s atteint pendant {phase}. '
+                              f'{accepted} étape(s) conservée(s). La pièce reste incomplète. '
+                              'La reprise repartira du dernier point enregistré.')
             await progress('failed', 'cad_failed', previous, diagnostic)
             return {'success': False, 'result_kind': 'cad', 'delivery_status': 'incomplete',
                     'runnable': False, 'error': diagnostic}

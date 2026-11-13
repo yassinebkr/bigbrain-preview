@@ -271,7 +271,8 @@ async def test_other_conversation_receives_no_image_or_design(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_restart_retry_uses_retained_drawing_before_delegation(monkeypatch):
+@pytest.mark.parametrize('fresh_upload', [False, True])
+async def test_restart_retry_uses_retained_drawing_before_delegation(monkeypatch, fresh_upload):
     """The normal UI route recovers the owned drawing after a fresh FrontBrain."""
     store, sid, record, data = fixture()
     saved = save_clarification(
@@ -300,9 +301,14 @@ async def test_restart_retry_uses_retained_drawing_before_delegation(monkeypatch
     monkeypatch.setattr(front, '_emit_task_routing', route)
     monkeypatch.setattr(bus, 'send_task', send)
     message = message_for(record, 'Reprends le contrat validé')
-    message.payload.update(session_id=sid, attachments=[])
+    message.payload.update(session_id=sid, attachments=[record] if fresh_upload else [])
+    before = SessionStore().get(sid)['cad_context']
     try:
         await front._handle_ui_message(message)
+        if fresh_upload:
+            assert tasks == []
+            assert SessionStore().get(sid)['cad_context'] == before
+            return
         assert len(tasks) == 1
         assert tasks[0]['drawing'] == saved['drawing']
         assert tasks[0]['session_id'] == sid

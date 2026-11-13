@@ -428,3 +428,31 @@ async def test_closed_native_timeout_repairs_in_a_fresh_session(tmp_path, engine
         assert diagnosis['mutation_outcome'] == 'unverified'
     finally:
         await bus.close()
+
+
+@pytest.mark.asyncio
+async def test_global_execution_deadline_reports_incomplete_with_retained_contract(tmp_path, engine, monkeypatch):
+    """An enclosing timeout identifies its scope and keeps the approved recipe."""
+    import asyncio
+    from bigbrain.solidcraft import SolidCraftSession
+
+    bus = MessageBus(tmp_path / 'bus', auth=None)
+    try:
+        plan, spec, _ = await prepared(bus, recipe())
+        confirmed = default_repository().approve_spec(spec.design_id, plan_id=plan.id)
+        original_timeout = asyncio.timeout
+
+        async def pending_session(self):
+            await asyncio.sleep(1)
+
+        monkeypatch.setattr(SolidCraftSession, '__aenter__', pending_session)
+        monkeypatch.setattr(asyncio, 'timeout', lambda delay: original_timeout(.01 if delay == 120 else delay))
+        result = await CadBrain('cad_brain', bus).handle_task(task(plan, confirmed))
+        assert result['success'] is False
+        assert result['delivery_status'] == 'incomplete'
+        assert 'Délai global CAO de 120 s' in result['error']
+        assert '0 étape(s) conservée(s)' in result['error']
+        assert default_repository().load_spec(confirmed.design_id, confirmed.revision) == confirmed
+        assert not list(CadStore().root.glob('*/current.json'))
+    finally:
+        await bus.close()
