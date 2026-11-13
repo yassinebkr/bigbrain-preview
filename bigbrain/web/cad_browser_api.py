@@ -91,6 +91,7 @@ def setup_browser_cad_routes(app, *, store=None):
     app.router.add_post('/api/cad/browser/{action:' + actions + '}', handle)
     app.router.add_get('/api/cad/browser/load/{ticket}/checkpoint.sc', load_checkpoint)
     app.router.add_get('/cad-engine/{asset:.*}', assets_build.serve)
+    app.router.add_get('/cad-engine-build/{build}/{asset:.*}', assets_build.serve)
     assets = Path(__file__).parent / 'static'
     async def script(request):
         return web.FileResponse(assets / 'cad-browser-bridge.mjs', headers={'Cache-Control': 'no-store'})

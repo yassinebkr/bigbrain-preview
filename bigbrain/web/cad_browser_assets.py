@@ -40,7 +40,12 @@ class BrowserCadAssets:
                 self.manifest = manifest
                 self.identity = hashlib.sha256(data).hexdigest()
             result = {'available': True, 'version': '0.28.0', 'build': self.identity,
-                      'url': f'/cad-engine/index.html?build={self.identity}'}
+                      'url': f'/cad-engine-build/{self.identity}/index.html',
+                      'preview_available': bool(self.manifest['patches'])}
+            if not result['preview_available']:
+                result['preview_diagnostic'] = (
+                    'La compilation SolidCraft configurée ne contient pas le moteur Worker '
+                    'nécessaire à la preview. Configure la distribution Worker qualifiée.')
             if self.manifest['patches']:
                 result['worker'] = f'/static/cad-geometry-worker.mjs?build={self.identity}'
             return result
@@ -50,6 +55,8 @@ class BrowserCadAssets:
     async def serve(self, request):
         if not self.capability()['available']:
             raise web.HTTPServiceUnavailable(text='Qualified SolidCraft browser build unavailable')
+        if request.match_info.get('build', self.identity) != self.identity:
+            raise web.HTTPNotFound()
         name = request.match_info['asset']
         if name not in self.manifest['assets']:
             raise web.HTTPNotFound()
