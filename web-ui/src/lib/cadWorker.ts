@@ -20,7 +20,7 @@ export class CadWorkerChannel {
     worker.addEventListener('messageerror', () => this.stop('CAD worker response could not be decoded'));
   }
 
-  request(action: 'open' | 'execute' | 'save', data: Record<string, unknown> = {}): Promise<unknown> {
+  request(action: 'open' | 'execute' | 'save' | 'mesh', data: Record<string, unknown> = {}): Promise<unknown> {
     if (this.closed) return Promise.reject(new Error('CAD worker is closed'));
     if (this.pending) return Promise.reject(new Error('CAD worker already has an operation in flight'));
     return new Promise((resolve, reject) => {

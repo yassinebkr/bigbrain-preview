@@ -119,6 +119,8 @@ describe('CAD piece surface', () => {
     expect(expanded).toContain('aria-label="Vue de la pièce"');
     expect(compact).not.toContain('role="dialog"');
     expect(expanded).not.toContain('role="dialog"');
+    expect(compact).toContain('<button class="work-secondary text-[11px] disabled:opacity-40"');
+    expect(compact).not.toContain('aria-pressed="false" title="Ouvrir SolidCraft Web');
   });
   it('keeps older geometry visibly distinct while a new revision is modeled', () => {
     const cad = cadUpdate(checkpoint(1, 'modeling'))!;

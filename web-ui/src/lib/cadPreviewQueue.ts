@@ -1,16 +1,16 @@
 /** Serial presentation preparation coalesces intermediate states during construction. */
-export class CadPreviewQueue<T> {
+export class CadPreviewQueue<T, Prepared = Uint8Array> {
   private desired?: { version: number; value: T };
   private version = 0;
   private running = false;
   private closed = false;
-  private readonly prepare: (value: T) => Promise<Uint8Array>;
-  private readonly present: (bytes: Uint8Array, value: T) => Promise<void>;
+  private readonly prepare: (value: T) => Promise<Prepared>;
+  private readonly present: (bytes: Prepared, value: T) => Promise<void>;
   private readonly status: (error?: Error) => void;
 
   constructor(
-    prepare: (value: T) => Promise<Uint8Array>,
-    present: (bytes: Uint8Array, value: T) => Promise<void>,
+    prepare: (value: T) => Promise<Prepared>,
+    present: (bytes: Prepared, value: T) => Promise<void>,
     status: (error?: Error) => void,
   ) {
     this.prepare = prepare;

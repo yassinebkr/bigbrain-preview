@@ -28,7 +28,7 @@ export default function CadLivePreview({ cad, sessionId, mode }: {
 
   return <div className="relative h-full w-full overflow-hidden" aria-label="Preview de construction en direct">
     <div ref={slot} className="absolute inset-0 overflow-hidden" />
-    <button aria-label="Recentrer" title="Recentrer" className="absolute z-[61] top-2 left-2 rounded-full bg-black/60 p-2 text-white"
+    <button aria-label="Recentrer" title="Recentrer" className="absolute z-[61] top-2 left-2 grid size-8 place-items-center rounded-full bg-black/60 text-white"
       onClick={() => runtime.current?.fit()}><Scan size={14} /></button>
     {mode === 'full' && <span className="absolute z-[61] bottom-2 right-2 rounded-full bg-black/70 px-3 py-1 text-[11px] text-white">Observation en lecture seule</span>}
     {status && <p role="status" className="absolute z-[61] bottom-2 inset-x-2 rounded-full bg-black/70 px-3 py-1 text-center text-[11px] text-white">{status}</p>}

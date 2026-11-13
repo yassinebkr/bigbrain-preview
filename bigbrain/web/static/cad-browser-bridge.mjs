@@ -181,6 +181,7 @@ export class SolidCraftBrowserEngine {
   }
   setLocked(value) {
     this.locked = value;
+    if (this.navigation) this.navigation.style.display = value ? '' : 'none';
     if (this.frame) {
       // The editor canvas includes sketch tools and keyboard shortcuts. Inert
       // blocks all manual editor input while the agent owns the document.
@@ -194,7 +195,7 @@ export class SolidCraftBrowserEngine {
       const frame = document.createElement('iframe');
       frame.dataset.cadInstance = crypto.randomUUID();
       frame.title = 'SolidCraft · checkpoint';
-      frame.style.cssText = 'width:100%;height:100%;border:0';
+      frame.style.cssText = 'width:100%;height:100%;border:0;opacity:0;transition:opacity 180ms ease';
       const address = new URL(this.appUrl, location.href);
       address.searchParams.set('bigbrain-hosted', '1');
       frame.src = address.href;
@@ -205,6 +206,8 @@ export class SolidCraftBrowserEngine {
       while (!frame.contentWindow?.solidcraft && performance.now() < deadline) await sleep(50);
       if (!frame.contentWindow?.solidcraft) throw new Error('Hosted SolidCraft API unavailable');
       this.api = frame.contentWindow.solidcraft;
+      frame.contentDocument.addEventListener('pointerdown', () => { if (!this.locked) this.onManualInput?.(); }, true);
+      frame.contentDocument.addEventListener('keydown', () => { if (!this.locked) this.onManualInput?.(); }, true);
       // Docked panels reserve their own area, giving camera input an explicit
       // viewport rectangle that excludes native toolbars and the document tree.
       await this.api.request('ui.set', { layout: 'docked' });
@@ -216,7 +219,7 @@ export class SolidCraftBrowserEngine {
     if (camera) await this.api.request('ui.camera', camera);
     this.presented = true;
     await this.configurePresentation();
-    await this.enableCameraNavigation();
+    if (this.locked) await this.enableCameraNavigation();
     if (!camera) await this.camera('fit');
   }
   async presentation(mode, sketches) {
@@ -224,7 +227,7 @@ export class SolidCraftBrowserEngine {
     if (sketches) this.previewSketches = sketches;
     if (this.api) {
       await this.configurePresentation();
-      await this.enableCameraNavigation();
+      if (this.locked) await this.enableCameraNavigation();
     }
   }
   async configurePresentation() {
@@ -241,19 +244,25 @@ export class SolidCraftBrowserEngine {
       shownDims:construction ? this.previewSketches || [] : [] });
     // The compact surface displays the native viewport. The complete ribbon
     // remains available through the separate full-editor surface.
-    this.frame.style.height = '100%';
-    this.frame.style.transform = '';
-    this.cropTop = 0;
-    if (full) return;
+    if (full) {
+      this.frame.style.height = '100%';
+      this.frame.style.transform = '';
+      this.cropTop = 0;
+      this.frame.style.opacity = '1';
+      return;
+    }
     await sleep(30);
     const state = await this.api.request('ui.inspect', {});
     const viewport = state.viewport;
     if (viewport) {
       const top = viewport[1];
-      const bottom = Math.max(0, this.container.clientHeight - top - viewport[3]);
+      const bottom = Math.max(0, this.frame.clientHeight - top - viewport[3]);
       this.cropTop = top;
       this.frame.style.height = `calc(100% + ${top + bottom}px)`;
       this.frame.style.transform = `translateY(-${top}px)`;
+      // Reveal only after the ribbon has been cropped and the viewport resized.
+      await sleep(50);
+      this.frame.style.opacity = '1';
     }
   }
   dispose() {
@@ -278,7 +287,7 @@ export class SolidCraftBrowserEngine {
     };
     if (!this.navigation) {
       const area = document.createElement('div');
-      area.setAttribute('aria-label', 'Navigation 3D SolidCraft : glisser pour tourner, molette pour zoomer');
+      area.setAttribute('aria-label', 'Navigation SolidCraft, glisser pour tourner, clic droit pour déplacer, molette pour zoomer');
       area.style.cssText = 'position:absolute;touch-action:none;cursor:grab';
       this.container.append(area); this.navigation = area;
       let drag;
@@ -296,12 +305,23 @@ export class SolidCraftBrowserEngine {
         finally { sending = false; }
       };
       area.onpointerdown = event => {
-        if (event.button !== 0 || !this.cameraState) return;
-        drag = {x:event.clientX, y:event.clientY, ...this.cameraState};
+        if (!this.cameraState) return;
+        drag = {x:event.clientX, y:event.clientY, pan:event.button !== 0 || event.shiftKey, ...this.cameraState};
         area.setPointerCapture(event.pointerId);
       };
+      area.oncontextmenu = event => event.preventDefault();
       area.onpointermove = event => {
-        if (drag) void send({yaw:drag.yaw-(event.clientX-drag.x)*0.008,
+        if (!drag) return;
+        if (drag.pan) {
+          const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
+          const scale = drag.distance * 2 / Math.max(1, area.clientHeight);
+          const right = [-Math.sin(drag.yaw), Math.cos(drag.yaw), 0];
+          const up = [-Math.cos(drag.yaw)*Math.sin(drag.pitch), -Math.sin(drag.yaw)*Math.sin(drag.pitch), Math.cos(drag.pitch)];
+          const target = drag.target.map((value, i) => value + scale * (-dx*right[i] + dy*up[i]));
+          void send({target});
+          return;
+        }
+        void send({yaw:drag.yaw-(event.clientX-drag.x)*0.008,
           pitch:Math.max(-Math.PI/2+0.000001,Math.min(Math.PI/2-0.000001,drag.pitch+(event.clientY-drag.y)*0.008))});
       };
       area.onpointerup = area.onpointercancel = () => { drag = undefined; };
@@ -364,6 +384,11 @@ export class SolidCraftBrowserEngine {
     return { output, observation };
   }
   async save() {
+    if (this.hostedReady) {
+      const saved = await this.api.request('bigbrain.save_cached', {});
+      if (!Array.isArray(saved.bytes) || !saved.bytes.length) throw new Error('SolidCraft returned an empty checkpoint');
+      return new Uint8Array(saved.bytes);
+    }
     const win = this.frame.contentWindow;
     const original = win.HTMLAnchorElement.prototype.click;
     let captured;

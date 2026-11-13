@@ -13,6 +13,7 @@ self.onmessage = async ({ data }) => {
     if (action === 'open') module.open(data.bytes);
     else if (action === 'execute') result = JSON.parse(module.execute(data.command, JSON.stringify(data.params)));
     else if (action === 'save') result = module.save();
+    else if (action === 'mesh') result = module.mesh();
     else throw new Error('Unknown CAD worker request');
     self.postMessage({ id, result }, result instanceof Uint8Array ? [result.buffer] : []);
   } catch (error) { self.postMessage({ id, error: String(error) }); }

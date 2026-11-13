@@ -71,7 +71,7 @@ export async function openEditor(runtime: EditorRuntime, documentId: string, ses
   runtime.pending = (async () => {
     runtime.loading = true; runtime.error = ''; notify(runtime);
     try {
-      const path = '/static/cad-browser-bridge.mjs?v=hosted-camera-2';
+      const path = '/static/cad-browser-bridge.mjs?v=interactive-preview-3';
       const bridge = await import(/* @vite-ignore */ path) as BridgeModule;
       const transport = new bridge.CadBrowserTransport(documentId, sessionId);
       const capability = await transport.call('capability') as {available: boolean; url: string; build: string; worker?: string; diagnostic?: string};
@@ -80,7 +80,7 @@ export async function openEditor(runtime: EditorRuntime, documentId: string, ses
       runtime.stop?.abort();
       runtime.engine?.interrupt?.();
       const viewer = new bridge.SolidCraftBrowserEngine(runtime.host, capability.url, capability.build);
-      runtime.engine = capability.worker ? new CadHostedEngine(viewer, capability.worker, capability.build) : viewer;
+      runtime.engine = capability.worker ? new CadHostedEngine(viewer, capability.worker, capability.build, true) : viewer;
       const executor = new bridge.CadBrowserExecutor(transport, runtime.engine, state => {
         runtime.state = state; notify(runtime);
       });

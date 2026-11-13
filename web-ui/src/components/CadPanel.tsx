@@ -1,5 +1,6 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
-import { Box, CheckCircle2, CircleHelp, Download, Expand, ExternalLink, Loader2, Ruler, XCircle } from 'lucide-react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { motion, useReducedMotion } from 'framer-motion';
+import { ArrowLeft, Box, CheckCircle2, CircleHelp, Download, Expand, ExternalLink, Loader2, Ruler, XCircle } from 'lucide-react';
 import { presentCadCheck } from '@/lib/cadChecks';
 import { cadArtifact, cadDesktop, currentCadPreview, readPublishedCad } from '@/lib/cad';
 import { useAppStore, type RunState } from '@/store/appStore';
@@ -35,7 +36,23 @@ export function CadPanel({ run, expanded = false }: { run: RunState; expanded?: 
   const [imageError, setImageError] = useState('');
   const [actionError, setActionError] = useState('');
   const [editing, setEditing] = useState(false);
+  const reducedMotion = useReducedMotion();
+  const preview = useRef<HTMLDivElement>(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  useEffect(() => {
+    const changed = () => setFullscreen(document.fullscreenElement === preview.current);
+    document.addEventListener('fullscreenchange', changed);
+    return () => document.removeEventListener('fullscreenchange', changed);
+  }, []);
   const [previewMode, setPreviewMode] = useState<'solid' | 'construction'>(() => cad ? retainedPreviewMode(cad.document_id, run.sessionId) : 'solid');
+  useEffect(() => {
+    if (!expanded || editing) return;
+    // Keep the full viewport visible below the fixed Atelier header.
+    const frame = requestAnimationFrame(() => preview.current?.scrollIntoView({
+      block: 'nearest', behavior: reducedMotion ? 'instant' : 'smooth',
+    }));
+    return () => cancelAnimationFrame(frame);
+  }, [expanded, editing, previewMode, reducedMotion]);
   useEffect(() => { setEditing(cad ? editorWasOpen(cad.document_id, run.sessionId) : false); }, [cad?.document_id, run.sessionId]);
   useEffect(() => {
     // Collapsing the full shell restores the selected compact preview mode.
@@ -109,14 +126,32 @@ export function CadPanel({ run, expanded = false }: { run: RunState; expanded?: 
       ? <Loader2 size={25} className="animate-spin motion-reduce:animate-none" /> : <Box size={34} strokeWidth={1.2} />}
       <p className="text-[12px] px-5 text-center">{imageError || captured?.preview_error || (captured ? 'Aperçu en préparation' : 'La pièce apparaîtra après la première capture.')}</p></div>;
   const hasMesh = captured?.document.exports.some(item => item.format === 'stl' && item.source_sha256 === captured.document.native.sha256);
-  const piece = hasMesh ? <Suspense fallback={picture}><CadMeshViewer cad={cad} sessionId={run.sessionId} fallback={picture} /></Suspense> : picture;
+  const piece = hasMesh || cad.working ? <Suspense fallback={picture}><CadMeshViewer cad={cad} sessionId={run.sessionId} fallback={picture} /></Suspense> : picture;
+  if (editing && expanded && (captured || cad.working)) return <section aria-label="SolidCraft Web" className="w-full min-w-0">
+    <div className="flex items-center gap-3 mb-3">
+      <button className="work-secondary !p-2" aria-label="Retour à la preview" onClick={() => {
+        selectEditor(cad.document_id, run.sessionId, false);
+        setEditing(false);
+      }}><ArrowLeft size={16} /></button>
+      <span className="text-[13px] font-medium">SolidCraft Web</span>
+    </div>
+    <motion.div initial={{opacity:0, y:reducedMotion ? 0 : 12}} animate={{opacity:1, y:0}} transition={{duration:reducedMotion ? 0 : 0.28}}>
+      {busy || !captured ? <div className="relative h-[65dvh] min-h-[350px]">
+        <Suspense fallback={<p role="status" className="work-muted text-[12px]">Préparation de la vue…</p>}>
+          <CadLivePreview cad={cad} sessionId={run.sessionId} mode="full" />
+        </Suspense>
+      </div> : <Suspense fallback={<p role="status" className="work-muted text-[12px]">Préparation de l’éditeur…</p>}>
+        <CadBrowserEditor documentId={cad.document_id} sessionId={run.sessionId} revision={captured.document.revision} />
+      </Suspense>}
+    </motion.div>
+  </section>;
   return <section className="work-widget" aria-label="Pièce CAO">
     <div className="flex items-center justify-between gap-3"><div className="work-eyebrow"><Box size={14} /> SolidCraft {captured?.document.engine_version} · CAO</div>
       {revision && <span className="work-muted text-[11px]">Révision {revision}</span>}</div>
     <h3 className="work-heading">{cad.title}</h3>
     {run.publishedRevision && <p className="work-muted mt-2 text-[11px]">Résultat actuellement validé · révision {run.publishedRevision}</p>}
     <p className="flex gap-2 items-center mt-2 text-[12px] work-muted">{busy && <span className="work-pulse" />}{phases[status]}</p>
-    {cad.execution && <div className="mt-3 rounded-2xl border border-white/5 bg-white/[0.02] p-3.5" aria-label="Progression de la construction">
+    {cad.execution && !editing && <div className="mt-3 rounded-2xl border border-white/5 bg-white/[0.02] p-3.5" aria-label="Progression de la construction">
       <div className="flex items-center justify-between gap-3 text-[11px] work-muted">
         <span className="flex items-center gap-2">{busy && <Loader2 size={13} className="animate-spin motion-reduce:animate-none" />}
           {busy ? executionPhases[cad.execution.phase] : status === 'ready' ? 'Construction vérifiée' : 'Construction conservée'}</span>
@@ -127,19 +162,25 @@ export function CadPanel({ run, expanded = false }: { run: RunState; expanded?: 
         ? 'La pièce et son historique ont passé les contrôles de cette révision.'
         : 'Les étapes conservées restent soumises aux vérifications de la pièce complète.'}</p>
     </div>}
-    {(captured || cad.working) && <div className="cad-view-modes relative z-[61] inline-flex gap-1 rounded-full p-1 mt-4" style={{background:'var(--bg-primary)'}} aria-label="Vue de la pièce">
+    {(captured || cad.working) && <div className="relative z-[61] flex items-center justify-between gap-3 mt-4">
+    <div className="cad-view-modes inline-flex gap-1 rounded-full p-1" style={{background:'var(--bg-primary)'}} aria-label="Vue de la pièce">
       <button className="rounded-full px-3 py-1.5 text-[11px]" aria-pressed={(!editing || !expanded) && previewMode === 'solid'} onClick={() => {selectEditor(cad.document_id, run.sessionId, false); setEditing(false); setPreviewMode('solid');}}>3D</button>
       {cad.working && <button className="rounded-full px-3 py-1.5 text-[11px]" aria-pressed={(!editing || !expanded) && previewMode === 'construction'} onClick={() => {selectEditor(cad.document_id, run.sessionId, false); setEditing(false); setPreviewMode('construction');}}>Construction</button>}
-      <button className="rounded-full px-3 py-1.5 text-[11px] disabled:opacity-40" aria-pressed={editing && expanded}
+    </div>
+      <button className="work-secondary text-[11px] disabled:opacity-40" disabled={!captured && !cad.working}
         title="Ouvrir SolidCraft Web dans l’Atelier"
         onClick={() => {selectEditor(cad.document_id, run.sessionId, true); setEditing(true); useWorkspaceStore.getState().update(run.sessionId, {mode:'expanded', selectedId:surfaceId(run, 'cad')});}}>SolidCraft Web</button>
     </div>}
-    {editing && expanded && captured && !busy && !cad.working && <Suspense fallback={<p role="status" className="work-muted mt-3 text-[12px]">Préparation de l’éditeur…</p>}>
-      <CadBrowserEditor documentId={cad.document_id} sessionId={run.sessionId} revision={captured.document.revision} />
-    </Suspense>}
-    <div className={`${editing && expanded && captured && !busy && !cad.working ? 'hidden' : ''} relative w-full mt-4 overflow-hidden rounded-2xl border border-white/5 bg-gradient-to-b from-slate-900/60 to-transparent ${editing && expanded ? 'h-[65dvh]' : 'aspect-[8/5]'}`}>
-      {cad.working ? <Suspense fallback={piece}><CadLivePreview cad={cad} sessionId={run.sessionId} mode={editing && expanded ? 'full' : previewMode} /></Suspense> : piece}{!expanded && (image || hasMesh || cad.working) && <button onClick={() => useWorkspaceStore.getState().update(run.sessionId, {mode:'expanded', selectedId:surfaceId(run, 'cad')})} aria-label="Agrandir la pièce"
-        className="absolute right-3 top-3 flex items-center gap-1 text-[11px] rounded-full px-2 py-1 bg-black/60 text-white"><Expand size={12} /> Agrandir</button>}
+    <div ref={preview} className={`relative w-full mt-4 overflow-hidden rounded-2xl border border-white/5 bg-gradient-to-b from-slate-900/60 to-transparent ${fullscreen ? '!h-screen !m-0 bg-slate-950' : expanded ? 'h-[65dvh] min-h-[350px]' : 'aspect-[8/5]'}`}>
+      {previewMode === 'construction' && cad.working ? <Suspense fallback={piece}><CadLivePreview cad={cad} sessionId={run.sessionId} mode="construction" /></Suspense> : piece}{(previewMode === 'solid' || !expanded) && (image || hasMesh || cad.working) && <button onClick={() => {
+          if (previewMode === 'construction') {
+            useWorkspaceStore.getState().update(run.sessionId, {mode:'expanded', selectedId:surfaceId(run, 'cad')});
+          } else {
+            const action = fullscreen ? document.exitFullscreen() : preview.current?.requestFullscreen();
+            void action?.catch(error => setActionError(String(error)));
+          }
+        }} aria-label={fullscreen ? 'Quitter le plein écran' : 'Agrandir la pièce'}
+        className="absolute z-[61] right-3 top-3 grid size-8 place-items-center rounded-full bg-black/60 text-white" title={fullscreen ? 'Quitter le plein écran' : 'Agrandir la pièce'}><Expand size={15} /></button>}
     </div>
     {!(editing && expanded) && captured?.preview && !current && <p className="mt-2 text-[11px] text-amber-200">Révision conservée · aperçu antérieur</p>}
     {editing && expanded && <p className="work-muted text-[11px] mt-4">Mesures de la révision publiée {revision}</p>}

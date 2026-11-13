@@ -38,3 +38,14 @@ pub fn save() -> Result<Vec<u8>, JsValue> {
         ).map_err(failure)
     })
 }
+
+/// Tessellate the same evaluated checkpoint for the lightweight Atelier viewer.
+#[wasm_bindgen]
+pub fn mesh() -> Result<Vec<u8>, JsValue> {
+    SESSION.with(|slot| {
+        let slot = slot.borrow();
+        let session = slot.as_ref().ok_or_else(|| failure("Document unavailable"))?;
+        solidcraft_io::export(&session.model.state(), &[], solidcraft_io::Format::StlBinary, "Atelier")
+            .map_err(failure)
+    })
+}

@@ -5,6 +5,7 @@ import { CadPreviewQueue } from './cadPreviewQueue';
 export type CadPreviewMode = 'solid' | 'construction' | 'full';
 type Working = NonNullable<CadView['working']>;
 type PreviewSource = Working & { publishedRevision?: number };
+type PreparedPreview = { cached: Uint8Array; mesh: Uint8Array };
 interface Viewer {
   camera(view: string): Promise<void>;
   presentCached(bytes: Uint8Array): Promise<void>;
@@ -19,13 +20,16 @@ export class CadLiveRuntime {
   attached = false;
   touched = Date.now();
   status = 'Préparation de la vue…';
+  mesh?: Uint8Array;
+  private prepared?: PreparedPreview;
+  private sketches: number[] = [];
   private mode: CadPreviewMode = 'solid';
   compactMode: 'solid' | 'construction' = 'solid';
   private source?: PreviewSource;
   private signature = '';
   private viewer?: Viewer;
   private worker?: CadWorkerChannel;
-  private queue?: CadPreviewQueue<PreviewSource>;
+  private queue?: CadPreviewQueue<PreviewSource, PreparedPreview>;
   private readonly abort = new AbortController();
   private readonly documentId: string;
   private readonly sessionId: string;
@@ -60,7 +64,14 @@ export class CadLiveRuntime {
   setMode(mode: CadPreviewMode) {
     this.mode = mode;
     if (mode !== 'full') this.compactMode = mode;
-    void this.viewer?.presentation(mode).catch(error => this.report(String(error)));
+    if (mode === 'solid') return;
+    void this.present().catch(error => this.report(String(error)));
+  }
+
+  private async present() {
+    if (!this.prepared || !this.viewer) return;
+    await this.viewer.presentation(this.mode, this.sketches);
+    await this.viewer.presentCached(this.prepared.cached);
   }
 
   fit() { void this.viewer?.camera('fit').catch(error => this.report(String(error))); }
@@ -81,7 +92,7 @@ export class CadLiveRuntime {
     const capability = await transport.call('capability');
     if (this.abort.signal.aborted) return;
     if (!capability.available || !capability.worker)
-      throw new Error(capability.diagnostic || 'Moteur de preview indisponible');
+      throw new Error(capability.preview_diagnostic || capability.diagnostic || 'Moteur de preview indisponible');
     const viewer: Viewer = new bridge.SolidCraftBrowserEngine(this.host, capability.url, capability.build);
     this.viewer = viewer;
     const address = new URL(capability.worker, location.href);
@@ -104,14 +115,18 @@ export class CadLiveRuntime {
       await worker.request('open', {bytes});
       const cached = await worker.request('save');
       if (!(cached instanceof Uint8Array)) throw new Error('État de preview invalide');
-      return cached;
-    }, async (bytes, source) => {
-      await viewer.presentCached(bytes);
-      const sketches = source.design.sketches.flatMap(value => {
+      // Sketch-only checkpoints remain displayable before the first solid exists.
+      const mesh = source.design.bodies.length ? await worker.request('mesh') : new Uint8Array();
+      if (!(mesh instanceof Uint8Array)) throw new Error('Maillage de preview invalide');
+      return {cached, mesh};
+    }, async (prepared, source) => {
+      this.prepared = prepared;
+      this.mesh = prepared.mesh.length ? prepared.mesh : undefined;
+      this.sketches = source.design.sketches.flatMap(value => {
         if (typeof value !== 'object' || value === null || !('id' in value)) return [];
         return typeof value.id === 'number' && Number.isSafeInteger(value.id) ? [value.id] : [];
       });
-      await viewer.presentation(this.mode, sketches);
+      if (this.mode !== 'solid') await this.present();
     }, error => this.report(error?.message));
     if (this.source) this.queue.update(this.source);
   }

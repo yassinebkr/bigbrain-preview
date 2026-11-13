@@ -1,3 +1,16 @@
+diff --git a/apps/solidcraft-web/index.html b/apps/solidcraft-web/index.html
+index e435479..9d549de 100644
+--- a/apps/solidcraft-web/index.html
++++ b/apps/solidcraft-web/index.html
+@@ -43,7 +43,7 @@
+   <div id="solidcraft_loading" role="status"><img src="loading-logo.svg" alt=""><span class="sr-only">Loading SolidCraft&hellip;</span></div>
+   <script>
+     // Offline use and updates (sw.js; written into release builds by `cargo xtask web-offline`).
+-    if ("serviceWorker" in navigator) {
++    if (!new URLSearchParams(location.search).has("bigbrain-hosted") && "serviceWorker" in navigator) {
+       addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+     }
+     // Install as an app: the browser's offer can come before the app runs, so it is kept here for
 diff --git a/apps/solidcraft-web/src/main.rs b/apps/solidcraft-web/src/main.rs
 index 6ebe145..52f8d5a 100644
 --- a/apps/solidcraft-web/src/main.rs
@@ -78,13 +91,18 @@ index 3b0380a..eb72f27 100644
  
      /// Become `fresh` (another design opened, recovered or started), keeping the settings that
 diff --git a/crates/ui-egui/src/control.rs b/crates/ui-egui/src/control.rs
-index 17c43cc..c2c6767 100644
+index 17c43cc..a5c892c 100644
 --- a/crates/ui-egui/src/control.rs
 +++ b/crates/ui-egui/src/control.rs
-@@ -596,6 +596,32 @@ fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) ->
+@@ -596,6 +596,37 @@ fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) ->
          }
          "engine.commands" => wrap(app.session.execute("engine.commands", &json!({})).map_err(|e| e.to_string())),
          "document.inspect" => wrap(app.session.execute("document.inspect", p).map_err(|e| e.to_string())),
++        #[cfg(target_arch = "wasm32")]
++        "bigbrain.save_cached" => {
++            let result = app.session.design_container(solidcraft_engine::io::DesignCompression::Fast, false, true);
++            wrap(result.map(|bytes| json!({"bytes":bytes})).map_err(|e| e.to_string()))
++        }
 +        #[cfg(target_arch = "wasm32")]
 +        "bigbrain.present_cached" => {
 +            let load = || -> Result<solidcraft_engine::Session, String> {
