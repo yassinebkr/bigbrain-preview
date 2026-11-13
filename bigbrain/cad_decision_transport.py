@@ -10,6 +10,11 @@ def decision_tool_schema(schema):
     """Keep CAD contracts typed while encoding native command dictionaries as JSON."""
     decision = deepcopy(schema)
     definitions = decision.pop('$defs', {})
+    # Operation constants make these branches disjoint. The provider accepts
+    # anyOf, while local validation retains the discriminator for precise errors.
+    if decision.get('discriminator', {}).get('propertyName') == 'operation':
+        decision['anyOf'] = decision.pop('oneOf')
+        decision.pop('discriminator')
     command = definitions.get('CadCommand')
     if command is not None:
         # Command parameters depend on the discovered SolidCraft command. A JSON
@@ -23,7 +28,7 @@ def decision_tool_schema(schema):
                 'required': ['decision'], 'additionalProperties': False, '$defs': definitions}
     return {'name': 'bigbrain_cad_decision',
             'description': 'Propose the next checkpoint-bound CAD decision.',
-            'parameters': envelope}
+            'parameters': _homogeneous_vectors(envelope)}
 
 
 def parse_decision_response(raw):
@@ -45,3 +50,20 @@ def parse_decision_response(raw):
                         raise ValueError('CAD command parameters must encode a JSON object')
                     command['params'] = parameters
     return value
+
+
+def _homogeneous_vectors(schema):
+    """Represent fixed homogeneous tuples with supported array length bounds."""
+    if isinstance(schema, list):
+        return [_homogeneous_vectors(value) for value in schema]
+    if not isinstance(schema, dict):
+        return schema
+    result = {key: _homogeneous_vectors(value) for key, value in schema.items()}
+    if 'prefixItems' in result:
+        items = result.pop('prefixItems')
+        if not items or any(value != items[0] for value in items):
+            raise ValueError('CAD transport requires homogeneous fixed vectors')
+        result['items'] = items[0]
+        result['minItems'] = len(items)
+        result['maxItems'] = len(items)
+    return result

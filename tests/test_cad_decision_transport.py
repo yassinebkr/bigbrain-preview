@@ -78,3 +78,23 @@ def test_finalization_schema_excludes_mutation():
     valid = {'decision': {'operation': 'complete', 'base_checkpoint': 'a' * 32}}
     Draft202012Validator(schema).validate(valid)
     assert list(Draft202012Validator(schema).iter_errors(wire(removal())))
+
+
+def test_provider_schema_uses_supported_union_and_vector_representations():
+    schema = decision_tool_schema(Decision.json_schema())['parameters']
+    encoded = _strict_schema(schema)
+    text = json.dumps(encoded)
+    assert '"oneOf"' not in text
+    assert '"discriminator"' not in text
+    assert '"prefixItems"' not in text
+    validator = Draft202012Validator(schema)
+    encoded_cut = wire(removal())
+    validator.validate(encoded_cut)
+    for vector in ([0, 0], [0, 0, 0, 0]):
+        invalid = deepcopy(encoded_cut)
+        invalid['decision']['group']['cut_intents'][0]['boundaries'][0]['origin_mm'] = vector
+        assert list(validator.iter_errors(invalid))
+    for decision in ({'operation': 'complete', 'base_checkpoint': None},
+                     {'operation': 'blocked', 'base_checkpoint': None, 'reason': 'Missing source dimension'}):
+        validator.validate({'decision': decision})
+        Decision.validate_python(parse_decision_response(json.dumps({'decision': decision})))
