@@ -630,3 +630,28 @@ async def test_failed_retry_requires_verified_additional_evidence(tmp_path, new_
     assert len(store.active()) == int(new_evidence)
     if not new_evidence:
         assert 'identical failed group' in provider.calls[1]['feedback']
+
+
+@pytest.mark.asyncio
+async def test_native_structured_decisions_use_the_existing_checkpoint_and_cut_gates(tmp_path, cad_native_engine):
+    from bigbrain.cad_controller import Decision
+    from bigbrain.cad_decision_transport import decision_tool_schema
+
+    class StructuredDecisions(Decisions):
+        async def chat_complete(self, **kwargs):
+            assert kwargs['tool_schema'] == decision_tool_schema(Decision.json_schema())
+            value = json.loads(await super().chat_complete(**kwargs))
+            for command in value.get('group', {}).get('commands', []):
+                command['params'] = json.dumps(command['params'])
+            return json.dumps({'decision': value})
+
+    store = CadExecutionStore(tmp_path, 'a' * 64)
+    provider = StructuredDecisions(actions())
+    driver = CadConstructionDriver(provider, definition(), [], [], store)
+    async with SolidCraftSession(tmp_path) as session:
+        result = await driver.run(session)
+    assert len(store.active()) == 4
+    assert len(result.cut_intents) == 1
+    assert len(provider.calls) == 5
+    for record in store.directory.glob('decision-*.json'):
+        assert 'decision' in json.loads(json.loads(record.read_text())['response'])

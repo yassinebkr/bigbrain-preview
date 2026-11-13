@@ -10,7 +10,8 @@ from pydantic import Field, TypeAdapter
 
 from .cad_contracts import Contract, Hash, Identity
 from .cad_execution import CadExecutionStore, ExecutionGroup, digest
-from .cad_stages import CadConstruction, parse_object
+from .cad_stages import CadConstruction
+from .cad_decision_transport import decision_tool_schema, parse_decision_response
 from .solidcraft import CadCommandError, CadError, CadTimeoutError
 
 
@@ -276,13 +277,14 @@ class CadConstructionDriver:
         """Spend conclusion reserve on a transition with no mutation authority."""
         from .cad_resources import inference_phase
         request['max_tokens'] = 1024
+        request['tool_schema'] = decision_tool_schema(ClosingDecision.json_schema())
         request['messages'][0] = {'role':'system','content':
             'The authorized construction share is exhausted. Inspect the retained CAD evidence and '
             'return complete to request independent whole-part inspection, or blocked with the exact '
             'remaining issue. This phase permits no geometry change, ancestor revision or tool action. '
             'A complete decision establishes no validation claim: independent checks still govern delivery. '
             'Use the current base_checkpoint. Return one JSON decision matching '
-            + json.dumps(ClosingDecision.json_schema())}
+            + 'the supplied native response schema. Wrap the response in decision.'}
         token = inference_phase.set('inspection')
         try:
             return await self.decide(trace, packet, **request)
@@ -501,7 +503,7 @@ class CadConstructionDriver:
                 or packet.get('execution_authorization') != self.packet()['execution_authorization']
                 or packet.get('base_checkpoint') != head):
             raise CadError('Retained CAD response scope or checkpoint changed')
-        decision = Decision.validate_python(parse_object(record['response']))
+        decision = Decision.validate_python(parse_decision_response(record['response']))
         if not isinstance(decision, Execute) or decision.base_checkpoint != head or decision.group.base_checkpoint != head:
             raise CadError('Retained CAD replay requires an execution at its exact checkpoint')
         return record['response'], digest(record)
@@ -550,7 +552,7 @@ class CadConstructionDriver:
                 async def decide(*args, **kwargs):
                     return replay[0]
             raw = await decide(trace, packet, model=self.model or 'default', stream=False,
-                max_tokens=8192, temperature=0.1, messages=[{'role': 'system', 'content':
+                max_tokens=8192, temperature=0.1, tool_schema=decision_tool_schema(Decision.json_schema()), messages=[{'role': 'system', 'content':
                 'Construct the confirmed CAD definition progressively in SolidCraft 0.28.0, mm/deg. '
                 'execution_authorization is supplied by the runtime after checking the recorded user decision. '
                 'When its status is confirmed, approval has already been given for this exact definition and '
@@ -581,7 +583,9 @@ class CadConstructionDriver:
                 'Each execution group supplies the full workflow inventory. accepted_workflow preserves '
                 'the exact accepted declarations and provenance. Retain all its driving parameters '
                 'unchanged when extending the workflow; omitting them is rejected before execution. '
-                'Return one JSON decision matching ' + json.dumps(Decision.json_schema()) + '. '
+                'Use the supplied native response schema. Wrap the response in decision. '
+                'Encode each command.params as a JSON object string. The runtime decodes it before '
+                'validating the command and its cut intent. '
                 'Use the exact current base_checkpoint on every decision and execution group. '
                 'Group commands with known inputs. End a group at sketch.finish and inspect the solver '
                 'before using its profile. Request actual body_topology before selecting newly created '
@@ -605,7 +609,7 @@ class CadConstructionDriver:
                 'each execution group remains limited to 64 commands. Reserve inspection calls for final checks.'},
                 {'role': 'user', 'content': [{'type': 'text', 'text': content}, *self.images]}])
             try:
-                decision = (ClosingDecision if finalizing else Decision).validate_python(parse_object(raw))
+                decision = (ClosingDecision if finalizing else Decision).validate_python(parse_decision_response(raw))
                 expected = packet['base_checkpoint']
                 if decision.base_checkpoint != expected:
                     raise ValueError('Decision references a stale checkpoint')
