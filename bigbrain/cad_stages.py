@@ -184,7 +184,8 @@ async def draft_construction(provider, definition, reference, images, *, model=N
     raise ValueError('CAD construction did not complete within its reference and correction allowance')
 
 
-async def inspect_candidate(provider, definition, construction, observations, *, model=None, stop_on_error=False):
+async def inspect_candidate(provider, definition, construction, observations, *, model=None, stop_on_error=False,
+                            correlation=None):
     """Choose checks from actual geometry while retaining independent requirements."""
     schema = CadRecipe.model_json_schema()
     schema['properties'].pop('commands')
@@ -221,9 +222,15 @@ async def inspect_candidate(provider, definition, construction, observations, *,
         'method. Manufacturing fits remain explicitly unqualified. Construction commands are already '
         'recorded; this inspection selects checks for their captured revision.'},
         {'role': 'user', 'content': content}]
+    from .llm.call_trace import trace_call
+    from .llm.usage import capture_usage
     for attempt in range(2):
-        raw = await provider.chat_complete(messages=messages, model=model or 'default', stream=False,
-                                           max_tokens=8192, temperature=0.1)
+        # Inspection is a separate inference phase after construction completes.
+        # Keep its transport failures and latency attached to the same document.
+        with capture_usage() as usage, trace_call(provider, 'cad.inspection.planning',
+                correlation=correlation, records=usage):
+            raw = await provider.chat_complete(messages=messages, model=model or 'default', stream=False,
+                                               max_tokens=8192, temperature=0.1)
         try:
             proposed = parse_object(raw)
             if any(key in proposed for key in ('commands', 'drawing', 'workflow', 'max_repairs', 'cut_intents')):

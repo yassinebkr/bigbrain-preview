@@ -302,7 +302,8 @@ class CadBrain(BaseBrain):
                             (evidence / 'inspection-input.json').write_text(
                                 json.dumps(observations, allow_nan=False), encoding='utf-8')
                             plan = await inspect_candidate(self.llm_provider, definition, plan, observations,
-                                model=self.model, stop_on_error=bool(progressive and driver.active_allowance
+                                model=self.model, correlation={"document_id": document_id},
+                                stop_on_error=bool(progressive and driver.active_allowance
                                     and driver.active_allowance.stop_on_new_error))
                             checkpoint.save(document_id, plan, kind='inspection')
                             (evidence / 'inspection-plan.json').write_text(plan.model_dump_json(), encoding='utf-8')
