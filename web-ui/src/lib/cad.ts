@@ -29,7 +29,7 @@ const view = z.object({ schema_version: z.literal('1.0'), document_id: z.string(
     checkpoint_id: z.string().regex(/^[a-f0-9]{32}$/),
     parent: z.string().regex(/^[a-f0-9]{32}$/).nullable(),
     contract_sha256: hash, engine_version: z.string(), engine_sha256: hash,
-    native: artifact, accepted_steps: z.number().int().positive(),
+    native: artifact, mesh: artifact.nullable().optional(), accepted_steps: z.number().int().positive(),
     design: z.object({ params: z.array(z.unknown()), timeline: z.array(z.unknown()),
       sketches: z.array(z.unknown()), bodies: z.array(z.unknown()) }),
   }).nullable().optional(),
@@ -100,4 +100,33 @@ export async function cadDesktop(cad: CadView, sessionId: string, action: 'open'
   const result = await response.json();
   if (!response.ok) throw new Error(result.error || 'Ouverture SolidCraft indisponible');
   return result as { available?: boolean; diagnostic?: string; message?: string };
+}
+
+
+/** Read the accepted mesh whose bytes and native source are both bound to the checkpoint. */
+export async function cadWorkingMesh(cad: CadView, sessionId: string, signal?: AbortSignal) {
+  const working = cad.working;
+  const mesh = working?.mesh;
+  if (!working || !mesh || mesh.format !== 'stl' || mesh.source_sha256 !== working.native.sha256) {
+    throw new Error('Le maillage ne correspond pas au point de reprise');
+  }
+  const response = await fetch('/api/cad/working-artifact', {
+    method: 'POST', signal,
+    headers: { 'Content-Type': 'application/json', 'X-BigBrain-CAD': '1' },
+    body: JSON.stringify({ documentId: cad.document_id, sessionId, checkpointId: working.checkpoint_id, kind: 'stl' }),
+  });
+  if (!response.ok) throw new Error((await response.json()).error || 'Maillage de reprise indisponible');
+  const bytes = await response.arrayBuffer();
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+  const hash = Array.from(digest).map(value => value.toString(16).padStart(2, '0')).join('');
+  if (hash !== mesh.sha256 || bytes.byteLength !== mesh.size_bytes) throw new Error('Identité du maillage modifiée');
+  return bytes;
+}
+
+
+/** A published delivery selects its inspected export independently of construction history. */
+export function cadMeshSource(cad: CadView): 'published' | 'checkpoint' | 'worker' | 'empty' {
+  if (cad.status === 'ready' || !cad.working) return 'published';
+  if (!cad.working.design.bodies.length) return 'empty';
+  return cad.working.mesh ? 'checkpoint' : 'worker';
 }

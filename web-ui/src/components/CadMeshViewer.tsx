@@ -1,101 +1,85 @@
+/** Retain the interactive renderer while accepted checkpoints replace mesh geometry. */
 import { useEffect, useRef, useState } from 'react';
-import * as THREE from 'three';
-import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
-import { STLLoader } from 'three/addons/loaders/STLLoader.js';
-import { cadArtifact, type CadView } from '@/lib/cad';
-import { inspectStl } from '@/lib/cadMesh';
+import { CadMeshViewport } from '@/lib/cadMeshViewport';
+import { cadArtifact, cadWorkingMesh, cadMeshSource, type CadView } from '@/lib/cad';
+import { Scan } from 'lucide-react';
+import { liveRuntime } from '@/lib/cadLiveRuntime';
 
 export default function CadMeshViewer({ cad, sessionId, fallback }: { cad: CadView; sessionId: string; fallback: React.ReactNode }) {
   const host = useRef<HTMLDivElement>(null);
-  const reset = useRef<() => void>(() => {});
+  const viewport = useRef<CadMeshViewport>(undefined);
   const [error, setError] = useState('');
   const [ready, setReady] = useState(false);
+  const [preview, setPreview] = useState<{ documentId: string; sessionId: string; mesh?: Uint8Array; status: string }>();
+  // A component can be reused while changing conversations or documents.
+  // Keep the fallback worker's asynchronous output bound to its original owner.
+  const current = preview?.documentId === cad.document_id && preview.sessionId === sessionId ? preview : undefined;
+  const liveMesh = current?.mesh;
+  const runtimeStatus = current?.status || '';
+  useEffect(() => {
+    if (cadMeshSource(cad) !== 'worker') return;
+    const runtime = liveRuntime(cad.document_id, sessionId);
+    runtime.setMode('solid');
+    const changed = () => {
+      setPreview({ documentId: cad.document_id, sessionId, mesh: runtime.mesh, status: runtime.status });
+    };
+    runtime.listeners.add(changed);
+    runtime.update(cad);
+    changed();
+    return () => { runtime.listeners.delete(changed); };
+  }, [cad, sessionId]);
   useEffect(() => {
     const node = host.current;
     if (!node) return;
     setError(''); setReady(false);
+    let currentViewport: CadMeshViewport;
+    try {
+      currentViewport = new CadMeshViewport(node, setError);
+      viewport.current = currentViewport;
+    } catch (failure) {
+      setError(String(failure));
+      return;
+    }
+    return () => {
+      viewport.current = undefined;
+      currentViewport.dispose();
+    };
+  }, [cad.document_id, sessionId]);
+
+  useEffect(() => {
     const abort = new AbortController();
-    let dispose = () => {};
-    cadArtifact(cad, sessionId, 'stl', abort.signal).then(async blob => {
-      const buffer = await blob.arrayBuffer();
-      if (abort.signal.aborted) return;
-      inspectStl(buffer);
-      const geometry = new STLLoader().parse(buffer);
-      let renderer: THREE.WebGLRenderer | undefined;
-      try {
-        const positions = geometry.getAttribute('position');
-        for (const value of positions.array) if (!Number.isFinite(value)) throw new Error('Coordonnées du maillage invalides');
-        geometry.computeBoundingSphere();
-        const radius = geometry.boundingSphere?.radius || 0;
-        if (!(radius > 0) || !Number.isFinite(radius)) throw new Error('Maillage sans étendue exploitable');
-        geometry.center(); geometry.computeVertexNormals();
-        renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-        renderer.domElement.setAttribute('aria-label', 'Vue 3D interactive de la pièce');
-        renderer.domElement.setAttribute('role', 'img');
-        renderer.domElement.tabIndex = 0;
-        renderer.domElement.setAttribute('aria-description', 'Glisser pour tourner, molette pour zoomer. Bouton Recentrer pour rétablir la vue.');
-        node.append(renderer.domElement);
-        const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(40, 1, radius / 1000, radius * 100);
-        camera.up.set(0, 0, 1);
-        const material = new THREE.MeshStandardMaterial({ color: 0x91b6d5, metalness: 0.25, roughness: 0.5 });
-        scene.add(new THREE.Mesh(geometry, material));
-        scene.add(new THREE.HemisphereLight(0xffffff, 0x243446, 2.5));
-        const light = new THREE.DirectionalLight(0xffffff, 3); light.position.set(radius, -radius, radius * 3); scene.add(light);
-        const controls = new TrackballControls(camera, renderer.domElement);
-        controls.staticMoving = true;
-        controls.minDistance = radius * 0.15; controls.maxDistance = radius * 20;
-        let visible = true;
-        const render = () => { if (visible && !document.hidden) renderer?.render(scene, camera); };
-        let frame = 0;
-        const update = () => {
-          if (frame) return;
-          frame = requestAnimationFrame(() => { frame = 0; controls.update(); });
-        };
-        // Trackball controls update on demand, including captured drags outside
-        // the canvas, so idle and hidden previews need no animation loop.
-        renderer.domElement.addEventListener('pointermove', update);
-        renderer.domElement.addEventListener('wheel', update);
-        const fit = () => {
-          const distance = radius / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2)) * Math.max(1, 1 / camera.aspect) * 1.15;
-          camera.position.set(distance, -distance, distance * 0.75); camera.position.setLength(distance);
-          camera.up.set(0, 0, 1);
-          controls.target.set(0, 0, 0); controls.update(); render();
-        };
-        reset.current = fit;
-        const resize = new ResizeObserver(() => {
-          const width = node.clientWidth, height = node.clientHeight;
-          if (!width || !height) return;
-          renderer?.setSize(width, height); camera.aspect = width / height; camera.updateProjectionMatrix(); controls.handleResize(); render();
-        });
-        resize.observe(node);
-        const intersection = new IntersectionObserver(entries => { visible = entries[0].isIntersecting; render(); });
-        intersection.observe(node);
-        const lost = (event: Event) => { event.preventDefault(); setError('Vue 3D interrompue : contexte graphique indisponible'); };
-        renderer.domElement.addEventListener('webglcontextlost', lost);
-        document.addEventListener('visibilitychange', render);
-        controls.addEventListener('change', render);
-        fit(); setReady(true);
-        dispose = () => {
-          cancelAnimationFrame(frame);
-          renderer?.domElement.removeEventListener('pointermove', update);
-          renderer?.domElement.removeEventListener('wheel', update);
-          resize.disconnect(); intersection.disconnect(); controls.dispose(); material.dispose(); geometry.dispose();
-          document.removeEventListener('visibilitychange', render);
-          renderer?.domElement.removeEventListener('webglcontextlost', lost);
-          renderer?.dispose(); renderer?.forceContextLoss(); renderer?.domElement.remove(); reset.current = () => {};
-        };
-      } catch (failure) { geometry.dispose(); renderer?.dispose(); renderer?.domElement.remove(); throw failure; }
-    }).catch(failure => { if (!abort.signal.aborted) setError(String(failure)); });
-    return () => { abort.abort(); dispose(); };
-  }, [cad.document_id, cad.snapshot?.document.revision, cad.snapshot?.document.native.sha256, sessionId]);
+    const source = cadMeshSource(cad);
+    if (source === 'empty') {
+      viewport.current?.clear();
+      setReady(false);
+      setError('');
+      return;
+    }
+    let mesh: Promise<ArrayBuffer>;
+    if (source === 'published') {
+      mesh = cadArtifact(cad, sessionId, 'stl', abort.signal).then(blob => blob.arrayBuffer());
+    } else if (source === 'checkpoint') {
+      mesh = cadWorkingMesh(cad, sessionId, abort.signal);
+    } else if (liveMesh) {
+      mesh = Promise.resolve(new Uint8Array(liveMesh).buffer);
+    } else return;
+    void mesh.then(buffer => {
+      if (!abort.signal.aborted && viewport.current) {
+        viewport.current.update(buffer);
+        setError('');
+        setReady(true);
+      }
+    }).catch(failure => {
+      if (!abort.signal.aborted) setError(String(failure));
+    });
+    return () => abort.abort();
+  }, [cad.document_id, cad.status, cad.snapshot?.document.revision, cad.snapshot?.document.native.sha256, sessionId, liveMesh, cad.working?.checkpoint_id, cad.working?.mesh?.sha256]);
   return <div className="relative w-full h-full min-h-0">
-    {(!ready || error) && <div className="absolute inset-0">{fallback}</div>}
-    <div ref={host} className="absolute inset-0" style={{ visibility: error ? 'hidden' : 'visible' }} />
-    {ready && !error && <button className="absolute top-2 left-2 rounded-full px-3 py-1 text-[11px] bg-black/60 text-white"
-      onClick={() => reset.current()}>Recentrer</button>}
+    {!ready && <div className="absolute inset-0">{fallback}</div>}
+    <div ref={host} className="absolute inset-0" style={{ visibility: ready ? 'visible' : 'hidden' }} />
+    {ready && !error && <button className="absolute top-2 left-2 grid size-8 place-items-center rounded-full bg-black/60 text-white"
+      aria-label="Recentrer la pièce" title="Recentrer la pièce" onClick={() => viewport.current?.fit()}><Scan size={15} /></button>}
     <span className="absolute bottom-2 left-2 right-2 text-[10px] text-center rounded-full px-2 py-1 bg-black/60 text-white pointer-events-none">
-      {error ? 'Vue 3D indisponible · aperçu statique conservé' : ready ? 'Glisser pour tourner · molette pour zoomer' : 'Chargement de la vue 3D…'}</span>
+      {error || (cadMeshSource(cad) === 'empty' && 'Aucun solide à cette étape · voir Construction') || (!ready && runtimeStatus) || (ready ? 'Glisser pour tourner · clic droit pour déplacer · molette pour zoomer' : 'Chargement de la vue 3D…')}</span>
   </div>;
 }

@@ -38,6 +38,7 @@ def working_checkpoint(store, document_id, session_id):
             'engine_version': checkpoint.engine_version,
             'engine_sha256': checkpoint.engine_sha256,
             'native': checkpoint.native.model_dump(mode='json'),
+            'mesh': checkpoint.mesh.model_dump(mode='json') if checkpoint.mesh else None,
             'accepted_steps': len(chain), 'design': inventory}
 
 

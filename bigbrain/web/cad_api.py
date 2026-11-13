@@ -30,11 +30,20 @@ def setup_cad_routes(app, *, store=None, bus=None):
                     return web.json_response({'working': checkpoint})
                 if checkpoint is None or checkpoint['checkpoint_id'] != body.get('checkpointId'):
                     raise CadError('CAD working checkpoint changed; refresh the presentation')
-                native = CadArtifact.model_validate(checkpoint['native'])
-                return web.Response(body=store.read_artifact(document_id, session_id, native),
+                kind = body.get('kind', 'native')
+                if kind not in {'native', 'stl'}:
+                    raise CadError('Unsupported CAD checkpoint artifact')
+                selected = checkpoint['native'] if kind == 'native' else checkpoint.get('mesh')
+                if selected is None:
+                    raise CadError('CAD checkpoint mesh is unavailable')
+                artifact = CadArtifact.model_validate(selected)
+                if kind == 'stl' and (artifact.format != 'stl'
+                        or artifact.source_sha256 != checkpoint['native']['sha256']):
+                    raise CadError('CAD checkpoint mesh source changed')
+                return web.Response(body=store.read_artifact(document_id, session_id, artifact),
                     content_type='application/octet-stream',
                     headers={'Cache-Control': 'private, no-store',
-                             'X-BigBrain-CAD-SHA256': native.sha256})
+                             'X-BigBrain-CAD-SHA256': artifact.sha256})
             if request.match_info['action'] == 'recovery':
                 from ..cad_recovery import retained_recovery
                 root = store.authorize(document_id, session_id)

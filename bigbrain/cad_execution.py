@@ -45,6 +45,7 @@ class ExecutionCheckpoint(Contract):
     engine_sha256: Hash
     proposal_sha256: Hash
     native: CadArtifact
+    mesh: CadArtifact | None = None
     evidence_ref: str
     evidence_sha256: Hash
 
@@ -242,16 +243,24 @@ class CadExecutionStore:
                     'observation_sha256': hashlib.sha256(rejected.read_bytes()).hexdigest(),
                     'observed_inventory': {key: [item.get('name') for item in design[key]]
                                            for key in ('sketches', 'timeline', 'bodies')}}})
-            observations['native_observations'] = list(session.observations)
             native_path = folder / 'part.sc'
             await session.tool('save', {'path': str(native_path)})
             native = session._artifact(native_path, 'solidcraft')
+            mesh = None
+            if design['bodies']:
+                # Export the already evaluated geometry once. Solid previews can
+                # then display the checkpoint without evaluating its history.
+                mesh_path = folder / 'part.stl'
+                await session.tool('export', {'path': str(mesh_path), 'format': 'stl'})
+                mesh = session._artifact(mesh_path, 'stl').model_copy(
+                    update={'source_sha256': native.sha256})
+            observations['native_observations'] = list(session.observations)
             evidence = folder / 'observations.json'
             self._write(evidence, observations)
             record = ExecutionCheckpoint(id=identity, parent=current,
                 contract_sha256=self.contract, engine_version=self.engine,
                 engine_sha256=self.engine_build,
-                proposal_sha256=digest(proposal_value), native=native,
+                proposal_sha256=digest(proposal_value), native=native, mesh=mesh,
                 evidence_ref=evidence.relative_to(self.root).as_posix(),
                 evidence_sha256=hashlib.sha256(evidence.read_bytes()).hexdigest())
             self._write(self.directory / (identity + '.json'), record.model_dump(mode='json'))

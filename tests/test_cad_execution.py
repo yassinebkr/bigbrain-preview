@@ -110,6 +110,10 @@ class Session:
             return {'nodes': [], 'edges': [], 'errors': [], 'cycles': []}
         if name == 'body_topology':
             return {'body': arguments['body'], 'faces': [], 'edges': []}
+        if name == 'export':
+            from pathlib import Path
+            Path(arguments['path']).write_bytes(b'synthetic mesh artifact')
+            return {}
         if name == 'save':
             from pathlib import Path
             Path(arguments['path']).write_text(json.dumps(self.design))

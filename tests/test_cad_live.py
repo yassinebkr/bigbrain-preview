@@ -83,6 +83,7 @@ async def test_native_working_artifact_is_bound_to_the_accepted_head(tmp_path, c
     working = working_checkpoint(CadStore(store.root), document, 'conversation')
     assert working['checkpoint_id'] == record.id
     assert working['native']['sha256'] == record.native.sha256
+    assert working['mesh']['source_sha256'] == record.native.sha256
     assert working['design']['bodies'][0]['name'] == 'Base'
     app = web.Application()
     setup_cad_routes(app, store=store)
@@ -92,6 +93,17 @@ async def test_native_working_artifact_is_bound_to_the_accepted_head(tmp_path, c
         response = await client.post('/api/cad/working-artifact', json=body, headers=headers)
         assert response.status == 200
         assert await response.read() == (root / record.native.path).read_bytes()
+        mesh = await client.post('/api/cad/working-artifact', json={**body, 'kind': 'stl'}, headers=headers)
+        assert mesh.status == 200
+        assert mesh.headers['X-BigBrain-CAD-SHA256'] == record.mesh.sha256
+        assert await mesh.read() == (root / record.mesh.path).read_bytes()
+        for changed in ({'checkpointId': 'f' * 32}, {'sessionId': 'foreign'}, {'kind': 'unsupported'}):
+            rejected = await client.post('/api/cad/working-artifact', json={**body, 'kind': 'stl', **changed}, headers=headers)
+            assert rejected.status == 400
+        (root / record.mesh.path).write_bytes(b'changed mesh')
+        rejected = await client.post('/api/cad/working-artifact', json={**body, 'kind': 'stl'}, headers=headers)
+        assert rejected.status == 400
+
         for changed in ({'checkpointId':'f' * 32}, {'sessionId':'foreign'}):
             response = await client.post('/api/cad/working-artifact', json={**body, **changed}, headers=headers)
             assert response.status == 400
