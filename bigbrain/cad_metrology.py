@@ -45,7 +45,7 @@ class NativeMeasurements:
 
 class StepMeasurements:
     name = 'occt-step-surfaces'
-    capabilities = frozenset({'cylinders', 'volume', 'bounds', 'vertices', 'solid_validity'})
+    capabilities = frozenset({'cylinders', 'volume', 'bounds', 'vertices', 'solid_validity', 'sections'})
 
     async def inspect(self, source, session):
         from .cad_step import inspect_step
@@ -53,11 +53,31 @@ class StepMeasurements:
         return {**result, 'source_sha256': source.native_sha256, 'step_sha256': source.step_sha256}
 
 
+    async def sections(self, source, sections):
+        from .cad_step_sections import inspect_step_sections
+        probes = await asyncio.to_thread(inspect_step_sections, source.step_path, sections)
+        return {'method': self.name, 'units': 'mm', 'source_sha256': source.native_sha256,
+                'step_sha256': source.step_sha256, 'probes': probes}
+
+
 class MeasurementRouter:
     """Choose qualified capabilities while keeping acceptance criteria shared."""
 
     def __init__(self, providers=None):
         self.providers = tuple(providers if providers is not None else (NativeMeasurements(), StepMeasurements()))
+
+    async def sections(self, source, sections):
+        """Select a qualified section provider using the shared measurement contract."""
+        provider = next((item for item in self.providers if 'sections' in item.capabilities), None)
+        if provider is None:
+            raise ValueError('No qualified CAD measurement provider for sections')
+        result = await provider.sections(source, sections)
+        if (result.get('units') != 'mm' or result.get('source_sha256') != source.native_sha256
+                or result.get('step_sha256') != source.step_sha256):
+            raise ValueError('CAD section provider returned inconsistent units or revision')
+        if set(result.get('probes', {})) != {item.id for item in sections}:
+            raise ValueError('CAD section provider returned an inconsistent probe inventory')
+        return result
 
     async def inspect(self, source, session):
         required = ('cylinders', 'volume', 'bounds', 'vertices', 'solid_validity')

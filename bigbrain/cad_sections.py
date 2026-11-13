@@ -1,4 +1,4 @@
-"""Revision-bound line sections measured from the exported binary STL surface."""
+"""Revision-bound material interval checks and legacy STL section probes."""
 
 import math
 import struct
@@ -138,6 +138,22 @@ def material_intervals(triangles, section: CadSection):
 def observe_section(section, triangles, *, source_sha256, evidence_ref):
     try:
         actual = material_intervals(triangles, section)
+    except ValueError as error:
+        return observe_intervals(section, None, source_sha256=source_sha256,
+                                 evidence_ref=evidence_ref, error=str(error))
+    return observe_intervals(section, actual, source_sha256=source_sha256, evidence_ref=evidence_ref)
+
+
+def observe_intervals(section, actual, *, source_sha256, evidence_ref, error=None):
+    """Apply identical acceptance rules to intervals from each measurement provider."""
+    try:
+        if error is not None:
+            raise ValueError(error)
+        actual = tuple(tuple(pair) for pair in actual)
+        if (any(len(pair) != 2 or not all(math.isfinite(value) for value in pair)
+                or pair[0] >= pair[1] for pair in actual)
+                or any(first[1] > second[0] for first, second in zip(actual, actual[1:]))):
+            raise ValueError('CAD section provider returned invalid material intervals')
         full_line = actual
         if section.empty_span_mm is not None:
             low, high = section.empty_span_mm

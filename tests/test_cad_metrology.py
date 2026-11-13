@@ -82,3 +82,22 @@ def test_missing_step_dependency_returns_an_actionable_diagnostic(monkeypatch):
     monkeypatch.setattr(builtins, '__import__', unavailable)
     with pytest.raises(ValueError, match='cadquery-ocp-novtk'):
         inspect_step(Path('part.step'), [])
+
+
+@pytest.mark.asyncio
+async def test_section_provider_replacement_retains_revision_and_probe_identity():
+    from bigbrain.cad_sections import CadSection
+    probe = CadSection(id='wall', label='Wall', axis=2, point_mm=(0, 0, 0))
+    class Sections:
+        name = 'future-native-sections'
+        capabilities = frozenset({'sections'})
+        async def sections(self, source, sections):
+            assert sections == [probe]
+            return {'method': self.name, 'units': 'mm',
+                    'source_sha256': source.native_sha256, 'step_sha256': source.step_sha256,
+                    'probes': {'wall': {'intervals_mm': ((0, 5),)}}}
+    result = await MeasurementRouter([Sections()]).sections(source(), [probe])
+    assert result['method'] == 'future-native-sections'
+    assert result['probes']['wall']['intervals_mm'] == ((0, 5),)
+    with pytest.raises(ValueError, match='No qualified.*sections'):
+        await MeasurementRouter([Provider()]).sections(source(), [probe])

@@ -225,7 +225,18 @@ class CadBrain(BaseBrain):
                         try:
                             if progressive:
                                 plan = await driver.run(session)
-                                checkpoint.save(document_id, plan, kind='construction')
+                                if retained and retained['kind'] == 'inspection':
+                                    inspected = CadPlan.model_validate(retained['recipe'])
+                                    # A completed checkpoint can reuse its saved measurement recipe.
+                                    # Revalidate construction identity before measuring the new capture.
+                                    if (inspected.drawing != definition.drawing or any(
+                                            getattr(inspected, field) != getattr(plan, field)
+                                            for field in ('commands', 'workflow', 'cut_intents', 'max_repairs'))):
+                                        raise CadError('CAD retained inspection belongs to another construction')
+                                    plan = inspected
+                                    checkpoint.save(document_id, plan, kind='inspection')
+                                else:
+                                    checkpoint.save(document_id, plan, kind='construction')
                             else:
                                 if plan.workflow and plan.workflow.parameters:
                                     await session.batch([plan.workflow.parameter_command()])
@@ -344,24 +355,32 @@ class CadBrain(BaseBrain):
                                 evidence_ref=f'revision-{revision}/topology.json') for item in (*plan.cylinders, *plan.vertices)}
                             checks += tuple(measured_cylinders.values())
                         if plan.sections:
-                            from ..cad_sections import read_triangles, observe_section
+                            from ..cad_sections import observe_intervals
+                            from ..cad_metrology import MeasurementRouter, MeasurementSource
                             if capture.geometry.body_count != 1:
                                 raise CadError('Section verification requires one closed body')
-                            artifact = next(item for item in capture.document.exports if item.format == 'stl')
-                            if session._artifact(root / artifact.path, 'stl').sha256 != artifact.sha256:
+                            artifact = next(item for item in capture.document.exports if item.format == 'step')
+                            if session._artifact(root / artifact.path, 'step').sha256 != artifact.sha256:
                                 raise CadError('CAD surface changed before section verification')
-                            triangles = await asyncio.to_thread(read_triangles, root / artifact.path)
+                            section_source = MeasurementSource(capture.document.native.sha256,
+                                root / artifact.path, artifact.sha256,
+                                [{'name': name} for name in capture.measurements['bodies']])
                             sampling_attempts = []
                             for sampling_attempt in range(2):
                                 section_evidence, section_checks = [], []
+                                measured = await MeasurementRouter().sections(section_source, plan.sections)
                                 for section in plan.sections:
-                                    observation, actual = await asyncio.to_thread(observe_section,
-                                        section, triangles, source_sha256=capture.document.native.sha256,
+                                    probe = measured['probes'][section.id]
+                                    observation, actual = observe_intervals(
+                                        section, probe.get('intervals_mm'), error=probe.get('error'),
+                                        source_sha256=capture.document.native.sha256,
                                         evidence_ref=f'revision-{revision}/sections.json')
                                     section_checks.append(observation)
                                     measured_sections[section.id] = actual
                                     section_evidence.append({'criterion': section.model_dump(mode='json'),
-                                        'observed_intervals_mm': actual, 'surface_sha256': artifact.sha256})
+                                        'observed_intervals_mm': actual, 'step_sha256': artifact.sha256,
+                                        'surface_sha256': artifact.sha256, 'surface_format': 'step',
+                                        'method': measured['method']})
                                 sampling_attempts.append({'sections': section_evidence,
                                     'observations': [item.model_dump(mode='json') for item in section_checks]})
                                 (evidence / 'sampling-attempts.json').write_text(

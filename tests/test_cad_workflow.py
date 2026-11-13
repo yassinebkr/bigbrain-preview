@@ -600,9 +600,10 @@ async def test_progressive_measurement_interruption_keeps_native_prefix(tmp_path
         prefix = [c.id for c in CadExecutionStore(root, checkpoint.digest).active()]
         assert len(prefix) == 4 and len(provider.calls) == 6
         assert CadCriterion.observe is original
+        calls_before_recovery = len(provider.calls)
         result = await CadBrain('cad_brain', bus, llm_provider=provider).handle_task(task(plan, confirmed))
         assert result['success'], result
-        assert len(provider.calls) == 7
+        assert len(provider.calls) == calls_before_recovery
         assert [c.id for c in CadExecutionStore(root, checkpoint.digest).active()] == prefix
         assert result['cad']['document']['revision'] == 2
     finally:

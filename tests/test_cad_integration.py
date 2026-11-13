@@ -354,6 +354,9 @@ async def test_dimensioned_stepped_support_runs_through_contract_and_local_check
         root = CadStore().directory(result['cad']['document']['document_id'])
         sections = json.loads((root / 'revision-1/sections.json').read_text())
         assert len(sections) == 5 and all(len(item['surface_sha256']) == 64 for item in sections)
+        exported_step = next(item for item in result['cad']['document']['exports'] if item['format'] == 'step')
+        assert all(item['step_sha256'] == exported_step['sha256'] for item in sections)
+        assert all(item['surface_format'] == 'step' for item in sections)
     finally:
         await bus.close()
 

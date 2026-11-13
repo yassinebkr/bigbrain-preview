@@ -10,13 +10,10 @@ def inspect_step(path: Path, native_bodies):
         from OCP.BRep import BRep_Tool
         from OCP.BRepAdaptor import BRepAdaptor_Surface
         from OCP.BRepBndLib import BRepBndLib
-        from OCP.BRepCheck import BRepCheck_Analyzer
         from OCP.BRepGProp import BRepGProp
         from OCP.Bnd import Bnd_Box
         from OCP.GeomAbs import GeomAbs_Cylinder, GeomAbs_Plane
         from OCP.GProp import GProp_GProps
-        from OCP.IFSelect import IFSelect_RetDone
-        from OCP.STEPControl import STEPControl_Reader
         from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_SHELL, TopAbs_SOLID
         from OCP.TopExp import TopExp, TopExp_Explorer
         from OCP.TopoDS import TopoDS
@@ -32,18 +29,7 @@ def inspect_step(path: Path, native_bodies):
     def xyz(point):
         return [point.X(), point.Y(), point.Z()]
 
-    reader = STEPControl_Reader()
-    if reader.ReadFile(str(path)) != IFSelect_RetDone:
-        raise ValueError('STEP reader rejected the exported artifact')
-    reader.SetSystemLengthUnit(1.0)  # All returned coordinates are millimetres.
-    if not reader.TransferRoots():
-        raise ValueError('STEP reader transferred no geometry')
-    shape = reader.OneShape()
-    if shape.IsNull() or not BRepCheck_Analyzer(shape).IsValid():
-        raise ValueError('Exported STEP has an invalid boundary representation')
-    loose = TopExp_Explorer(shape, TopAbs_FACE, TopAbs_SOLID)
-    if loose.More():
-        raise ValueError('Exported STEP contains faces outside its solids')
+    shape = load_step_shape(path)
     solids = list(explore(shape, TopAbs_SOLID))
     if not solids or len(solids) != len(native_bodies):
         raise ValueError('STEP solid count differs from the native body inventory')
@@ -94,3 +80,26 @@ def inspect_step(path: Path, native_bodies):
             'bounds_max_mm': list(coordinates[3:])}
     return {'method': 'occt-step-surfaces', 'units': 'mm', 'bodies': bodies,
             'volume_mm3': sum(body['volume_mm3'] for body in bodies.values())}
+
+
+def load_step_shape(path):
+    """Load millimetre STEP geometry and reject invalid or loose surfaces."""
+    from OCP.BRepCheck import BRepCheck_Analyzer
+    from OCP.IFSelect import IFSelect_RetDone
+    from OCP.STEPControl import STEPControl_Reader
+    from OCP.TopAbs import TopAbs_FACE, TopAbs_SOLID
+    from OCP.TopExp import TopExp_Explorer
+
+    reader = STEPControl_Reader()
+    if reader.ReadFile(str(path)) != IFSelect_RetDone:
+        raise ValueError('STEP reader rejected the exported artifact')
+    reader.SetSystemLengthUnit(1.0)  # All returned coordinates are millimetres.
+    if not reader.TransferRoots():
+        raise ValueError('STEP reader transferred no geometry')
+    shape = reader.OneShape()
+    if shape.IsNull() or not BRepCheck_Analyzer(shape).IsValid():
+        raise ValueError('Exported STEP has an invalid boundary representation')
+    loose = TopExp_Explorer(shape, TopAbs_FACE, TopAbs_SOLID)
+    if loose.More():
+        raise ValueError('Exported STEP contains faces outside its solids')
+    return shape
