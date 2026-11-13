@@ -32,9 +32,9 @@ def test_visual_decision_limits_follow_inputs_and_persisted_dossier(monkeypatch)
     plain = [{'role': 'user', 'content': 'Describe a drawing'}]
     assert decision_runtime.decision_limits(plain, 's') == (60, 4096)
     visual = [{'role': 'user', 'content': [{'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,AA=='}}]}]
-    assert decision_runtime.decision_limits(visual, 's') == (120, 8192)
+    assert decision_runtime.decision_limits(visual, 's') == (300, 8192)
     monkeypatch.setattr(cad_context, 'design_context', lambda session: ({'revision': 2}, []))
-    assert decision_runtime.decision_limits(plain, 's') == (120, 8192)
+    assert decision_runtime.decision_limits(plain, 's') == (300, 8192)
 
 
 def test_cad_destination_constraint_is_exposed_and_enforced():

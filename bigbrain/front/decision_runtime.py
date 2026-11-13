@@ -8,7 +8,9 @@ from pydantic import ValidationError
 from .decision import ConsultMemory, Delegate, FrontDecision, FRONT_TOOL_SCHEMA
 
 FRONT_DECISION_TIMEOUT_SECONDS = 60.0
-VISUAL_DECISION_TIMEOUT_SECONDS = 120.0
+# Visual decisions include a complete dimensioned dossier in their typed output.
+# Budget visual intake separately from ordinary conversational decisions.
+VISUAL_DECISION_TIMEOUT_SECONDS = 300.0
 
 
 def decision_limits(messages, session_id):
