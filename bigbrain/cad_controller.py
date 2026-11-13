@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Annotated, Literal
 
 from pydantic import Field, TypeAdapter
@@ -245,17 +246,30 @@ class CadConstructionDriver:
                   'model': request['model'], 'max_tokens': request['max_tokens'],
                   'temperature': request['temperature'], 'image_count': len(self.images)}
         self.store._write(trace, record)
+        from .llm.call_trace import trace_call
+        from .llm.usage import capture_usage
+        started = time.monotonic()
         try:
-            raw = await self.provider.chat_complete(**request)
+            # Share transport diagnostics with the Front Brain. The call ID ties
+            # setup and generation timing to this exact retained decision.
+            with capture_usage() as usage, trace_call(self.provider, 'cad.construction.decision',
+                    correlation={'document_id': self.store.root.name,
+                                 'checkpoint_id': packet['base_checkpoint'], 'decision_id': trace.stem},
+                    records=usage) as call:
+                record['call_id'] = call.call_id
+                self.store._write(trace, record)
+                raw = await self.provider.chat_complete(**request)
         except BaseException as error:
             self.store._write(trace, {**record, 'status': 'interrupted',
-                                     'error_type': type(error).__name__, 'error': str(error)[:2000]})
+                                     'error_type': type(error).__name__, 'error': str(error)[:2000],
+                                     'duration_ms': round((time.monotonic() - started) * 1000, 2)})
             from .cad_resources import CadBudgetExceeded
             self.state['recovery'] = {'kind': 'budget' if isinstance(error, CadBudgetExceeded) else 'provider',
                 'checkpoint': packet['base_checkpoint']}
             self.save()
             raise
-        self.store._write(trace, {**record, 'status': 'returned', 'response': raw})
+        self.store._write(trace, {**record, 'status': 'returned', 'response': raw,
+                                 'duration_ms': round((time.monotonic() - started) * 1000, 2)})
         return raw
 
     async def finalize_decision(self, trace, packet, **request):

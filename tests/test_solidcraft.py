@@ -82,6 +82,7 @@ async def test_real_enclosure_and_scope_guards(tmp_path, engine):
         with pytest.raises(CadError):
             await session.batch([command('solid.box', length=2, width=2, height=2, unexpected=True)])
         assert (await session.tool('measure'))['total']['volume_mm3'] == pytest.approx(13632)
+        assert all(item['elapsed_ms'] >= 0 for item in session.observations)
         native = tmp_path / capture.document.native.path
         native.write_bytes(b'changed revision')
         with pytest.raises(CadError, match='changed before reopening'):

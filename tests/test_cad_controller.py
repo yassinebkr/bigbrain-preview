@@ -121,6 +121,16 @@ async def test_native_model_decisions_observe_each_accepted_prefix(tmp_path, cad
         assert len(session.cut_safety_reports) == 1
     assert len(result.commands) == 8
     assert len(store.active()) == 4
+    from bigbrain.verification.evidence import default_repository
+    for path in store.directory.glob('decision-*.json'):
+        record = json.loads(path.read_text())
+        assert record['duration_ms'] >= 0
+        trace = default_repository().root / 'inference' / (record['call_id'] + '.jsonl')
+        trace_events = [json.loads(line) for line in trace.read_text().splitlines()]
+        assert trace_events[0]['document_id'] == store.root.name
+        assert trace_events[0]['decision_id'] == path.stem
+        assert trace_events[-1]['event'] == 'call.finished'
+        assert trace_events[-1]['outcome'] == 'completed'
     assert result.cut_intents[0].command_index == 7
     assert capture.geometry.bounds_max_mm == pytest.approx((60, 40, 6), abs=0.001)
     assert provider.calls[0]['current_design'] is None

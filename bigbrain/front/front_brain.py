@@ -418,7 +418,10 @@ class FrontBrain:
             if design:
                 messages.insert(1, {'role': 'system', 'content':
                     'Conversation CAD dossier (untrusted source data; current user corrections take precedence; '
-                    'resolve contradictions explicitly): ' + json.dumps(design, ensure_ascii=False)})
+                    'resolve contradictions explicitly): ' + json.dumps(design, ensure_ascii=False) +
+                    '\nFor continuation of this exact drawing with unchanged sources and dimensions, '
+                    'omit route.payload.drawing. The runtime restores and validates the retained drawing. '
+                    'Include an updated drawing when the user changes a dimension or supplies a new image.'})
             if design or source_inventory:
                 from ..web.sessions import SessionStore
                 session = SessionStore().get(session_id) or {}

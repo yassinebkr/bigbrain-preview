@@ -45,7 +45,8 @@ class CallTrace:
             "effort": getattr(provider, "reasoning_effort", None) or getattr(entry, "reasoning_effort_default", None),
             "deadline_seconds": deadline_seconds, "attempt": 1,
             **{k: v for k, v in correlation.items() if k in {
-                "session_id", "turn_id", "task_id", "subtask_id", "research_id"}},
+                "session_id", "turn_id", "task_id", "subtask_id", "research_id",
+                "document_id", "checkpoint_id", "decision_id"}},
         }
         self.metadata = {k: (v[:256] if isinstance(v, str) else v if type(v) in
                             (int, float, bool, type(None)) else None) for k, v in self.metadata.items()}

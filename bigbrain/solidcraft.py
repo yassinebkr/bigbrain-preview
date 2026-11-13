@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass
 import hashlib
 import json
@@ -190,6 +191,7 @@ class SolidCraftSession:
             return result
 
     async def tool(self, name, arguments=None):
+        started = time.monotonic()
         result = await self.request('tools/call', {'name': name, 'arguments': arguments or {}})
         text = '\n'.join(item['text'] for item in result.get('content', [])
                          if item.get('type') == 'text')
@@ -198,7 +200,8 @@ class SolidCraftSession:
         except ValueError:
             value = {'text': text[:16_000]}
         self.observations.append({'tool': name, 'arguments': arguments or {}, 'result': value,
-                                  'is_error': bool(result.get('isError'))})
+                                  'is_error': bool(result.get('isError')),
+                                  'elapsed_ms': round((time.monotonic() - started) * 1000, 2)})
         if len(self.observations) > 128:
             raise CadError('CAD session observation budget exhausted')
         if result.get('isError') or isinstance(value, dict) and value.get('ok') is False:
