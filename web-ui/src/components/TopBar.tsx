@@ -1,280 +1,71 @@
-import type { ReactNode } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronDown, Sparkles } from 'lucide-react';
+/** Primary navigation and front-model selection for the current conversation. */
+import { useState, type ReactNode } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
+import { ArrowLeft, Check, ChevronDown, SlidersHorizontal, Sparkles } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
+import { useModelSelection } from '@/lib/useModelSelection';
 import { ConnectionStatus } from './ConnectionStatus';
 
-// Per-role model lineup (BigBrain orchestrates models per role — the
-// dropdown shows the orchestra, not a single model). Available models come
-// from the registry filtered by the connected providers.
+export function TopBar({ children }: { children?: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const { connectionStatus, sidebarPanel, setSidebarPanel, setSettingsSection, goBack, view, navigationHistory } = useAppStore();
+  const { roles, models, error, pending, modelsLoading, assign } = useModelSelection(open, sidebarPanel);
+  const front = roles.front;
+  const mismatch = front?.runtime?.some(holder => holder.registry_key !== front.key);
 
-import { useCallback, useEffect, useState } from 'react';
-
-interface RoleLine {
-  key: string;
-  model_id: string | null;
-  display_name: string;
-}
-interface RegistryModel {
-  key: string;
-  display_name: string;
-  provider: string;
-  available: boolean;
-}
-
-const ROLE_LABELS: Record<string, string> = {
-  front: 'Front Brain',
-  planner: 'Planner',
-  code: 'Code',
-  web: 'Web App Brain',
-  research: 'Web Search Brain',
-  subagent: 'Sub-agents',
-};
-
-interface TopBarProps {
-  children?: ReactNode;
-}
-
-export function TopBar({ children }: TopBarProps) {
-  const { connectionStatus } = useAppStore();
-  const [dropdownOpen, setDropdownOpen] = useState(false);
-  const [lineup, setLineup] = useState<Record<string, RoleLine> | null>(null);
-  const [registry, setRegistry] = useState<RegistryModel[]>([]);
-  const [roleMenu, setRoleMenu] = useState<string | null>(null);
-
-  const refresh = useCallback(async () => {
-    try {
-      const [rolesRes, modelsRes] = await Promise.all([
-        fetch('/api/models/roles').then((r) => r.json()),
-        fetch('/api/models').then((r) => r.json()),
-      ]);
-      setLineup(rolesRes.roles || null);
-      setRegistry(modelsRes.models || []);
-    } catch (e) {
-      setLineup(null);
-    }
-  }, []);
-
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
-
-  const assign = async (role: string, key: string) => {
-    setRoleMenu(null);
-    try {
-      await fetch('/api/models/roles', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role, key }),
-      });
-      await refresh();
-    } catch (e) { /* surfaced by the roles refresh */ }
+  const openModelSettings = () => {
+    setOpen(false);
+    setSidebarPanel('settings');
+    setSettingsSection('models');
   };
 
-  const frontName = lineup?.front?.display_name || 'BigBrain';
-
-  return (
-    <motion.header
-      initial={{ opacity: 0, y: -10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.35, delay: 0.15, ease: [0, 0, 0.2, 1] }}
-      className="sticky top-0 z-30 flex items-center justify-between px-2 sm:px-3 md:px-4 h-14 flex-shrink-0"
-    >
-      {/* Left Zone - Hamburger (mobile) + Model Selector */}
-      <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
-        {children}
-        <div className="hidden sm:block flex-shrink-0">
-          <ConnectionStatus status={connectionStatus} />
-        </div>
-        <div className="relative flex-shrink-0">
-          <button
-            onClick={() => {
-              setDropdownOpen(!dropdownOpen);
-              if (!dropdownOpen) refresh();
-            }}
-            className="flex items-center gap-1.5 h-9 sm:h-8 pl-1.5 sm:pl-2 pr-2 sm:pr-3 rounded-full transition-all duration-200 cursor-pointer"
-            style={{
-              backgroundColor: 'var(--bg-surface)',
-              border: '1px solid var(--border-subtle)',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = 'var(--bg-button)';
-              e.currentTarget.style.borderColor = 'var(--border-input)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = 'var(--bg-surface)';
-              e.currentTarget.style.borderColor = 'var(--border-subtle)';
-            }}
-          >
-            <img
-              src="/robot-icon.png"
-              alt=""
-              className="w-[18px] h-[18px] object-contain"
-            />
-            <span
-              className="text-[13px] font-medium hidden sm:inline"
-              style={{ color: 'var(--text-primary)' }}
-            >
-              {frontName}
-            </span>
-            <ChevronDown
-              size={12}
-              className="hidden sm:block"
-              style={{
-                color: 'var(--text-tertiary)',
-                transform: dropdownOpen ? 'rotate(180deg)' : 'rotate(0)',
-                transition: 'transform 0.2s ease',
-              }}
-            />
-          </button>
-
-          <AnimatePresence>
-            {dropdownOpen && (
-              <>
-                <div
-                  className="fixed inset-0 z-40"
-                  onClick={() => setDropdownOpen(false)}
-                />
-                <motion.div
-                  initial={{ opacity: 0, y: -5, scale: 0.97 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: -5, scale: 0.97 }}
-                  transition={{ duration: 0.15 }}
-                  className="absolute top-full left-0 mt-2 min-w-[200px] rounded-xl py-2 z-50"
-                  style={{
-                    backgroundColor: 'var(--bg-surface)',
-                    border: '1px solid var(--border-subtle)',
-                    boxShadow: 'var(--shadow-lg)',
-                  }}
-                >
-                  {/* Per-role lineup: each role picks among the models
-                      AVAILABLE under the current connection mode. */}
-                  {!lineup && (
-                    <div className="px-4 py-2 text-xs" style={{ color: 'var(--text-tertiary)' }}>
-                      Lineup unavailable (server offline?)
-                    </div>
-                  )}
-                  {lineup && Object.entries(ROLE_LABELS).map(([role, label]) => {
-                    const current = lineup[role];
-                    const open = roleMenu === role;
-                    return (
-                      <div key={role} className="relative">
-                        <button
-                          onClick={() => setRoleMenu(open ? null : role)}
-                          className="flex items-center gap-2.5 w-full h-9 px-4 transition-colors duration-150 cursor-pointer"
-                          style={{
-                            backgroundColor: open ? 'var(--bg-button)' : 'transparent',
-                          }}
-                          onMouseEnter={(e) => {
-                            if (!open) e.currentTarget.style.backgroundColor = 'var(--bg-button)';
-                          }}
-                          onMouseLeave={(e) => {
-                            if (!open) e.currentTarget.style.backgroundColor = 'transparent';
-                          }}
-                        >
-                          <span
-                            className="text-[11px] uppercase tracking-wide w-[74px] text-left flex-shrink-0"
-                            style={{ color: 'var(--text-tertiary)' }}
-                          >
-                            {label}
-                          </span>
-                          <span
-                            className="text-[12.5px] font-medium truncate"
-                            style={{ color: 'var(--text-primary)' }}
-                          >
-                            {current?.display_name || '—'}
-                          </span>
-                          <ChevronDown
-                            size={11}
-                            className="ml-auto flex-shrink-0"
-                            style={{ color: 'var(--text-tertiary)' }}
-                          />
-                        </button>
-                        {open && (
-                          <div
-                            className="absolute left-2 right-2 top-full z-50 rounded-lg py-1 max-h-[240px] overflow-y-auto"
-                            style={{
-                              backgroundColor: 'var(--bg-surface)',
-                              border: '1px solid var(--border-subtle)',
-                              boxShadow: 'var(--shadow-lg)',
-                            }}
-                          >
-                            {registry.filter((m) => m.available).length === 0 && (
-                              <div className="px-3 py-2 text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
-                                No model connected — add a key in Settings → Providers
-                              </div>
-                            )}
-                            {registry.filter((m) => m.available).map((m) => (
-                              <button
-                                key={m.key}
-                                onClick={() => assign(role, m.key)}
-                                className="flex items-center gap-2 w-full px-3 h-8 text-left transition-colors duration-100 cursor-pointer"
-                                style={{
-                                  color: m.key === current?.key
-                                    ? 'var(--accent-blue)'
-                                    : 'var(--text-primary)',
-                                }}
-                                onMouseEnter={(e) => {
-                                  e.currentTarget.style.backgroundColor = 'var(--bg-button)';
-                                }}
-                                onMouseLeave={(e) => {
-                                  e.currentTarget.style.backgroundColor = 'transparent';
-                                }}
-                              >
-                                <span className="text-[12px] truncate">{m.display_name}</span>
-                                {m.key === current?.key && (
-                                  <span className="ml-auto text-[10px]">active</span>
-                                )}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-
-                </motion.div>
-              </>
-            )}
-          </AnimatePresence>
-        </div>
+  return <motion.header initial={{opacity:0, y:-10}} animate={{opacity:1, y:0}}
+    className="sticky top-0 z-30 flex h-14 shrink-0 items-center justify-between px-2 sm:px-3 md:px-4">
+    <div className="flex items-center gap-2 min-w-0">
+      {children}
+      <button aria-label="Retour" title="Retour" onClick={goBack}
+        disabled={view === 'welcome' && !sidebarPanel && !navigationHistory.length}
+        className="grid size-8 shrink-0 place-items-center rounded-full transition-colors hover:bg-white/10 disabled:opacity-30"
+        style={{color:'var(--text-primary)'}}><ArrowLeft size={17} /></button>
+      <div className="hidden sm:block"><ConnectionStatus status={connectionStatus} /></div>
+      <div className="relative min-w-0">
+        <button aria-label={`Modèle du Front Brain, ${front?.display_name || 'chargement'}`} aria-expanded={open}
+          onClick={() => setOpen(value => !value)}
+          className="flex h-8 max-w-[240px] items-center gap-2 rounded-full border px-2.5 text-[12px]"
+          style={{background:'var(--bg-surface)', color:'var(--text-primary)', borderColor:'var(--border-subtle)'}}>
+          <img src="/robot-icon.png" alt="" className="size-4" />
+          <span className="truncate">{front?.display_name || 'BigBrain'}</span>
+          <ChevronDown size={12} className="shrink-0" />
+        </button>
+        <AnimatePresence>{open && <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <motion.div initial={{opacity:0, y:-5}} animate={{opacity:1, y:0}} exit={{opacity:0, y:-5}}
+            className="absolute left-0 top-full z-50 mt-2 w-72 overflow-hidden rounded-2xl border shadow-xl"
+            style={{background:'var(--bg-surface)', color:'var(--text-primary)', borderColor:'var(--border-subtle)'}}>
+            <p className="px-4 pt-3 pb-2 text-[11px]" style={{color:'var(--text-tertiary)'}}>Modèle du Front Brain</p>
+            <div className="max-h-64 overflow-y-auto px-1.5 pb-1.5">
+              {models.filter(model => model.available || model.key === front?.key).map(model =>
+                <button key={model.key} disabled={!!pending || !model.available}
+                  onClick={async () => { if (await assign('front', model.key)) setOpen(false); }}
+                  className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-[12px] hover:bg-white/10 disabled:opacity-40"
+                  aria-pressed={model.key === front?.key}>
+                  <span className="flex-1">{model.display_name}</span>{model.key === front?.key && <Check size={14} />}
+                </button>)}
+              {!models.length && <p className="px-2.5 py-2 text-[12px]" style={{color:'var(--text-secondary)'}}>{modelsLoading ? 'Chargement des modèles…' : 'Aucun modèle disponible.'}</p>}
+            </div>
+            {(error || mismatch) && <p role="alert" className="px-4 pb-3 text-[11px]" style={{color:'var(--warning)'}}>{error || 'Le fournisseur actif doit être vérifié.'}</p>}
+            <button onClick={openModelSettings} className="flex w-full items-center gap-2 border-t px-4 py-3 text-left text-[12px] hover:bg-white/5"
+              style={{borderColor:'var(--border-subtle)', color:'var(--text-secondary)'}}>
+              <SlidersHorizontal size={15} />Modèles des spécialistes
+            </button>
+          </motion.div>
+        </>}</AnimatePresence>
       </div>
-
-      {/* Center Zone - App Title - hidden on very small screens */}
-      <div
-        className="absolute left-1/2 -translate-x-1/2 text-sm font-semibold pointer-events-none hidden xs:block"
-        style={{
-          color: 'var(--text-primary)',
-          letterSpacing: '0.01em',
-        }}
-      >
-        Aplot AI
-      </div>
-
-      {/* Right Zone - Upgrade Button */}
-      <motion.button
-        whileHover={{ scale: 1.03 }}
-        whileTap={{ scale: 0.97 }}
-        className="flex items-center gap-1.5 h-9 sm:h-8 px-2 sm:px-3.5 rounded-full transition-colors duration-200 cursor-pointer flex-shrink-0"
-        style={{
-          backgroundColor: 'var(--bg-surface)',
-          border: '1px solid var(--border-subtle)',
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.backgroundColor = 'var(--bg-button)';
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.backgroundColor = 'var(--bg-surface)';
-        }}
-      >
-        <span
-          className="text-[13px] font-semibold hidden sm:inline"
-          style={{ color: 'var(--text-primary)' }}
-        >
-          Upgrade
-        </span>
-        <Sparkles size={14} style={{ color: 'var(--text-primary)' }} />
-      </motion.button>
-    </motion.header>
-  );
+    </div>
+    <span className="pointer-events-none absolute left-1/2 hidden -translate-x-1/2 text-sm font-semibold lg:block" style={{color:'var(--text-primary)'}}>Aplot AI</span>
+    <button className="flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-3 text-[12px]"
+      style={{background:'var(--bg-surface)', color:'var(--text-primary)', borderColor:'var(--border-subtle)'}}>
+      <span className="hidden sm:inline">Upgrade</span><Sparkles size={14} />
+    </button>
+  </motion.header>;
 }

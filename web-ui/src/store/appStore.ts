@@ -6,6 +6,7 @@ import type { ConnectionLike } from '@/lib/connection';
 import { parseWidgetProposal, type WidgetProposal } from '@/lib/widgetPolicy';
 import { researchUpdate, type ResearchView } from '@/lib/research';
 import { cadUpdate, publishedCadView, type CadView } from '@/lib/cad';
+import { useWorkspaceStore } from './workspaceStore';
 
 // A first message can arrive before sessions.create answers. Never send it
 // with the previous conversation's id (or the server's implicit fallback).
@@ -101,6 +102,10 @@ interface AppState {
   // View
   view: View;
   setView: (view: View) => void;
+  navigationHistory: { view: View; sessionId: string }[];
+  goBack: () => void;
+  settingsSection: 'general' | 'models';
+  setSettingsSection: (section: 'general' | 'models') => void;
 
   // Messages
   messages: Message[];
@@ -300,9 +305,38 @@ export const useAppStore = create<AppState>()(
 
       // View
       view: 'welcome',
+      navigationHistory: [],
+      settingsSection: 'general',
+      setSettingsSection: (settingsSection) => set({ settingsSection }),
       setView: (view) => {
+        const state = get();
+        if (view !== state.view) set({ navigationHistory: [...state.navigationHistory,
+          {view:state.view, sessionId:state.activeSessionKey}].slice(-20) });
         if (view === 'welcome') get().startNewSession();
-        else set({ view });
+        else set({ view, sidebarPanel: null });
+      },
+      goBack: () => {
+        const state = get();
+        if (state.sidebarPanel === 'settings' && state.settingsSection === 'models') {
+          set({ settingsSection: 'general' });
+          return;
+        }
+        if (state.sidebarPanel) {
+          state.setSidebarPanel(null);
+          return;
+        }
+        const workspace = useWorkspaceStore.getState();
+        if (state.view === 'chat' && workspace.sessions[state.activeSessionKey]?.mode === 'expanded') {
+          workspace.update(state.activeSessionKey, {mode:'workspace'});
+          return;
+        }
+        const history = [...state.navigationHistory];
+        const previous = history.pop();
+        set({ navigationHistory:history, view:previous?.view || (state.activeSessionKey ? 'chat' : 'welcome') });
+        // Returning to an earlier chat restores its server-owned history.
+        if (previous?.view === 'chat' && previous.sessionId && previous.sessionId !== state.activeSessionKey) {
+          state.openSession(previous.sessionId);
+        }
       },
 
       // Messages
@@ -797,10 +831,12 @@ export const useAppStore = create<AppState>()(
       sidebarOpen: false,
       sidebarPanel: null,
       setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
-      setSidebarPanel: (sidebarPanel) => set({ sidebarPanel, sidebarOpen: sidebarPanel !== null }),
+      setSidebarPanel: (sidebarPanel) => set((state) => ({ sidebarPanel, sidebarOpen: sidebarPanel !== null,
+        settingsSection:sidebarPanel ? 'general' : state.settingsSection })),
       toggleSidebarPanel: (panel) => set((state) => {
         const isSamePanel = state.sidebarPanel === panel;
-        return { sidebarPanel: isSamePanel ? null : panel, sidebarOpen: !isSamePanel };
+        return { sidebarPanel: isSamePanel ? null : panel, sidebarOpen: !isSamePanel,
+          settingsSection:isSamePanel ? state.settingsSection : 'general' };
       }),
       mobileSidebarOpen: false,
       setMobileSidebarOpen: (mobileSidebarOpen) => set({ mobileSidebarOpen }),

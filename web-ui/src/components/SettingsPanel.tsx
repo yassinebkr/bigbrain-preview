@@ -1,7 +1,8 @@
 import { motion } from 'framer-motion';
-import { X, LogOut, Moon, Sun } from 'lucide-react';
+import { ArrowLeft, ChevronRight, SlidersHorizontal, X, LogOut, Moon, Sun } from 'lucide-react';
 import { BigBrainProviders } from './BigBrainProviders';
 import { useAppStore } from '@/store/appStore';
+import { ModelSettings } from './ModelSettings';
 
 const easeOut = [0, 0, 0.2, 1] as [number, number, number, number];
 
@@ -14,6 +15,9 @@ export function SettingsPanel() {
     setSidebarPanel,
     user,
     logout,
+    settingsSection,
+    setSettingsSection,
+    goBack,
   } = useAppStore();
 
   return (
@@ -35,11 +39,12 @@ export function SettingsPanel() {
         className="flex items-center justify-between h-14 px-4 flex-shrink-0"
         style={{ borderBottom: '1px solid var(--border-subtle)' }}
       >
+        <button aria-label="Retour dans les paramètres" onClick={goBack} className="grid size-8 shrink-0 place-items-center rounded-full hover:bg-white/10" style={{color:'var(--text-primary)'}}><ArrowLeft size={17} /></button>
         <span
           className="text-base font-semibold"
           style={{ color: 'var(--text-primary)' }}
         >
-          Settings
+          {settingsSection === 'models' ? 'Modèles des spécialistes' : 'Settings'}
         </span>
         <button
           onClick={() => setSidebarPanel(null)}
@@ -59,6 +64,11 @@ export function SettingsPanel() {
 
       {/* Settings Content */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-6">
+        {settingsSection === 'models' ? <ModelSettings /> : <>
+        <button onClick={() => setSettingsSection('models')} className="flex w-full items-center gap-2 rounded-xl border p-3 text-[12px] text-left"
+          style={{background:'var(--bg-button)', color:'var(--text-primary)', borderColor:'var(--border-subtle)'}}>
+          <SlidersHorizontal size={15} /><span className="flex-1">Modèles des spécialistes</span><ChevronRight size={14} />
+        </button>
         {/* Theme Toggle */}
         <div className="space-y-3">
           <span
@@ -225,15 +235,16 @@ export function SettingsPanel() {
             Log Out
           </button>
         </div>
+      </>}
       </div>
-
-      {/* BigBrain providers: model registry + subscription connections */}
+      {/* Provider connections stay available from the general settings page. */}
+      {settingsSection === 'general' &&
       <div
         className="border-t"
         style={{ borderBottom: 'none', borderColor: 'var(--border-subtle)' }}
       >
         <BigBrainProviders />
-      </div>
+      </div>}
     </motion.div>
   );
 }
