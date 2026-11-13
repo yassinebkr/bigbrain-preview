@@ -307,3 +307,35 @@ async def test_document_worker_boundary_reuses_codex_thread_and_isolates_convers
     finally:
         provider._inference_directory.cleanup()
         await bus.close()
+
+
+@pytest.mark.asyncio
+async def test_turn_notifications_keep_their_trace_when_rpc_reader_has_another_context(transport, monkeypatch):
+    """A long-lived RPC reader must report stages under the observing turn."""
+    from contextvars import Context
+    from bigbrain.llm.call_trace import trace_call
+    from bigbrain.verification.evidence import default_repository
+
+    reader_context = Context()
+    original_emit = transport.emit
+    def emit(method, thread, params):
+        reader_context.run(original_emit, method, thread, params)
+    monkeypatch.setattr(transport, 'emit', emit)
+    provider = CodexProvider()
+    call_ids = []
+    try:
+        with conversation_scope('trace-conversation', 'cad'):
+            for turn in ('first', 'second'):
+                with trace_call(provider, 'cad.decision') as trace:
+                    call_ids.append(trace.call_id)
+                    await provider.chat_complete([{'role': 'user', 'content': turn}])
+        for call_id in call_ids:
+            path = default_repository().root / 'inference' / (call_id + '.jsonl')
+            events = [json.loads(line) for line in path.read_text().splitlines()]
+            names = [event['event'] for event in events]
+            assert 'codex.agent_message' in names
+            assert 'codex.usage_observed' in names
+            assert names[-1] == 'call.finished'
+            assert {event['call_id'] for event in events} == {call_id}
+    finally:
+        provider._inference_directory.cleanup()

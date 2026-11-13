@@ -429,7 +429,15 @@ class CodexProvider(LLMProvider):
 
         Returns visible text and per-turn usage, never a lifetime counter.
         """
-        from .call_trace import trace_stage
+        from contextvars import copy_context
+        from .call_trace import trace_stage as current_trace_stage
+        trace_context = copy_context()
+
+        def trace_stage(stage, **metadata):
+            # RPC notifications run in the persistent reader task. Bind tracing
+            # to this turn so later calls cannot write into an earlier call log.
+            trace_context.run(current_trace_stage, stage, **metadata)
+
         trace_stage("codex.session.connecting")
         client = await _get_session()
         model_id = model if model and model != "default" else self.default_model
