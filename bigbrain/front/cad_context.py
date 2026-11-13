@@ -105,7 +105,8 @@ def save_clarification(session_id, decision, user_text, source_message_id, sourc
         raise ValueError('La conception dépasse 64 échanges. Reprends ses informations dans une conversation dédiée.')
     exchanges.append({'message_id': source_message_id, 'user': user_text,
                       'assistant': decision.reply})
-    context = {'status': 'proposed' if is_cad else 'clarifying',
+    # Keep execution ownership while clarification snapshots advance.
+    context = {**previous, 'status': 'proposed' if is_cad else 'clarifying',
                'sources': sources,
                'drawing': drawing.model_dump(mode='json') if drawing else previous.get('drawing'),
                'exchanges': exchanges,

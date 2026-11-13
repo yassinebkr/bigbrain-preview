@@ -268,3 +268,60 @@ async def test_other_conversation_receives_no_image_or_design(monkeypatch):
         assert all('Conversation CAD dossier' not in str(item['content']) for item in provider.calls[0]['messages'])
     finally:
         await bus.close()
+
+
+@pytest.mark.asyncio
+async def test_restart_retry_uses_retained_drawing_before_delegation(monkeypatch):
+    """The normal UI route recovers the owned drawing after a fresh FrontBrain."""
+    store, sid, record, data = fixture()
+    saved = save_clarification(
+        sid, Clarify(operation='clarify', drawing=data, reply='Ready'),
+        'Create this support', 'first', design_context(sid)[1])
+    store.set_cad_context(sid, {**saved, 'run_id': 'previous-attempt'},
+                          expected_revision=saved['revision'])
+    decision = Delegate(operation='delegate', reply='Je reprends la pièce.',
+                        objective='Resume the approved CAD drawing',
+                        route={'brain': 'cad_brain', 'payload': {'type': 'model_cad'}})
+    bus = MessageBus(auth=None)
+    front = FrontBrain(bus, llm_provider=RecordingProvider(True))
+    tasks = []
+
+    async def decide(*args, **kwargs):
+        front._decision_context.set(decision)
+        return decision.reply
+
+    async def route(*args, **kwargs):
+        return 'resumed-attempt'
+
+    async def send(**kwargs):
+        tasks.append(kwargs['task_data'])
+
+    monkeypatch.setattr(front, 'handle_user_input', decide)
+    monkeypatch.setattr(front, '_emit_task_routing', route)
+    monkeypatch.setattr(bus, 'send_task', send)
+    message = message_for(record, 'Reprends le contrat validé')
+    message.payload.update(session_id=sid, attachments=[])
+    try:
+        await front._handle_ui_message(message)
+        assert len(tasks) == 1
+        assert tasks[0]['drawing'] == saved['drawing']
+        assert tasks[0]['session_id'] == sid
+        restored = SessionStore().get(sid)['cad_context']
+        assert restored['drawing'] == saved['drawing']
+        assert restored['run_id'] == 'resumed-attempt'
+    finally:
+        await bus.close()
+
+
+def test_clarification_keeps_execution_lineage():
+    store, sid, _, data = fixture()
+    context = save_clarification(
+        sid, Clarify(operation='clarify', drawing=data, reply='Ready'),
+        'Create this support', 'first', design_context(sid)[1])
+    store.set_cad_context(sid, {**context, 'run_id': 'retained-attempt'},
+                          expected_revision=context['revision'])
+    updated = save_clarification(
+        sid, Clarify(operation='clarify', cad=True, reply='Quelle précision ?'),
+        'Continue', 'second', design_context(sid)[1])
+    assert updated['run_id'] == 'retained-attempt'
+    assert SessionStore().get(sid)['cad_context'] == updated

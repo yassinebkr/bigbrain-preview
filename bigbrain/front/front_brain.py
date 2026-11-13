@@ -763,6 +763,33 @@ Type 'quit' or 'exit' to stop."""
             # Conversation text, including JSON examples, remains display data.
             from .decision import Delegate
             decision = self._decision_context.get()
+            parsed = decision.task_payload() if isinstance(decision, Delegate) else None
+            route = parsed.get('route') if parsed else None
+            route_brain = route.get('brain') if route else None
+            route_payload = route.get('payload') if route else None
+            # Recovery may omit a drawing already retained by this conversation.
+            # Fresh image uploads require an explicit new interpretation.
+            if (route_brain == 'cad_brain' and route_payload.get('drawing') is None
+                    and not any(item.get('type', '').startswith('image/') for item in current_attachments)
+                    and (design or {}).get('drawing')):
+                route_payload['drawing'] = design['drawing']
+            if route_brain == 'cad_brain':
+                from ..cad_drawings import DrawingSpecification
+                drawing = route_payload.get('drawing')
+                images = [item for item in attachments
+                          if str(item.get('type') or '').lower().startswith('image/')]
+                if images and drawing is None:
+                    raise ValueError('Une pièce issue d’un dessin exige son interprétation cotée.')
+                if drawing is not None:
+                    import hashlib
+                    from ..web.attachments import read_attachment
+                    interpretation = DrawingSpecification.model_validate(drawing).require_resolved()
+                    current = {item.get('id') for item in images}
+                    for source in interpretation.sources:
+                        path = read_attachment(source.attachment_id)
+                        if (source.attachment_id not in current or path is None
+                                or hashlib.sha256(path.read_bytes()).hexdigest() != source.sha256):
+                            raise ValueError('Les sources du dessin ont changé ou appartiennent à une autre conversation.')
             from .cad_context import save_clarification
             context = save_clarification(session_id, decision, message.payload.get('text', ''),
                                          message.payload.get('user_message_id'),
@@ -771,7 +798,6 @@ Type 'quit' or 'exit' to stop."""
             if context:
                 await self.bus.broadcast_event(source=self.name, event_type='cad.context.updated',
                     payload={'session_id': session_id, 'context': context})
-            parsed = decision.task_payload() if isinstance(decision, Delegate) else None
             
             # The model picked this specialist and typed payload; the runtime
             # preserves that decision and supplies conversation/run ownership.
@@ -786,23 +812,6 @@ Type 'quit' or 'exit' to stop."""
             )
             
             if parsed and route_valid:
-                if route_brain == 'cad_brain':
-                    from ..cad_drawings import DrawingSpecification
-                    drawing = route_payload.get('drawing')
-                    images = [item for item in attachments
-                              if str(item.get('type') or '').lower().startswith('image/')]
-                    if images and drawing is None:
-                        raise ValueError('Une pièce issue d’un dessin exige son interprétation cotée.')
-                    if drawing is not None:
-                        import hashlib
-                        from ..web.attachments import read_attachment
-                        interpretation = DrawingSpecification.model_validate(drawing).require_resolved()
-                        current = {item.get('id') for item in images}
-                        for source in interpretation.sources:
-                            path = read_attachment(source.attachment_id)
-                            if (source.attachment_id not in current or path is None
-                                    or hashlib.sha256(path.read_bytes()).hexdigest() != source.sha256):
-                                raise ValueError('Les sources du dessin ont changé ou appartiennent à une autre conversation.')
                 if route_payload.get('local_project') is not None:
                     from ..local_projects import default_registry
                     current = default_registry().conversation_context(session_id)
