@@ -13,6 +13,7 @@ export function AttachmentChip({ attachment, onRemove }: AttachmentChipProps) {
       className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs"
       style={{
         backgroundColor: 'var(--bg-button)',
+        color: 'var(--text-primary)',
         border: '1px solid var(--border-subtle)',
       }}
     >

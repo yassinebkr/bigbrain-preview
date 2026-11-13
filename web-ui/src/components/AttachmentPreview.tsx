@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import type { Attachment } from '@/types';
 import { Dialog, DialogContent, DialogTitle } from './ui/dialog';
+import { useAppStore } from '@/store/appStore';
 
 /** Shared thumbnail for pending uploads, persisted chat and design sources. */
 export function AttachmentPreview({ attachment }: { attachment: Attachment }) {
+  const theme = useAppStore(state => state.theme);
   const [local, setLocal] = useState<string>();
   const [open, setOpen] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -16,19 +18,20 @@ export function AttachmentPreview({ attachment }: { attachment: Attachment }) {
   }, [attachment.file, image]);
   const src = attachment.file ? local : /^att-[a-f0-9]{12}$/.test(attachment.id)
     ? `/api/attachments/${attachment.id}` : undefined;
-  if (!image) return <span className="text-xs break-all">{attachment.name}</span>;
+  if (!image) return <span className="text-xs break-all" style={{color:'var(--text-primary)'}}>{attachment.name}</span>;
   return <>
     <button type="button" onClick={() => setOpen(true)} aria-label={`Agrandir ${attachment.name}`}
-      className="flex items-center gap-2 rounded-xl p-1 text-left max-w-full hover:bg-white/10 transition-colors">
+      className="flex items-center gap-2 rounded-xl border p-1.5 text-left max-w-full transition-colors"
+      style={{background:'var(--bg-button)', color:'var(--text-primary)', borderColor:'var(--border-input)'}}>
       {src && !failed ? <img src={src} alt={attachment.name} onError={() => setFailed(true)}
-        className="h-16 w-20 rounded-lg object-contain bg-white/5" />
+        className="h-16 w-20 rounded-lg object-contain bg-white" />
         : <span className="text-xs p-2">{failed ? 'Image indisponible' : 'Chargement…'}</span>}
       <span className="text-xs truncate max-w-40">{attachment.name}</span>
     </button>
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="sm:max-w-[90vw] max-h-[92vh] overflow-auto bg-[var(--bg-surface)] text-[var(--text-primary)]" aria-describedby={undefined}>
+      <DialogContent data-theme={theme} className="sm:max-w-[90vw] max-h-[92vh] overflow-auto bg-[var(--bg-surface)] text-[var(--text-primary)]" aria-describedby={undefined}>
         <DialogTitle>{attachment.name}</DialogTitle>
-        {src && !failed ? <img src={src} alt={attachment.name} className="w-full max-h-[78vh] object-contain" onError={() => setFailed(true)} />
+        {src && !failed ? <img src={src} alt={attachment.name} className="w-full max-h-[78vh] rounded-lg bg-white object-contain" onError={() => setFailed(true)} />
           : <p role="status">Cette image est indisponible. Joins-la à nouveau pour la consulter.</p>}
       </DialogContent>
     </Dialog>

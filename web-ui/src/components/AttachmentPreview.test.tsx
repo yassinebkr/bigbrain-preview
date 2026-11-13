@@ -11,6 +11,8 @@ describe('drawing sources and clarification dossier', () => {
     expect(html).toContain('/api/attachments/att-012345abcdef');
     expect(html).toContain('Agrandir drawing.png');
     expect(html).toContain('alt="drawing.png"');
+    expect(html).toContain('color:var(--text-primary)');
+    expect(html).toContain('object-contain bg-white');
   });
   it('keeps non-images as filenames', () => {
     expect(renderToStaticMarkup(<AttachmentPreview attachment={{ ...image, type: 'application/pdf' }} />)).not.toContain('<img');
