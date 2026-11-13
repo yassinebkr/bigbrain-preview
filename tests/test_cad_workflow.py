@@ -481,8 +481,10 @@ async def test_interrupted_inspection_resumes_owned_recipe_without_front_or_cons
     class Provider:
         entry = SimpleNamespace(vision=True)
         def __init__(self, resumed=False):
-            self.calls, self.resumed = [], resumed
+            self.calls, self.resumed, self.scopes = [], resumed, []
         async def chat_complete(self, **kwargs):
+            from bigbrain.llm.conversation import current_conversation
+            self.scopes.append(current_conversation.get())
             self.calls.append(kwargs)
             if self.resumed:
                 assert 'candidate_observations' in kwargs['messages'][-1]['content']
@@ -498,6 +500,7 @@ async def test_interrupted_inspection_resumes_owned_recipe_without_front_or_cons
         provider = Provider()
         failed = await CadBrain('cad_brain', bus, llm_provider=provider).handle_task(task(plan, confirmed))
         assert failed['success'] is False and len(provider.calls) == 6
+        assert set(provider.scopes) == {(sid, 'worker:cad_brain')}
         checkpoint = CadRunCheckpoint(CadStore(), confirmed, sid)
         state = checkpoint.load()
         assert state['kind'] == 'construction'

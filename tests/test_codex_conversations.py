@@ -268,3 +268,42 @@ async def test_independent_review_scope_does_not_inherit_worker_history():
     assert observed[0][0] == observed[1][0] == 'sess-one'
     assert observed[0][1] != observed[1][1]
     assert current_conversation.get() is None
+
+
+@pytest.mark.asyncio
+async def test_document_worker_boundary_reuses_codex_thread_and_isolates_conversations(transport, tmp_path):
+    """A worker without a code-directory scope still owns one provider conversation."""
+    from bigbrain.brains.base import BaseBrain
+    from bigbrain.bus.bus import MessageBus
+    from bigbrain.bus.message import BusMessage, MessageType
+
+    provider = CodexProvider()
+    observed = []
+    class DocumentWorker(BaseBrain):
+        async def handle_message(self, message):
+            pass
+        async def handle_task(self, message):
+            for phase in ('construct', 'inspect'):
+                observed.append(current_conversation.get())
+                await provider.chat_complete([{'role': 'user', 'content': phase}])
+            return {'success': True}
+
+    bus = MessageBus(tmp_path / 'logs', auth=None)
+    worker = DocumentWorker('document-worker', bus)
+    try:
+        for session in ('first', 'first', 'second'):
+            message = BusMessage(type=MessageType.TASK, source='orchestrator', target=worker.name,
+                                 payload={'session_id': session})
+            await worker._execute_task_background(message)
+            assert current_conversation.get() is None
+        assert observed == [('first', 'worker:document-worker')] * 4 + [('second', 'worker:document-worker')] * 2
+        starts = [params for method, params in transport.calls if method == 'thread/start']
+        turns = [params for method, params in transport.calls if method == 'turn/start']
+        assert len(starts) == 2
+        assert len(turns) == 6
+        assert len({turn['threadId'] for turn in turns[:4]}) == 1
+        assert turns[4]['threadId'] == turns[5]['threadId']
+        assert turns[4]['threadId'] != turns[0]['threadId']
+    finally:
+        provider._inference_directory.cleanup()
+        await bus.close()

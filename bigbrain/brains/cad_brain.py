@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 
 from .base import BaseBrain
+from ..llm.conversation import scoped_conversation
 from ..cad_contracts import CadDelivery, CriterionObservation
 from ..cad_planning import CadPlan, draft_cad_plan, draft_cad_repair, refine_cad_sampling
 from ..cad_store import CadStore
@@ -82,6 +83,7 @@ class CadBrain(BaseBrain):
     async def handle_message(self, message):
         return None
 
+    @scoped_conversation('worker:cad_brain', message_argument='message')
     async def handle_task(self, message):
         payload = message.payload or {}
         if payload.get('type') != 'model_cad':

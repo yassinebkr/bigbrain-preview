@@ -537,14 +537,24 @@ class BaseBrain(BusParticipant, ABC):
         task_token = self._task_context.set(message)
         try:
             # Announce task start
+            provider = getattr(self, 'llm_provider', None)
+            entry = getattr(provider, 'entry', None)
             await self.send_event("brain.started", {
                 "brain": self.name,
                 "task_id": message.id,
-                "task_type": message.payload.get("type", "unknown")
+                "task_type": message.payload.get("type", "unknown"),
+                "model_selection": {
+                    "registry_key": getattr(provider, 'registry_key', None),
+                    "provider": getattr(entry, 'provider', None),
+                    "model_id": getattr(entry, 'model_id', None),
+                },
             })
             
-            # Delegate to subclass
-            result = await self.handle_task(message)
+            # Every worker binds provider state at the task boundary, including
+            # handlers that use document storage instead of execution_scope.
+            from ..llm.conversation import conversation_scope
+            with conversation_scope(message.payload.get('session_id'), 'worker:' + self.name):
+                result = await self.handle_task(message)
             
             if not self._cancelled:
                 # Save reply info before clearing task state.
