@@ -3,8 +3,9 @@
 ## Provider strategy and native migration
 
 Native analytic measurements are preferred whenever their capability is
-qualified. The current native provider supplies cylinder radii and axes; the
-STEP provider supplies precise volume, bounds, vertices and solid validation.
+qualified. The current native provider supplies cylinder radii and axes. The
+STEP provider supplies precise volume, bounds, vertices, solid validation and
+axis-line material sections.
 `MeasurementRouter` selects providers by capability. The CAD brain consumes
 one shared result with units, revision hashes and per-capability provenance.
 
@@ -31,17 +32,28 @@ intervals and volumes are calculated separately from elementary geometry.
 ```text
 Reference solid -> native saved candidate -> body topology
                             |
-                        STL export
+                       STEP export
                             |
-                 independent line intersections
+                 analytic surface intersections
                             |
        compare with analytic coordinates and defect expectations
 ```
 
-STL sections run outside SolidCraft. They inspect its exported boundary mesh,
-so this cross-check shares the CAD kernel and export path. It establishes
-nominal local geometry within the tested section tolerance. Manufacturing
-certification requires a separate accuracy contract.
+Section verification uses OCCT line intersections against the exported STEP.
+The reader validates the closed solid, merges duplicate seam crossings and
+classifies the material between intersections. Tangent and surface-coincident
+probes return explicit inconclusive results. Local empty-span checks retain
+remote material in their evidence. Legacy STL observers remain available for
+historical diagnostics.
+
+On the retained drawing 42 candidate, a 45-degree wall probe measured an outer
+radius of 144.947909 mm through the STL. The same STEP surfaces intersect at
+145 mm, with the inner surfaces at 105 mm. All 23 saved section probes passed
+when replayed against STEP with their existing 0.05 mm acceptance threshold.
+The reference suite includes a hollow torus, translated probe origins, local
+empty spans, surface-coincident and tangent lines. The shared measurement router
+allows a qualified native section provider to replace the STEP implementation.
+Manufacturing certification retains its separate accuracy contract.
 
 ## Observed accuracy
 
