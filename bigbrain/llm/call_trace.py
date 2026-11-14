@@ -19,6 +19,9 @@ def trace_stage(stage, **metadata):
     """Record transport milestones using a deliberately narrow metadata set."""
     trace = _active_trace.get()
     if trace is not None:
+        if stage == 'model.first_content':
+            trace.first_content(metadata.get('observation'))
+            return
         trace.write(stage, **{k: v for k, v in metadata.items() if k in {
             "status_code", "request_id", "native_thread_id", "native_turn_id",
             "request_bytes", "response_bytes", "automatic_retries", "attempt",
@@ -30,6 +33,8 @@ class CallTrace:
     def __init__(self, provider, phase, correlation, deadline_seconds, records):
         from ..verification.evidence import default_repository
         self.started = time.monotonic()
+        self.first_content_ms = None
+        self.first_content_observation = None
         self.deadline = deadline_seconds
         self.records = records
         self.call_id = uuid4().hex
@@ -50,6 +55,13 @@ class CallTrace:
         }
         self.metadata = {k: (v[:256] if isinstance(v, str) else v if type(v) in
                             (int, float, bool, type(None)) else None) for k, v in self.metadata.items()}
+
+    def first_content(self, observation):
+        """Record actual transport evidence once, keeping completion-only observations explicit."""
+        if self.first_content_ms is None and observation in {'delta', 'complete_item', 'complete_response'}:
+            self.first_content_ms = round((time.monotonic() - self.started) * 1000, 2)
+            self.first_content_observation = observation
+            self.write('model.first_content', observation=observation)
 
     def write(self, event, **fields):
         record = {**self.metadata, "event": event,
@@ -90,5 +102,7 @@ def trace_call(provider, phase, *, correlation=None, deadline_seconds=None, reco
             "input_tokens", "output_tokens", "cached_input_tokens", "reasoning_output_tokens", "total_tokens", "cost_usd")}
             for r in trace.records]
         trace.write("call.finished", outcome=outcome, exception_types=chain,
+                    first_content_ms=trace.first_content_ms,
+                    first_content_observation=trace.first_content_observation,
                     usage=usage, usage_known=bool(usage) and any(r["total_tokens"] > 0 for r in usage))
         _active_trace.reset(token)

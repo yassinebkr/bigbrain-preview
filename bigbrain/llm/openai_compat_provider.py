@@ -183,6 +183,9 @@ class OpenAICompatProvider(LLMProvider):
         data = response.json()
         self._record_usage(data, model)
         choices = data.get("choices") or [{}]
+        message = choices[0].get("message") or {}
+        if message.get("content") or message.get("tool_calls"):
+            trace_stage("model.first_content", observation="complete_response")
         if choices[0].get('finish_reason') == 'length':
             raise ValueError('Provider truncated generation at its token/context limit; no partial answer accepted')
         if tool_schema is not None:
@@ -262,6 +265,8 @@ class OpenAICompatProvider(LLMProvider):
                     # content field is surfaced to the caller.
                     text = visible_content(delta.get("content"))
                     if text:
+                        from .call_trace import trace_stage
+                        trace_stage('model.first_content', observation='delta')
                         if body.get('tools'):
                             visible_parts.append(text)
                         yield text

@@ -871,6 +871,8 @@ class WebServer:
         self, ws: web.WebSocketResponse, data: dict
     ) -> None:
         payload = data.get('payload') or {}
+        if not (payload.get('text') or '').strip():
+            return
         from .sessions import SessionError
         try:
             target = payload.get('sessionId') or self._ws_session_ids.get(ws)
@@ -888,10 +890,16 @@ class WebServer:
             self._chat_task_sessions[current] = session_id
         lock = self._session_locks.setdefault(session_id, asyncio.Lock())
         turn_id = uuid4().hex
+        if self.bus is not None:
+            await self.bus.broadcast_event(source='morphable_ui', event_type='chat.turn_received',
+                payload={'session_id': session_id, 'turn_id': turn_id})
         reply = self._reply_events[turn_id] = asyncio.Event()
         delivery = reply_wait = None
         try:
             async with lock:
+                if self.bus is not None:
+                    await self.bus.broadcast_event(source='morphable_ui', event_type='chat.turn_dispatched',
+                        payload={'session_id': session_id, 'turn_id': turn_id})
                 delivery = asyncio.create_task(self._deliver_chat_send(ws, {
                     **data, 'payload': {**payload, 'sessionId': session_id, 'turn_id': turn_id}}))
                 reply_wait = asyncio.create_task(reply.wait())

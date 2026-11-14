@@ -520,7 +520,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
                 from ..cad_intake import prepare_drawing
                 provider = self.cad_intake_provider
                 model = None
-                drawing = await prepare_drawing(provider, task.payload, self.bus, self.name)
+                drawing = await prepare_drawing(provider, task.payload, self.bus, self.name, task_id=plan.id)
                 if drawing is not None:
                     task.payload['drawing'] = drawing.model_dump(mode='json')
             recipe = await prepare_cad_plan(provider, task.payload, model=model, defer_construction=True)

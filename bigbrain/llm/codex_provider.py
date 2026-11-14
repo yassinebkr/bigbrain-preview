@@ -516,9 +516,12 @@ class CodexProvider(LLMProvider):
                     trace_stage('codex.native_tool_rejected', item_type=item.get('type'),
                                 tool_name=item.get('name'), boundary='raw_response')
                     turn_future.set_exception(CodexNativeToolAttempt(item['type'], item.get('name')))
+            if method == 'item/agentMessage/delta' and params.get('delta'):
+                trace_stage('model.first_content', observation='delta')
             if method == "item/agentMessage" or (method == "item/completed" and item.get("type") == "agentMessage"):
                 text = item.get("text") or params.get("text") or ""
                 if text:
+                    trace_stage('model.first_content', observation='complete_item')
                     phase = item.get('phase')
                     identity = item.get('id') or f'legacy-{len(reply)}'
                     trace_stage('codex.agent_message', message_phase=phase, message_id=identity)

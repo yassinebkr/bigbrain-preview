@@ -67,7 +67,7 @@ async def _consult_front(front, messages, session_id, deadline, output_tokens=40
             from ..llm.usage import capture_usage
             with capture_usage() as records, trace_call(front.llm_provider, "front.decision",
                     correlation={"session_id": session_id, "turn_id": front._turn_context.get()},
-                    deadline_seconds=max(0, deadline-time.monotonic()), records=records):
+                    deadline_seconds=max(0, deadline-time.monotonic()), records=records) as call:
                 raw = await front.llm_provider.chat_complete(messages=messages, stream=False,
                     max_tokens=output_tokens, tool_schema=FRONT_TOOL_SCHEMA)
                 if time.monotonic() >= deadline:
@@ -94,7 +94,7 @@ async def _consult_front(front, messages, session_id, deadline, output_tokens=40
         decision = envelope.decision
         await front.bus.broadcast_event(source=front.name,event_type="front.decision",
             payload={"session_id":session_id,"turn_id":front._turn_context.get(),
-                     "operation":decision.operation,"consultation":consultation+1})
+                     "operation":decision.operation,"consultation":consultation+1,"call_id":call.call_id})
         if not isinstance(decision,ConsultMemory):
             if isinstance(decision,Delegate) and decision.route:
                 registered = getattr(front,"_registered_brains",{})

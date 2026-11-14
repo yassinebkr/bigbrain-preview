@@ -8,10 +8,18 @@ from unittest.mock import AsyncMock
 import pytest
 
 from bigbrain.cad_intake import prepare_drawing
+from bigbrain.cad_drawing_transport import compact_drawing, WIRE_VERSION
+from bigbrain.cad_drawings import DrawingSource
 from bigbrain.cad_planning import CadClarificationRequired
 from bigbrain.front.cad_context import design_context
 from bigbrain.front.decision import FRONT_TOOL_SCHEMA, FrontDecision
 from tests.test_cad_clarification import fixture
+
+
+def response(drawing, question):
+    sources = [DrawingSource.model_validate(item) for item in drawing['sources']]
+    return json.dumps({'decision': {'wire_version': WIRE_VERSION,
+        'drawing': compact_drawing(drawing, sources), 'question': question}})
 
 
 def test_front_wire_routes_cad_without_a_dimension_inventory():
@@ -32,7 +40,7 @@ async def test_specialist_intake_retains_sources_and_questions(clarify):
         drawing['dimensions'][0].update(value=None, origin='unresolved')
     question = 'Quelle largeur faut-il utiliser ?' if clarify else None
     provider = SimpleNamespace(entry=SimpleNamespace(vision=True), chat_complete=AsyncMock(
-        return_value=json.dumps({'decision': {'drawing': drawing, 'question': question}})))
+        return_value=response(drawing, question)))
     bus = SimpleNamespace(broadcast_event=AsyncMock())
     payload = {'session_id': sid, 'user_request': 'Créer le support du dessin.'}
     if clarify:
@@ -56,12 +64,11 @@ async def test_specialist_intake_retains_sources_and_questions(clarify):
 @pytest.mark.asyncio
 async def test_intake_rejects_foreign_sources_before_persistence():
     _, sid, _, drawing = fixture()
-    foreign = {'attachment_id': 'att-000000000000', 'sha256': 'a' * 64}
-    drawing['sources'] = [foreign]
-    drawing['dimensions'][0]['sources'] = [foreign]
+    malicious = json.loads(response(drawing, None))
+    malicious['decision']['drawing']['sources'][0]['source_index'] = 7
     provider = SimpleNamespace(entry=SimpleNamespace(vision=True), chat_complete=AsyncMock(
-        return_value=json.dumps({'decision': {'drawing': drawing, 'question': None}})))
-    with pytest.raises(ValueError, match='extérieure'):
+        return_value=json.dumps(malicious)))
+    with pytest.raises(ValueError, match='source reference'):
         await prepare_drawing(provider, {'session_id': sid, 'user_request': 'Créer la pièce'},
             SimpleNamespace(broadcast_event=AsyncMock()), 'orchestrator_default')
     assert design_context(sid)[0] is None
@@ -75,7 +82,7 @@ async def test_intake_preserves_revision_when_provider_cannot_commit(outcome):
         if outcome == 'cancel':
             raise asyncio.CancelledError()
         store.set_cad_context(sid, {'status': 'clarifying', 'question': 'Nouvelle précision'})
-        return json.dumps({'decision': {'drawing': drawing, 'question': None}})
+        return response(drawing, None)
     provider = SimpleNamespace(entry=SimpleNamespace(vision=True), chat_complete=respond)
     error = asyncio.CancelledError if outcome == 'cancel' else ValueError
     with pytest.raises(error):
@@ -94,7 +101,7 @@ async def test_normal_proposal_uses_selected_cad_provider_and_waits_for_confirma
     store, sid, _, drawing = fixture()
     planner = SimpleNamespace(chat_complete=AsyncMock(side_effect=AssertionError('Planner must preserve CAD role ownership')))
     specialist = SimpleNamespace(entry=SimpleNamespace(vision=True), chat_complete=AsyncMock(
-        return_value=json.dumps({'decision': {'drawing': drawing, 'question': None}})))
+        return_value=response(drawing, None)))
     bus = MessageBus(tmp_path / 'bus', auth=None)
     orchestrator = WorkspaceOrchestrator('default', bus, llm_provider=planner)
     orchestrator.cad_intake_provider = specialist
@@ -112,3 +119,26 @@ async def test_normal_proposal_uses_selected_cad_provider_and_waits_for_confirma
     assert plan.awaiting_approval
     assert not plan.subtasks[0].result
     await bus.close()
+
+
+@pytest.mark.asyncio
+async def test_replacement_image_keeps_historical_ledger_separate():
+    import hashlib
+    from bigbrain.web.attachments import read_attachment, save_attachment
+    store, sid, original, old_drawing = fixture()
+    read_attachment(original['id']).unlink()
+    replacement = save_attachment('replacement.png', 'image/png', b'replacement drawing')
+    store.append_message(sid, 'user', 'Utilise cette nouvelle image.', [replacement])
+    inventory = design_context(sid)[1]
+    store.set_cad_context(sid, {'status': 'clarifying', 'drawing': old_drawing, 'sources': [inventory[-1]]})
+    current = {**old_drawing, 'sources': [{'attachment_id': replacement['id'],
+        'sha256': hashlib.sha256(b'replacement drawing').hexdigest()}]}
+    current['dimensions'] = [{**old_drawing['dimensions'][0], 'sources': current['sources']}]
+    provider = SimpleNamespace(entry=SimpleNamespace(vision=True), chat_complete=AsyncMock(
+        return_value=response(current, None)))
+    await prepare_drawing(provider, {'session_id': sid, 'user_request': 'Créer le support'},
+        SimpleNamespace(broadcast_event=AsyncMock()), 'orchestrator_default')
+    packet = json.loads(provider.chat_complete.call_args.kwargs['messages'][1]['content'][0]['text'])
+    assert packet['sources'][0]['attachment_id'] == replacement['id']
+    assert packet['retained_design']['historical_sources'][0]['attachment_id'] == original['id']
+    assert design_context(sid)[0]['drawing']['sources'][0]['attachment_id'] == replacement['id']

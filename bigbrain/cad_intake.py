@@ -1,12 +1,14 @@
 """Specialist drawing intake with conversation-owned evidence and revision checks."""
 
 import json
+import time
 from types import SimpleNamespace
 
 from pydantic import Field, model_validator
 
 from .cad_contracts import Contract
 from .cad_drawings import DrawingSource, DrawingSpecification
+from .cad_drawing_transport import compact_drawing, expand_intake, intake_schema
 from .cad_decision_transport import decision_tool_schema, parse_decision_response
 from .cad_planning import CadClarification, CadClarificationRequired
 from .front.cad_context import design_context, drawing_image_blocks, save_clarification, verified_images
@@ -28,8 +30,9 @@ class DrawingIntake(Contract):
         return self
 
 
-async def prepare_drawing(provider, payload, bus, source):
+async def prepare_drawing(provider, payload, bus, source, *, task_id=None):
     """Interpret sources before contract preparation and preserve clarification authority."""
+    started = time.monotonic()
     session_id = payload.get('session_id')
     context, inventory = design_context(session_id)
     if not inventory:
@@ -44,16 +47,35 @@ async def prepare_drawing(provider, payload, bus, source):
     images = drawing_image_blocks(SimpleNamespace(sources=drawing_sources), session_id)
     statements = [{'id': message['id'], 'text': message.get('text', '')}
                   for message in session.get('messages', []) if message.get('role') == 'user']
-    packet = {'objective': payload['user_request'], 'sources': [s.model_dump(mode='json') for s in drawing_sources],
-              'retained_design': context, 'user_statements': statements}
+    retained = {key: context[key] for key in
+                ('revision', 'status', 'question', 'document_id', 'base_revision') if key in context}
+    if context.get('drawing'):
+        historical = DrawingSpecification.model_validate(context['drawing'])
+        current_ids = {(item.attachment_id, item.sha256) for item in drawing_sources}
+        historical_ids = {(item.attachment_id, item.sha256) for item in historical.sources}
+        if historical_ids <= current_ids:
+            retained['drawing'] = compact_drawing(historical, drawing_sources)
+        else:
+            # A replacement upload may recover an unavailable former image.
+            # Its ledger describes historical data. Output indices use current sources.
+            retained['historical_sources'] = [item.model_dump(mode='json', exclude_defaults=True)
+                                               for item in historical.sources]
+            retained['drawing'] = compact_drawing(historical, historical.sources)
+    packet = {'objective': payload['user_request'],
+              'sources': [s.model_dump(mode='json', exclude_defaults=True) for s in drawing_sources],
+              'retained_design': retained, 'user_statements': statements}
     await bus.broadcast_event(source=source, event_type='cad.intake.started',
-        payload={'session_id': session_id, 'task_id': payload.get('_plan_id'),
+        payload={'session_id': session_id, 'task_id': task_id, 'turn_id': payload.get('turn_id'),
                  'context_revision': context.get('revision', 0)})
     with conversation_scope(session_id, 'worker:cad_intake'), capture_usage() as records:
-        with trace_call(provider, 'cad.intake', correlation={'session_id': session_id}, records=records):
+        with trace_call(provider, 'cad.intake', records=records,
+                correlation={'session_id': session_id, 'turn_id': payload.get('turn_id'), 'task_id': task_id}):
             raw = await provider.chat_complete(messages=[{'role': 'system', 'content':
                 'Prepare the CAD drawing dossier from the supplied images and exact user statements. '
-                'Retain confirmed dimensions, stable IDs and exact source hashes. Use every useful view. '
+                'Retain confirmed dimensions and stable IDs. Source references use source_index into the '
+                'top-level runtime sources ledger, with a normalized region when a crop is needed. '
+                'A retained historical_sources ledger describes earlier evidence only. The runtime '
+                'restores the exact owned hashes. Return wire_version=cad-drawing/1. Use every useful view. '
                 'Record user dimensions with origin=user and the exact message ID and quotation; '
                 'dependencies are arithmetic inputs only. Preserve unresolved dimensions and conflicting '
                 'annotations as blocking issues. Ask one targeted necessary question in French when '
@@ -61,9 +83,9 @@ async def prepare_drawing(provider, payload, bus, source):
                 'over perspective. Return the interpreted drawing and question, or null question when '
                 'all critical requirements are resolved. Construction requires subsequent contract confirmation.'},
                 {'role': 'user', 'content': [{'type': 'text', 'text': json.dumps(packet, ensure_ascii=False)}, *images]}],
-                tool_schema=decision_tool_schema(DrawingIntake.model_json_schema()),
+                tool_schema=decision_tool_schema(intake_schema(DrawingIntake.model_json_schema())),
                 max_tokens=8192, temperature=0.1)
-    interpreted = DrawingIntake.model_validate(parse_decision_response(raw))
+    interpreted = DrawingIntake.model_validate(expand_intake(parse_decision_response(raw), drawing_sources))
     # This shared persistence boundary checks quoted user facts, source ownership,
     # critical-dimension retention and the revision captured before inference.
     if interpreted.question:
@@ -81,7 +103,9 @@ async def prepare_drawing(provider, payload, bus, source):
     await bus.broadcast_event(source=source, event_type='cad.context.updated',
         payload={'session_id': session_id, 'context': updated})
     await bus.broadcast_event(source=source, event_type='cad.intake.finished',
-        payload={'session_id': session_id, 'context_revision': updated['revision'],
+        payload={'session_id': session_id, 'task_id': task_id, 'turn_id': payload.get('turn_id'),
+                 'duration_ms': round((time.monotonic() - started) * 1000, 2),
+                 'context_revision': updated['revision'],
                  'outcome': 'clarification' if interpreted.question else 'resolved'})
     if interpreted.question:
         unresolved = tuple(item.id for item in interpreted.drawing.dimensions if item.origin == 'unresolved')

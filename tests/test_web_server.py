@@ -346,7 +346,11 @@ class TestAplotProtocol:
 
         # Exactly one bus task to front_brain with the legacy user_message
         # shape + the session id of the lazily created session.
+        timings = [frame for frame in received if frame.type == MessageType.EVENT]
+        received = [frame for frame in received if frame.type == MessageType.TASK]
+        assert [frame.payload['event'] for frame in timings] == ['chat.turn_received', 'chat.turn_dispatched']
         assert len(received) == 1
+        assert all(frame.payload['turn_id'] == received[0].payload['turn_id'] for frame in timings)
         assert received[0].source == "morphable_ui"
         assert received[0].payload["type"] == "user_message"
         assert received[0].payload["text"] == "hello bigbrain"
@@ -597,12 +601,18 @@ class TestModelRoles:
         monkeypatch.setattr(mr, "_ROLES_FILE", tmp_path / "model_roles.json")
         yield
 
-    def test_default_lineup_covers_all_roles(self):
+    @pytest.mark.parametrize('fallback_key', ['codex-sol-6.1', 'codex-terra-6.1'])
+    def test_default_lineup_covers_all_roles(self, monkeypatch, fallback_key):
+        from bigbrain.auth import registry
         from bigbrain.web import model_roles
+        from bigbrain.llm.model_registry import get_model
+        for role in model_roles.ROLES:
+            monkeypatch.delenv(f'BIGBRAIN_{role.upper()}_MODEL_KEY', raising=False)
+        monkeypatch.setattr(registry, 'select_registry_key', lambda: fallback_key)
         lineup = model_roles.current_lineup()
         assert set(lineup) == {"front", "planner", "code", "web", "research", "subagent"}
-        assert lineup["front"]["key"]
-        assert lineup["subagent"]["key"]
+        assert all(item['key'] == fallback_key for item in lineup.values())
+        assert all(item['model_id'] == get_model(fallback_key).model_id for item in lineup.values())
 
     def test_set_role_persists_and_mirrors_env(self, monkeypatch):
         from bigbrain.web import model_roles
@@ -1086,3 +1096,22 @@ class TestCompoundFallback:
         subtasks = orch._simple_decompose("plan2", {"type": "research", "query": "x"})
         assert subtasks[0].payload["type"] == "research"
         assert subtasks[0].brain_target == "researcher"
+
+
+@pytest.mark.asyncio
+async def test_chat_timing_and_dispatch_use_the_authenticated_ui_identity(tmp_path):
+    from bigbrain.bus.auth import BusAuth
+    auth = BusAuth()
+    auth.generate_token('morphable_ui')
+    bus = MessageBus(tmp_path / 'bus', auth=auth)
+    server = WebServer(bus=bus, host='127.0.0.1', port=0)
+    frames = []
+    bus.subscribe('front_brain', frames.append)
+    await server._handle_chat_send(AsyncMock(), {'payload': {'text': 'hello', 'messageId': 'timed-input'}})
+    stages = [frame for frame in frames if frame.type == MessageType.EVENT]
+    tasks = [frame for frame in frames if frame.type == MessageType.TASK]
+    assert [frame.payload['event'] for frame in stages] == ['chat.turn_received', 'chat.turn_dispatched']
+    assert len(tasks) == 1
+    assert all(auth.verify_message(frame.source, frame, frame.signature) for frame in frames)
+    assert all(frame.payload['turn_id'] == tasks[0].payload['turn_id'] for frame in stages)
+    await bus.close()

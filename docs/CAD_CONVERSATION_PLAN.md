@@ -448,3 +448,30 @@ clarification persistence, foreign source rejection, cancellation and a competin
 revision update. Front routing schema serialization decreased from 18,826 to
 9,154 bytes in the current implementation. Normal-interface latency qualification
 and complete-part Terra low/medium qualification are pending.
+
+## Compact drawing exchange and latency evidence
+
+CAD intake uses the versioned `cad-drawing/1` transport. A runtime-owned source
+ledger supplies image identities and hashes once. Individual references carry
+a source index and optional normalized crop. Local expansion restores the full
+DrawingSpecification and its defaults before provenance and revision validation.
+A replacement image keeps earlier source metadata in a separate historical ledger.
+
+The retained drawing 42 dossier round-trips exactly through this representation.
+Its serialized size decreases from 7,355 to 3,577 bytes. Tests include cropped
+regions, user quotes, derived dependencies, unresolved dimensions, altered hashes,
+unknown indices and a replacement for an unavailable older image.
+
+Inference traces record the first observable provider content and its observation
+kind, including streamed delta, completed item and complete HTTP response. A
+missing observation remains null. Reception, dispatch, Front and CAD intake share
+the turn identity; intake also records its task identity and duration. Timing
+metadata contains phase identities, numeric measurements and outcome codes.
+
+The first normal-interface experiment on drawing 42 recorded 8.419 seconds for
+Sol low Front routing and 26.792 seconds for Terra low intake. The contract appeared
+in the normal port-3007 Atelier. Complete-part construction remains pending.
+That experiment exposed unsigned reception timing events from an unregistered
+sender. The correction uses the existing authenticated UI identity and has a
+regression test with HMAC enforcement. The corrected reception events await live
+verification after the next reload.

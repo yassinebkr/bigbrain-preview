@@ -641,6 +641,9 @@ Type 'quit' or 'exit' to stop."""
         attached_token = self._attached_project_context.set(None)
         source_token = self._source_message_context.set(message.payload.get('user_message_id'))
         try:
+            await self.bus.broadcast_event(source=self.name, event_type='front.turn_received',
+                payload={'session_id': message.payload.get('session_id'),
+                         'turn_id': message.payload.get('turn_id')})
             if message.payload.get('session_id'):
                 from ..local_projects import default_registry, ProjectAccessError
                 try:
@@ -829,6 +832,7 @@ Type 'quit' or 'exit' to stop."""
                     "user_message": text,
                     "session_id": session_id,
                     "project_target": parsed.get("project_target", route_payload.get("project_target")),
+                    "turn_id": self._turn_context.get(),
                     "_ui_run_id": run_id,
                 }
                 await self.bus.send_task(

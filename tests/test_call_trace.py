@@ -73,9 +73,11 @@ async def test_http_trace_has_one_transport_attempt_and_captured_usage(tmp_path)
         await provider._client.aclose()
     rows = traces(tmp_path)[0]
     assert len(calls) == 1
-    assert [r["event"] for r in rows] == ["call.started", "http.started", "http.response", "call.finished"]
+    assert [r["event"] for r in rows] == ["call.started", "http.started", "http.response", "model.first_content", "call.finished"]
     assert rows[1]["automatic_retries"] == 0
     assert rows[2]["request_id"] == "request-1"
+    assert rows[-1]["first_content_observation"] == "complete_response"
+    assert rows[-1]["first_content_ms"] is not None
     assert rows[-1]["usage"][0]["total_tokens"] == 10
     assert "private" not in json.dumps(rows)
 
@@ -98,3 +100,25 @@ async def test_http_failure_does_not_retry_or_log_response_body(tmp_path):
     assert rows[-1]["outcome"] == "failed"
     assert rows[-2]["status_code"] == 503
     assert "private" not in json.dumps(rows)
+
+
+def test_first_content_records_only_the_first_transport_observation(tmp_path):
+    from bigbrain.llm.call_trace import trace_stage
+    provider = SimpleNamespace(default_model='test-model')
+    with trace_call(provider, 'choose'):
+        trace_stage('model.first_content', observation='private body')
+        trace_stage('model.first_content', observation='delta')
+        trace_stage('model.first_content', observation='complete_item')
+    rows = traces(tmp_path)[0]
+    first = [row for row in rows if row['event'] == 'model.first_content']
+    assert len(first) == 1 and first[0]['observation'] == 'delta'
+    assert rows[-1]['first_content_observation'] == 'delta'
+    assert 'private body' not in json.dumps(rows)
+
+
+def test_unobserved_first_content_remains_unknown(tmp_path):
+    with trace_call(SimpleNamespace(), 'choose'):
+        pass
+    terminal = traces(tmp_path)[0][-1]
+    assert terminal['first_content_ms'] is None
+    assert terminal['first_content_observation'] is None

@@ -595,3 +595,25 @@ def test_strict_schema_preserves_required_null_and_rejects_open_objects():
     assert _strict_schema(schema)['properties']['value'] == schema['properties']['value']
     with pytest.raises(ValueError, match='closed object'):
         _strict_schema({'type': 'object', 'additionalProperties': True})
+
+
+@pytest.mark.asyncio
+async def test_native_delta_timing_is_distinct_from_completed_content(clean_state, tmp_path):
+    import json
+    from bigbrain.llm.call_trace import trace_call
+    clean_state.notifications = [
+        {'method': 'item/agentMessage/delta', 'params': {'threadId': 'thread-1', 'delta': 'private fragment'}},
+        {'method': 'item/completed', 'params': {'threadId': 'thread-1',
+            'item': {'type': 'agentMessage', 'text': 'final answer'}}},
+        {'method': 'turn/completed', 'params': {'threadId': 'thread-1', 'turn': {'status': 'completed'}}},
+    ]
+    provider = CodexProvider()
+    with trace_call(provider, 'cad.intake'):
+        text, _ = await provider.run_turn([{'role': 'user', 'content': 'private question'}])
+    assert text == 'final answer'
+    path = next((tmp_path / 'evidence' / 'inference').glob('*.jsonl'))
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    first = [row for row in rows if row['event'] == 'model.first_content']
+    assert len(first) == 1 and first[0]['observation'] == 'delta'
+    assert rows[-1]['first_content_observation'] == 'delta'
+    assert 'private' not in json.dumps(rows)
