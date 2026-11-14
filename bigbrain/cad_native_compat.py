@@ -33,8 +33,13 @@ def construction_guidance(version, engine_sha256=None):
         return []
     guidance = [
         {'id': 'outer-union-before-continuous-bore', 'status': 'qualified_examples',
-         'condition': 'A curved hollow pipe and annular flange fail native union.',
-         'strategy': 'Join the solid exterior and solid flange, then remove the continuous bore.',
+         'condition': 'A curved hollow pipe and annular flange fail native union, or sequential bore cuts '
+                      'meeting at a tangent plane trigger a Boolean tool displacement.',
+         'strategy': 'Join the solid exterior and solid flange. Build the curved and straight bore '
+                     'segments as one named native tool body, then subtract it once with solid.combine. '
+                     'Start from the checkpoint preceding the sequential bore cuts. Observe the actual '
+                     'local frame and keep the cutter flush with the confirmed opening planes. '
+                     'Run the ordinary cut guard and history diagnostics before accepting the group.',
          'invariants': 'Preserve wall thickness, openings, original dimensions and native editable history.',
          'retirement_case': 'test_native_pipe_flange_union_and_parameter_edit[quarter-bend]',
          'qualified_cases': 'test_native_outer_union_before_bore_and_parameter_edit[aligned-tool-30/60]'},
@@ -45,6 +50,18 @@ def construction_guidance(version, engine_sha256=None):
          'invariants': 'Keep the strict collision check and explicit targets. Zero allowance remains strict.',
          'retirement_case': 'test_native_outer_union_before_bore_and_parameter_edit[extended-tool-60]',
          'qualified_cases': 'test_native_outer_union_before_bore_and_parameter_edit[aligned-tool-30/60]'},
+        {'id': 'guarded-hole-profiles', 'status': 'qualified_examples',
+         'condition': 'A guarded hole or counterbore is required.',
+         'limitation': 'solid.hole is exposed by the native command catalog, while the current cut guard '
+                       'requires an explicit solid cutter for pre-mutation overrun inspection.',
+         'strategy': 'Use constrained circle profiles and solid.extrude cuts. Bind circle locations and '
+                     'diameters to the driving parameters. Inspect the completed sketch before extrusion. '
+                     'Give the through bore and blind counterbore separate cut intents with their own '
+                     'depth and diameter sources. Observe the actual sketch frame and opening material.',
+         'invariants': 'Keep independent cut guards and reject native history warnings. Direct cylinder '
+                       'cuts can trigger a tool nudge on a coplanar flange; qualify the chosen construction.',
+         'qualified_cases': 'Drawing 42 retained flange replay: four constrained profiles per sketch, '
+                            'guarded through and blind extrusions, zero solver DOF and native save/reopen.'},
         {'id': 'native-bore-mouth-chamfer', 'status': 'qualified_example',
          'condition': 'An explicit conical mouth cut stalls or fails.',
          'strategy': 'Observe actual bore-mouth topology, then use solid.chamfer on the intended edge.',
