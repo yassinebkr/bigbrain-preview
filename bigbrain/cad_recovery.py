@@ -48,7 +48,7 @@ def retained_recovery(root):
         action = recovery_action(state.get('recovery'))
         if action['checkpoint'] != (head[-1] if head else None):
             return recovery_action(None)
-        if action['kind'] == 'geometry':
+        if action['kind'] in {'geometry', 'response_validation'}:
             # A recorded native diagnosis can authorize another proposal from
             # this exact checkpoint. The execution path still enforces the
             # confirmed contract, continuation allowance and mutation guards.
@@ -71,7 +71,7 @@ def retained_recovery(root):
                         and value.get('checkpoint') == action['checkpoint']
                         and value.get('contract_sha256') == state.get('contract_sha256')
                         and value.get('engine_sha256') == head_record.get('engine_sha256')):
-                    action.update(action='resume_diagnosed_geometry',
+                    action.update(action='resume_diagnosed_' + ('geometry' if action['kind'] == 'geometry' else 'proposal'),
                                   label='Reprendre après diagnostic', enabled=True)
                     break
         if (root / '.cad-execution').exists():

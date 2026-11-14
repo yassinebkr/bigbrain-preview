@@ -50,8 +50,9 @@ def test_missing_or_corrupt_state_requires_diagnosis(tmp_path):
     assert retained_recovery(tmp_path)['enabled'] is False
 
 
+@pytest.mark.parametrize('kind', ['geometry', 'response_validation'])
 @pytest.mark.parametrize('changed', ['none', 'bytes', 'checkpoint', 'contract', 'engine', 'ready', 'link', 'active'])
-def test_geometry_resume_requires_hash_bound_native_diagnosis(tmp_path, changed):
+def test_geometry_resume_requires_hash_bound_native_diagnosis(tmp_path, changed, kind):
     import hashlib
 
     root = tmp_path / 'execution-checkpoints'
@@ -69,7 +70,7 @@ def test_geometry_resume_requires_hash_bound_native_diagnosis(tmp_path, changed)
     path = root / 'offline-diagnosis-native.json'
     path.write_text(json.dumps(diagnosis))
     identity = hashlib.sha256(path.read_bytes()).hexdigest()
-    state = {'contract_sha256': contract, 'recovery': {'kind': 'geometry', 'checkpoint': checkpoint},
+    state = {'contract_sha256': contract, 'recovery': {'kind': kind, 'checkpoint': checkpoint},
              'offline_diagnostics': [{'name': path.name, 'sha256': identity}]}
     (root / 'controller.json').write_text(json.dumps(state))
     if changed == 'bytes':
@@ -83,4 +84,4 @@ def test_geometry_resume_requires_hash_bound_native_diagnosis(tmp_path, changed)
     result = retained_recovery(tmp_path)
     assert result['enabled'] is (changed == 'none')
     if changed == 'none':
-        assert result['action'] == 'resume_diagnosed_geometry'
+        assert result['action'] == ('resume_diagnosed_geometry' if kind == 'geometry' else 'resume_diagnosed_proposal')

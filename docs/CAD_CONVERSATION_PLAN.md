@@ -531,8 +531,9 @@ retain their existing format. The regression covers store recreation, foreign
 conversation rejection and modified native bytes. The live/integration suite
 passed 19 tests.
 
-A geometry failure can expose a continuation action after an operator-recorded
-offline diagnosis explicitly marks the current checkpoint ready to resume. The
+A geometry failure or rejected proposal can expose a continuation action after
+an operator-recorded offline diagnosis explicitly marks the current checkpoint
+ready to resume. The
 runtime checks the diagnosis hash, contract, native build and checkpoint before
 enabling the action. Active executions remain locked. Contract confirmation,
 resource accounting, native history checks and guarded cuts still apply during
@@ -543,3 +544,10 @@ The retained Terra low bore failure was reproduced without model calls. A
 continuous native cutter passed both exact opening guards, produced a closed
 solid and survived save/reopen on a private copy. Independent STEP measurement
 was retained. Full-piece validation and Terra medium qualification remain open.
+
+The diagnosed-proposal continuation covers immutable-prefix rejections as well.
+The drawing 42 face-sketch proposal attempted to edit an accepted sketch after
+using it to discover the local frame. Its diagnostic retains that frame and
+requires revision to the sketch ancestor followed by atomic recreation with the
+functional curves. Recovery tests pass 31 cases across geometry and proposal
+clearances, including identity changes and an active execution lock.
