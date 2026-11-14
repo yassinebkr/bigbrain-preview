@@ -226,6 +226,8 @@ class BigBrainSystem:
                 holder.model = None
             if hasattr(holder, 'voice_model'):
                 holder.voice_model = getattr(getattr(provider, 'entry', None), 'model_id', None) or 'default'
+        if role == 'subagent' and self.orchestrator is not None:
+            self.orchestrator.cad_intake_provider = provider
         if role == 'planner' and self.orchestrator is not None:
             # A retained override from another provider must follow the role.
             self.orchestrator.planner_model = None
@@ -397,6 +399,7 @@ class BigBrainSystem:
             llm_provider=self._provider_for_role('planner'),
             planner_model=None,
         )
+        self.orchestrator.cad_intake_provider = self._provider_for_role('subagent')
         self._configure_execution_modes()
         planner_model = app_config.effective_planner_model
         print(f"📋 Planner: {planner_model} (task decomposition)")

@@ -520,32 +520,13 @@ angles from checked perpendicular rise/run sections, and analytic cylindrical-fa
 coordinates. Truncated cylindrical profiles combine analytic face checks with sections for endpoints
 and extent. Manufacturing fits, freeform surface certification and arbitrary topology remain outside
 this contract. Evaluate older unsupported issues against these current capabilities before asking again.
-For a dimensioned drawing, interpret the image into CadInput.drawing. Preserve exact annotations,
-units, source attachment IDs and SHA256 from the image metadata, views and dimension dependencies.
-Every feature size and location needed to reproduce the part must appear in the specification.
-Use clarify when critical dimensions are missing, conflicting or illegible. Perspective views
-provide shape context; dimensions come from annotated views. Ask about unsupported tolerances,
-fits or features before delegation. The runtime binds the interpretation to the confirmed recipe.
-For a reading uncertainty, identify the particular annotation, view and affected feature.
-Preserve the dimensions already read. Request a better source only for a specific illegible
-region after cross-checking the other views. Prefer one precise clarification over a generic
-image-quality request. Keep internal tool or measurement questions with the CAD specialist.
-CAD requests may start with natural language, sketches, drawings or photographs. Use clarify.cad=true
-for CAD questions, including language-only requests. Keep the
-design active through clarification turns. For image-based clarification return clarify.drawing
-with acquired dimensions and unresolved issues. Update this snapshot using the user's exact
-answers, including units and scope. Preserve earlier answers and distinguish missing from conflicting
-information. Dimensions supplied in chat use origin=user with the exact user_message_id and user_quote
-from this conversation; keep the image as their geometric reference. Each dossier exchange exposes its message_id.
-For origin=user or explicit, dependencies must be empty. Dependencies encode arithmetic derivation
-inputs exclusively, never feature support, location or topology relationships. User measurements may
-include a derivation note for unit conversion only.
-Keep dimension IDs stable through clarification. Represent contradictions as unresolved dimensions and
-blocking issues until the user resolves them. Photos require an explicit scale or user measurements whenever dimensions cannot be read.
-Never infer a precise dimension from perspective pixels. A new source has a separate attachment ID;
-ask which source governs any contradiction. Select only the relevant images in drawing.sources.
-For language-only requests collect the required dimensions in the objective and ask targeted questions.
-Once all critical questions are resolved, delegate with the complete drawing and self-contained objective.
+For CAD requests delegate early with cad_brain/model_cad and intake=true. The CAD specialist
+prepares the detailed drawing interpretation and clarification questions before proposing a contract.
+Keep the objective concise and faithful to the user's request. The runtime supplies conversation-owned
+images, exact user statements and the retained CAD dossier. Preserve document_id and base_revision
+when editing an observed existing document. CAD intake handles missing dimensions, units and conflicting
+sources. Do not transcribe a dimension inventory into the Front response. General image discussion
+continues through respond or clarify. Construction starts after the contract confirmation.
 Attached Python maintenance uses python_brain/maintain_project with deliverable_type python,
 local_project {{project_id,revision}} from the current attached selection and entry_point.
 Attached web maintenance uses web_app_brain/maintain_project, deliverable_type web_app,
@@ -773,6 +754,7 @@ Type 'quit' or 'exit' to stop."""
             # Recovery may omit a drawing already retained by this conversation.
             # Fresh image uploads require an explicit new interpretation.
             if (route_brain == 'cad_brain' and route_payload.get('drawing') is None
+                    and not route_payload.get('intake')
                     and not any(item.get('type', '').startswith('image/') for item in current_attachments)
                     and (design or {}).get('drawing')):
                 route_payload['drawing'] = design['drawing']
@@ -781,7 +763,7 @@ Type 'quit' or 'exit' to stop."""
                 drawing = route_payload.get('drawing')
                 images = [item for item in attachments
                           if str(item.get('type') or '').lower().startswith('image/')]
-                if images and drawing is None:
+                if images and drawing is None and not route_payload.get('intake'):
                     raise ValueError('Une pièce issue d’un dessin exige son interprétation cotée.')
                 if drawing is not None:
                     import hashlib

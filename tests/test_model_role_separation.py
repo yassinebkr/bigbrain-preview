@@ -106,6 +106,7 @@ def test_reload_restores_each_role_and_clears_stale_model_overrides(configured_r
     assert_runtime_matches_settings(system)
     assert system.orchestrator.planner_model is None
     assert system.brains['cad_brain'].model is None
+    assert system.orchestrator.cad_intake_provider is system.brains['cad_brain'].llm_provider
     assert verifier.model is None
     expected_web = model_registry.get_model(model_roles.configured_key('web'))
     assert os.environ['BIGBRAIN_WEB_MODEL'] == expected_web.model_id

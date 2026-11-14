@@ -444,7 +444,8 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
             started = time.monotonic()
             await self._planning_progress("contracts", "running", task_data.get("session_id"), task_id=plan.id)
             try:
-                proposal_timeout = 120 if any(st.payload.get('type') == 'model_cad' for st in plan.subtasks) else 20
+                proposal_timeout = (300 if any(st.payload.get('intake') for st in plan.subtasks) else
+                                    120 if any(st.payload.get('type') == 'model_cad' for st in plan.subtasks) else 20)
                 spec = await asyncio.wait_for(self._propose_contracts(plan, user_request), timeout=proposal_timeout)
                 if spec is None:
                     raise ValueError("Proposal was not recorded")
@@ -476,7 +477,7 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         if context.get('run_id') != plan.id:
             raise ValueError('CAD clarification belongs to a superseded design run')
         drawing = context.get('drawing')
-        if drawing:
+        if drawing and not any(issue.get('question') == clarification.question for issue in drawing.get('issues', [])):
             from ..cad_drawings import DrawingSpecification
             drawing = {**drawing, 'issues': [*drawing.get('issues', []), {
                 'id': 'specialist-' + plan.id[:8], 'question': clarification.question,
@@ -513,7 +514,16 @@ User: "ajoute une tâche à la taskboard : mettre à jour le README de near_agi"
         if len(plan.subtasks) == 1 and plan.subtasks[0].payload.get('type') == 'model_cad':
             from ..brains.cad_brain import prepare_cad_plan
             task = plan.subtasks[0]
-            recipe = await prepare_cad_plan(self.llm_provider, task.payload, model=self.planner_model, defer_construction=True)
+            provider = self.llm_provider
+            model = self.planner_model
+            if task.payload.get('intake'):
+                from ..cad_intake import prepare_drawing
+                provider = self.cad_intake_provider
+                model = None
+                drawing = await prepare_drawing(provider, task.payload, self.bus, self.name)
+                if drawing is not None:
+                    task.payload['drawing'] = drawing.model_dump(mode='json')
+            recipe = await prepare_cad_plan(provider, task.payload, model=model, defer_construction=True)
             from ..cad_stages import CadDefinition
             cad = {'definition' if isinstance(recipe, CadDefinition) else 'plan': recipe.model_dump(mode='json'),
                    'document_id': task.payload.get('document_id'),

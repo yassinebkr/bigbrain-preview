@@ -90,6 +90,7 @@ class WebInput(ClosedModel):
 
 class CadInput(ClosedModel):
     type: Literal['model_cad']
+    intake: bool = False
     document_id: str | None = Field(default=None, pattern=r'^[a-f0-9]{32}$')
     base_revision: int | None = Field(default=None, strict=True, ge=1)
     drawing: DrawingSpecification | None = None
@@ -215,8 +216,35 @@ class FrontDecision(ClosedModel):
         return value
 
 
+def routing_schema():
+    """Keep visual interpretation in specialist intake and accept saved full decisions locally."""
+    schema = FrontDecision.model_json_schema()
+    # The persisted decision model still reads historical drawing snapshots.
+    # New Front inference emits a small delegation; CAD intake owns the dossier.
+    for name in ('CadInput', 'Clarify'):
+        schema['$defs'][name]['properties'].pop('drawing', None)
+    reachable = set()
+    def visit(value):
+        if isinstance(value, dict):
+            reference = value.get('$ref')
+            if reference and reference.startswith('#/$defs/'):
+                name = reference.split('/')[-1]
+                if name not in reachable:
+                    reachable.add(name)
+                    visit(schema['$defs'][name])
+            for key, item in value.items():
+                if key != '$defs':
+                    visit(item)
+        elif isinstance(value, list):
+            for item in value:
+                visit(item)
+    visit(schema)
+    schema['$defs'] = {name: value for name, value in schema['$defs'].items() if name in reachable}
+    return schema
+
+
 FRONT_TOOL_SCHEMA = {
     "name": "bigbrain_front_decision",
     "description": "Choose one response, clarification, memory consultation or delegation for this conversation turn.",
-    "parameters": FrontDecision.model_json_schema(),
+    "parameters": routing_schema(),
 }

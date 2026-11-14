@@ -429,3 +429,22 @@ unscaled-image candidate after reviewing its measured contract. Retain a fresh
 trace and screenshot outside temporary storage. Add a successful fresh
 language-only delivery alongside the already observed incomplete spacer case.
 CI review and merge remain separate, deferred actions.
+
+## Early specialist intake
+
+The Front provider-facing schema carries a compact CAD delegation with `intake=true`.
+The CAD specialist interprets conversation-owned images and prepares the dimensioned
+DrawingSpecification. The selected subagent provider owns this intake step and
+updates when the model setting changes. The orchestrator retains the contract
+confirmation boundary before native construction.
+
+Intake reuses the existing source ownership, literal user quotation, critical
+dimension and optimistic revision validators. A necessary specialist question is
+persisted in the same CAD conversation and returns through the existing
+clarification route. Historical full Front decisions remain readable locally.
+
+Focused offline tests exercise the normal orchestrated contract proposal,
+clarification persistence, foreign source rejection, cancellation and a competing
+revision update. Front routing schema serialization decreased from 18,826 to
+9,154 bytes in the current implementation. Normal-interface latency qualification
+and complete-part Terra low/medium qualification are pending.
