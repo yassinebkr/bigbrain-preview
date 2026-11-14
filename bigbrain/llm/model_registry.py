@@ -230,6 +230,12 @@ _REGISTRY: dict[str, ModelEntry] = {
         reasoning=True, reasoning_efforts=["low", "medium", "high", "xhigh", "max"],
         reasoning_effort_default="low", vision=True, context_window=1_050_000,
     ),
+    "codex-terra-6.1": ModelEntry(
+        key="codex-terra-6.1", display_name="GPT-6.1 Terra (Codex)",
+        provider="codex", model_id="gpt-6.1-terra", api_key_env="",
+        reasoning=True, reasoning_efforts=["none", "low", "medium", "high", "xhigh", "max"],
+        reasoning_effort_default="low", vision=True, context_window=1_050_000,
+    ),
     "codex-luna-6": ModelEntry(
         key="codex-luna-6", display_name="GPT-6 Luna (Codex)",
         provider="codex", model_id="gpt-6-luna", api_key_env="",
