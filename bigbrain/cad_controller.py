@@ -12,6 +12,7 @@ from .cad_contracts import Contract, Hash, Identity
 from .cad_execution import CadExecutionStore, ExecutionGroup, digest
 from .cad_stages import CadConstruction
 from .cad_decision_transport import decision_tool_schema, parse_decision_response
+from .cad_workflow_transport import expand_execution_workflow
 from .solidcraft import CadCommandError, CadError, CadTimeoutError
 
 
@@ -21,6 +22,9 @@ class BasedDecision(Contract):
 
 class Execute(BasedDecision):
     operation: Literal['execute']
+    inherit_workflow: bool = Field(default=False, strict=True, description=
+        'With an accepted base checkpoint, extend its workflow with the supplied additions. '
+        'Omitted accepted members are restored. Parameter changes still require ancestor revision.')
     group: ExecutionGroup
 
 
@@ -497,13 +501,15 @@ class CadConstructionDriver:
         packet = record.get('packet', {})
         chain = self.store.active()
         head = chain[-1].id if chain else None
+        current_packet = self.packet()
         if (record.get('status') != 'returned'
                 or packet.get('definition') != self.definition.model_dump(mode='json')
                 or packet.get('engine_sha256') != self.store.engine_build
-                or packet.get('execution_authorization') != self.packet()['execution_authorization']
+                or packet.get('execution_authorization') != current_packet['execution_authorization']
                 or packet.get('base_checkpoint') != head):
             raise CadError('Retained CAD response scope or checkpoint changed')
-        decision = Decision.validate_python(parse_decision_response(record['response']))
+        decision = Decision.validate_python(expand_execution_workflow(
+            parse_decision_response(record['response']), current_packet))
         if not isinstance(decision, Execute) or decision.base_checkpoint != head or decision.group.base_checkpoint != head:
             raise CadError('Retained CAD replay requires an execution at its exact checkpoint')
         return record['response'], digest(record)
@@ -580,9 +586,15 @@ class CadConstructionDriver:
                 'Resolved datum frames are not exposed by these tools; distinguish definitions and '
                 'derived geometry from direct measurement. Solid STEP measurements cannot establish '
                 'a construction axis orientation. Repeated reads at the same checkpoint are rejected. '
-                'Each execution group supplies the full workflow inventory. accepted_workflow preserves '
-                'the exact accepted declarations and provenance. Retain all its driving parameters '
-                'unchanged when extending the workflow; omitting them is rejected before execution. '
+                'Each execution group supplies the workflow inventory. Set inherit_workflow=true '
+                'after an accepted checkpoint to extend its workflow with additions. In that mode, '
+                'omit unchanged parameters, sketches, features, bodies and groups; the runtime restores '
+                'the accepted declarations before all validations. Inherited members keep their existing '
+                'group ownership; new groups contain new members. Use the full inventory mode for '
+                'deliberate reorganization or replacement of future intent. accepted_workflow preserves '
+                'the exact accepted declarations and provenance. An accepted driving-value change '
+                'requires ancestor revision. Full inventory mode (inherit_workflow=false) supplies '
+                'every driving parameter explicitly. '
                 'Use the supplied native response schema. Wrap the response in decision. '
                 'Encode each command.params as a JSON object string. The runtime decodes it before '
                 'validating the command and its cut intent. '
@@ -609,7 +621,8 @@ class CadConstructionDriver:
                 'each execution group remains limited to 64 commands. Reserve inspection calls for final checks.'},
                 {'role': 'user', 'content': [{'type': 'text', 'text': content}, *self.images]}])
             try:
-                decision = (ClosingDecision if finalizing else Decision).validate_python(parse_decision_response(raw))
+                decision = (ClosingDecision if finalizing else Decision).validate_python(
+                    expand_execution_workflow(parse_decision_response(raw), packet))
                 expected = packet['base_checkpoint']
                 if decision.base_checkpoint != expected:
                     raise ValueError('Decision references a stale checkpoint')

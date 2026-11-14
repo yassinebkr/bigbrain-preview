@@ -98,3 +98,23 @@ def test_provider_schema_uses_supported_union_and_vector_representations():
                      {'operation': 'blocked', 'base_checkpoint': None, 'reason': 'Missing source dimension'}):
         validator.validate({'decision': decision})
         Decision.validate_python(parse_decision_response(json.dumps({'decision': decision})))
+
+
+def test_additive_wire_restores_inventory_before_local_minimum_checks():
+    from bigbrain.cad_workflow_transport import expand_execution_workflow
+    from bigbrain.cad_workflow import CadWorkflow
+    value = removal()
+    accepted = deepcopy(value['group']['workflow'])
+    value['inherit_workflow'] = True
+    for field in ('parameters', 'sketches', 'features', 'bodies', 'groups'):
+        value['group']['workflow'][field] = []
+    schema = decision_tool_schema(Decision.json_schema())['parameters']
+    encoded = wire(value)
+    Draft202012Validator(schema).validate(encoded)
+    decoded = parse_decision_response(json.dumps(encoded))
+    packet = {'base_checkpoint': value['base_checkpoint'], 'accepted_workflow': accepted}
+    restored = Decision.validate_python(expand_execution_workflow(decoded, packet))
+    assert restored.group.workflow == CadWorkflow.model_validate(accepted)
+    decoded['inherit_workflow'] = False
+    with pytest.raises(ValueError):
+        Decision.validate_python(expand_execution_workflow(decoded, packet))

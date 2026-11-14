@@ -489,3 +489,33 @@ The complete-part Terra campaign selects 3600 seconds per piece. This gives
 multi-stage model inference an explicit window alongside native work. Reusing an
 exact resolved dossier can request `intake=false`; the runtime restores and
 validates the retained drawing before the next contract proposal.
+
+## Checkpoint workflow references
+
+An execution proposal can set `inherit_workflow=true` and send additions to its
+accepted workflow. The runtime expands parameters, sketches, features, bodies and
+groups from the exact base checkpoint before the complete workflow validator.
+Explicit parameter changes reach the ancestor-revision guard. Group ownership,
+name uniqueness, dependency cycles and inventory limits are checked after expansion.
+Complete-inventory mode supports deliberate reorganization and future-plan replacement.
+
+A retained Terra proposal was replayed on a private copy with this explicit
+reference mode. It reproduced the design from the previously corrected checkpoint
+with zero model calls. The compact response occupied 1,452 bytes compared with
+5,933 bytes for the complete-inventory response. This is a measured transport-size
+comparison.
+
+## Associative face projections
+
+Native face sketches contain automatically projected boundaries with named parent
+face links. Their fixed curve state can represent associative geometry. The sketch
+quality gate recognizes this qualified reference form and continues to check the
+solver and functional driving dimensions. Native tests change the parent cylinder
+diameter, verify the projected radius follows it, and reopen the document.
+
+A face selection point can differ from the local sketch origin. Native capability
+guidance now calls for inspection of the actual plane basis and profile centroids,
+including selection of the intended profile when projected boundaries coexist with
+a newly drawn outline. The drawing 42 failure was reproduced on its retained
+checkpoint and its local placement discrepancy is attached as hash-bound evidence
+for the next construction decision.

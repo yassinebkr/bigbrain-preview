@@ -15,6 +15,12 @@ def decision_tool_schema(schema):
     if decision.get('discriminator', {}).get('propertyName') == 'operation':
         decision['anyOf'] = decision.pop('oneOf')
         decision.pop('discriminator')
+    workflow = definitions.get('CadWorkflow')
+    if workflow is not None:
+        # Additive proposals inherit existing members before the complete local
+        # workflow validator applies its nonempty inventory requirements.
+        for name in ('features', 'bodies', 'groups'):
+            workflow['properties'][name]['minItems'] = 0
     command = definitions.get('CadCommand')
     if command is not None:
         # Command parameters depend on the discovered SolidCraft command. A JSON

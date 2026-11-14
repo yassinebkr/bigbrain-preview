@@ -655,3 +655,64 @@ async def test_native_structured_decisions_use_the_existing_checkpoint_and_cut_g
     assert len(provider.calls) == 5
     for record in store.directory.glob('decision-*.json'):
         assert 'decision' in json.loads(json.loads(record.read_text())['response'])
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_parameter_reference_avoids_a_repair_call(tmp_path, cad_native_engine):
+    values = json.loads(json.dumps(actions()))
+    for action in values[1:-1]:
+        action['inherit_workflow'] = True
+        for field in ('parameters', 'sketches', 'features', 'bodies', 'groups'):
+            action['group']['workflow'][field] = []
+    provider = Decisions(values)
+    store = CadExecutionStore(tmp_path, 'a' * 64)
+    async with SolidCraftSession(tmp_path) as session:
+        driver = CadConstructionDriver(provider, definition(), [], [], store)
+        construction = await driver.run(session)
+    assert len(provider.calls) == 5
+    assert len(store.active()) == 4
+    assert driver.state['protocol_diagnostics'] == []
+    assert construction.workflow.parameters == driver.groups()[0].workflow.parameters
+
+
+@pytest.mark.asyncio
+async def test_parameter_reference_keeps_the_ancestor_revision_guard(tmp_path, cad_native_engine):
+    values = actions()
+    changed = json.loads(json.dumps(values[1]))
+    changed['inherit_workflow'] = True
+    changed['group']['workflow']['parameters'][0]['expression'] = '99 mm'
+    provider = Decisions([values[0], changed, *values[1:]])
+    store = CadExecutionStore(tmp_path, 'a' * 64)
+    async with SolidCraftSession(tmp_path) as session:
+        driver = CadConstructionDriver(provider, definition(), [], [], store)
+        await driver.run(session)
+    assert len(store.active()) == 4
+    assert 'Changing an accepted driving parameter requires ancestor revision' in provider.calls[2]['feedback']
+    assert provider.calls[1]['base_checkpoint'] == provider.calls[2]['base_checkpoint']
+
+
+@pytest.mark.asyncio
+async def test_replayed_reference_uses_hash_verified_current_workflow(tmp_path, cad_native_engine):
+    store = CadExecutionStore(tmp_path, 'a' * 64)
+    provider = Decisions([])
+    driver = CadConstructionDriver(provider, definition(), [], [], store)
+    async with SolidCraftSession(tmp_path) as session:
+        await store.recover(session)
+        await store.execute(session, ExecutionGroup.model_validate(actions()[0]['group']), validate=driver.check_step)
+        action = actions()[1]
+        checkpoint = store.active()[-1].id
+        action.update(base_checkpoint=checkpoint, inherit_workflow=True)
+        action['group']['base_checkpoint'] = checkpoint
+        for field in ('parameters', 'sketches', 'features', 'bodies', 'groups'):
+            action['group']['workflow'][field] = []
+        snapshot = driver.packet()
+        expected = snapshot['accepted_workflow']['parameters'][0]['expression']
+        snapshot['accepted_workflow']['parameters'][0]['expression'] = '999 mm'
+        record = {'status': 'returned', 'packet': snapshot, 'response': json.dumps(action)}
+        store._write(store.directory / 'decision-1.json', record)
+        driver.state['decisions'] = 1
+        driver.save()
+        await driver.run(session, replay_decision=1)
+    assert len(store.active()) == 2
+    assert driver.groups()[-1].workflow.parameters[0].expression == expected
+    assert provider.calls == []

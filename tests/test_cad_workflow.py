@@ -608,3 +608,67 @@ async def test_progressive_measurement_interruption_keeps_native_prefix(tmp_path
         assert result['cad']['document']['revision'] == 2
     finally:
         await bus.close()
+
+
+def test_auto_projected_face_boundary_has_explicit_associative_identity():
+    intent = workflow()
+    profile = {'name': 'Base_profile', 'status': 'solved', 'dof': 0,
+        'fully_constrained': True, 'failing': [], 'constraints': [{'type': 'length'}],
+        'curves': [{'fixed': False}, {'fixed': True, 'construction': False, 'link': 'face-ref'}],
+        'links': [{'id': 'face-ref', 'kind': 'project', 'auto_face': True,
+                   'face_name': 'F1:top', 'source': {'type': 'face', 'body': 'Base'}}]}
+    assert intent.sketch_diagnostics(profile) == []
+    for change in ({'auto_face': False}, {'face_name': ''}, {'source': {'type': 'face'}},
+                   {'source': {'type': 'sketch_axis', 'body': 'Base'}}):
+        rejected = copy.deepcopy(profile)
+        rejected['links'][0].update(change)
+        assert any('fixation' in issue for issue in intent.sketch_diagnostics(rejected))
+    rejected = copy.deepcopy(profile)
+    rejected['curves'].append({'fixed': True, 'construction': False})
+    assert any('fixation' in issue for issue in intent.sketch_diagnostics(rejected))
+
+
+@pytest.mark.asyncio
+async def test_native_face_projection_tracks_parent_parameter_and_reopen(tmp_path, cad_native_engine):
+    intent = CadWorkflow.model_validate({
+        'parameters': [
+            {'name': 'diameter', 'expression': '40 mm', 'unit': 'mm', 'purpose': 'Parent cylinder diameter'},
+            {'name': 'hole_diameter', 'expression': '10 mm', 'unit': 'mm', 'purpose': 'Driving profile diameter'}],
+        'features': [{'name': 'BaseCylinder', 'purpose': 'Parent cylinder'},
+                     {'name': 'Face_profile', 'purpose': 'Face referenced profile'}],
+        'sketches': [{'name': 'Face_profile', 'purpose': 'Constrained face profile'}],
+        'bodies': ['Base'],
+        'groups': [{'name': 'Part', 'features': ['BaseCylinder', 'Face_profile'],
+                    'sketches': ['Face_profile'], 'bodies': ['Base']}]})
+    commands = [
+        {'command': 'solid.cylinder', 'params': {'radius': 'diameter / 2', 'height': 10,
+                                               'body_name': 'Base', 'name': 'BaseCylinder'}},
+        {'command': 'sketch.create', 'params': {'plane': {'face': [0, 0, 10], 'body': 'Base'},
+                                               'name': 'Face_profile'}},
+        {'command': 'sketch.draw.dimensioned', 'params': {'command': 'sketch.circle.center',
+            'params': {'center': [0, 0], 'diameter': 10},
+            'dimensions': {'diameter': 'hole_diameter'}, 'locate': True}},
+        {'command': 'sketch.finish', 'params': {}}]
+    async with SolidCraftSession(tmp_path) as session:
+        await session.batch([intent.parameter_command()])
+        await session.batch(commands[:1])
+        topology = await session.tool('body_topology', {'body': 'Base'})
+        face = next(item for item in topology['faces'] if item.get('plane_normal') == [0, 0, 1])
+        commands[1]['params']['plane'].update(face=face['point'], index=face['index'])
+        await session.construct(commands[1:], intent)
+        before = (await session.tool('inspect_design'))['sketches'][0]
+        assert intent.sketch_diagnostics(before) == []
+        projected = [curve for curve in before['curves'] if curve.get('fixed') and not curve.get('construction')]
+        assert projected and all(curve.get('radius') == pytest.approx(20) for curve in projected)
+        await session.batch([{'command': 'parameters.change', 'params': {'changes': {'diameter': '50 mm'}}}])
+        changed = (await session.tool('inspect_design'))['sketches'][0]
+        assert intent.sketch_diagnostics(changed) == []
+        projected = [curve for curve in changed['curves'] if curve.get('fixed') and not curve.get('construction')]
+        assert projected and all(curve.get('radius') == pytest.approx(25) for curve in projected)
+        functional = [curve for curve in changed['curves'] if curve.get('type') == 'circle' and not curve.get('fixed')]
+        assert functional and all(curve['radius'] == pytest.approx(5) for curve in functional)
+        capture = await session.capture('face-projection', 'Face projection', 1)
+        await session.reopen(capture.document.native)
+        reopened = (await session.tool('inspect_design'))['sketches'][0]
+        assert intent.sketch_diagnostics(reopened) == []
+        assert reopened['links'] == changed['links']

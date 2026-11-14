@@ -57,6 +57,16 @@ def construction_guidance(version, engine_sha256=None):
          'invariants': 'Preserve measured dimensions and verify the solver before extrusion. '
                        'Coordinate seeds alone do not establish driving dimensions.',
          'qualified_cases': 'test_native_rounded_profile_constraints_and_parameter_edit'},
+        {'id': 'face-sketch-local-frame', 'status': 'qualified_example',
+         'condition': 'sketch.create attaches to a planar body face.',
+         'strategy': 'The selected world point identifies the face. Its sketch origin can be elsewhere. '
+                     'Read the observed plane origin, x_dir/y_dir and profile centroids from inspect_design '
+                     'before extrusion. Transform world coordinates into that local frame. '
+                     'Auto-projected face boundaries carry associative native links and may introduce '
+                     'additional profiles; select the intended profile explicitly.',
+         'invariants': 'Keep driving dimensions, associative references and verified local placement. '
+                       'Manually fixed functional curves remain rejected.',
+         'qualified_cases': 'test_native_face_projection_tracks_parent_parameter_and_reopen'},
         {'id': 'revolve-parametric-axis', 'status': 'qualified_example',
          'condition': 'solid.revolve explicit axis.origin contains parameter expressions.',
          'limitation': 'The 0.28.0 parser silently substitutes [0,0,0] for nonnumeric origins; '

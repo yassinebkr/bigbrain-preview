@@ -118,10 +118,18 @@ class CadWorkflow(Contract):
         projected_links = {link.get('id') for link in sketch.get('links', [])
                            if link.get('kind') == 'project' and isinstance(link.get('source'), dict)
                            and link['source'].get('type') and link.get('id')}
-        # Native dimension placement projects a fixed construction axis. Its
-        # source link distinguishes a reference from a fixed functional curve.
-        if any(curve.get('fixed') and not (curve.get('construction')
-                and curve.get('link') in projected_links) for curve in sketch.get('curves', [])):
+        # Native face attachments project associative boundary curves. Their
+        # fixed state follows the parent face; its explicit native link and
+        # face identity distinguish that geometry from manual curve fixation.
+        face_boundaries = {link['id'] for link in sketch.get('links', [])
+                           if link.get('id') in projected_links and link.get('auto_face') is True
+                           and isinstance(link.get('face_name'), str) and link['face_name']
+                           and link['source'].get('type') == 'face'
+                           and isinstance(link['source'].get('body'), str) and link['source']['body']}
+        if any(curve.get('fixed') and not (
+                curve.get('link') in face_boundaries or
+                curve.get('construction') and curve.get('link') in projected_links)
+                for curve in sketch.get('curves', [])):
             errors.append(f'{name}: blanket curve fixation replaces dimensional intent')
         dimensional = {'length', 'diameter', 'radius', 'distance_x', 'distance_y', 'angle'}
         if not intent.expected_dof and not sketch.get('links') and not any(
