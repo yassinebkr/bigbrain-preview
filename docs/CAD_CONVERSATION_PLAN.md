@@ -475,3 +475,17 @@ That experiment exposed unsigned reception timing events from an unregistered
 sender. The correction uses the existing authenticated UI identity and has a
 regression test with HMAC enforcement. The corrected reception events await live
 verification after the next reload.
+
+## Explicit execution window
+
+New drawing-based contracts read `BIGBRAIN_CAD_EXECUTION_SECONDS`, with a default
+of 600 seconds and a maximum of 3600 seconds. The selected value appears in the
+contract before confirmation and governs construction and final inspection.
+Stored definitions retain their recorded value when reopened. Native command
+capacity, repair limits, provenance checks and measurement criteria keep their
+existing contracts.
+
+The complete-part Terra campaign selects 3600 seconds per piece. This gives
+multi-stage model inference an explicit window alongside native work. Reusing an
+exact resolved dossier can request `intake=false`; the runtime restores and
+validates the retained drawing before the next contract proposal.

@@ -1,6 +1,18 @@
 """Runtime-scoped CAD capacity and inference phase for explicit continuations."""
 
+import os
 from contextvars import ContextVar
+
+MAX_EXECUTION_SECONDS = 3600
+
+
+def proposal_execution_seconds():
+    """Read the operator's window when creating a new confirmation contract."""
+    value = int(os.environ.get('BIGBRAIN_CAD_EXECUTION_SECONDS', '600'))
+    if not 1 <= value <= MAX_EXECUTION_SECONDS:
+        raise ValueError(f'CAD execution window must be within 1..{MAX_EXECUTION_SECONDS} seconds')
+    return value
+
 
 command_capacity = ContextVar('cad_command_capacity', default=64)
 inference_phase = ContextVar('cad_inference_phase', default='construction')

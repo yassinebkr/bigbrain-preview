@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import AfterValidator, Field
 from typing import Annotated
-from .cad_resources import check_commands
+from .cad_resources import MAX_EXECUTION_SECONDS, check_commands
 
 from .cad_contracts import Contract
 from .cad_drawings import DrawingSpecification
@@ -19,7 +19,7 @@ class CadDefinition(Contract):
     objective: str = Field(min_length=1, max_length=20000)
     drawing: DrawingSpecification
     max_repairs: int = Field(default=2, strict=True, ge=0, le=2)
-    execution_seconds: int = Field(default=600, strict=True, ge=1, le=600)
+    execution_seconds: int = Field(default=600, strict=True, ge=1, le=MAX_EXECUTION_SECONDS)
 
     def contracts(self):
         self.drawing.require_resolved()

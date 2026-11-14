@@ -33,7 +33,9 @@ async def prepare_cad_plan(provider, payload, *, model=None, defer_construction=
             raise CadError('CAD drawing planning requires a vision-capable model')
         images = drawing_image_blocks(drawing, payload.get('session_id'))
     if defer_construction and drawing is not None and not document_id:
-        return CadDefinition(title=drawing.title, objective=payload['user_request'], drawing=drawing)
+        from ..cad_resources import proposal_execution_seconds
+        return CadDefinition(title=drawing.title, objective=payload['user_request'], drawing=drawing,
+                             execution_seconds=proposal_execution_seconds())
     if document_id:
         view = store.view(document_id, payload.get('session_id'))
         if view['document']['revision'] != payload.get('base_revision'):

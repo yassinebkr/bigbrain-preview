@@ -520,7 +520,9 @@ angles from checked perpendicular rise/run sections, and analytic cylindrical-fa
 coordinates. Truncated cylindrical profiles combine analytic face checks with sections for endpoints
 and extent. Manufacturing fits, freeform surface certification and arbitrary topology remain outside
 this contract. Evaluate older unsupported issues against these current capabilities before asking again.
-For CAD requests delegate early with cad_brain/model_cad and intake=true. The CAD specialist
+For new CAD requests or changed geometry, delegate early with cad_brain/model_cad and intake=true.
+For an explicit reuse of the exact retained resolved definition, use intake=false. The runtime
+restores and validates the saved drawing. A new image or dimension answer requires intake=true. The CAD specialist
 prepares the detailed drawing interpretation and clarification questions before proposing a contract.
 Keep the objective concise and faithful to the user's request. The runtime supplies conversation-owned
 images, exact user statements and the retained CAD dossier. Preserve document_id and base_revision
