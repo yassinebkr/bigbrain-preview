@@ -129,9 +129,15 @@ integration/recovery subset passes 74 tests.
 The normal-server drawing 42 candidate reached 26 accepted construction groups.
 Revision 10 passed all 66 piece checks and the delivery gate. The inspection
 recipe was reused after validating its construction identity. The replay added
-zero model calls. After a complete server stop and restart, the normal interface
-retained the piece, exports, verified status, seven historical attempts and
-recorded evidence. A second retained drawing is being qualified through the same
+zero model calls. The retained initial inspection attempt recorded 253.410 s
+of backend elapsed time. The successful replay recorded 18.592 s. Their native
+tool observations totalled 3.509 s and 2.999 s respectively. This comparison
+combines recipe reuse and the analytic section provider. Their separate effects
+require a controlled comparison. Browser presentation preparation has its own
+timing scope.
+
+After a complete server stop and restart, the normal interface retained the
+piece, exports, verified status, seven historical attempts and recorded evidence. A second retained drawing is being qualified through the same
 interface. Final aggregate regression remains pending.
 
 | Native case | Observed failure |
