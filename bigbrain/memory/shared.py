@@ -276,7 +276,7 @@ def execute_memory(request, shared: SharedMemory, persistent, session_id: str | 
             if tool == 'cad.list' and not args:
                 return CadStore().list(session_id)
             if tool == 'cad.read' and set(args) == {'id'}:
-                return {'status': 'ok', 'piece': CadStore().view(args['id'], session_id)}
+                return {'status': 'ok', 'piece': CadStore().memory_view(args['id'], session_id)}
             raise ValueError('CAD memory requires an empty list request or an exact document ID')
         if tool == 'projects.read' and set(args) == {'id'} and isinstance(args['id'], str) and 0 < len(args['id']) <= 150:
             return shared.projects(session_id, args['id'])

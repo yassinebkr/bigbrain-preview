@@ -131,6 +131,29 @@ class CadStore:
                 'preview_error': data.get('preview_error'),
                 'checks': [check.model_dump(mode='json') for check in delivery.checks] if delivery else []}
 
+    def memory_view(self, document_id, session_id):
+        """Expose an owned accepted construction before its first publication.
+
+        A working checkpoint has revision zero in the publication namespace.
+        Its immutable identity remains separate so callers can resume the exact
+        construction without presenting it as an independently verified delivery.
+        """
+        root = self.authorize(document_id, session_id)
+        if (root / 'current.json').exists():
+            return self.view(document_id, session_id)
+        from .cad_live import working_checkpoint
+        working = working_checkpoint(self, document_id, session_id)
+        if working is None:
+            raise CadError('CAD document has no accepted construction or publication')
+        from .cad_contracts import CadArtifact
+        self.read_artifact(document_id, session_id, CadArtifact.model_validate(working['native']))
+        return {'title': 'Pièce CAO en construction', 'delivery_status': 'incomplete',
+                'document': {'document_id': document_id, 'revision': 0},
+                'working': {key: working[key] for key in (
+                    'checkpoint_id', 'contract_sha256', 'engine_version',
+                    'engine_sha256', 'accepted_steps')},
+                'checks': []}
+
     def list(self, session_id):
         """Return bounded identity pointers; callers request geometry separately."""
         if not session_id:
@@ -144,9 +167,12 @@ class CadStore:
             if not DOCUMENT_ID.fullmatch(path.name) or path.is_symlink() or not path.is_dir():
                 continue
             try:
-                view = self.view(path.name, session_id)
+                view = self.memory_view(path.name, session_id)
+                identity = path / ('current.json' if view['document']['revision'] else 'execution-checkpoints/head.json')
                 items.append({'document_id': path.name, 'revision': view['document']['revision'],
-                              'title': view['title'], 'updated': (path / 'current.json').stat().st_mtime})
+                              'title': view['title'], 'updated': identity.stat().st_mtime,
+                              'delivery_status': view['delivery_status'],
+                              **({'working': view['working']} if 'working' in view else {})})
             except CadError:
                 continue
         items.sort(key=lambda item: item['updated'], reverse=True)

@@ -110,3 +110,38 @@ async def test_native_working_artifact_is_bound_to_the_accepted_head(tmp_path, c
         (root / record.native.path).write_bytes(b'replaced')
         response = await client.post('/api/cad/working-artifact', json=body, headers=headers)
         assert response.status == 400
+
+
+@pytest.mark.asyncio
+async def test_memory_discovers_unpublished_checkpoint_after_store_recreation(tmp_path, monkeypatch):
+    """A retained construction remains discoverable through conversation memory."""
+    from bigbrain.cad_execution import CadExecutionStore
+    from bigbrain.memory.shared import execute_memory
+    from bigbrain.web.sessions import SessionStore
+    from tests.test_cad_execution import Session, accept, group
+
+    monkeypatch.setenv('BIGBRAIN_CAD_DIR', str(tmp_path / 'cad'))
+    monkeypatch.setenv('BIGBRAIN_SESSIONS_DIR', str(tmp_path / 'sessions'))
+    sessions = SessionStore()
+    conversation = sessions.create()['id']
+    store = CadStore()
+    document = store.create(conversation)
+    root = store.authorize(document, conversation)
+    execution = CadExecutionStore(root, 'a' * 64)
+    record = await execution.execute(Session(root), group(), validate=accept)
+    listing = execute_memory({'tool': 'cad.list', 'arguments': {}}, None, None, conversation)
+    assert listing['status'] == 'ok'
+    item, = listing['documents']
+    assert item['document_id'] == document and item['revision'] == 0
+    assert item['delivery_status'] == 'incomplete'
+    assert item['working']['checkpoint_id'] == record.id
+    assert item['working']['accepted_steps'] == 1
+    view = execute_memory({'tool': 'cad.read', 'arguments': {'id': document}}, None, None, conversation)
+    assert view['piece']['working'] == item['working']
+    assert view['piece']['checks'] == []
+    assert CadStore().list('foreign')['documents'] == []
+    with pytest.raises(CadError, match='another conversation'):
+        CadStore().memory_view(document, 'foreign')
+    # A modified native artifact invalidates the pointer before the next turn.
+    (root / record.native.path).write_bytes(b'changed')
+    assert CadStore().list(conversation)['documents'] == []

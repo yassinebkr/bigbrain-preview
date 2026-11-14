@@ -48,3 +48,39 @@ def test_missing_or_corrupt_state_requires_diagnosis(tmp_path):
     root.mkdir()
     (root / 'controller.json').write_text('{')
     assert retained_recovery(tmp_path)['enabled'] is False
+
+
+@pytest.mark.parametrize('changed', ['none', 'bytes', 'checkpoint', 'contract', 'engine', 'ready', 'link', 'active'])
+def test_geometry_resume_requires_hash_bound_native_diagnosis(tmp_path, changed):
+    import hashlib
+
+    root = tmp_path / 'execution-checkpoints'
+    root.mkdir()
+    checkpoint, contract, engine = 'a' * 32, 'b' * 64, 'c' * 64
+    head = {'active': [checkpoint], 'contract_sha256': contract, 'engine_sha256': engine}
+    (root / 'head.json').write_text(json.dumps(head))
+    diagnosis = {'checkpoint': checkpoint, 'contract_sha256': contract,
+                 'engine_sha256': engine, 'resume_ready': True}
+    if changed in ('checkpoint', 'contract', 'engine'):
+        key = {'checkpoint': 'checkpoint', 'contract': 'contract_sha256', 'engine': 'engine_sha256'}[changed]
+        diagnosis[key] = 'd' * len(diagnosis[key])
+    if changed == 'ready':
+        diagnosis['resume_ready'] = False
+    path = root / 'offline-diagnosis-native.json'
+    path.write_text(json.dumps(diagnosis))
+    identity = hashlib.sha256(path.read_bytes()).hexdigest()
+    state = {'contract_sha256': contract, 'recovery': {'kind': 'geometry', 'checkpoint': checkpoint},
+             'offline_diagnostics': [{'name': path.name, 'sha256': identity}]}
+    (root / 'controller.json').write_text(json.dumps(state))
+    if changed == 'bytes':
+        path.write_text('{}')
+    if changed == 'link':
+        target = tmp_path / 'external.json'
+        path.rename(target)
+        path.symlink_to(target)
+    if changed == 'active':
+        (tmp_path / '.cad-execution').mkdir()
+    result = retained_recovery(tmp_path)
+    assert result['enabled'] is (changed == 'none')
+    if changed == 'none':
+        assert result['action'] == 'resume_diagnosed_geometry'

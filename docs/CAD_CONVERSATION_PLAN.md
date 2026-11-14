@@ -519,3 +519,27 @@ including selection of the intended profile when projected boundaries coexist wi
 a newly drawn outline. The drawing 42 failure was reproduced on its retained
 checkpoint and its local placement discrepancy is attached as hash-bound evidence
 for the next construction decision.
+
+### Unpublished construction discovery and diagnosed recovery
+
+The Terra low continuation exposed a mismatch between durable presentation and
+conversation memory. Atelier recovered the accepted construction, while
+`cad.list` enumerated published revisions only. Conversation memory now includes
+owned, hash-checked working checkpoints with publication revision zero, explicit
+incomplete status and their exact checkpoint identity. Published revision reads
+retain their existing format. The regression covers store recreation, foreign
+conversation rejection and modified native bytes. The live/integration suite
+passed 19 tests.
+
+A geometry failure can expose a continuation action after an operator-recorded
+offline diagnosis explicitly marks the current checkpoint ready to resume. The
+runtime checks the diagnosis hash, contract, native build and checkpoint before
+enabling the action. Active executions remain locked. Contract confirmation,
+resource accounting, native history checks and guarded cuts still apply during
+execution. Recovery/controller tests passed 59 cases, including changed hashes,
+foreign identities, inactive clearance and concurrent execution.
+
+The retained Terra low bore failure was reproduced without model calls. A
+continuous native cutter passed both exact opening guards, produced a closed
+solid and survived save/reopen on a private copy. Independent STEP measurement
+was retained. Full-piece validation and Terra medium qualification remain open.
