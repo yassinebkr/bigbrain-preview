@@ -28,6 +28,21 @@ beforeEach(() => useAppStore.setState({ activeSessionKey: run.sessionId, activeR
   runsById: {}, completedRuns: [], sessionProposals: {} }));
 
 describe('CAD piece surface', () => {
+  it.each([69, 114])('accepts a verified publication with %i source-bound checks', count => {
+    const previous = cadUpdate(checkpoint(3, 'checking'))!;
+    const captured = checkpoint().snapshot;
+    captured.checks = Array.from({ length: count }, (_, index) => ({
+      ...captured.checks[0], criterion_id: `check-${index}`,
+    }));
+    const publication = publishedCadView(previous, { ...captured, delivery_status: 'ready' });
+    expect(publication?.status).toBe('ready');
+    expect(publication?.snapshot?.checks).toHaveLength(count);
+    if (count === 114) {
+      captured.checks.push({ ...captured.checks[0], criterion_id: 'overflow' });
+      expect(publishedCadView(previous, { ...captured, delivery_status: 'ready' })).toBeUndefined();
+    }
+  });
+
   it('shares a verified publication across mirrors while retaining the failed attempt', () => {
     const failed: RunState = { ...run, status: 'failed', deliveryStatus: 'incomplete',
       error: 'Old preflight failure', cad: cadUpdate(checkpoint(3, 'failed'))!,

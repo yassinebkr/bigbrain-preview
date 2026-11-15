@@ -5,7 +5,7 @@ from copy import deepcopy
 import pytest
 from pydantic import ValidationError
 
-from bigbrain.cad_contracts import CadArtifact, CadDelivery, CadPreview, CadRun
+from bigbrain.cad_contracts import CadArtifact, CadDelivery, CadPreview, CadRun, MAX_PROPOSED_CHECKS, MAX_DELIVERY_CHECKS
 
 
 @pytest.fixture
@@ -37,11 +37,11 @@ def run():
                   specification_id='spec-1')
 
 
-def test_delivery_reserves_two_runtime_checks_after_64_proposed_checks(delivery):
-    ids = [f'check-{i}' for i in range(64)] + ['design-quality', 'cut-safety']
+def test_delivery_reserves_two_runtime_checks_after_proposed_capacity(delivery):
+    ids = [f'check-{i}' for i in range(MAX_PROPOSED_CHECKS)] + ['design-quality', 'cut-safety']
     delivery['required_criteria'] = ids
     delivery['checks'] = [{**delivery['checks'][0], 'criterion_id': name} for name in ids]
-    assert len(CadDelivery.model_validate(delivery).checks) == 66
+    assert len(CadDelivery.model_validate(delivery).checks) == MAX_DELIVERY_CHECKS
     delivery['checks'][-1]['status'] = 'failed'
     with pytest.raises(ValidationError):
         CadDelivery.model_validate(delivery)

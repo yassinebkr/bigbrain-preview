@@ -551,3 +551,44 @@ using it to discover the local frame. Its diagnostic retains that frame and
 requires revision to the sketch ancestor followed by atomic recreation with the
 functional curves. Recovery tests pass 31 cases across geometry and proposal
 clearances, including identity changes and an active execution lock.
+
+### Terra low complete-piece result — 2026-11-15
+
+Drawing 42 document `b5204cb2a27f47db9b548ecaa4c5da45` is published at
+revision 7 with 69 passing CAD checks. The shared delivery verdict adds one
+run-level check. Construction retains 22 accepted groups and 48 controller
+decisions, including reference reads, observations, revisions and rejected
+proposals. The native build identity remains the qualified 0.28.0 executable.
+The independent volume is 28,094,977.1325365 mm³, with one closed solid and
+590 × 360 × 590 mm bounds in this document's coordinate frame.
+
+The inspection proposed 67 checks within the individual schema capacities.
+Its aggregate 64-check limit rejected their combination. Aggregate capacity now
+comes from the five bounded arrays, totaling 112 authored checks and two runtime
+slots. Backend, delivery schema and frontend publication validation share those
+bounds. The 64 KB recipe limit, per-array capacities, provenance rules, source
+identity checks and measurement tolerances continue to apply. Capacity,
+metrology, inspection and replay tests passed 72 cases. Frontend tests passed
+205 cases, and the production build completed.
+
+The rejected inspection response was recovered from its exact Codex turn and
+validated through the same gate used for live output. Its contract, construction
+and captured native source were bound before saving the inspection stage.
+The final UI recovery measured and published the candidate in 13.93 seconds with
+zero additional model calls. Future inspection responses are retained beside
+their captured revision before validation, including the call identity and
+source/definition/construction hashes.
+
+The frontend's previous 66-check publication bound also rejected the new ready
+snapshot. After capacity alignment, the actual Atelier displayed the verified
+revision, its dimensions and controls without the obsolete interruption banner.
+
+This low run includes development-time corrections and operator diagnoses.
+Its 48 construction traces report 1,310.49 inference seconds and one call with
+unknown usage. The single inspection trace reports 114.07 seconds. Known usage
+across these phases totals 6,336,216 input tokens, including 1,702,784 cached
+input tokens, and 35,063 output tokens. These totals include retained-thread
+context and provider compaction accounting. They describe this entire campaign.
+A direct end-to-end speed comparison with a fresh medium run requires the
+implementation changes and interventions to remain visible in the report.
+Terra medium complete-piece qualification is pending.

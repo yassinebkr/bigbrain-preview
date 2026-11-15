@@ -7,7 +7,7 @@ from pydantic import AfterValidator, Field
 from typing import Annotated
 from .cad_resources import MAX_EXECUTION_SECONDS, check_commands
 
-from .cad_contracts import Contract
+from .cad_contracts import Contract, MAX_PROPOSED_CHECKS
 from .cad_drawings import DrawingSpecification
 from .cad_planning import CadCommand, CadRecipe, command_diagnostics, validate_cad_proposal
 from .cad_workflow import CadWorkflow
@@ -184,8 +184,26 @@ async def draft_construction(provider, definition, reference, images, *, model=N
     raise ValueError('CAD construction did not complete within its reference and correction allowance')
 
 
+def validate_inspection_response(raw, definition, construction):
+    """Apply the same inspection gate to live output and exact retained output."""
+    proposed = parse_object(raw)
+    if any(key in proposed for key in ('commands', 'drawing', 'workflow', 'max_repairs', 'cut_intents')):
+        raise ValueError('Inspection output must contain verification fields exclusively')
+    plan = validate_cad_proposal(json.dumps({**proposed, 'title': construction.title,
+        'workflow': construction.workflow.model_dump(mode='json'),
+        'max_repairs': construction.max_repairs,
+        'cut_intents': [item.model_dump(mode='json') for item in construction.cut_intents],
+        'commands': [item.model_dump(mode='json') for item in construction.commands]}),
+        drawing=definition.drawing, existing_document=bool(construction.workflow.parameters))
+    for method in plan.measurements:
+        dimension = next(item for item in definition.drawing.dimensions if item.id == method.dimension_id)
+        if method.absolute_tolerance > (0.1 if dimension.unit == 'degree' else 0.05):
+            raise ValueError(f'Measurement tolerance exceeds confirmed precision: {method.id}')
+    return plan
+
+
 async def inspect_candidate(provider, definition, construction, observations, *, model=None, stop_on_error=False,
-                            correlation=None):
+                            correlation=None, response_directory=None):
     """Choose checks from actual geometry while retaining independent requirements."""
     schema = CadRecipe.model_json_schema()
     schema['properties'].pop('commands')
@@ -216,7 +234,7 @@ async def inspect_candidate(provider, definition, construction, observations, *,
         'Requirement targets are read by the runtime. Differences require coordinate operands on '
         'the same axis. Angles use perpendicular rise/run with optional rise_origin and run_origin. '
         'Avoid copying observed defects into targets. Preserve every requested opening, depth and feature. '
-        'There are 32 sections and at most 64 model-authored checks across all arrays. The runtime '
+        f'There are 32 sections and at most {MAX_PROPOSED_CHECKS} model-authored checks across all arrays. The runtime '
         'reserves two additional slots for design-quality and cut-safety. Tolerances must remain within 0.05 mm '
         'or 0.1 degree for requirement measurements; choose precision consistent with the measurement '
         'method. Manufacturing fits remain explicitly unqualified. Construction commands are already '
@@ -228,24 +246,22 @@ async def inspect_candidate(provider, definition, construction, observations, *,
         # Inspection is a separate inference phase after construction completes.
         # Keep its transport failures and latency attached to the same document.
         with capture_usage() as usage, trace_call(provider, 'cad.inspection.planning',
-                correlation=correlation, records=usage):
+                correlation=correlation, records=usage) as call:
             raw = await provider.chat_complete(messages=messages, model=model or 'default', stream=False,
                                                max_tokens=8192, temperature=0.1)
+        if response_directory is not None:
+            from .cad_execution import digest
+            from .cad_store import CadStore
+            # Keep rejected output bound to its captured revision. Recovery can
+            # reapply the validation gate without purchasing another inference.
+            CadStore._write(response_directory / f'inspection-response-{attempt + 1}.json', {
+                'call_id': call.call_id, 'attempt': attempt + 1,
+                'source_sha256': observations.get('source_sha256'),
+                'definition_sha256': digest(definition.model_dump(mode='json')),
+                'construction_sha256': digest(construction.model_dump(mode='json')),
+                'raw': raw})
         try:
-            proposed = parse_object(raw)
-            if any(key in proposed for key in ('commands', 'drawing', 'workflow', 'max_repairs', 'cut_intents')):
-                raise ValueError('Inspection output must contain verification fields exclusively')
-            plan = validate_cad_proposal(json.dumps({**proposed, 'title': construction.title,
-                'workflow': construction.workflow.model_dump(mode='json'),
-                'max_repairs': construction.max_repairs,
-                'cut_intents': [item.model_dump(mode='json') for item in construction.cut_intents],
-                'commands': [item.model_dump(mode='json') for item in construction.commands]}),
-                drawing=definition.drawing, existing_document=bool(construction.workflow.parameters))
-            for method in plan.measurements:
-                dimension = next(item for item in definition.drawing.dimensions if item.id == method.dimension_id)
-                if method.absolute_tolerance > (0.1 if dimension.unit == 'degree' else 0.05):
-                    raise ValueError(f'Measurement tolerance exceeds confirmed precision: {method.id}')
-            return plan
+            return validate_inspection_response(raw, definition, construction)
         except ValueError as error:
             if attempt or stop_on_error:
                 raise

@@ -8,8 +8,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 Hash = Annotated[str, Field(pattern=r'^[a-f0-9]{64}$')]
 Identity = Annotated[str, Field(min_length=1, max_length=160)]
 
-# Model-authored checks and mandatory runtime checks have separate capacity.
-MAX_PROPOSED_CHECKS = 64
+# Each inspection array has its own work bound. Their sum keeps the aggregate
+# capacity consistent with valid combinations of probes and derived checks.
+CAD_CHECK_CAPACITIES = {'criteria': 16, 'sections': 32, 'cylinders': 16,
+                        'vertices': 16, 'measurements': 32}
+MAX_PROPOSED_CHECKS = sum(CAD_CHECK_CAPACITIES.values())
 MAX_DELIVERY_CHECKS = MAX_PROPOSED_CHECKS + 2
 Finite = Annotated[float, Field(allow_inf_nan=False)]
 Vector = tuple[Finite, Finite, Finite]

@@ -1,5 +1,8 @@
 import { z } from 'zod';
 
+// Match the five bounded inspection arrays and the two mandatory runtime checks.
+const maxDeliveryChecks = 16 + 32 + 16 + 16 + 32 + 2;
+
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const artifact = z.object({ path: z.string(), format: z.enum(['solidcraft', 'step', 'stl', 'png']),
   sha256: hash, size_bytes: z.number().int().positive(), source_sha256: hash.nullable() });
@@ -20,7 +23,7 @@ const snapshot = z.object({ document,
     absolute_tolerance: z.number().finite().nullable().optional(), relative_tolerance: z.number().finite().nullable().optional(),
     observed_intervals_mm: z.array(z.tuple([z.number().finite(), z.number().finite()])).max(16).nullable().optional(),
     expected_intervals_mm: z.array(z.tuple([z.number().finite(), z.number().finite()])).max(16).nullable().optional(),
-  })).max(66).default([]) });
+  })).max(maxDeliveryChecks).default([]) });
 const view = z.object({ schema_version: z.literal('1.0'), document_id: z.string().regex(/^[a-f0-9]{32}$/),
   title: z.string(), sequence: z.number().int().positive(),
   status: z.enum(['modeling', 'checking', 'ready', 'failed', 'cancelled']),

@@ -41,3 +41,26 @@ async def test_inspection_records_one_correlated_transport_outcome(tmp_path, out
     assert records[-1]['outcome'] == {'response': 'completed', 'provider_error': 'failed',
                                       'timeout': 'deadline', 'cancelled': 'cancelled'}[outcome]
     assert 'private' not in files[0].read_text()
+
+
+@pytest.mark.asyncio
+async def test_rejected_inspection_retains_exact_revision_bound_response(tmp_path):
+    from bigbrain.cad_execution import digest
+
+    raw = '{"criteria": []}'
+    class Provider:
+        async def chat_complete(self, **kwargs):
+            return raw
+
+    construction = CadConstruction(title='Plate', commands=construction_commands(), workflow=workflow(),
+                                  cut_intents=construction_cut_intents())
+    definition_value = definition()
+    with pytest.raises(ValueError):
+        await inspect_candidate(Provider(), definition_value, construction,
+            {'source_sha256': 'a' * 64}, stop_on_error=True, response_directory=tmp_path)
+    saved = json.loads((tmp_path / 'inspection-response-1.json').read_text())
+    assert saved['raw'] == raw and saved['source_sha256'] == 'a' * 64
+    assert saved['definition_sha256'] == digest(definition_value.model_dump(mode='json'))
+    assert saved['construction_sha256'] == digest(construction.model_dump(mode='json'))
+    assert saved['attempt'] == 1
+    assert len(saved['call_id']) == 32

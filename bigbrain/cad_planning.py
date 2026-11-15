@@ -7,7 +7,7 @@ from typing import Annotated, Any, Literal
 from pydantic import AfterValidator, Field, model_validator, field_validator
 from .cad_resources import check_commands
 
-from .cad_contracts import Contract, CriterionObservation, Finite, GeometryObservation, Identity, Vector, MAX_PROPOSED_CHECKS
+from .cad_contracts import Contract, CriterionObservation, Finite, GeometryObservation, Identity, Vector, MAX_PROPOSED_CHECKS, CAD_CHECK_CAPACITIES
 from .cad_drawings import DrawingSpecification
 from .cad_sections import CadSection
 from .cad_surfaces import CadCylinder, CadVertex
@@ -82,15 +82,15 @@ class CadRecipe(Contract):
     """Model-authored construction commands and proposed measurement targets."""
     title: str = Field(min_length=1, max_length=160)
     commands: Annotated[tuple[CadCommand, ...], AfterValidator(check_commands)] = Field(min_length=1, max_length=96)
-    criteria: tuple[CadCriterion, ...] = Field(min_length=1, max_length=16)
+    criteria: tuple[CadCriterion, ...] = Field(min_length=1, max_length=CAD_CHECK_CAPACITIES['criteria'])
     limitations: tuple[Annotated[str, Field(min_length=1, max_length=500)], ...] = Field(default=(), max_length=6)
-    sections: tuple[CadSection, ...] = Field(default=(), max_length=32)
-    cylinders: tuple[CadCylinder, ...] = Field(default=(), max_length=16,
+    sections: tuple[CadSection, ...] = Field(default=(), max_length=CAD_CHECK_CAPACITIES['sections'])
+    cylinders: tuple[CadCylinder, ...] = Field(default=(), max_length=CAD_CHECK_CAPACITIES['cylinders'],
         description='Analytic cylinder radius and perpendicular axis coordinates; combine with sections for trimmed extents.')
     max_repairs: int = Field(default=0, strict=True, ge=0, le=2)
-    measurements: tuple[RequirementMeasurement, ...] = Field(default=(), max_length=32,
+    measurements: tuple[RequirementMeasurement, ...] = Field(default=(), max_length=CAD_CHECK_CAPACITIES['measurements'],
         description='Measurement methods referencing geometry. Targets come exclusively from drawing dimensions.')
-    vertices: tuple[CadVertex, ...] = Field(default=(), max_length=16,
+    vertices: tuple[CadVertex, ...] = Field(default=(), max_length=CAD_CHECK_CAPACITIES['vertices'],
         description='Native edge endpoints selected by full world point. Use for exact arc or chamfer endpoints on boundaries.')
     workflow: CadWorkflow | None = None
     cut_intents: tuple[CutIntent, ...] = Field(default=(), max_length=16)
@@ -114,7 +114,7 @@ class CadPlan(CadRecipe):
         if set(identities) & {'design-quality', 'cut-safety'}:
             diagnostics.append('Design-quality and cut-safety identities belong to runtime checks')
         if len(identities) > MAX_PROPOSED_CHECKS:
-            diagnostics.append('CAD verification requires at most 64 checks')
+            diagnostics.append(f'CAD verification requires at most {MAX_PROPOSED_CHECKS} checks')
         if len(self.model_dump_json().encode()) > 64_000:
             diagnostics.append('CAD recipe exceeds its byte budget')
         if diagnostics:
