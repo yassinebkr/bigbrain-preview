@@ -592,3 +592,19 @@ context and provider compaction accounting. They describe this entire campaign.
 A direct end-to-end speed comparison with a fresh medium run requires the
 implementation changes and interventions to remain visible in the report.
 Terra medium complete-piece qualification is pending.
+
+### Terra medium intake transport qualification
+
+The fresh medium conversation exposed nested `oneOf` variants in drawing
+provenance fields. Codex rejected the response schema before generation.
+The CAD schema adapter now recursively converts tagged variants to `anyOf`
+after proving that each branch requires a distinct string constant. Local
+Pydantic validation keeps the original provenance and dimension rules. Fixed
+homogeneous vectors continue to retain their exact length bounds.
+
+The real drawing-intake schema and invalid-origin regression pass alongside
+the existing decision, drawing transport, intake and Codex provider cases.
+The focused suite passed 81 tests. A fresh UI retry reached the specialist's
+counterbore-facing clarification. The answer preserves the same outer flange
+faces used by the completed low candidate. Medium construction and its final
+independent verification remain qualification work.

@@ -118,3 +118,43 @@ def test_additive_wire_restores_inventory_before_local_minimum_checks():
     decoded['inherit_workflow'] = False
     with pytest.raises(ValueError):
         Decision.validate_python(expand_execution_workflow(decoded, packet))
+
+
+def test_drawing_intake_nested_variants_use_supported_strict_schema():
+    from bigbrain.cad_intake import DrawingIntake
+    from bigbrain.cad_drawing_transport import compact_drawing, expand_intake, intake_schema, WIRE_VERSION
+    from bigbrain.cad_drawings import DrawingSource
+    from tests.test_cad_drawings import drawing
+
+    original = intake_schema(DrawingIntake.model_json_schema())
+    schema = decision_tool_schema(original)['parameters']
+    strict = _strict_schema(schema)
+    def inspect(node):
+        if isinstance(node, dict):
+            assert not {'oneOf', 'discriminator', 'prefixItems'} & node.keys()
+            for value in node.values():
+                inspect(value)
+        elif isinstance(node, list):
+            for value in node:
+                inspect(value)
+    inspect(strict)
+    source = DrawingSource.model_validate(drawing()['sources'][0])
+    value = {'decision': {'wire_version': WIRE_VERSION,
+        'drawing': compact_drawing(drawing(), [source]), 'question': None}}
+    Draft202012Validator(schema).validate(value)
+    parsed = parse_decision_response(json.dumps(value))
+    assert DrawingIntake.model_validate(expand_intake(parsed, [source])).drawing.dimensions[0].value == 60
+    value['decision']['drawing']['dimensions'][0]['origin'] = 'guessed'
+    assert list(Draft202012Validator(schema).iter_errors(value))
+    with pytest.raises(ValueError):
+        DrawingIntake.model_validate(expand_intake(value['decision'], [source]))
+
+
+@pytest.mark.parametrize('branches', [
+    [{'type': 'object', 'properties': {'kind': {'const': 'same'}}, 'required': ['kind']}] * 2,
+    [{'type': 'object', 'properties': {'kind': {'const': 'optional'}}}],
+    [{'type': 'string'}, {'type': 'integer'}],
+])
+def test_exclusive_variants_require_proven_disjoint_tags(branches):
+    with pytest.raises(ValueError, match='distinct required string constants'):
+        decision_tool_schema({'oneOf': branches, 'discriminator': {'propertyName': 'kind'}})

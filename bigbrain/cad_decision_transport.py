@@ -10,11 +10,6 @@ def decision_tool_schema(schema):
     """Keep CAD contracts typed while encoding native command dictionaries as JSON."""
     decision = deepcopy(schema)
     definitions = decision.pop('$defs', {})
-    # Operation constants make these branches disjoint. The provider accepts
-    # anyOf, while local validation retains the discriminator for precise errors.
-    if decision.get('discriminator', {}).get('propertyName') == 'operation':
-        decision['anyOf'] = decision.pop('oneOf')
-        decision.pop('discriminator')
     workflow = definitions.get('CadWorkflow')
     if workflow is not None:
         # Additive proposals inherit existing members before the complete local
@@ -34,7 +29,7 @@ def decision_tool_schema(schema):
                 'required': ['decision'], 'additionalProperties': False, '$defs': definitions}
     return {'name': 'bigbrain_cad_decision',
             'description': 'Propose the next checkpoint-bound CAD decision.',
-            'parameters': _homogeneous_vectors(envelope)}
+            'parameters': _provider_schema(envelope)}
 
 
 def parse_decision_response(raw):
@@ -58,13 +53,32 @@ def parse_decision_response(raw):
     return value
 
 
-def _homogeneous_vectors(schema):
-    """Represent fixed homogeneous tuples with supported array length bounds."""
+def _provider_schema(schema, root=None):
+    """Encode disjoint tagged unions and homogeneous vectors for strict providers."""
+    root = schema if root is None else root
     if isinstance(schema, list):
-        return [_homogeneous_vectors(value) for value in schema]
+        return [_provider_schema(value, root) for value in schema]
     if not isinstance(schema, dict):
         return schema
-    result = {key: _homogeneous_vectors(value) for key, value in schema.items()}
+    result = {key: _provider_schema(value, root) for key, value in schema.items()}
+    if 'oneOf' in result:
+        tag = schema.get('discriminator', {}).get('propertyName')
+        tags = set()
+        for branch in schema['oneOf']:
+            if '$ref' in branch:
+                reference = branch['$ref']
+                if not reference.startswith('#/$defs/'):
+                    raise ValueError('CAD tagged union requires local definition references')
+                branch = root['$defs'][reference[len('#/$defs/'):]]
+            value = branch.get('properties', {}).get(tag, {}).get('const')
+            if (not isinstance(value, str) or tag not in branch.get('required', [])
+                    or value in tags):
+                raise ValueError('CAD tagged union requires distinct required string constants')
+            tags.add(value)
+        # Distinct required tags prove that these branches cannot overlap.
+        # The local Pydantic discriminator retains the complete domain validation.
+        result['anyOf'] = result.pop('oneOf')
+        result.pop('discriminator', None)
     if 'prefixItems' in result:
         items = result.pop('prefixItems')
         if not items or any(value != items[0] for value in items):
