@@ -45,3 +45,17 @@ Replay the original contract and checkpoint chain on a disposable copy before
 running new inference. Compare local dimensions, continuity, cut safety and
 revision lineage. Proposed thresholds from the roadmap remain subject to review
 before live comparison.
+
+## Native checkpoint recovery
+
+On Linux, a disposable copy of the Terra medium document recovered all 29
+accepted checkpoints in order through `CadExecutionStore.recover`. The replay
+used SolidCraft 0.28.0 with executable SHA-256
+`866a8ded1f66e0fbd6f01d6046502b2a62e98da6403c127edfdbce8a8e7a549e`.
+The stock installation has a different executable digest. Each recovery
+verified the native file hash and compared the reopened design inventory
+against its retained observation under the original contract digest.
+Observed recovery times ranged from under 0.01 seconds to 1.98 seconds.
+This measures checkpoint reopening and identity verification. Command
+reconstruction from an empty document and fresh metrology remain separate
+qualification steps.
