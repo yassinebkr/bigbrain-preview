@@ -27,7 +27,7 @@ def test_priority_oauth_first(monkeypatch):
 def test_priority_openrouter_before_mistral(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     monkeypatch.setenv("MISTRAL_API_KEY", "k")
-    assert registry.select_registry_key() == "openrouter-gpt-6.1-sol"
+    assert registry.select_registry_key() == "openrouter-gpt-6.2-sol"
 
 
 def test_priority_mistral_then_kimi_then_codex(monkeypatch):
@@ -41,7 +41,7 @@ def test_priority_mistral_then_kimi_then_codex(monkeypatch):
     assert registry.select_registry_key() == "kimi-k3"
     monkeypatch.delenv("KIMI_API_KEY")
     monkeypatch.setattr(registry, "codex_available", lambda: True)
-    assert registry.select_registry_key() == "codex-chatgpt"
+    assert registry.select_registry_key() == "codex-sol-6.2"
 
 
 def test_no_provider_returns_none():

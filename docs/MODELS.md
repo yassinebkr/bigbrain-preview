@@ -8,6 +8,8 @@ env var, base URL, and capability flags (reasoning, vision).
 
 | Key | Provider | Model id | Auth | Reasoning | Vision |
 |---|---|---|---|---|---|
+| `openrouter-gpt-6.2-sol` | OpenRouter | `openai/gpt-6.2-sol` | `OPENROUTER_API_KEY` | yes (low default) | yes |
+| `codex-sol-6.2` | Codex | `gpt-6.2-sol` | Codex sign-in | yes (low default) | yes |
 | `openrouter-gpt-6.1-sol` | OpenRouter | `openai/gpt-6.1-sol` | `OPENROUTER_API_KEY` | yes (medium default) | yes |
 | `openrouter-gpt-sol` | OpenRouter | `openai/gpt-5.6-sol` | `OPENROUTER_API_KEY` | yes (low default) | yes |
 | `openrouter-kimi-k3` | OpenRouter | `moonshotai/kimi-k3` | `OPENROUTER_API_KEY` | yes | yes |
@@ -32,10 +34,10 @@ Verify current ids on openrouter.ai/models before relying on a default.
 `BIGBRAIN_PROVIDER=<key>`):
 
 1. Claude OAuth token (stored by `python -m bigbrain --login`)
-2. `OPENROUTER_API_KEY` → `openrouter-gpt-6.1-sol`
+2. `OPENROUTER_API_KEY` → `openrouter-gpt-6.2-sol`
 3. `MISTRAL_API_KEY` → `mistral-vibe` (set by the browser wizard)
 4. `KIMI_API_KEY` → `kimi-k3`
-5. codex CLI with stored credentials → `codex-chatgpt`
+5. codex CLI with stored credentials → `codex-sol-6.2`
 6. legacy litellm keys (`OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GOOGLE_API_KEY`)
 7. mock provider
 

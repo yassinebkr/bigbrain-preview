@@ -29,10 +29,10 @@ import httpx
 # -- defaults -----------------------------------------------------------------
 
 # Roles used by BigBrainConfig (front / code / web / planner / subagent).
-DEFAULT_FRONT_MODEL_KEY = os.getenv("BIGBRAIN_FRONT_MODEL_KEY", "openrouter-gpt-6.1-sol")
-DEFAULT_CODE_MODEL_KEY = os.getenv("BIGBRAIN_CODE_MODEL_KEY", "openrouter-gpt-6.1-sol")
-DEFAULT_PLANNER_MODEL_KEY = os.getenv("BIGBRAIN_PLANNER_MODEL_KEY", "openrouter-gpt-6.1-sol")
-DEFAULT_SUBAGENT_MODEL_KEY = os.getenv("BIGBRAIN_SUBAGENT_MODEL_KEY", "openrouter-gpt-6.1-sol")
+DEFAULT_FRONT_MODEL_KEY = os.getenv("BIGBRAIN_FRONT_MODEL_KEY", "openrouter-gpt-6.2-sol")
+DEFAULT_CODE_MODEL_KEY = os.getenv("BIGBRAIN_CODE_MODEL_KEY", "openrouter-gpt-6.2-sol")
+DEFAULT_PLANNER_MODEL_KEY = os.getenv("BIGBRAIN_PLANNER_MODEL_KEY", "openrouter-gpt-6.2-sol")
+DEFAULT_SUBAGENT_MODEL_KEY = os.getenv("BIGBRAIN_SUBAGENT_MODEL_KEY", "openrouter-gpt-6.2-sol")
 
 _OPENROUTER_DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 
@@ -89,6 +89,21 @@ class ModelEntry:
 
 _REGISTRY: dict[str, ModelEntry] = {
     # -- OpenRouter (one key covers all models below) -------------------------
+    "openrouter-gpt-6.2-sol": ModelEntry(
+        key="openrouter-gpt-6.2-sol",
+        display_name="GPT-6.2 Sol (OpenRouter)",
+        provider="openai_compat",
+        model_id="openai/gpt-6.2-sol",
+        api_key_env="OPENROUTER_API_KEY",
+        base_url=_OPENROUTER_DEFAULT_BASE_URL,
+        health_path="/auth/key",
+        reasoning=True,
+        reasoning_efforts=["low", "medium", "high", "xhigh", "max"],
+        reasoning_effort_default="low",
+        supports_temperature=False,
+        vision=True,
+        context_window=1_050_000,
+    ),
     "openrouter-gpt-6.1-sol": ModelEntry(
         key="openrouter-gpt-6.1-sol",
         display_name="GPT-6.1 Sol (OpenRouter)",
@@ -224,6 +239,12 @@ _REGISTRY: dict[str, ModelEntry] = {
         reasoning_effort_default="low",
     ),
     # -- Subscription-backed (no API key; local credential store) --------------
+    "codex-sol-6.2": ModelEntry(
+        key="codex-sol-6.2", display_name="GPT-6.2 Sol (Codex)",
+        provider="codex", model_id="gpt-6.2-sol", api_key_env="",
+        reasoning=True, reasoning_efforts=["low", "medium", "high", "xhigh", "max"],
+        reasoning_effort_default="low", vision=True, context_window=1_050_000,
+    ),
     "codex-sol-6.1": ModelEntry(
         key="codex-sol-6.1", display_name="GPT-6.1 Sol (Codex)",
         provider="codex", model_id="gpt-6.1-sol", api_key_env="",

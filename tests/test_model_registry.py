@@ -14,6 +14,8 @@ from bigbrain.llm.model_registry import (
 def test_registry_contains_all_phase3_models():
     keys = {entry["key"] for entry in list_models()}
     expected = {
+        "openrouter-gpt-6.2-sol",
+        "codex-sol-6.2",
         "openrouter-gpt-6.1-sol",
         "openrouter-gpt-sol",
         "openrouter-kimi-k3",
@@ -57,9 +59,9 @@ def test_sol_6_1_capabilities_are_declared():
     assert entry.reasoning_efforts == ["low", "medium", "high", "xhigh", "max"]
     assert entry.vision is True
     assert entry.context_window == 1_050_000
-def test_all_role_defaults_use_sol_6_1():
+def test_all_role_defaults_use_sol_6_2():
     roles = {r: role_default_key(r) for r in ("front", "code", "planner", "web", "subagent")}
-    assert set(roles.values()) == {"openrouter-gpt-6.1-sol"}
+    assert set(roles.values()) == {"openrouter-gpt-6.2-sol"}
 
 
 def test_unknown_key_raises():

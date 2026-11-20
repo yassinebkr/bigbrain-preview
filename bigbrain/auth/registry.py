@@ -2,7 +2,7 @@
 
 Priority order (first available wins, overridable with ``BIGBRAIN_PROVIDER``):
 1. ``anthropic-oauth``  — stored Claude Pro/Max OAuth token
-2. ``openrouter-*``    — OPENROUTER_API_KEY (Sol 6.1/5.6, Kimi K3, Opus 5.5, Luna)
+2. ``openrouter-*``    — OPENROUTER_API_KEY (Sol 6.2/6.1/5.6, Kimi K3, Opus 5.5, Luna)
 3. ``mistral-studio-large-4`` — MISTRAL_STUDIO_API_KEY (developer API)
 4. ``mistral-vibe``    — MISTRAL_API_KEY (set by the browser sign-in wizard)
 5. ``kimi-k3``         — KIMI_API_KEY (direct)
@@ -23,9 +23,9 @@ from typing import Optional
 
 # Registry keys selectable through BIGBRAIN_PROVIDER.
 KNOWN_PROVIDER_KEYS = {
-    "codex-sol-6.1", "codex-terra-6.1", "codex-luna-6",
+    "codex-sol-6.2", "codex-sol-6.1", "codex-terra-6.1", "codex-luna-6",
     "anthropic-oauth", "codex-chatgpt", "mistral-vibe", "mistral-studio-large-4", "kimi-k3",
-    "openrouter-gpt-6.1-sol", "openrouter-gpt-sol", "openrouter-kimi-k3",
+    "openrouter-gpt-6.2-sol", "openrouter-gpt-6.1-sol", "openrouter-gpt-sol", "openrouter-kimi-k3",
     "openrouter-opus-5.5", "openrouter-luna",
 }
 
@@ -65,7 +65,7 @@ def select_registry_key() -> Optional[str]:
     if anthropic_oauth_token():
         return "anthropic-oauth"
     if os.environ.get("OPENROUTER_API_KEY"):
-        return "openrouter-gpt-6.1-sol"
+        return "openrouter-gpt-6.2-sol"
     if os.environ.get("MISTRAL_STUDIO_API_KEY"):
         return "mistral-studio-large-4"
     if os.environ.get("MISTRAL_API_KEY"):
@@ -73,7 +73,7 @@ def select_registry_key() -> Optional[str]:
     if os.environ.get("KIMI_API_KEY"):
         return "kimi-k3"
     if codex_available():
-        return "codex-chatgpt"
+        return "codex-sol-6.2"
     return None
 
 
