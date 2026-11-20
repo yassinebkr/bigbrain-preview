@@ -59,3 +59,17 @@ Observed recovery times ranged from under 0.01 seconds to 1.98 seconds.
 This measures checkpoint reopening and identity verification. Command
 reconstruction from an empty document and fresh metrology remain separate
 qualification steps.
+
+## Reconstruction from the command journal
+
+Run `python -m tools.replay_cad_checkpoints DOCUMENT --engine CLI` from the
+repository root with the retained document directory and its qualified CLI.
+The tool verifies proposal hashes and original parent links before remapping
+parents to the new temporary chain. The native cut guards run on every group.
+
+All 29 groups executed on Linux. Design inventories, parameter graphs and
+remaining obligations matched at each group. Cut reports matched in measured
+values and verdicts. Four groups, 18, 21, 24 and 27, produced different
+`before_native_sha256` and `cutter_sha256` values. The tool reports strict
+evidence divergence with a nonzero exit status. The cause of the byte-level
+differences and the final independent metrology remain unqualified.
