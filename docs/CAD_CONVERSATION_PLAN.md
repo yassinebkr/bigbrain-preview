@@ -608,3 +608,112 @@ The focused suite passed 81 tests. A fresh UI retry reached the specialist's
 counterbore-facing clarification. The answer preserves the same outer flange
 faces used by the completed low candidate. Medium construction and its final
 independent verification remain qualification work.
+
+### Terra medium complete-piece result — 2026-11-20
+
+Drawing 42 document `244a9e82d4f745939827c561a6ecf48f` is published at
+revision 5 with 94 passing CAD checks. The delivery verdict adds one run-level
+check. The native artifact SHA-256 is
+`88fab0142b2b44cf9457603ec5e5fe0c46fab553aec0c2105f7b40fb455d9a54`.
+The qualified 0.28.0 engine fingerprint matches the low campaign. The document
+retains 29 accepted groups, 51 controller decisions, constrained sketches and
+named editable history. Independent measurement reports one closed solid,
+590 × 360 × 590 mm bounds and 28,094,977.13234817 mm³ volume. Low and medium
+volumes differ by 0.00018833 mm³. Their coordinate frames differ; the comparison
+uses pose-independent dimensions and volume.
+
+The same 14 confirmed dimension values and units were checked before execution.
+Medium requested an additional clarification about counterbore facing. The
+answer selected the outer flange faces, matching the low candidate. Construction
+started through the ordinary contract confirmation in the Atelier.
+
+Two native attempts were rejected during construction: an undeclared helper
+sketch, and an empty sketch without a driving dimension or projected reference.
+The model corrected both through controller feedback. Additional proposal
+rejections covered missing workflow parameters, an oversized group inventory
+and the consumed bore tool remaining in the declared body inventory. The model
+resolved these while retaining the accepted construction prefix. An account
+usage limit interrupted one subsequent inference. The existing interrupted-call
+recovery resumed after the provider's stated reset time.
+
+The first inspection failed five measurements. Four section lines crossed the
+R20 flange corners and measured a 354.641 mm chord instead of the 360 mm side.
+The fifth selected the first material interval on a ray that intersects the bend
+before the counterbore flange. Offline STEP sections reproduced these choices.
+Moving the four width probes onto straight portions measured 360 mm; selecting
+the second material interval placed the counterbore floor at x=400 mm, 10 mm
+from the x=410 mm outer face. The complete original failed evidence remains in
+revision 4. The operator correction is retained in
+`operator-inspection-correction.json`, bound to the original source, definition,
+construction and both inspection recipe hashes.
+
+The corrected recipe passed the production inspection validator. Its geometry
+commands, workflow, drawing, criterion inventory and tolerances remained equal
+to the original. UI recovery performed the full measurements and publication
+without another inference. The exported STEP hash stayed identical across this
+recovery. This is an assisted qualification result. Automatic selection of all
+inspection probes remains a reliability limitation. The repair budget was
+already consumed by construction failures, and the runtime attempted to classify
+these measurement failures through the geometry repair path. A later change
+should distinguish inspection-method diagnosis from reproduced geometry defects
+before authorizing a geometric edit.
+
+### Complete-piece comparison and limits
+
+| Recorded quantity | Terra low | Terra medium |
+| --- | ---: | ---: |
+| Construction decisions / traced calls | 48 | 51 |
+| Inspection planning calls | 1 | 1 |
+| Construction inference | 1,310.49 s | 1,264.77 s |
+| Inspection inference | 114.07 s | 95.20 s |
+| Total recorded inference | 23.74 min | 22.67 min |
+| Known input tokens, including cache | 6,336,216 | 6,417,341 |
+| Cached input tokens | 1,702,784 | 2,337,280 |
+| Output tokens | 35,063 | 33,842 |
+| Calls with unknown usage | 1 | 1 |
+| Published CAD checks | 69 | 94 |
+| Native failures retained during campaign | 4 | 2 |
+| Published revision | 7 | 5 |
+
+Timings sum observed inference durations. They exclude operator work and waits
+between resumptions, including the medium quota reset. The full elapsed campaign
+spans those interruptions. Intake and Front routing remain separate phases.
+Both campaigns required assistance. Low includes development-time code changes;
+medium includes the nested-schema correction before construction and the final
+operator inspection correction. These measurements cannot isolate a causal
+speed or quality advantage for either reasoning effort. Additional checks chosen
+by one inspector do not establish broader coverage than another inspector.
+
+The official [Terra model pricing](https://developers.openai.com/api/docs/models/gpt-6.1-terra)
+was checked on 2026-11-20. Standard per-million token rates are $1 input,
+$0.05 cached input and $5 output. Applying these rates to known read/output
+usage gives reference subtotals of $4.893886 for low and $4.366135 for medium.
+These are partial API-equivalent calculations. They exclude unknown usage,
+cache-write charges unavailable in the Codex traces, Front and intake calls,
+and local compute. The recorded calls stay below the documented 272K input
+threshold for long-context rates. Actual transport used the Codex subscription.
+The existing single-operation Sol/Terra comparison remains supporting evidence;
+there is no controlled complete-piece Sol benchmark in this campaign.
+
+The normal UI recovered the verified medium revision and all 94 CAD controls
+after a real server restart. Sol was restored for the specialist role through
+settings; the temporary Terra medium environment override was removed. The
+focused final regression passed 115 tests across CAD intake, compact drawing
+and decision transports, call tracing, planner clarification, retained
+clarification and configurable model roles. Four existing Pydantic deprecation
+warnings remain. GitHub CI was outside this run.
+
+### Four-item delivery audit
+
+| Work item | Current evidence | Qualification boundary |
+| --- | --- | --- |
+| Early specialist delegation | Compact Front route, CAD-owned intake, configured provider, preserved source ledger and clarification tests; ordinary drawing 42 UI entry | Image interpretation still depends on the selected model |
+| Compact exchange | Lossless 7,355 → 3,577-byte drawing round trip; checkpoint workflow inheritance and strict source validation | Native observations and persistent model context still dominate complete-piece input usage |
+| Separate latency | Correlated receipt, dispatch, Front, first-content and intake events; per-phase inference traces for both full pieces | First-content is unknown when the transport cannot observe it; campaign wall time includes interruptions |
+| Full-piece Terra low/medium qualification | Two independent published documents, matching engine identity, saved native/STEP/STL hashes and passing measurements | Both are assisted runs; automatic inspection planning and economic efficiency remain open limitations |
+
+This completes the requested implementation and qualification sequence on
+`feat/cad-reliability-qualification`. The branch remains available for review.
+The campaign supports complete-piece capability with the recorded assistance.
+Further adoption decisions should account for the measured context cost and
+inspection-method failures.
