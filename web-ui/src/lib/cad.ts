@@ -14,7 +14,7 @@ const snapshot = z.object({ document,
   assembly: z.object({
     source_sha256: hash, occurrences: z.array(z.object({
       id: z.number().int().positive(), component_id: z.number().int().positive(),
-      name: z.string(), definition: z.string(), grounded: z.boolean(), translation_mm: vector,
+      name: z.string(), definition: z.string(), grounded: z.boolean(), translation_mm: vector, world_bounds_mm: z.tuple([vector, vector]).nullable().optional(),
     })).min(1).max(256),
   }).nullable().optional(),
   geometry: z.object({ source_sha256: hash, body_count: z.number().int().nonnegative(), closed_solid: z.boolean(),

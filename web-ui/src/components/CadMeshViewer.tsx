@@ -6,7 +6,7 @@ import { cadSketchLines } from '@/lib/cadSketchLines';
 import { Scan } from 'lucide-react';
 import { liveRuntime } from '@/lib/cadLiveRuntime';
 
-export default function CadMeshViewer({ cad, sessionId, fallback, construction = false }: { cad: CadView; sessionId: string; fallback: React.ReactNode; construction?: boolean }) {
+export default function CadMeshViewer({ cad, sessionId, fallback, construction = false, selectedBounds }: { cad: CadView; sessionId: string; fallback: React.ReactNode; construction?: boolean; selectedBounds?: [[number, number, number], [number, number, number]] | null }) {
   const host = useRef<HTMLDivElement>(null);
   const viewport = useRef<CadMeshViewport>(undefined);
   const [error, setError] = useState('');
@@ -82,6 +82,9 @@ export default function CadMeshViewer({ cad, sessionId, fallback, construction =
     viewport.current?.updateSketches(vertices);
     setHasSketch(vertices.length > 0);
   }, [construction, sketches, cad.document_id, sessionId]);
+  useEffect(() => {
+    viewport.current?.selectBounds(selectedBounds);
+  }, [selectedBounds, ready, cad.document_id, sessionId]);
   const visible = ready || hasSketch;
   return <div className="relative w-full h-full min-h-0">
     {!visible && <div className="absolute inset-0">{fallback}</div>}

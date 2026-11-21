@@ -11,6 +11,7 @@ export class CadMeshViewport {
   private readonly piece = new THREE.Mesh(new THREE.BufferGeometry(), this.material);
   private readonly sketches = new THREE.LineSegments(new THREE.BufferGeometry(),
     new THREE.LineBasicMaterial({ color: 0x64e0fb, depthTest: false }));
+  private readonly selection = new THREE.Box3Helper(new THREE.Box3(), 0xfbbf24);
   private sketchAnchor?: THREE.Vector3;
   private readonly light = new THREE.DirectionalLight(0xffffff, 3);
   private renderer?: THREE.WebGLRenderer;
@@ -38,7 +39,10 @@ export class CadMeshViewport {
       canvas.tabIndex = 0;
       host.append(canvas);
       this.sketches.renderOrder = 1;
-      this.scene.add(this.piece, this.sketches, new THREE.HemisphereLight(0xffffff, 0x243446, 2.5), this.light);
+      this.selection.visible = false;
+      this.selection.renderOrder = 2;
+      if (!Array.isArray(this.selection.material)) this.selection.material.depthTest = false;
+      this.scene.add(this.piece, this.sketches, this.selection, new THREE.HemisphereLight(0xffffff, 0x243446, 2.5), this.light);
       this.camera.up.set(0, 0, 1);
       this.controls = new TrackballControls(this.camera, canvas);
       this.controls.staticMoving = true;
@@ -100,6 +104,15 @@ export class CadMeshViewport {
     }
   }
 
+  selectBounds(bounds?: [[number, number, number], [number, number, number]] | null) {
+    this.selection.visible = Boolean(bounds && this.anchor);
+    if (bounds && this.anchor) {
+      this.selection.box.set(new THREE.Vector3(...bounds[0]).sub(this.anchor),
+        new THREE.Vector3(...bounds[1]).sub(this.anchor));
+    }
+    this.render();
+  }
+
   updateSketches(vertices: number[]) {
     if (this.disposed) return;
     const geometry = new THREE.BufferGeometry();
@@ -159,6 +172,7 @@ export class CadMeshViewport {
     this.material.dispose();
     this.sketches.geometry.dispose();
     this.sketches.material.dispose();
+    this.selection.dispose();
     this.renderer?.dispose();
     this.renderer?.forceContextLoss();
     canvas?.remove();

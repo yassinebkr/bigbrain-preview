@@ -386,10 +386,19 @@ class SolidCraftSession:
         assembly = None
         if len(bodies) > 1:
             inventory = await self.tool('execute', {'command': 'component.list', 'params': {}})
-            occurrences = tuple(CadOccurrence(id=item['id'], component_id=component['id'],
-                name=item['name'], definition=component['name'], grounded=item['grounded'],
-                translation_mm=item['transform'][3][:3])
-                for component in inventory['components'] for item in component['occurrences'])
+            occurrences = []
+            for component in inventory['components']:
+                for item in component['occurrences']:
+                    bounds = None
+                    if item['parent'] == 0 and len(occurrences) < 24:
+                        properties = await self.tool('execute', {'command': 'occurrence.properties',
+                            'params': {'occurrence': item['id'], 'path': [item['id']]}})
+                        box = properties['total'].get('bbox')
+                        if box and box.get('min') is not None and box.get('max') is not None:
+                            bounds = (box['min'], box['max'])
+                    occurrences.append(CadOccurrence(id=item['id'], component_id=component['id'],
+                        name=item['name'], definition=component['name'], grounded=item['grounded'],
+                        translation_mm=item['transform'][3][:3], world_bounds_mm=bounds))
             if occurrences:
                 assembly = CadAssemblyInventory(source_sha256=native.sha256, occurrences=occurrences)
         return CadCapture(document, geometry, preview, preview_error, inspection, assembly)

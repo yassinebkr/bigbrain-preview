@@ -128,9 +128,9 @@ export function CadPanel({ run, expanded = false }: { run: RunState; expanded?: 
       ? <Loader2 size={25} className="animate-spin motion-reduce:animate-none" /> : <Box size={34} strokeWidth={1.2} />}
       <p className="text-[12px] px-5 text-center">{imageError || captured?.preview_error || (captured ? 'Aperçu en préparation' : 'La pièce apparaîtra après la première capture.')}</p></div>;
   const hasMesh = captured?.document.exports.some(item => item.format === 'stl' && item.source_sha256 === captured.document.native.sha256);
-  const piece = hasMesh || cad.working ? <Suspense fallback={picture}><CadMeshViewer cad={cad} sessionId={run.sessionId} fallback={picture} construction={previewMode === 'construction'} /></Suspense> : picture;
   const assembly = captured?.assembly;
   const selectedComponent = assembly?.occurrences.find(item => String(item.id) === selectedOccurrence);
+  const piece = hasMesh || cad.working ? <Suspense fallback={picture}><CadMeshViewer cad={cad} sessionId={run.sessionId} fallback={picture} construction={previewMode === 'construction'} selectedBounds={selectedComponent?.world_bounds_mm} /></Suspense> : picture;
   const sketchDimensions = previewMode === 'construction'
     ? cadSketchDimensions(cad.working?.design.sketches ?? []) : [];
   if (editing && expanded && (captured || cad.working)) return <section aria-label="SolidCraft Web" className="w-full min-w-0">

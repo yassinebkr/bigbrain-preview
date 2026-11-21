@@ -52,6 +52,7 @@ class CadOccurrence(Contract):
     definition: Identity
     grounded: bool
     translation_mm: Vector
+    world_bounds_mm: tuple[Vector, Vector] | None = None
 
 
 class CadAssemblyInventory(Contract):
