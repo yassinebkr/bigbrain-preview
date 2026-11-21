@@ -82,9 +82,11 @@ export default function CadMeshViewer({ cad, sessionId, fallback, construction =
     viewport.current?.updateSketches(vertices);
     setHasSketch(vertices.length > 0);
   }, [construction, sketches, cad.document_id, sessionId]);
+  const bounds = cadMeshSource(cad) === 'published' ? selectedBounds : undefined;
   useEffect(() => {
-    viewport.current?.selectBounds(selectedBounds);
-  }, [selectedBounds, ready, cad.document_id, sessionId]);
+    // The selected occurrence belongs to the published revision.
+    viewport.current?.selectBounds(bounds);
+  }, [bounds, ready, cad.document_id, sessionId]);
   const visible = ready || hasSketch;
   return <div className="relative w-full h-full min-h-0">
     {!visible && <div className="absolute inset-0">{fallback}</div>}

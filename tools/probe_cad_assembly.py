@@ -122,6 +122,14 @@ async def main():
             capture = await session.capture(document_id, document_id, 1)
             if capture.assembly is None or len(capture.assembly.occurrences) != 6:
                 raise RuntimeError('BigBrain capture did not retain all assembly occurrences')
+            by_id = {item.id: item for item in capture.assembly.occurrences}
+            for occurrence_id, (x, y, z) in expected_placements.items():
+                bounds = by_id[occurrence_id].world_bounds_mm
+                expected = ((x + 5, y + 5, z + 16), (x + 10, y + 9, z + 18))
+                if bounds is None or any(abs(actual - target) > 1e-6
+                        for corner, reference in zip(bounds, expected, strict=True)
+                        for actual, target in zip(corner, reference, strict=True)):
+                    raise RuntimeError(f'Incorrect selection bounds for occurrence {occurrence_id}: {bounds}')
             store.publish(session_id, capture, title='Enclosure assembly')
             reopened = CadStore(Path(folder)).view(document_id, session_id)
             if reopened['assembly'] != capture.assembly.model_dump(mode='json'):
