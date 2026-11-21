@@ -159,3 +159,14 @@ This measures an incomplete run. Cost and duration per verified delivery
 remain unknown. For future probes, the runtime should receive the construction
 share up front so that the reserved phase receives the correct checkpoint
 without first attempting a construction call that the wrapper will reject.
+
+### Grouped sketch replay
+
+On a disposable copy of the Sol probe, the 18 retained native commands for
+flange A holes, flange B holes and flange A counterbores reproduced the three
+sketch groups in one accepted group. The production intermediate validator
+passed. The resulting design inventory, parameter graph, cut evidence and
+remaining obligations matched the last original checkpoint. This establishes
+that the runtime can replace three proposal turns with one for this retained
+sequence. The model's ability to choose the combined group in a fresh run
+still requires live verification.

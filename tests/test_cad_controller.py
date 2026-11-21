@@ -639,7 +639,8 @@ async def test_native_structured_decisions_use_the_existing_checkpoint_and_cut_g
 
     class StructuredDecisions(Decisions):
         async def chat_complete(self, **kwargs):
-            assert kwargs['tool_schema'] == decision_tool_schema(Decision.json_schema())
+            assert kwargs['tool_schema'] == decision_tool_schema(Decision.json_schema(),
+                allow_workflow_inheritance=packet(kwargs)['accepted_workflow'] is not None)
             value = json.loads(await super().chat_complete(**kwargs))
             for command in value.get('group', {}).get('commands', []):
                 command['params'] = json.dumps(command['params'])
