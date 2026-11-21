@@ -189,3 +189,20 @@ test conversation, showed the incomplete delivery state and restored all 13
 accepted steps. The Construction control displayed the interactive Three.js
 canvas and the sketch dimensions disclosure. This reused the bounded run
 data and a synthetic conversation message, with zero provider calls.
+
+## Delayed mesh response in Chromium
+
+On Linux, headless Chromium with ANGLE SwiftShader mounted the product
+`CadMeshViewer` component and rendered synthetic STL files through its
+Three.js viewport. A browser fixture held the second checkpoint's HTTP
+response, advanced to the third checkpoint, then released the obsolete
+second response. The displayed sketch stayed with the first mesh while
+the second request was pending. The third mesh and sketch then appeared
+together, the obsolete result produced no update, and the canvas element
+survived both transitions. A fourth checkpoint with no solids or sketches
+cleared the preview.
+
+This test exercised React, Three.js and the product mesh decoder with a
+controlled HTTP transport. Whole-application qualification still covers a
+real connection interruption, camera interaction and performance on a
+large part using the machine's production graphics backend.
