@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 // @ts-expect-error The backend serves this ES module without TypeScript declarations.
-import { CadBrowserExecutor } from '../../../bigbrain/web/static/cad-browser-bridge.mjs';
+import { CadBrowserExecutor, cadRecoveryKey } from '../../../bigbrain/web/static/cad-browser-bridge.mjs';
 
 function fixture(accept: () => Promise<unknown> = async () => ({ revision: 2, status: 'accepted' })) {
   const bytes = Uint8Array.of(1, 2, 3);
@@ -96,4 +96,15 @@ describe('manual CAD saves', () => {
     expect(executor.dirty).toBe(true);
     expect(engine.setLocked).toHaveBeenLastCalledWith(false);
   });
+});
+
+
+it('scopes native recovery to the conversation, document and accepted bytes', async () => {
+  const scope = { sessionId: 'session', documentId: 'document' };
+  const key = await cadRecoveryKey(scope, 'base');
+  expect(key).toMatch(/^[a-f0-9]{64}$/);
+  expect(await cadRecoveryKey({ ...scope }, 'base')).toBe(key);
+  expect(await cadRecoveryKey({ ...scope, sessionId: 'other' }, 'base')).not.toBe(key);
+  expect(await cadRecoveryKey({ ...scope, documentId: 'other' }, 'base')).not.toBe(key);
+  expect(await cadRecoveryKey(scope, 'next')).not.toBe(key);
 });

@@ -23,6 +23,11 @@ export class CadBrowserTransport {
   }
 }
 
+// Use the accepted bytes rather than the transient ticket path to name drafts.
+export function cadRecoveryKey({ documentId, sessionId }, checkpointHash) {
+  return sha256(new TextEncoder().encode(JSON.stringify([sessionId, documentId, checkpointHash])));
+}
+
 export class CadBrowserExecutor {
   constructor(transport, engine, onState = () => {}) {
     this.transport = transport;
@@ -45,13 +50,13 @@ export class CadBrowserExecutor {
     this.engine.setLocked(true);
     // Restoring before claiming makes uncertain executions safe to repeat.
     const initialBytes = await this.transport.call('checkpoint');
-    await this.engine.restore(initialBytes);
+    await this.restore(initialBytes);
     const capabilities = await this.engine.capabilities();
     const state = await this.transport.call('connect', { capabilities });
     // Read again after obtaining the generation: a previous client may have
     // committed while this browsing context was loading the first checkpoint.
     const bytes = await this.transport.call('checkpoint');
-    if (await sha256(bytes) !== await sha256(initialBytes)) await this.engine.restore(bytes);
+    if (await sha256(bytes) !== await sha256(initialBytes)) await this.restore(bytes);
     this.ready = true;
     this.dirty = false;
     const current = await this.transport.call('state');
@@ -61,6 +66,10 @@ export class CadBrowserExecutor {
       throw new Error('CAD checkpoint changed during reconnect; connect again');
     }
     return this.update(current);
+  }
+  async restore(bytes) {
+    const key = this.transport.scope && await cadRecoveryKey(this.transport.scope, await sha256(bytes));
+    await this.engine.restore(bytes, key);
   }
   step() {
     if (!this.ready || this.busy || this.stopping) return Promise.resolve(null);
@@ -177,6 +186,8 @@ export class CadBrowserExecutor {
         this.update(current);
       }
       this.dirty = false;
+      if (this.transport.scope && this.engine.setRecoveryKey)
+        this.engine.setRecoveryKey(await cadRecoveryKey(this.transport.scope, savedHash));
     } finally {
       // Leave the user's canvas available after a failed save so they can retry
       // or export the current document with the native editor.
@@ -350,7 +361,7 @@ export class SolidCraftBrowserEngine {
     await sleep(50);
     await layout();
   }
-  async restore(bytes) {
+  async restore(bytes, recoveryKey) {
     // SolidCraft's pinned URL loader accepts HTTPS or same-origin HTTP files.
     // A scoped single-use server ticket supplies the immutable checkpoint.
     const url = await this.loadCheckpoint(bytes);
@@ -361,6 +372,7 @@ export class SolidCraftBrowserEngine {
     const loaded = new Promise(resolve => frame.addEventListener('load', resolve, { once: true }));
     const address = new URL(this.appUrl, location.href);
     address.searchParams.set('open', url);
+    if (recoveryKey) address.searchParams.set('bigbrain-recovery', recoveryKey);
     frame.src = address.href;
     this.container.replaceChildren(frame);
     this.frame = frame;
@@ -383,6 +395,13 @@ export class SolidCraftBrowserEngine {
       }
       throw new Error('SolidCraft checkpoint load timed out');
     } finally { this.setLocked(this.locked); }
+  }
+  setRecoveryKey(key) {
+    const win = this.frame?.contentWindow;
+    if (!win) return;
+    const url = new URL(win.location.href);
+    url.searchParams.set('bigbrain-recovery', key);
+    win.history.replaceState(win.history.state, '', url);
   }
   async capabilities() {
     const catalog = await this.api.commands();
