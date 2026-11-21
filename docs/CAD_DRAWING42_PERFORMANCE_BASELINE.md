@@ -170,3 +170,15 @@ remaining obligations matched the last original checkpoint. This establishes
 that the runtime can replace three proposal turns with one for this retained
 sequence. The model's ability to choose the combined group in a fresh run
 still requires live verification.
+
+### Intermediate cut digest diagnosis
+
+The byte audit compared the four retained and rebuilt `before.sc` and
+`cutter.step` pairs for groups 18, 21, 24 and 27. The SolidCraft ZIP archives
+had identical non-cache entries, including byte-identical `document.json`.
+The differing entries were `cache/model.json` in all four pairs and the two
+thumbnail entries in group 18. The STEP files differed exclusively in the
+generated `CutSafetyTool_<id>` name on the `MANIFOLD_SOLID_BREP` entity. Replacing
+that name in the diagnostic comparison produced byte-identical STEP data in
+all four cases. The replay tool continues to report raw digest differences.
+Every retained artifact remains verified against its original byte hash.
