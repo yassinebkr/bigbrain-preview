@@ -24,6 +24,7 @@ export interface EditorRuntime {
   listeners: Set<() => void>; pending?: Promise<void>; stop?: AbortController;
   engine?: Engine; attached: boolean;
   selected?: boolean;
+  baseRevision?: number;
 }
 const cache = new Map<string, EditorRuntime>();
 if (import.meta.hot) import.meta.hot.dispose(() => {
@@ -86,6 +87,8 @@ export async function openEditor(runtime: EditorRuntime, documentId: string, ses
       });
       runtime.executor = executor;
       await executor.connect();
+      // A warm editor remains based on its original published revision.
+      runtime.baseRevision = revision;
       runtime.initialized = true;
       const stop = new AbortController(); runtime.stop = stop;
       void executor.run(stop.signal).catch(error => { runtime.error = String(error); notify(runtime); });

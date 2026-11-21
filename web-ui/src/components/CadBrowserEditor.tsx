@@ -33,6 +33,8 @@ export default function CadBrowserEditor({ documentId, sessionId, revision }: {
     setActing(true); await editorAction(runtime, name); setActing(false);
   };
   const failure = error || runtime?.error;
+  const baseRevision = runtime?.baseRevision;
+  const publishedChanged = baseRevision !== undefined && baseRevision !== revision;
   return <div className="mt-3 flex flex-col min-h-0"
     style={{ background: 'var(--bg-surface)', color: 'var(--text-primary)' }} aria-label="Éditeur SolidCraft intégré">
     <div className="flex items-center gap-2 mb-3 flex-wrap text-[11px]">
@@ -58,6 +60,11 @@ export default function CadBrowserEditor({ documentId, sessionId, revision }: {
     </div>
     {failure && <div className="mt-3 text-[12px]" role="alert" style={{color:'var(--warning)'}}>{failure}
       {runtime && <button className="work-link ml-3" onClick={() => void openEditor(runtime, documentId, sessionId, revision)}>Reconnecter l’éditeur</button>}</div>}
-    <p className="work-muted text-[10px] mt-2">Basée sur la révision publiée {revision}{state ? ` · sauvegarde de travail ${state.revision}` : ''}. Les modifications attendent leurs contrôles avant publication.</p>
+    {publishedChanged && <p role="status" className="mt-2 text-[11px]" style={{color:'var(--warning)'}}>
+      La révision publiée {revision} est disponible. Cette copie garde la révision {baseRevision} comme base.
+    </p>}
+    {baseRevision !== undefined && <p className="work-muted text-[10px] mt-2">
+      Base publiée {baseRevision}{state ? ` · sauvegarde de travail ${state.revision}` : ''}. Les modifications attendent leurs contrôles avant publication.
+    </p>}
   </div>;
 }
