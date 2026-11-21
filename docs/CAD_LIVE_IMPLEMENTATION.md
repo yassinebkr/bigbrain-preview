@@ -237,3 +237,19 @@ was 200 ms. These timings describe one software-rendered browser run with
 preloaded assets. The animation callback is a display timing proxy.
 Production hardware, network transfer and the complete live construction
 path require their own measurements.
+
+## SolidCraft command interruption on the browser bridge
+
+The packaged 0.28.0 WASM runtime passed all seven bridge qualification
+stages in Linux Chromium. The test performed a parameter change and
+interrupted it after the geometry changed, while the accepted document
+remained at revision 2. Reload restored revision 2 and applied the
+pending operation once at revision 3. An earlier lost acknowledgement
+preserved its committed receipt. Pause transferred ownership after the
+pending operation settled. Stop discarded the unaccepted geometry.
+The serial command pump then published a named solid at revision 7.
+
+The bridge qualification uses its dedicated browser host. The product
+Atelier restart check above exercises a retained native CAD Brain run
+at rest. A product Atelier run interrupted during construction remains
+a separate acceptance case.
