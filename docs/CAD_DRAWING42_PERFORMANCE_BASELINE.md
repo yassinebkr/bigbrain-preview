@@ -98,3 +98,11 @@ details absent from the summaries, so this transformation offers zero savings on
 the retained run. Keep the existing encoding. The next comparison should
 measure the effect of sending static contract and command references once per
 provider context while preserving a complete packet for offline replay.
+
+Run `python -m tools.cad_packet_budget DOCUMENT/execution-checkpoints` to
+measure the static-context opportunity. The 51 packets total 5,486,227 bytes.
+Repeated values in seven stable contract and tool-reference fields account
+for 1,906,400 bytes (34.7%). This is the gross upper bound before reference
+overhead and context refreshes. The provider's retained history and token
+accounting require separate measurement. Static reuse alone falls short of
+the proposed 50% input reduction even at the application-payload level.
