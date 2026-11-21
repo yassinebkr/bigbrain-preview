@@ -113,3 +113,21 @@ of CAD JSON blocks across the same 51 decisions, down from 5,486,227 bytes
 compaction refreshes. A compaction refresh restores exact sources once on the
 same provider thread, including inline images. Provider tokens and elapsed
 time still require a controlled live comparison.
+
+## Regression checkpoint
+
+On Linux, the pinned SolidCraft build passed 20 tests spanning CAD execution,
+presentation persistence, the browser bridge API and inference-free recovery
+of a retained inspection. Reproduce with the qualified CLI on your platform:
+
+```text
+python -m pytest -q tests/test_cad_live.py tests/test_cad_inspection_replay.py tests/test_cad_execution.py tests/test_cad_browser_api.py
+```
+
+For the next controlled live run, record role/model/effort, drawing digest,
+engine digest, call limit, inspection reserve and whether any operator recovery
+was required. The primary acceptance result is autonomous publication with the
+same dimensional and cut-safety requirements. Compare the token and inference
+totals with the reference table separately from end-to-end wall time. Record
+quota interruption and incomplete delivery explicitly. The first model
+response, first accepted solid and first verified delivery are distinct events.
