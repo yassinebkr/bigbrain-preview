@@ -47,14 +47,26 @@ async def main():
             path = root / 'assembly.sc'
             await session.tool('save', {'path': str(path)})
             await session.tool('open', {'path': str(path)})
+            inventory = (await command('component.list'))['components']
+            occurrences = [item for definition in inventory for item in definition['occurrences']]
+            expected_offsets = ([0, 0, 0], [46, 0, 0], [0, 26, 0], [46, 26, 0])
+            expected_placements = {item['occurrence']: offset for item, offset
+                                   in zip([fastener, *copies], expected_offsets, strict=True)}
+            placements = {item['id']: item['transform'][3][:3] for item in occurrences
+                          if item['component'] == fastener['component']}
+            if len(occurrences) != 6 or placements != expected_placements:
+                raise RuntimeError('Reopened assembly did not preserve the six occurrence placements')
             original_joints = await command('joint.list')
             revisions = []
             for width in (4, 5):
                 if width == 5:
                     await command('parameters.change', name='head_width', expression='5 mm')
-                    edited = root / 'wider-heads.sc'
+                    edited = root / 'edited' / path.name
+                    edited.parent.mkdir()
                     await session.tool('save', {'path': str(edited)})
                     await session.tool('open', {'path': str(edited)})
+                if (await command('component.list'))['components'] != inventory:
+                    raise RuntimeError('Editing the fastener changed the assembly inventory or placements')
                 joints = await command('joint.list')
                 clearance = await command('inspect.clearance', skip_within='occurrence', clearance=0.5)
                 if (len(joints['joints']) != 5 or joints != original_joints
@@ -102,7 +114,7 @@ async def main():
             await command('joint.edit', joint='Conflicting lid placement', suppressed=True)
             if (await command('joint.list'))['conflicts']:
                 raise RuntimeError('Suppressing the incompatible joint did not resolve the conflict')
-            print(json.dumps({'joints': original_joints, 'revisions': revisions, 'collision': collision,
+            print(json.dumps({'components': inventory, 'joints': original_joints, 'revisions': revisions, 'collision': collision,
                               'missing_reference': missing_reference, 'conflicts': conflicting['conflicts']}), flush=True)
 
 if __name__ == '__main__':
