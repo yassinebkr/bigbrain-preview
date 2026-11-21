@@ -34,6 +34,12 @@ def working_checkpoint(store, document_id, session_id):
         sketch['curves'] = [{key: curve[key] for key in
                              ('type', 'start_at', 'end_at', 'center_at', 'radius') if key in curve}
                             for curve in observed.get('curves', []) if curve.get('type') in {'line', 'circle', 'arc'}]
+        # Parametric constraints carry the driving expression and resolved value.
+        sketch['dimensions'] = [{key: constraint[key] for key in ('id', 'type', 'value', 'expression')
+                                 if key in constraint}
+                                for constraint in observed.get('constraints', [])
+                                if constraint.get('param') is not None
+                                and type(constraint.get('value')) in (int, float)]
     # Keep the checkpoint distinct from the independently verified delivery.
     # Consumers use its hash when accepting asynchronous presentation results.
     return {'checkpoint_id': checkpoint.id, 'parent': checkpoint.parent,

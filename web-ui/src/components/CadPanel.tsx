@@ -1,3 +1,4 @@
+import { cadSketchDimensions } from '@/lib/cadSketchLines';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { ArrowLeft, Box, CheckCircle2, CircleHelp, Download, Expand, ExternalLink, Loader2, Ruler, XCircle } from 'lucide-react';
@@ -127,6 +128,8 @@ export function CadPanel({ run, expanded = false }: { run: RunState; expanded?: 
       <p className="text-[12px] px-5 text-center">{imageError || captured?.preview_error || (captured ? 'Aperçu en préparation' : 'La pièce apparaîtra après la première capture.')}</p></div>;
   const hasMesh = captured?.document.exports.some(item => item.format === 'stl' && item.source_sha256 === captured.document.native.sha256);
   const piece = hasMesh || cad.working ? <Suspense fallback={picture}><CadMeshViewer cad={cad} sessionId={run.sessionId} fallback={picture} construction={previewMode === 'construction'} /></Suspense> : picture;
+  const sketchDimensions = previewMode === 'construction'
+    ? cadSketchDimensions(cad.working?.design.sketches ?? []) : [];
   if (editing && expanded && (captured || cad.working)) return <section aria-label="SolidCraft Web" className="w-full min-w-0">
     <div className="flex items-center gap-3 mb-3">
       <button className="work-secondary !p-2" aria-label="Retour à la preview" onClick={() => {
@@ -189,6 +192,20 @@ export function CadPanel({ run, expanded = false }: { run: RunState; expanded?: 
         }} aria-label={fullscreen ? 'Quitter le plein écran' : 'Agrandir la pièce'}
         className="absolute z-[61] right-3 top-3 grid size-8 place-items-center rounded-full bg-black/60 text-white" title={fullscreen ? 'Quitter le plein écran' : 'Agrandir la pièce'}><Expand size={15} /></button>}
     </div>
+    {!!sketchDimensions.length && <details className="mt-3 text-[12px]">
+      <summary className="cursor-pointer work-muted">Cotes d’esquisse</summary>
+      <div className="mt-2 space-y-2">
+        {sketchDimensions.map(sketch => <section key={sketch.name}>
+          <h4 className="font-medium">{sketch.name}</h4>
+          <ul className="work-muted">
+            {sketch.dimensions.map(dimension => <li key={dimension.id}>
+              {dimension.expression || dimension.id} · {dimension.type === 'diameter' ? 'Ø' : dimension.type === 'radius' ? 'R' : ''}{number(dimension.value)}
+              {['diameter', 'radius', 'distance', 'distance_x', 'distance_y', 'point_line_distance'].includes(dimension.type) && ' mm'}
+            </li>)}
+          </ul>
+        </section>)}
+      </div>
+    </details>}
     {!(editing && expanded) && captured?.preview && !current && <p className="mt-2 text-[11px] text-amber-200">Révision conservée · aperçu antérieur</p>}
     {editing && expanded && <p className="work-muted text-[11px] mt-4">Mesures de la révision publiée {revision}</p>}
     {dimensions && captured && <dl className="grid grid-cols-2 gap-3 mt-4 text-[12px]">

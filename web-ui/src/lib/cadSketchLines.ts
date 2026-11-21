@@ -66,3 +66,19 @@ export function cadSketchLines(sketches: unknown[], includePlanes = false): numb
   }
   return vertices;
 }
+
+
+const dimensionedSketch = z.object({
+  name: z.string(),
+  dimensions: z.array(z.object({
+    id: z.string(), type: z.string(), value: z.number().finite(),
+    expression: z.string().nullable().optional(),
+  })),
+});
+
+export function cadSketchDimensions(sketches: unknown[]) {
+  return sketches.flatMap(value => {
+    const parsed = dimensionedSketch.safeParse(value);
+    return parsed.success ? [parsed.data] : [];
+  }).filter(item => item.dimensions.length > 0);
+}
