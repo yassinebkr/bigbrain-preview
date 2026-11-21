@@ -10,7 +10,8 @@ export default function CadMeshViewer({ cad, sessionId, fallback, construction =
   const host = useRef<HTMLDivElement>(null);
   const viewport = useRef<CadMeshViewport>(undefined);
   const [error, setError] = useState('');
-  const [ready, setReady] = useState(false);
+  const [displayedMesh, setDisplayedMesh] = useState<string>();
+  const ready = displayedMesh !== undefined;
   const [preview, setPreview] = useState<{ documentId: string; sessionId: string; mesh?: Uint8Array; status: string }>();
   // A component can be reused while changing conversations or documents.
   // Keep the fallback worker's asynchronous output bound to its original owner.
@@ -32,7 +33,7 @@ export default function CadMeshViewer({ cad, sessionId, fallback, construction =
   useEffect(() => {
     const node = host.current;
     if (!node) return;
-    setError(''); setReady(false);
+    setError(''); setDisplayedMesh(undefined);
     let currentViewport: CadMeshViewport;
     try {
       currentViewport = new CadMeshViewport(node, setError);
@@ -54,11 +55,13 @@ export default function CadMeshViewer({ cad, sessionId, fallback, construction =
   const checkpointId = source === 'checkpoint' ? cad.working?.checkpoint_id : undefined;
   const checkpointMeshHash = source === 'checkpoint' ? cad.working?.mesh?.sha256 : undefined;
   const workerMesh = source === 'worker' ? liveMesh : undefined;
+  const meshIdentity = JSON.stringify([sessionId, cad.document_id, source, publishedRevision,
+    publishedHash, checkpointId, checkpointMeshHash]);
   useEffect(() => {
     const abort = new AbortController();
     if (source === 'empty') {
       viewport.current?.clear();
-      setReady(false);
+      setDisplayedMesh(undefined);
       setError('');
       return;
     }
@@ -74,13 +77,13 @@ export default function CadMeshViewer({ cad, sessionId, fallback, construction =
       if (!abort.signal.aborted && viewport.current) {
         viewport.current.update(buffer);
         setError('');
-        setReady(true);
+        setDisplayedMesh(meshIdentity);
       }
     }).catch(failure => {
       if (!abort.signal.aborted) setError(String(failure));
     });
     return () => abort.abort();
-  }, [source, cad.document_id, sessionId, publishedRevision, publishedHash, checkpointId, checkpointMeshHash, workerMesh]);
+  }, [source, cad.document_id, sessionId, publishedRevision, publishedHash, checkpointId, checkpointMeshHash, workerMesh, meshIdentity]);
   const sketches = cad.working?.design.sketches;
   const [hasSketch, setHasSketch] = useState(false);
   useEffect(() => {
@@ -88,7 +91,7 @@ export default function CadMeshViewer({ cad, sessionId, fallback, construction =
     viewport.current?.updateSketches(vertices);
     setHasSketch(vertices.length > 0);
   }, [construction, sketches, cad.document_id, sessionId]);
-  const bounds = source === 'published' ? selectedBounds : undefined;
+  const bounds = source === 'published' && displayedMesh === meshIdentity ? selectedBounds : undefined;
   useEffect(() => {
     // The selected occurrence belongs to the published revision.
     viewport.current?.selectBounds(bounds);
