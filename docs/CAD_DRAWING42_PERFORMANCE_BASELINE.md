@@ -106,3 +106,10 @@ for 1,906,400 bytes (34.7%). This is the gross upper bound before reference
 overhead and context refreshes. The provider's retained history and token
 accounting require separate measurement. Static reuse alone falls short of
 the proposed 50% input reduction even at the application-payload level.
+
+An offline replay through the implemented message cursor sent 3,591,853 bytes
+of CAD JSON blocks across the same 51 decisions, down from 5,486,227 bytes
+(34.53%). This comparison excludes image bytes, system instructions and
+compaction refreshes. A compaction refresh restores exact sources once on the
+same provider thread, including inline images. Provider tokens and elapsed
+time still require a controlled live comparison.

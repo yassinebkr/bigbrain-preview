@@ -363,7 +363,8 @@ class CodexProvider(LLMProvider):
             scope = (scope[0], scope[1] + '-actions-v1')
         if scope:
             text, usage = await self._scoped_turn(messages, model, encoded_schema, scope, schema,
-                                                 kwargs.get('context_checkpoint'), bridge)
+                                                 kwargs.get('context_checkpoint'), bridge,
+                                                 refresh_context=kwargs.get('refresh_context_after_compaction', False))
         else:
             # Unidentified callers must not share a global anonymous history.
             text, usage = await self.run_turn(messages, model=model, output_schema=encoded_schema, action_bridge=bridge)
@@ -384,7 +385,7 @@ class CodexProvider(LLMProvider):
         path, lock = self._conversations.binding(*scope, digest(identity))
         return client, path, lock
 
-    async def _scoped_turn(self, messages, model, encoded_schema, scope, original_schema, checkpoint=None, bridge=False):
+    async def _scoped_turn(self, messages, model, encoded_schema, scope, original_schema, checkpoint=None, bridge=False, *, refresh_context=False):
         client, path, lock = await self._binding(scope)
         async with lock:
             # Reload under the shared lock, including when another provider
@@ -394,8 +395,11 @@ class CodexProvider(LLMProvider):
             state['_save'] = lambda: self._conversations.save(path, state, scope[0])
             delta, hashes = incremental_messages(messages, state)
             compactions = state.get('compactions', 0)
-            checkpoint_due = checkpoint is not None and compactions > state.get('checkpoint_compactions', 0)
-            if checkpoint_due:
+            checkpoint_due = (checkpoint is not None or refresh_context) and compactions > state.get('checkpoint_compactions', 0)
+            if checkpoint_due and refresh_context:
+                # Context compaction may summarize structured facts and image inputs.
+                delta, hashes = incremental_messages(messages, {})
+            elif checkpoint_due:
                 delta.insert(0, {'role': 'user', 'content': json.dumps({
                     'authoritative_checkpoint': checkpoint,
                     'instruction': 'Current runtime facts supersede stale historical observations.'}, ensure_ascii=False)})

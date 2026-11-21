@@ -339,3 +339,28 @@ async def test_turn_notifications_keep_their_trace_when_rpc_reader_has_another_c
             assert {event['call_id'] for event in events} == {call_id}
     finally:
         provider._inference_directory.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_cad_compaction_resends_the_exact_multimodal_context(transport):
+    provider = CodexProvider()
+    image_url = 'data:image/png;base64,AA=='
+    prefix = {'role': 'user', 'content': [
+        {'type': 'text', 'text': 'Stable drawing definition'},
+        {'type': 'image_url', 'image_url': {'url': image_url}},
+    ]}
+
+    async def turn(checkpoint):
+        return await provider.chat_complete([prefix, {'role': 'user', 'content': checkpoint}],
+            conversation_id='cad-refresh', refresh_context_after_compaction=True)
+
+    await turn('checkpoint 1')
+    await turn('checkpoint 2')
+    await provider.compact_conversation('cad-refresh')
+    await turn('checkpoint 3')
+    await turn('checkpoint 4')
+    turns = [args for method, args in transport.calls if method == 'turn/start']
+    assert len({item['threadId'] for item in turns}) == 1
+    assert [[part['url'] for part in item['input'] if part['type'] == 'image'] for item in turns] == [
+        [image_url], [], [image_url], [],
+    ]
