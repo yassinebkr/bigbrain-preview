@@ -1,0 +1,92 @@
+diff --git a/apps/solidcraft-web/src/files.rs b/apps/solidcraft-web/src/files.rs
+--- a/apps/solidcraft-web/src/files.rs
++++ b/apps/solidcraft-web/src/files.rs
+@@ -263,6 +263,37 @@
+     Ok(out)
+ }
+ 
++// An integrated editor reserves a distinct recovery slot for its accepted base.
++const SCOPED_RECOVERY_PREFIX: &str = "bigbrain-recovery-";
++
++fn recovery_scope() -> Option<String> {
++    let query = web_sys::window()?.location().search().ok()?;
++    url::form_urlencoded::parse(query.trim_start_matches('?').as_bytes())
++        .find(|(key, _)| key == "bigbrain-recovery")
++        .map(|(_, value)| value.into_owned())
++        .filter(|value| value.len() == 64 && value.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
++}
++
++fn recovery_storage_name(scope: Option<&str>, name: &str) -> String {
++    match scope {
++        Some(scope) => format!("{SCOPED_RECOVERY_PREFIX}{scope}-{name}"),
++        None => name.to_owned(),
++    }
++}
++
++fn recovery_input_name(name: &str, scope: Option<&str>) -> Option<String> {
++    if let Some(scope) = scope {
++        let prefix = format!("{SCOPED_RECOVERY_PREFIX}{scope}-");
++        if let Some(recovery) = name.strip_prefix(&prefix) {
++            return [RECOVERY, RECOVERY_META].contains(&recovery).then(|| recovery.to_owned());
++        }
++        if [RECOVERY, RECOVERY_META].contains(&name) || LEGACY_RECOVERY.contains(&name) {
++            return None;
++        }
++    }
++    (!name.starts_with(SCOPED_RECOVERY_PREFIX)).then(|| name.to_owned())
++}
++
+ /// Ask the browser to keep the storage (not evict it under pressure), then load every stored
+ /// file into the engine's files.
+ pub fn start(files: &Rc<Files>) {
+@@ -281,6 +312,10 @@
+         }
+         match read_all().await {
+             Ok(all) => {
++                let scope = recovery_scope();
++                let all: Vec<_> = all.into_iter().filter_map(|(name, bytes, modified)| {
++                    recovery_input_name(&name, scope.as_deref()).map(|name| (name, bytes, modified))
++                }).collect();
+                 if local_only() {
+                     files.say("This page can't use the browser's file storage (it needs https or localhost): designs are kept in local storage, a few MB at most.", false);
+                 }
+@@ -407,6 +442,9 @@
+ /// Keep (or drop) the autosave of the open design.
+ pub fn autosave(files: &Rc<Files>, doc: Option<(&solidcraft_engine::doc::Document, Option<&str>)>) {
+     let files = files.clone();
++    let scope = recovery_scope();
++    let recovery = recovery_storage_name(scope.as_deref(), RECOVERY);
++    let metadata = recovery_storage_name(scope.as_deref(), RECOVERY_META);
+     match doc {
+         Some((d, path)) => {
+             let bytes = match solidcraft_engine::io::write_design_container(d) {
+@@ -419,8 +457,8 @@
+             let meta = serde_json::json!({"name": d.name, "path": path, "saved_at": js_sys::Date::now()}).to_string();
+             spawn_local(async move {
+                 let r = async {
+-                    write_file(RECOVERY, &bytes).await?;
+-                    write_file(RECOVERY_META, meta.as_bytes()).await
++                    write_file(&recovery, &bytes).await?;
++                    write_file(&metadata, meta.as_bytes()).await
+                 };
+                 if let Err(e) = r.await {
+                     files.say(format!("autosave: {e}"), true);
+@@ -428,11 +466,13 @@
+             });
+         }
+         None => spawn_local(async move {
+-            let _ = remove_file(RECOVERY).await;
+-            for legacy in LEGACY_RECOVERY {
+-                let _ = remove_file(legacy).await;
+-            }
+-            let _ = remove_file(RECOVERY_META).await;
++            let _ = remove_file(&recovery).await;
++            if scope.is_none() {
++                for legacy in LEGACY_RECOVERY {
++                    let _ = remove_file(legacy).await;
++                }
++            }
++            let _ = remove_file(&metadata).await;
+         }),
+     }
+ }
