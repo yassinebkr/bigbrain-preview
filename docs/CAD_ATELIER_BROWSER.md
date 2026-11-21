@@ -106,3 +106,25 @@ encountered this prompt on its disposable copy; reconciliation between these two
 recovery systems remains open. The host currently leaves this choice visible.
 Development module replacement now releases its retained iframes and command
 pumps; ordinary production view switches retain them.
+
+## Native autosave ownership
+
+SolidCraft 0.28.0 Web stores unsaved work in origin-private files
+`recovery.sc` and `recovery.json`. Its metadata records a display name,
+a path and a timestamp. BigBrain checkpoints carry a conversation,
+document, accepted revision and native content hash. The native path
+can refer to a single-use loading ticket. A display name or a ticket
+path cannot establish ownership of an autosave.
+
+A recoverable BigBrain draft needs a stable document key and the hash
+of its accepted base. When the base still matches, the editor can offer
+that draft beside the accepted checkpoint. When the base has advanced,
+the draft must remain a separate recoverable copy. Publication still
+requires inspection. Qualification should use two documents on the
+same origin, a reload after a working edit and an advanced publication
+while a draft exists.
+
+Until scoped draft ownership is available, the editor preserves unsaved
+changes in its active iframe across surface switches and guards against
+a reconnect replacing that iframe. Reload recovery of saved BigBrain
+checkpoints remains independently supported.

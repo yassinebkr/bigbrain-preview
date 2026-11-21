@@ -69,6 +69,12 @@ export function editorRuntime(documentId: string, sessionId: string): EditorRunt
 
 export async function openEditor(runtime: EditorRuntime, documentId: string, sessionId: string, revision: number) {
   if (runtime.initialized && runtime.executor?.ready) return;
+  // Reconnect replaces the native iframe. Preserve unsaved local edits.
+  if (runtime.executor?.dirty) {
+    runtime.error = 'Enregistre ou exporte la copie de travail avant de reconnecter SolidCraft.';
+    notify(runtime);
+    return;
+  }
   if (runtime.pending) return runtime.pending;
   runtime.pending = (async () => {
     runtime.loading = true; runtime.error = ''; notify(runtime);

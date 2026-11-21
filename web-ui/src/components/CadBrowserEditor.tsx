@@ -59,7 +59,7 @@ export default function CadBrowserEditor({ documentId, sessionId, revision }: {
       {runtime?.loading && <p role="status" className="absolute inset-0 grid place-content-center text-[12px] pointer-events-none"><Loader2 size={22} className="animate-spin mb-3" />Chargement de SolidCraft…</p>}
     </div>
     {failure && <div className="mt-3 text-[12px]" role="alert" style={{color:'var(--warning)'}}>{failure}
-      {runtime && <button className="work-link ml-3" onClick={() => void openEditor(runtime, documentId, sessionId, revision)}>Reconnecter l’éditeur</button>}</div>}
+      {runtime && !runtime.executor?.dirty && <button className="work-link ml-3" onClick={() => void openEditor(runtime, documentId, sessionId, revision)}>Reconnecter l’éditeur</button>}</div>}
     {publishedChanged && <p role="status" className="mt-2 text-[11px]" style={{color:'var(--warning)'}}>
       La révision publiée {revision} est disponible. {baseRevision == null
         ? 'La copie de travail conservée utilise une base antérieure.'
