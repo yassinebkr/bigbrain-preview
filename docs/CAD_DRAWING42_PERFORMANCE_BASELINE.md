@@ -131,3 +131,10 @@ same dimensional and cut-safety requirements. Compare the token and inference
 totals with the reference table separately from end-to-end wall time. Record
 quota interruption and incomplete delivery explicitly. The first model
 response, first accepted solid and first verified delivery are distinct events.
+
+A second reconstruction recalculated all 28 retained section probes on the
+rebuilt and published STEP files. All intervals matched and all probes
+returned conclusive results. Use
+`--reference-sections DOCUMENT/revision-5/sections.json` together with
+`--reference-step`. The tool still reports the four intermediate cut file
+digest differences independently of the successful geometric comparisons.

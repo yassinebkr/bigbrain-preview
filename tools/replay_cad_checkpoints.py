@@ -8,9 +8,11 @@ import time
 from pathlib import Path
 from bigbrain.cad_execution import CadExecutionStore, ExecutionGroup, digest
 from bigbrain.solidcraft import SolidCraftSession
+from bigbrain.cad_sections import CadSection
 from bigbrain.cad_step import inspect_step
+from bigbrain.cad_step_sections import inspect_step_sections
 
-async def replay_checkpoints(root, engine, reference_step):
+async def replay_checkpoints(root, engine, reference_step, sections_path=None):
     head = json.loads((root / 'execution-checkpoints/head.json').read_text())
     source = CadExecutionStore(root, head['contract_sha256'], head['engine_version'])
     with tempfile.TemporaryDirectory(prefix='cad-command-replay-') as directory:
@@ -54,6 +56,14 @@ async def replay_checkpoints(root, engine, reference_step):
                 if observed != baseline:
                     raise ValueError('Reconstructed STEP metrology differs from the reference')
                 print(f'STEP metrology matched at {observed["volume_mm3"]:.9f} mm³', flush=True)
+                if sections_path is not None:
+                    retained = json.loads(sections_path.read_text(encoding='utf-8'))
+                    probes = [CadSection.model_validate(item['criterion']) for item in retained]
+                    expected = inspect_step_sections(reference_step, probes)
+                    observed = inspect_step_sections(export, probes)
+                    if observed != expected or any(item.get('error') for item in observed.values()):
+                        raise ValueError('Reconstructed STEP section probes differ or are inconclusive')
+                    print(f'{len(probes)} STEP section probes matched', flush=True)
         if differences:
             raise ValueError(f"Cut evidence differs at groups {differences}")
 
@@ -62,5 +72,8 @@ if __name__ == '__main__':
     parser.add_argument('document', type=Path)
     parser.add_argument('--engine', type=Path, required=True)
     parser.add_argument('--reference-step', type=Path)
+    parser.add_argument('--reference-sections', type=Path)
     args = parser.parse_args()
-    asyncio.run(replay_checkpoints(args.document, args.engine, args.reference_step))
+    if args.reference_sections is not None and args.reference_step is None:
+        parser.error('--reference-sections requires --reference-step')
+    asyncio.run(replay_checkpoints(args.document, args.engine, args.reference_step, args.reference_sections))
