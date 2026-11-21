@@ -82,3 +82,19 @@ of 28,094,977.13234817 mm³. Reproduce this comparison with
 `--reference-step DOCUMENT/revision-5/part.step`. The strict cut-evidence
 comparison still flags the four snapshot and cutter file hashes. Fresh
 local section probes are outside this particular STEP comparison.
+
+## Decision packet cost
+
+The 51 retained construction packets grew from 39,324 to 170,727 UTF-8 bytes.
+Across the corpus, observations account for 1,793,108 serialized value bytes.
+The default command reference and retrieved references account for 938,196 and
+808,695 bytes respectively. The confirmed definition accounts for 426,870
+bytes. These totals exclude field keys and provider thread history.
+
+A trial extended identical-field references from parameters to the timeline,
+sketches and bodies. Rebuilding the observation from each checkpoint produced
+545,532 bytes before and after the change. The full observations carry native
+details absent from the summaries, so this transformation offers zero savings on
+the retained run. Keep the existing encoding. The next comparison should
+measure the effect of sending static contract and command references once per
+provider context while preserving a complete packet for offline replay.
