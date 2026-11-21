@@ -182,3 +182,10 @@ generated `CutSafetyTool_<id>` name on the `MANIFOLD_SOLID_BREP` entity. Replaci
 that name in the diagnostic comparison produced byte-identical STEP data in
 all four cases. The replay tool continues to report raw digest differences.
 Every retained artifact remains verified against its original byte hash.
+
+The replay tool now checks both original and rebuilt byte hashes before
+comparing the documented serialization differences. It accepts only the
+known native cache entries and generated STEP solid names as equivalent.
+The Drawing 42 replay exited successfully with all 29 groups and 28 section
+probes. Pass `--require-identical-cut-bytes` to require byte-for-byte equality
+between the original and rebuilt intermediate files.

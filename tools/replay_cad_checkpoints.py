@@ -2,17 +2,55 @@
 
 import argparse
 import asyncio
+import hashlib
 import json
+import re
 import tempfile
 import time
 from pathlib import Path
+from zipfile import ZipFile
 from bigbrain.cad_execution import CadExecutionStore, ExecutionGroup, digest
 from bigbrain.solidcraft import SolidCraftSession
 from bigbrain.cad_sections import CadSection
 from bigbrain.cad_step import inspect_step
 from bigbrain.cad_step_sections import inspect_step_sections
 
-async def replay_checkpoints(root, engine, reference_step, sections_path=None):
+CACHE_ENTRIES = {'cache/model.json', 'cache/thumbnail.json', 'cache/thumbnail.png'}
+CUTTER_NAME = re.compile(rb"(?<=MANIFOLD_SOLID_BREP\(')CutSafetyTool_[0-9a-f]{12}(?=')")
+
+
+def cut_serialization_matches(original_root, rebuilt_root, original, rebuilt):
+    """Compare cut inputs after binding each file to its own recorded hash."""
+    digest_fields = {'before_native_sha256', 'cutter_sha256'}
+    ignored = digest_fields | {'evidence_ref'}
+    if {k: v for k, v in original.items() if k not in ignored} != {
+            k: v for k, v in rebuilt.items() if k not in ignored}:
+        return False
+
+    def verified(root, report, name, field):
+        path = (root / report['evidence_ref']).parent / name
+        if not path.resolve().is_relative_to(root.resolve()):
+            raise ValueError('Cut evidence path is outside its document')
+        if hashlib.sha256(path.read_bytes()).hexdigest() != report[field]:
+            raise ValueError(f'Cut evidence digest changed: {name}')
+        return path
+
+    if not all(digest_fields <= report.keys() for report in (original, rebuilt)):
+        return False
+    with (ZipFile(verified(original_root, original, 'before.sc', 'before_native_sha256')) as old,
+          ZipFile(verified(rebuilt_root, rebuilt, 'before.sc', 'before_native_sha256')) as new):
+        names = set(old.namelist()) - CACHE_ENTRIES
+        if (len(old.namelist()) != len(set(old.namelist()))
+                or len(new.namelist()) != len(set(new.namelist()))
+                or 'document.json' not in names or names != set(new.namelist()) - CACHE_ENTRIES
+                or any(old.read(name) != new.read(name) for name in names)):
+            return False
+    old_step = verified(original_root, original, 'cutter.step', 'cutter_sha256').read_bytes()
+    new_step = verified(rebuilt_root, rebuilt, 'cutter.step', 'cutter_sha256').read_bytes()
+    return CUTTER_NAME.sub(b'CutSafetyTool', old_step) == CUTTER_NAME.sub(b'CutSafetyTool', new_step)
+
+
+async def replay_checkpoints(root, engine, reference_step, sections_path=None, *, require_identical_cut_bytes=False):
     head = json.loads((root / 'execution-checkpoints/head.json').read_text())
     source = CadExecutionStore(root, head['contract_sha256'], head['engine_version'])
     with tempfile.TemporaryDirectory(prefix='cad-command-replay-') as directory:
@@ -29,13 +67,22 @@ async def replay_checkpoints(root, engine, reference_step, sections_path=None):
 
                 async def validate(_proposal, observed):
                     observed = json.loads(json.dumps(observed))
-                    for values in (expected, observed):
-                        # Every replay writes its cut evidence into a fresh directory.
-                        for report in values['cut_safety']:
-                            report.pop('evidence_ref', None)
-                    if observed["cut_safety"] != expected.get("cut_safety"):
+                    retained_cuts, rebuilt_cuts = expected['cut_safety'], observed['cut_safety']
+                    if len(retained_cuts) != len(rebuilt_cuts):
                         differences.append(step)
-                        print(f'Cut evidence differs at group {step}', flush=True)
+                    else:
+                        for old, new in zip(retained_cuts, rebuilt_cuts, strict=True):
+                            comparable = {k: v for k, v in old.items() if k != 'evidence_ref'} == {
+                                k: v for k, v in new.items() if k != 'evidence_ref'}
+                            if comparable:
+                                continue
+                            if cut_serialization_matches(root, replay.root, old, new):
+                                if require_identical_cut_bytes:
+                                    differences.append(step)
+                                print(f'Cut serialization differs at group {step}; native and STEP content matched',
+                                      flush=True)
+                            else:
+                                differences.append(step)
                     return [f"{key} differs at step {step}" for key in sorted(observed.keys() - {"cut_safety"})
                             if observed[key] != expected.get(key)]
 
@@ -73,7 +120,9 @@ if __name__ == '__main__':
     parser.add_argument('--engine', type=Path, required=True)
     parser.add_argument('--reference-step', type=Path)
     parser.add_argument('--reference-sections', type=Path)
+    parser.add_argument('--require-identical-cut-bytes', action='store_true')
     args = parser.parse_args()
     if args.reference_sections is not None and args.reference_step is None:
         parser.error('--reference-sections requires --reference-step')
-    asyncio.run(replay_checkpoints(args.document, args.engine, args.reference_step, args.reference_sections))
+    asyncio.run(replay_checkpoints(args.document, args.engine, args.reference_step, args.reference_sections,
+        require_identical_cut_bytes=args.require_identical_cut_bytes))
