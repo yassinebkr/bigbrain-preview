@@ -6,12 +6,12 @@ import json
 from .cad_stages import parse_object
 
 
-def decision_tool_schema(schema):
+def decision_tool_schema(schema, *, allow_workflow_inheritance=True):
     """Keep CAD contracts typed while encoding native command dictionaries as JSON."""
     decision = deepcopy(schema)
     definitions = decision.pop('$defs', {})
     workflow = definitions.get('CadWorkflow')
-    if workflow is not None:
+    if workflow is not None and allow_workflow_inheritance:
         # Additive proposals inherit existing members before the complete local
         # workflow validator applies its nonempty inventory requirements.
         for name in ('features', 'bodies', 'groups'):

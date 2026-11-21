@@ -187,3 +187,15 @@ def test_construction_delta_reuses_static_context_and_images():
     delta, _ = incremental_messages(changed, state)
     assert len(delta) == 2
     assert images[0] in delta[0]['content']
+
+
+def test_initial_construction_schema_requires_planned_body_inventory():
+    from bigbrain.cad_controller import Decision
+    from bigbrain.cad_decision_transport import decision_tool_schema
+
+    schema = Decision.json_schema()
+    initial = decision_tool_schema(schema, allow_workflow_inheritance=False)
+    following = decision_tool_schema(schema)
+    for field in ('features', 'bodies', 'groups'):
+        assert initial['parameters']['$defs']['CadWorkflow']['properties'][field]['minItems'] == 1
+        assert following['parameters']['$defs']['CadWorkflow']['properties'][field]['minItems'] == 0

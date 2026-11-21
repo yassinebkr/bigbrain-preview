@@ -563,7 +563,8 @@ class CadConstructionDriver:
                 async def decide(*args, **kwargs):
                     return replay[0]
             raw = await decide(trace, packet, model=self.model or 'default', stream=False,
-                max_tokens=8192, temperature=0.1, tool_schema=decision_tool_schema(Decision.json_schema()), messages=[{'role': 'system', 'content':
+                max_tokens=8192, temperature=0.1, tool_schema=decision_tool_schema(Decision.json_schema(),
+                    allow_workflow_inheritance=packet['accepted_workflow'] is not None), messages=[{'role': 'system', 'content':
                 'Construct the confirmed CAD definition progressively in SolidCraft 0.28.0, mm/deg. '
                 'execution_authorization is supplied by the runtime after checking the recorded user decision. '
                 'When its status is confirmed, approval has already been given for this exact definition and '
@@ -599,7 +600,8 @@ class CadConstructionDriver:
                 'deliberate reorganization or replacement of future intent. accepted_workflow preserves '
                 'the exact accepted declarations and provenance. An accepted driving-value change '
                 'requires ancestor revision. Full inventory mode (inherit_workflow=false) supplies '
-                'every driving parameter explicitly. '
+                'every driving parameter explicitly. In the first group declare the planned body inventory, '
+                'even when native commands stop at an accepted sketch before creating the solid. '
                 'Use the supplied native response schema. Wrap the response in decision. '
                 'Encode each command.params as a JSON object string. The runtime decodes it before '
                 'validating the command and its cut intent. '
