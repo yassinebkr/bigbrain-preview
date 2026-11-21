@@ -69,7 +69,13 @@ describe('manual CAD saves', () => {
   }
 
   it('recovers a committed save when its response is lost', async () => {
-    const { bytes, executor, call, state } = manualSave();
+    const { bytes, engine, executor, call, state } = manualSave();
+    const scope = { documentId: 'document', sessionId: 'session' };
+    const setRecoveryKey = vi.fn(() => {
+      expect(engine.setLocked).toHaveBeenLastCalledWith(true);
+    });
+    Object.assign(engine, { setRecoveryKey });
+    executor.transport.scope = scope;
     const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
     const hash = Array.from(digest, value => value.toString(16).padStart(2, '0')).join('');
     const committed = { ...state, revision: 2, hash };
@@ -81,6 +87,8 @@ describe('manual CAD saves', () => {
     await executor.saveManual();
     expect(executor.state).toEqual(committed);
     expect(executor.dirty).toBe(false);
+    expect(setRecoveryKey).toHaveBeenCalledWith(await cadRecoveryKey(scope, hash));
+    expect(engine.setLocked).toHaveBeenLastCalledWith(false);
     expect(call.mock.calls.map(([action]) => action)).toEqual(['save', 'state']);
   });
 

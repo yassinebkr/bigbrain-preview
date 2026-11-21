@@ -176,14 +176,14 @@ export class CadBrowserExecutor {
       const bytes = await this.engine.save();
       const savedHash = await sha256(bytes);
       try {
-        this.update(await this.transport.call('save', { generation, revision, hash, native: base64(bytes) }));
+        this.state = await this.transport.call('save', { generation, revision, hash, native: base64(bytes) });
       } catch (error) {
         // A lost response can leave a committed copy. Accept only the exact
         // bytes from this save and the same editor generation.
         const current = await this.transport.call('state');
         if (current.generation !== generation || current.revision !== revision + 1
             || current.hash !== savedHash || current.owner !== 'user') throw error;
-        this.update(current);
+        this.state = current;
       }
       this.dirty = false;
       if (this.transport.scope && this.engine.setRecoveryKey)
