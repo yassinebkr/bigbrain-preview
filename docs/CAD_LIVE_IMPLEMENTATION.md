@@ -182,3 +182,10 @@ the same working checkpoint and a byte-identical STL from
 `/api/cad/working-artifact`. The evidence list exposed the CAD run. This
 checks recovery of incomplete construction through the product server.
 The check used an HTTP/WebSocket client and did not measure browser rendering.
+
+The production frontend build was then served by a fresh BigBrain WebServer
+process over the same copied stores. From History, the browser reopened the
+test conversation, showed the incomplete delivery state and restored all 13
+accepted steps. The Construction control displayed the interactive Three.js
+canvas and the sketch dimensions disclosure. This reused the bounded run
+data and a synthetic conversation message, with zero provider calls.
