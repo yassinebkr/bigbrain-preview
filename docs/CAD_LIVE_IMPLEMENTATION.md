@@ -206,3 +206,16 @@ This test exercised React, Three.js and the product mesh decoder with a
 controlled HTTP transport. Whole-application qualification still covers a
 real connection interruption, camera interaction and performance on a
 large part using the machine's production graphics backend.
+
+## Open Atelier during a product server restart
+
+The current production frontend build reopened the Drawing 42 conversation
+from History in Chromium on Linux. Its Construction view displayed the
+interactive Three.js canvas, thirteen retained steps and the incomplete
+delivery status. The process serving BigBrain was then stopped and replaced
+with a second process using the same disposable stores. Observations before,
+during and after the interruption showed the same Construction view, canvas
+and retained checkpoint count in the tab, with zero provider calls. The
+browser used ANGLE SwiftShader. This run interrupted a retained construction
+view at rest. Interruption during a pending geometry change remains a
+separate acceptance case.
