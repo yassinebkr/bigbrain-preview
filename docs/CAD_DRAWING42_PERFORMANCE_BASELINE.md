@@ -73,3 +73,12 @@ values and verdicts. Four groups, 18, 21, 24 and 27, produced different
 `before_native_sha256` and `cutter_sha256` values. The tool reports strict
 evidence divergence with a nonzero exit status. The cause of the byte-level
 differences and the final independent metrology remain unqualified.
+
+### Independent STEP comparison
+
+The reconstructed export and the revision 5 STEP returned identical
+`inspect_step` results, including analytic bounds and the measured volume
+of 28,094,977.13234817 mm³. Reproduce this comparison with
+`--reference-step DOCUMENT/revision-5/part.step`. The strict cut-evidence
+comparison still flags the four snapshot and cutter file hashes. Fresh
+local section probes are outside this particular STEP comparison.

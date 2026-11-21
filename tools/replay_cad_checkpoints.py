@@ -8,8 +8,9 @@ import time
 from pathlib import Path
 from bigbrain.cad_execution import CadExecutionStore, ExecutionGroup, digest
 from bigbrain.solidcraft import SolidCraftSession
+from bigbrain.cad_step import inspect_step
 
-async def replay_checkpoints(root, engine):
+async def replay_checkpoints(root, engine, reference_step):
     head = json.loads((root / 'execution-checkpoints/head.json').read_text())
     source = CadExecutionStore(root, head['contract_sha256'], head['engine_version'])
     with tempfile.TemporaryDirectory(prefix='cad-command-replay-') as directory:
@@ -44,6 +45,15 @@ async def replay_checkpoints(root, engine):
                 parent = rebuilt.id
                 print(step, round(time.monotonic() - start, 2), flush=True)
 
+            if reference_step is not None:
+                bodies = (await session.tool('measure'))['bodies']
+                export = replay.root / 'rebuilt.step'
+                await session.tool('export', {'path': str(export), 'format': 'step'})
+                observed = inspect_step(export, bodies)
+                baseline = inspect_step(reference_step, bodies)
+                if observed != baseline:
+                    raise ValueError('Reconstructed STEP metrology differs from the reference')
+                print(f'STEP metrology matched at {observed["volume_mm3"]:.9f} mm³', flush=True)
         if differences:
             raise ValueError(f"Cut evidence differs at groups {differences}")
 
@@ -51,5 +61,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('document', type=Path)
     parser.add_argument('--engine', type=Path, required=True)
+    parser.add_argument('--reference-step', type=Path)
     args = parser.parse_args()
-    asyncio.run(replay_checkpoints(args.document, args.engine))
+    asyncio.run(replay_checkpoints(args.document, args.engine, args.reference_step))
