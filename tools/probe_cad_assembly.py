@@ -4,7 +4,7 @@ import asyncio
 import json
 import tempfile
 from pathlib import Path
-from bigbrain.solidcraft import SolidCraftSession
+from bigbrain.solidcraft import CadError, SolidCraftSession
 
 async def main():
     with tempfile.TemporaryDirectory(prefix='cad-assembly-') as folder:
@@ -82,7 +82,28 @@ async def main():
             if (len(overlaps) != 1 or abs(overlaps[0]['volume_mm3'] - 8.875) > 1e-6
                     or collision['unchecked'] or collision['truncated']):
                 raise RuntimeError(f'Expected the enlarged lip to overlap the right wall: {collision}')
-            print(json.dumps({'joints': original_joints, 'revisions': revisions, 'collision': collision}), flush=True)
+            # Keep invalid constraints on the disposable session and verify diagnostics.
+            await session.tool('open', {'path': str(edited)})
+            try:
+                await command('joint.as_built', type='rigid', a=base['occurrence'], b='MissingOccurrence')
+            except CadError as error:
+                if 'MissingOccurrence' not in str(error):
+                    raise
+                missing_reference = str(error)
+            else:
+                raise RuntimeError('SolidCraft accepted a joint with a missing occurrence')
+            if await command('joint.list') != original_joints:
+                raise RuntimeError('Missing occurrence changed the assembly joints')
+            conflicting = await command('joint.create', name='Conflicting lid placement', type='rigid',
+                a={'occurrence': base['occurrence'], 'point': [0, 0, 0]},
+                b={'occurrence': lid['occurrence'], 'point': [10, 0, 0]})
+            if not conflicting['conflicts']:
+                raise RuntimeError('SolidCraft did not report the conflicting lid placement')
+            await command('joint.edit', joint='Conflicting lid placement', suppressed=True)
+            if (await command('joint.list'))['conflicts']:
+                raise RuntimeError('Suppressing the incompatible joint did not resolve the conflict')
+            print(json.dumps({'joints': original_joints, 'revisions': revisions, 'collision': collision,
+                              'missing_reference': missing_reference, 'conflicts': conflicting['conflicts']}), flush=True)
 
 if __name__ == '__main__':
     asyncio.run(main())
