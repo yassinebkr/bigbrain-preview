@@ -15,10 +15,30 @@ that release and the migration from the current local installation.
 - `bigbrain/auth/registry.py` manages inference providers. Product identity
   needs an independent user session and membership lookup.
 
-Confirm the route and storage inventory against the checkout before migration.
 Use hosted database records for identities, memberships, run metadata and
 revision references. Use private object storage for model bytes and evidence.
 Keep local filesystem adapters for desktop and development.
+
+## Local state to migrate
+
+| Current entry point | State | Hosted boundary |
+| --- | --- | --- |
+| `/ws`, session store and run history | Conversation messages, activity and run correlation | Resolve conversation membership before history reads and subscriptions. Persist event cursors with tenant and project. |
+| `/api/cad/*` | Published captures, native files, exports and execution checkpoints in `BIGBRAIN_CAD_DIR` | Import immutable revisions and their hashes. Resolve every document through its project before issuing a download. |
+| `/api/cad/browser/*` | SQLite work revisions and operation receipts beside the document | Retain drafts and their base identity. Issue a fresh editor lease after import. |
+| `/api/attachments/{attachment_id}` | Upload bytes in `BIGBRAIN_ATTACHMENTS_DIR` and references in session records | Verify the owning conversation before reading or issuing a URL. |
+| `/api/evidence/*` | Run manifests and artifacts under `BIGBRAIN_EVIDENCE_ROOT` | Import through the owning run. Treat hashes as integrity evidence and enforce access through membership. |
+| Provider and local project settings | Model role preferences, credentials and local paths | Import preferences separately. Keep provider secrets and machine paths out of project archives. |
+
+SolidCraft 0.28.0 Web also retains an origin-wide autosave with a name,
+path and timestamp. The migration manifest can carry only drafts whose
+document and base hash are established. Preserve an ambiguous recovery
+file locally for explicit user review.
+
+Historical operation IDs and receipts can be preserved for inspection.
+The importer starts with suspended execution. Browser generations,
+one-use checkpoint tickets and provider connections belong to the
+installation where they were issued.
 
 ## Access model
 
