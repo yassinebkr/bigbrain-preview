@@ -6,6 +6,7 @@ import json
 import shutil
 import tempfile
 from pathlib import Path
+from bigbrain.cad_contracts import CadDelivery, CriterionObservation
 from bigbrain.cad_store import CadStore
 from bigbrain.solidcraft import CadError, SolidCraftSession
 
@@ -132,10 +133,30 @@ async def main(fixture_directory=None):
                         for corner, reference in zip(bounds, expected, strict=True)
                         for actual, target in zip(corner, reference, strict=True)):
                     raise RuntimeError(f'Incorrect selection bounds for occurrence {occurrence_id}: {bounds}')
-            store.publish(session_id, capture, title='Enclosure assembly')
+            source = capture.document.native.sha256
+            evidence = root / 'revision-1' / 'assembly-qualification.json'
+            evidence.write_text(json.dumps({
+                'source_sha256': source, 'components': inventory,
+                'joints': original_joints, 'fit': revisions[-1],
+            }, allow_nan=False), encoding='utf-8')
+            criteria = {
+                'assembly-occurrences': ('Occurrences', 'Six occurrences with verified placements.'),
+                'assembly-joints': ('Liaisons', 'Five rigid joints with no conflicts or floating occurrences.'),
+                'assembly-fit': ('Ajustement', 'Four 0.25 mm locating gaps and zero interferences.'),
+            }
+            checks = tuple(CriterionObservation(criterion_id=identity, label=label,
+                source_sha256=source, evidence_ref=evidence.relative_to(root).as_posix(),
+                status='passed', diagnostic=diagnostic)
+                for identity, (label, diagnostic) in criteria.items())
+            delivery = CadDelivery(specification_id='enclosure-assembly-qualification',
+                required_criteria=tuple(criteria), required_exports=('step', 'stl'),
+                document=capture.document, geometry=capture.geometry, checks=checks)
+            store.publish(session_id, capture, delivery=delivery, title='Enclosure assembly')
             reopened = CadStore(Path(folder)).view(document_id, session_id)
-            if reopened['assembly'] != capture.assembly.model_dump(mode='json'):
-                raise RuntimeError('Reopened revision did not preserve the assembly inventory')
+            if (reopened['assembly'] != capture.assembly.model_dump(mode='json')
+                    or reopened['delivery_status'] != 'ready'
+                    or len(reopened['checks']) != len(checks)):
+                raise RuntimeError('Reopened revision did not preserve the assembly and its checks')
             if fixture_directory is not None:
                 fixture = fixture_directory / document_id
                 shutil.copytree(root, fixture)
