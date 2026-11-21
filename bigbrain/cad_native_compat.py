@@ -84,6 +84,15 @@ def construction_guidance(version, engine_sha256=None):
          'invariants': 'Keep driving dimensions, associative references and verified local placement. '
                        'Manually fixed functional curves remain rejected.',
          'qualified_cases': 'test_native_face_projection_tracks_parent_parameter_and_reopen'},
+        {'id': 'face-extrude-derived-profile', 'status': 'qualified_example',
+         'condition': 'solid.extrude uses a planar face directly as its profile.',
+         'strategy': 'Prefer a named associative face sketch when its profile can be observed before '
+                     'extrusion. Direct face extrusion can create native sketch history in addition to '
+                     'the extrusion feature. Declare that profile in the workflow inventory and use '
+                     'observed native names when recovering a rejected group.',
+         'invariants': 'Retain the associative profile, named editable history and intermediate solver checks.',
+         'qualified_cases': 'Drawing 42 Sol 6.2 low probe decisions 5 and 6; direct extrusions retained '
+                            'the two native profiles after explicit history naming.'},
         {'id': 'revolve-parametric-axis', 'status': 'qualified_example',
          'condition': 'solid.revolve explicit axis.origin contains parameter expressions.',
          'limitation': 'The 0.28.0 parser silently substitutes [0,0,0] for nonnumeric origins; '
