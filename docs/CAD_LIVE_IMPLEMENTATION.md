@@ -219,3 +219,21 @@ and retained checkpoint count in the tab, with zero provider calls. The
 browser used ANGLE SwiftShader. This run interrupted a retained construction
 view at rest. Interruption during a pending geometry change remains a
 separate acceptance case.
+
+## Drawing 42 preview frame timings
+
+An isolated Chromium run mounted the product viewer with three distinct
+retained Drawing 42 STL files (1,570,884, 2,312,284 and 1,650,484 bytes).
+Files were preloaded and a controlled transport held the second response
+until the third checkpoint was displayed. The obsolete response produced
+no mesh or overlay update. The same canvas remained mounted, and an empty
+fourth checkpoint cleared the preview.
+
+On Linux with ANGLE SwiftShader, the first viewport update took 142.8 ms
+and the subsequent update took 34.0 ms. The elapsed times from checkpoint
+selection to the next animation-frame callback were 412.2 ms and 47.4 ms.
+The maximum animation-frame interval over the full run, including startup,
+was 200 ms. These timings describe one software-rendered browser run with
+preloaded assets. The animation callback is a display timing proxy.
+Production hardware, network transfer and the complete live construction
+path require their own measurements.
