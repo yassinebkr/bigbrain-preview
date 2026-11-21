@@ -171,3 +171,14 @@ to be qualified against the shared behavior and storage contracts.
 The existing hosted viewer and worker changes are prerequisites already present
 in this worktree. The completed branch will receive one final push. Merge follows
 the repository owner's subsequent review.
+
+## Sol 6.2 stopped run recovery
+
+Two independent Linux processes started the normal BigBrain WebServer over
+one disposable copy of the bounded Drawing 42 probe. Each process served the
+same conversation through the WebSocket `chat.history` request and stopped
+cleanly. The second process restored the same 13 named accepted operations,
+the same working checkpoint and a byte-identical STL from
+`/api/cad/working-artifact`. The evidence list exposed the CAD run. This
+checks recovery of incomplete construction through the product server.
+The check used an HTTP/WebSocket client and did not measure browser rendering.
