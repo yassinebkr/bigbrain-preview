@@ -47,9 +47,15 @@ export default function CadMeshViewer({ cad, sessionId, fallback, construction =
     };
   }, [cad.document_id, sessionId]);
 
+  const source = cadMeshSource(cad);
+  // Status and timing frames can share the same immutable artifact.
+  const publishedRevision = source === 'published' ? cad.snapshot?.document.revision : undefined;
+  const publishedHash = source === 'published' ? cad.snapshot?.document.native.sha256 : undefined;
+  const checkpointId = source === 'checkpoint' ? cad.working?.checkpoint_id : undefined;
+  const checkpointMeshHash = source === 'checkpoint' ? cad.working?.mesh?.sha256 : undefined;
+  const workerMesh = source === 'worker' ? liveMesh : undefined;
   useEffect(() => {
     const abort = new AbortController();
-    const source = cadMeshSource(cad);
     if (source === 'empty') {
       viewport.current?.clear();
       setReady(false);
@@ -61,8 +67,8 @@ export default function CadMeshViewer({ cad, sessionId, fallback, construction =
       mesh = cadArtifact(cad, sessionId, 'stl', abort.signal).then(blob => blob.arrayBuffer());
     } else if (source === 'checkpoint') {
       mesh = cadWorkingMesh(cad, sessionId, abort.signal);
-    } else if (liveMesh) {
-      mesh = Promise.resolve(new Uint8Array(liveMesh).buffer);
+    } else if (workerMesh) {
+      mesh = Promise.resolve(new Uint8Array(workerMesh).buffer);
     } else return;
     void mesh.then(buffer => {
       if (!abort.signal.aborted && viewport.current) {
@@ -74,7 +80,7 @@ export default function CadMeshViewer({ cad, sessionId, fallback, construction =
       if (!abort.signal.aborted) setError(String(failure));
     });
     return () => abort.abort();
-  }, [cad.document_id, cad.status, cad.snapshot?.document.revision, cad.snapshot?.document.native.sha256, sessionId, liveMesh, cad.working?.checkpoint_id, cad.working?.mesh?.sha256]);
+  }, [source, cad.document_id, sessionId, publishedRevision, publishedHash, checkpointId, checkpointMeshHash, workerMesh]);
   const sketches = cad.working?.design.sketches;
   const [hasSketch, setHasSketch] = useState(false);
   useEffect(() => {
@@ -82,7 +88,7 @@ export default function CadMeshViewer({ cad, sessionId, fallback, construction =
     viewport.current?.updateSketches(vertices);
     setHasSketch(vertices.length > 0);
   }, [construction, sketches, cad.document_id, sessionId]);
-  const bounds = cadMeshSource(cad) === 'published' ? selectedBounds : undefined;
+  const bounds = source === 'published' ? selectedBounds : undefined;
   useEffect(() => {
     // The selected occurrence belongs to the published revision.
     viewport.current?.selectBounds(bounds);
