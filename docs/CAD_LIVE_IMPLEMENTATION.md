@@ -253,3 +253,18 @@ The bridge qualification uses its dedicated browser host. The product
 Atelier restart check above exercises a retained native CAD Brain run
 at rest. A product Atelier run interrupted during construction remains
 a separate acceptance case.
+
+## Editable enclosure in the browser
+
+The SolidCraft 0.28.0 browser bridge opened a disposable copy of the
+qualified enclosure and changed the shared fastener width from 5 to
+4 mm under user ownership. The bridge saved revision 1. A full page
+reload restored that revision with the 4 mm parameter, six occurrences
+and five resolved rigid joints. The native clearance query returned zero
+interferences, zero unchecked pairs and a complete result.
+
+On Linux Chromium with software rendering, opening, editing and saving
+took 4.17 s. Reopening and checking took 2.66 s. The automated probe
+issued the edit through the browser API and consumed zero inference
+calls. The normal Atelier manual-edit walkthrough by a second person
+remains open.
