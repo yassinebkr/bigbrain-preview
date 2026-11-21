@@ -9,6 +9,8 @@ const sketch = z.object({
 });
 const curve = z.discriminatedUnion('type', [
   z.object({ type: z.literal('line'), start_at: point, end_at: point }),
+  z.object({ type: z.literal('arc'), center_at: point, start_at: point, end_at: point,
+    radius: z.number().finite().positive() }),
   z.object({ type: z.literal('circle'), center_at: point, radius: z.number().finite().positive() }),
 ]);
 
@@ -32,9 +34,15 @@ export function cadSketchLines(sketches: unknown[]): number[] {
         add(...item.end_at);
       } else {
         const [x, y] = item.center_at;
-        for (let segment = 0; segment < 48; segment++) {
+        const turn = 2 * Math.PI;
+        // SolidCraft stores arcs counter-clockwise in their sketch frame.
+        const start = item.type === 'arc' ? Math.atan2(item.start_at[1] - y, item.start_at[0] - x) : 0;
+        const end = item.type === 'arc' ? Math.atan2(item.end_at[1] - y, item.end_at[0] - x) : turn;
+        const sweep = item.type === 'arc' ? (end - start + turn) % turn : turn;
+        const segments = Math.max(1, Math.ceil(48 * sweep / turn));
+        for (let segment = 0; segment < segments; segment++) {
           for (const index of [segment, segment + 1]) {
-            const angle = index * Math.PI / 24;
+            const angle = start + index * sweep / segments;
             add(x + Math.cos(angle) * item.radius, y + Math.sin(angle) * item.radius);
           }
         }

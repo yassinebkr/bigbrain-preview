@@ -33,7 +33,7 @@ def working_checkpoint(store, document_id, session_id):
     for sketch, observed in zip(inventory['sketches'], observations['design']['sketches'], strict=True):
         sketch['curves'] = [{key: curve[key] for key in
                              ('type', 'start_at', 'end_at', 'center_at', 'radius') if key in curve}
-                            for curve in observed.get('curves', []) if curve.get('type') in {'line', 'circle'}]
+                            for curve in observed.get('curves', []) if curve.get('type') in {'line', 'circle', 'arc'}]
     # Keep the checkpoint distinct from the independently verified delivery.
     # Consumers use its hash when accepting asynchronous presentation results.
     return {'checkpoint_id': checkpoint.id, 'parent': checkpoint.parent,
