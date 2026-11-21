@@ -50,6 +50,21 @@ describe('direct CAD checkpoint meshes', () => {
     await expect(cadWorkingMesh(cad, 'session')).rejects.toThrow('checkpoint changed');
   });
 
+  it('retains scene identity across progress and replaces it on checkpoint advance', async () => {
+    const { cad } = await fixture();
+    const first = cadUpdate(cad)!;
+    const progress = cadUpdate({ ...cad, sequence: 2, elapsed_seconds: 2 }, first)!;
+    expect(progress.elapsed_seconds).toBe(2);
+    expect(progress.working?.design).toBe(first.working?.design);
+
+    const advanced = cadUpdate({ ...cad, sequence: 3, working: {
+      ...cad.working!, checkpoint_id: 'f'.repeat(32), parent: cad.working!.checkpoint_id,
+      design: { ...cad.working!.design, sketches: [{ name: 'Updated profile' }] },
+    } }, progress)!;
+    expect(advanced.working?.design.sketches).toEqual([{ name: 'Updated profile' }]);
+    expect(advanced.working?.design).not.toBe(progress.working?.design);
+  });
+
   it('selects the published export after delivery and retains compatibility with older checkpoints', async () => {
     const { cad } = await fixture();
     expect(cadMeshSource(cad)).toBe('checkpoint');

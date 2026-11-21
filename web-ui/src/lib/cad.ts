@@ -85,6 +85,15 @@ export function cadUpdate(raw: unknown, previous?: CadView): CadView | undefined
   if (captured && (captured.document.document_id !== next.document_id
     || captured.geometry.source_sha256 !== captured.document.native.sha256
     || (captured.assembly && captured.assembly.source_sha256 !== captured.document.native.sha256))) return previous;
+  const previousWorking = previous?.working;
+  const nextWorking = next.working;
+  if (previousWorking && nextWorking && previousWorking.checkpoint_id === nextWorking.checkpoint_id
+    && previousWorking.native.sha256 === nextWorking.native.sha256
+    && previousWorking.engine_sha256 === nextWorking.engine_sha256
+    && previousWorking.contract_sha256 === nextWorking.contract_sha256) {
+    // Progress events reuse the immutable scene data of the accepted checkpoint.
+    nextWorking.design = previousWorking.design;
+  }
   return next;
 }
 
