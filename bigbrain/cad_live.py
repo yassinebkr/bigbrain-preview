@@ -62,6 +62,9 @@ def retain_progress(store, document_id, session_id, context, progress):
         raise CadError('CAD presentation directory identity changed')
     identity = hashlib.sha256(json.dumps(context, sort_keys=True).encode()).hexdigest()
     path = runs / (identity + '.json')
+    timestamp = time.time()
+    cad = progress['cad']
+    milestones = {'first_progress_at': timestamp}
     if path.exists():
         if path.is_symlink():
             raise CadError('CAD presentation record identity changed')
@@ -70,8 +73,14 @@ def retain_progress(store, document_id, session_id, context, progress):
         # sequence monotonic within the same conversation/run/step identity.
         progress['cad']['sequence'] = max(progress['cad']['sequence'],
                                          previous['progress']['cad']['sequence'] + 1)
+        milestones.update(previous.get('milestones', {}))
+    working = cad.get('working')
+    if working and working.get('design', {}).get('bodies'):
+        milestones.setdefault('first_solid_checkpoint_at', timestamp)
+    if cad.get('status') == 'ready':
+        milestones.setdefault('first_verified_delivery_at', timestamp)
     value = {'schema_version': '1.0', 'session_id': session_id,
-             'document_id': document_id, 'updated_at': time.time(),
+             'document_id': document_id, 'updated_at': timestamp, 'milestones': milestones,
              'context': context, 'progress': progress}
     store._write(path, value)
     store._write(root / 'working-state.json', value)

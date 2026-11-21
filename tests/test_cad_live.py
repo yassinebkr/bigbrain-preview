@@ -33,6 +33,27 @@ def test_progress_survives_store_recreation_and_keeps_run_scope(tmp_path):
         retain_progress(reopened, document, 'foreign', context, progress)
 
 
+def test_latency_milestones_survive_progress_and_store_restart(tmp_path, monkeypatch):
+    store = CadStore(tmp_path)
+    document = store.create('conversation')
+    context = {'session_id': 'conversation', 'task_id': 'run'}
+    clock = iter([100.0, 104.0, 120.0])
+    monkeypatch.setattr('bigbrain.cad_live.time.time', lambda: next(clock))
+    for sequence, (status, working) in enumerate([
+        ('modeling', {'design': {'bodies': []}}),
+        ('modeling', {'design': {'bodies': [{'name': 'Plate'}]}}),
+        ('ready', None),
+    ], start=1):
+        retain_progress(CadStore(tmp_path), document, 'conversation', context,
+            {'cad': {'sequence': sequence, 'status': status, 'working': working}})
+    record = json.loads((store.directory(document) / 'working-state.json').read_text())
+    assert record['milestones'] == {
+        'first_progress_at': 100.0,
+        'first_solid_checkpoint_at': 104.0,
+        'first_verified_delivery_at': 120.0,
+    }
+
+
 def test_checkpoint_head_symlink_is_rejected(tmp_path):
     store = CadStore(tmp_path / 'cad')
     document = store.create('conversation')
