@@ -126,7 +126,7 @@ export function CadPanel({ run, expanded = false }: { run: RunState; expanded?: 
       ? <Loader2 size={25} className="animate-spin motion-reduce:animate-none" /> : <Box size={34} strokeWidth={1.2} />}
       <p className="text-[12px] px-5 text-center">{imageError || captured?.preview_error || (captured ? 'Aperçu en préparation' : 'La pièce apparaîtra après la première capture.')}</p></div>;
   const hasMesh = captured?.document.exports.some(item => item.format === 'stl' && item.source_sha256 === captured.document.native.sha256);
-  const piece = hasMesh || cad.working ? <Suspense fallback={picture}><CadMeshViewer cad={cad} sessionId={run.sessionId} fallback={picture} /></Suspense> : picture;
+  const piece = hasMesh || cad.working ? <Suspense fallback={picture}><CadMeshViewer cad={cad} sessionId={run.sessionId} fallback={picture} construction={previewMode === 'construction'} /></Suspense> : picture;
   if (editing && expanded && (captured || cad.working)) return <section aria-label="SolidCraft Web" className="w-full min-w-0">
     <div className="flex items-center gap-3 mb-3">
       <button className="work-secondary !p-2" aria-label="Retour à la preview" onClick={() => {
@@ -179,7 +179,7 @@ export function CadPanel({ run, expanded = false }: { run: RunState; expanded?: 
         onClick={() => {selectEditor(cad.document_id, run.sessionId, true); setEditing(true); useWorkspaceStore.getState().update(run.sessionId, {mode:'expanded', selectedId:surfaceId(run, 'cad')});}}>SolidCraft Web</button>
     </div>}
     <div ref={preview} className={`relative w-full mt-4 overflow-hidden rounded-2xl border border-white/5 bg-gradient-to-b from-slate-900/60 to-transparent ${fullscreen ? '!h-screen !m-0 bg-slate-950' : expanded ? 'h-[65dvh] min-h-[350px]' : 'aspect-[8/5]'}`}>
-      {previewMode === 'construction' && cad.working ? <Suspense fallback={piece}><CadLivePreview cad={cad} sessionId={run.sessionId} mode="construction" /></Suspense> : piece}{(previewMode === 'solid' || !expanded) && (image || hasMesh || cad.working) && <button onClick={() => {
+      {piece}{(previewMode === 'solid' || !expanded) && (image || hasMesh || cad.working) && <button onClick={() => {
           if (previewMode === 'construction') {
             useWorkspaceStore.getState().update(run.sessionId, {mode:'expanded', selectedId:surfaceId(run, 'cad')});
           } else {

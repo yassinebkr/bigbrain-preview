@@ -2,10 +2,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { CadMeshViewport } from '@/lib/cadMeshViewport';
 import { cadArtifact, cadWorkingMesh, cadMeshSource, type CadView } from '@/lib/cad';
+import { cadSketchLines } from '@/lib/cadSketchLines';
 import { Scan } from 'lucide-react';
 import { liveRuntime } from '@/lib/cadLiveRuntime';
 
-export default function CadMeshViewer({ cad, sessionId, fallback }: { cad: CadView; sessionId: string; fallback: React.ReactNode }) {
+export default function CadMeshViewer({ cad, sessionId, fallback, construction = false }: { cad: CadView; sessionId: string; fallback: React.ReactNode; construction?: boolean }) {
   const host = useRef<HTMLDivElement>(null);
   const viewport = useRef<CadMeshViewport>(undefined);
   const [error, setError] = useState('');
@@ -74,12 +75,20 @@ export default function CadMeshViewer({ cad, sessionId, fallback }: { cad: CadVi
     });
     return () => abort.abort();
   }, [cad.document_id, cad.status, cad.snapshot?.document.revision, cad.snapshot?.document.native.sha256, sessionId, liveMesh, cad.working?.checkpoint_id, cad.working?.mesh?.sha256]);
+  const sketches = cad.working?.design.sketches;
+  const [hasSketch, setHasSketch] = useState(false);
+  useEffect(() => {
+    const vertices = construction && sketches ? cadSketchLines(sketches) : [];
+    viewport.current?.updateSketches(vertices);
+    setHasSketch(vertices.length > 0);
+  }, [construction, sketches, cad.document_id, sessionId]);
+  const visible = ready || hasSketch;
   return <div className="relative w-full h-full min-h-0">
-    {!ready && <div className="absolute inset-0">{fallback}</div>}
-    <div ref={host} className="absolute inset-0" style={{ visibility: ready ? 'visible' : 'hidden' }} />
-    {ready && !error && <button className="absolute top-2 left-2 grid size-8 place-items-center rounded-full bg-black/60 text-white"
+    {!visible && <div className="absolute inset-0">{fallback}</div>}
+    <div ref={host} className="absolute inset-0" style={{ visibility: visible ? 'visible' : 'hidden' }} />
+    {visible && !error && <button className="absolute top-2 left-2 grid size-8 place-items-center rounded-full bg-black/60 text-white"
       aria-label="Recentrer la pièce" title="Recentrer la pièce" onClick={() => viewport.current?.fit()}><Scan size={15} /></button>}
     <span className="absolute bottom-2 left-2 right-2 text-[10px] text-center rounded-full px-2 py-1 bg-black/60 text-white pointer-events-none">
-      {error || (cadMeshSource(cad) === 'empty' && 'Aucun solide à cette étape · voir Construction') || (!ready && runtimeStatus) || (ready ? 'Glisser pour tourner · clic droit pour déplacer · molette pour zoomer' : 'Chargement de la vue 3D…')}</span>
+      {error || (!hasSketch && cadMeshSource(cad) === 'empty' && 'Aucun solide à cette étape · voir Construction') || (!ready && runtimeStatus) || (visible ? 'Glisser pour tourner · clic droit pour déplacer · molette pour zoomer' : 'Chargement de la vue 3D…')}</span>
   </div>;
 }

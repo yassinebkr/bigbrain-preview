@@ -25,12 +25,15 @@ def working_checkpoint(store, document_id, session_id):
         return None
     checkpoint = chain[-1]
     observations = execution.observations(checkpoint)
-    # The native document carries curves and constraints. Progress needs only
-    # their inventory and sketch identities to configure the observation view.
-    fields = {'id', 'name', 'status', 'dof', 'fully_constrained', 'plane'}
+    # Preview geometry comes from the exact accepted sketch observations.
+    fields = {'id', 'name', 'status', 'dof', 'fully_constrained', 'plane', 'type'}
     inventory = {kind: [{key: value for key, value in item.items() if key in fields}
                         for item in items]
                  for kind, items in observations['design'].items()}
+    for sketch, observed in zip(inventory['sketches'], observations['design']['sketches'], strict=True):
+        sketch['curves'] = [{key: curve[key] for key in
+                             ('type', 'start_at', 'end_at', 'center_at', 'radius') if key in curve}
+                            for curve in observed.get('curves', []) if curve.get('type') in {'line', 'circle'}]
     # Keep the checkpoint distinct from the independently verified delivery.
     # Consumers use its hash when accepting asynchronous presentation results.
     return {'checkpoint_id': checkpoint.id, 'parent': checkpoint.parent,

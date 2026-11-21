@@ -9,13 +9,15 @@ export class CadMeshViewport {
   private readonly camera = new THREE.PerspectiveCamera(40, 1, .001, 100);
   private readonly material = new THREE.MeshStandardMaterial({ color: 0x91b6d5, metalness: .25, roughness: .5 });
   private readonly piece = new THREE.Mesh(new THREE.BufferGeometry(), this.material);
+  private readonly sketches = new THREE.LineSegments(new THREE.BufferGeometry(),
+    new THREE.LineBasicMaterial({ color: 0x64e0fb, depthTest: false }));
+  private sketchAnchor?: THREE.Vector3;
   private readonly light = new THREE.DirectionalLight(0xffffff, 3);
   private renderer?: THREE.WebGLRenderer;
   private controls?: TrackballControls;
   private resize?: ResizeObserver;
   private intersection?: IntersectionObserver;
   private anchor?: THREE.Vector3;
-  private radius = 1;
   private frame = 0;
   private disposed = false;
   private contextLost = false;
@@ -35,7 +37,8 @@ export class CadMeshViewport {
       canvas.setAttribute('aria-description', 'Glisser pour tourner, clic droit pour déplacer, molette pour zoomer.');
       canvas.tabIndex = 0;
       host.append(canvas);
-      this.scene.add(this.piece, new THREE.HemisphereLight(0xffffff, 0x243446, 2.5), this.light);
+      this.sketches.renderOrder = 1;
+      this.scene.add(this.piece, this.sketches, new THREE.HemisphereLight(0xffffff, 0x243446, 2.5), this.light);
       this.camera.up.set(0, 0, 1);
       this.controls = new TrackballControls(this.camera, canvas);
       this.controls.staticMoving = true;
@@ -72,8 +75,8 @@ export class CadMeshViewport {
       geometry.computeBoundingSphere();
       const radius = geometry.boundingSphere?.radius || 0;
       if (!(radius > 0) || !Number.isFinite(radius)) throw new Error('Maillage sans étendue exploitable');
-      const first = !this.anchor;
-      const anchor = this.anchor || geometry.boundingSphere!.center.clone();
+      const first = !this.anchor && !this.sketchAnchor;
+      const anchor = this.anchor || this.sketchAnchor || geometry.boundingSphere!.center.clone();
       // One document keeps its original world origin as features are added.
       // Updating geometry therefore preserves the user's camera and pan target.
       geometry.translate(-anchor.x, -anchor.y, -anchor.z);
@@ -82,7 +85,7 @@ export class CadMeshViewport {
       this.piece.geometry = geometry;
       previous.dispose();
       this.anchor = anchor;
-      this.radius = radius;
+      this.sketches.position.copy(anchor).negate();
       this.camera.near = radius / 1000;
       this.camera.far = radius * 100;
       this.camera.updateProjectionMatrix();
@@ -97,6 +100,22 @@ export class CadMeshViewport {
     }
   }
 
+  updateSketches(vertices: number[]) {
+    if (this.disposed) return;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    this.sketches.geometry.dispose();
+    this.sketches.geometry = geometry;
+    if (vertices.length) {
+      geometry.computeBoundingSphere();
+      const first = !this.anchor && !this.sketchAnchor;
+      this.sketchAnchor ??= geometry.boundingSphere!.center.clone();
+      this.sketches.position.copy(this.anchor || this.sketchAnchor).negate();
+      if (first) this.fit();
+    }
+    this.render();
+  }
+
   /** Reflect checkpoints that remove the last solid while retaining camera ownership. */
   clear() {
     if (this.disposed) return;
@@ -107,10 +126,15 @@ export class CadMeshViewport {
   }
 
   fit = () => {
-    if (!this.controls || !this.piece.geometry.boundingSphere || this.disposed) return;
-    const center = this.piece.geometry.boundingSphere!.center;
-    const distance = this.radius / Math.sin(THREE.MathUtils.degToRad(this.camera.fov / 2))
+    const solid = this.piece.geometry.boundingSphere;
+    const sketch = this.sketches.geometry.boundingSphere;
+    const bounds = solid || sketch;
+    if (!this.controls || !bounds || this.disposed) return;
+    const center = bounds.center.clone().add(solid ? this.piece.position : this.sketches.position);
+    const distance = Math.max(bounds.radius, .01) / Math.sin(THREE.MathUtils.degToRad(this.camera.fov / 2))
       * Math.max(1, 1 / this.camera.aspect) * 1.15;
+    this.camera.far = Math.max(this.camera.far, distance * 4);
+    this.camera.updateProjectionMatrix();
     this.camera.position.set(distance, -distance, distance * .75).setLength(distance).add(center);
     this.camera.up.set(0, 0, 1);
     this.controls.target.copy(center);
@@ -133,6 +157,8 @@ export class CadMeshViewport {
     this.controls?.dispose();
     this.piece.geometry.dispose();
     this.material.dispose();
+    this.sketches.geometry.dispose();
+    this.sketches.material.dispose();
     this.renderer?.dispose();
     this.renderer?.forceContextLoss();
     canvas?.remove();
