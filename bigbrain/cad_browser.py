@@ -33,6 +33,8 @@ class BrowserCadBridge:
                     id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER,
                     hash TEXT, native BLOB, owner TEXT, generation TEXT,
                     pause INTEGER, capabilities TEXT);
+                CREATE TABLE IF NOT EXISTS published_base (
+                    id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL);
                 CREATE TABLE IF NOT EXISTS operation (
                     id TEXT PRIMARY KEY, request TEXT, status TEXT,
                     result TEXT, revision INTEGER);
@@ -69,18 +71,24 @@ class BrowserCadBridge:
         if generation is not None and row['generation'] != generation:
             raise BridgeConflict('Browser CAD connection replaced')
 
-    def initialize(self, native):
+    def initialize(self, native, *, published_revision=None):
         if not native or len(native) > 96 * 1024**2:
             raise ValueError('Native checkpoint size outside browser bridge limits')
         with self.transaction() as db:
-            existing = db.execute('SELECT native FROM checkpoint WHERE revision=0').fetchone()
-            if existing is not None and digest(existing['native']) != digest(native):
+            existing = db.execute('SELECT hash FROM checkpoint WHERE revision=0').fetchone()
+            changed = existing is not None and existing['hash'] != digest(native)
+            if changed and published_revision is None:
                 raise BridgeConflict('La révision publiée a changé ; la copie de travail conservée doit être réconciliée.')
+            # Only matching native bytes can identify the base of a legacy copy.
+            if published_revision is not None and not changed:
+                db.execute('INSERT OR IGNORE INTO published_base VALUES (1,?)', (published_revision,))
             db.execute('INSERT OR IGNORE INTO document VALUES (1,0,?,?,?,NULL,0,?)',
                        (digest(native), native, 'user', '{}'))
             row = self.row(db)
             db.execute('INSERT OR IGNORE INTO checkpoint VALUES (?,?,?)',
                        (row['revision'], row['hash'], row['native']))
+            base = db.execute('SELECT revision FROM published_base WHERE id=1').fetchone()
+            return {'base_revision': base['revision'] if base else None, 'base_conflict': changed}
 
     def connect(self, capabilities):
         if not isinstance(capabilities, dict) or not capabilities.get('build'):

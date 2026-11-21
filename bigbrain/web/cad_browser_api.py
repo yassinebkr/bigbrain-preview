@@ -40,8 +40,8 @@ def setup_browser_cad_routes(app, *, store=None):
             if action == 'initialize':
                 # Only an owned retained native revision can initialize execution.
                 _, native = store.artifact(document, body['sessionId'], body['revision'], 'native')
-                bridge.initialize(native)
-                result = bridge.state()
+                base = bridge.initialize(native, published_revision=body['revision'])
+                result = {**bridge.state(), **base}
             elif action == 'connect':
                 result = bridge.connect(body['capabilities'])
             elif action == 'state':

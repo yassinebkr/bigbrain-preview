@@ -113,3 +113,28 @@ def test_pause_during_disconnect_and_failed_geometry(bridge):
     bridge.fail('op2', state['generation'], 'native reconstruction failed')
     assert bridge.state()['owner'] == 'user'
     assert bridge.checkpoint() == b'original'
+
+
+def test_published_revision_change_retains_saved_work_after_restart(tmp_path):
+    bridge = BrowserCadBridge(tmp_path)
+    assert bridge.initialize(b'base', published_revision=4) == {
+        'base_revision': 4, 'base_conflict': False,
+    }
+    state = bridge.connect({'build': 'test-build'})
+    bridge.save_manual(state['generation'], state['revision'], state['hash'], b'work')
+
+    reopened = BrowserCadBridge(tmp_path)
+    assert reopened.initialize(b'new publication', published_revision=5) == {
+        'base_revision': 4, 'base_conflict': True,
+    }
+    assert reopened.checkpoint() == b'work'
+    assert reopened.checkpoint(0) == b'base'
+
+
+def test_legacy_copy_keeps_unknown_base_when_publication_changes(tmp_path):
+    bridge = BrowserCadBridge(tmp_path)
+    bridge.initialize(b'legacy base')
+    assert bridge.initialize(b'new publication', published_revision=5) == {
+        'base_revision': None, 'base_conflict': True,
+    }
+    assert bridge.checkpoint() == b'legacy base'

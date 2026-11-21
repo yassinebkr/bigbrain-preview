@@ -24,7 +24,8 @@ export interface EditorRuntime {
   listeners: Set<() => void>; pending?: Promise<void>; stop?: AbortController;
   engine?: Engine; attached: boolean;
   selected?: boolean;
-  baseRevision?: number;
+  baseRevision?: number | null;
+  baseConflict?: boolean;
 }
 const cache = new Map<string, EditorRuntime>();
 if (import.meta.hot) import.meta.hot.dispose(() => {
@@ -77,7 +78,9 @@ export async function openEditor(runtime: EditorRuntime, documentId: string, ses
       const transport = new bridge.CadBrowserTransport(documentId, sessionId);
       const capability = await transport.call('capability') as {available: boolean; url: string; build: string; worker?: string; diagnostic?: string};
       if (!capability.available) throw new Error(capability.diagnostic || 'Éditeur navigateur indisponible');
-      await transport.call('initialize', { revision });
+      const base = await transport.call('initialize', { revision }) as {
+        base_revision: number | null; base_conflict: boolean;
+      };
       runtime.stop?.abort();
       runtime.engine?.interrupt?.();
       const viewer = new bridge.SolidCraftBrowserEngine(runtime.host, capability.url, capability.build);
@@ -88,7 +91,8 @@ export async function openEditor(runtime: EditorRuntime, documentId: string, ses
       runtime.executor = executor;
       await executor.connect();
       // A warm editor remains based on its original published revision.
-      runtime.baseRevision = revision;
+      runtime.baseRevision = base.base_revision;
+      runtime.baseConflict = base.base_conflict;
       runtime.initialized = true;
       const stop = new AbortController(); runtime.stop = stop;
       void executor.run(stop.signal).catch(error => { runtime.error = String(error); notify(runtime); });
