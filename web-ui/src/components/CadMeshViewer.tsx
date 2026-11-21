@@ -12,18 +12,18 @@ export default function CadMeshViewer({ cad, sessionId, fallback, construction =
   const [error, setError] = useState('');
   const [displayedMesh, setDisplayedMesh] = useState<string>();
   const ready = displayedMesh !== undefined;
-  const [preview, setPreview] = useState<{ documentId: string; sessionId: string; mesh?: Uint8Array; status: string }>();
+  const [preview, setPreview] = useState<{ documentId: string; sessionId: string; mesh?: Uint8Array; checkpointId?: string; status: string }>();
   // A component can be reused while changing conversations or documents.
   // Keep the fallback worker's asynchronous output bound to its original owner.
   const current = preview?.documentId === cad.document_id && preview.sessionId === sessionId ? preview : undefined;
-  const liveMesh = current?.mesh;
+  const liveMesh = current?.checkpointId === cad.working?.checkpoint_id ? current?.mesh : undefined;
   const runtimeStatus = current?.status || '';
   useEffect(() => {
     if (cadMeshSource(cad) !== 'worker') return;
     const runtime = liveRuntime(cad.document_id, sessionId);
     runtime.setMode('solid');
     const changed = () => {
-      setPreview({ documentId: cad.document_id, sessionId, mesh: runtime.mesh, status: runtime.status });
+      setPreview({ documentId: cad.document_id, sessionId, mesh: runtime.mesh, checkpointId: runtime.meshCheckpointId, status: runtime.status });
     };
     runtime.listeners.add(changed);
     runtime.update(cad);
@@ -52,7 +52,7 @@ export default function CadMeshViewer({ cad, sessionId, fallback, construction =
   // Status and timing frames can share the same immutable artifact.
   const publishedRevision = source === 'published' ? cad.snapshot?.document.revision : undefined;
   const publishedHash = source === 'published' ? cad.snapshot?.document.native.sha256 : undefined;
-  const checkpointId = source === 'checkpoint' ? cad.working?.checkpoint_id : undefined;
+  const checkpointId = cad.working?.checkpoint_id;
   const checkpointMeshHash = source === 'checkpoint' ? cad.working?.mesh?.sha256 : undefined;
   const workerMesh = source === 'worker' ? liveMesh : undefined;
   const meshIdentity = JSON.stringify([sessionId, cad.document_id, source, publishedRevision,
@@ -84,13 +84,23 @@ export default function CadMeshViewer({ cad, sessionId, fallback, construction =
     });
     return () => abort.abort();
   }, [source, cad.document_id, sessionId, publishedRevision, publishedHash, checkpointId, checkpointMeshHash, workerMesh, meshIdentity]);
-  const sketches = cad.working?.design.sketches;
+  // Keep the visible checkpoint's overlays while its successor is loading.
+  const sketches = useRef<{ identity: string; curves: unknown[] | undefined }>(undefined);
+  const displayedCheckpoint = source === 'empty' || displayedMesh === meshIdentity;
+  if (displayedCheckpoint) {
+    sketches.current = {
+      identity: JSON.stringify([sessionId, cad.document_id]),
+      curves: cad.working?.design.sketches,
+    };
+  }
+  const visibleSketches = sketches.current?.identity === JSON.stringify([sessionId, cad.document_id])
+    ? sketches.current.curves : undefined;
   const [hasSketch, setHasSketch] = useState(false);
   useEffect(() => {
-    const vertices = construction && sketches ? cadSketchLines(sketches, true) : [];
+    const vertices = construction && visibleSketches ? cadSketchLines(visibleSketches, true) : [];
     viewport.current?.updateSketches(vertices);
     setHasSketch(vertices.length > 0);
-  }, [construction, sketches, cad.document_id, sessionId]);
+  }, [construction, visibleSketches, cad.document_id, sessionId]);
   const bounds = source === 'published' && displayedMesh === meshIdentity ? selectedBounds : undefined;
   useEffect(() => {
     // The selected occurrence belongs to the published revision.

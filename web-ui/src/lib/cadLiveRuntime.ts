@@ -21,6 +21,7 @@ export class CadLiveRuntime {
   touched = Date.now();
   status = 'Préparation de la vue…';
   mesh?: Uint8Array;
+  meshCheckpointId?: string;
   private prepared?: PreparedPreview;
   private sketches: number[] = [];
   private mode: CadPreviewMode = 'solid';
@@ -122,6 +123,7 @@ export class CadLiveRuntime {
     }, async (prepared, source) => {
       this.prepared = prepared;
       this.mesh = prepared.mesh.length ? prepared.mesh : undefined;
+      this.meshCheckpointId = source.checkpoint_id;
       this.sketches = source.design.sketches.flatMap(value => {
         if (typeof value !== 'object' || value === null || !('id' in value)) return [];
         return typeof value.id === 'number' && Number.isSafeInteger(value.id) ? [value.id] : [];
