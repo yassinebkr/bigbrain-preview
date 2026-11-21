@@ -268,3 +268,18 @@ took 4.17 s. Reopening and checking took 2.66 s. The automated probe
 issued the edit through the browser API and consumed zero inference
 calls. The normal Atelier manual-edit walkthrough by a second person
 remains open.
+
+## Working assembly copy after a newer publication
+
+An isolated Chromium test mounted the production Atelier components against
+a copied enclosure assembly and the normal CAD endpoints. The fixture
+provided published revision 2 and retained a browser work copy based on
+revision 1. On opening SolidCraft Web, the editor reported both revision
+numbers and its saved work revision. Inspection inside the reopened WASM
+editor returned the retained copy's 4 mm fastener width. The copy was
+available in manual editing mode, and the published assembly retained
+its completed status in the Atelier header.
+
+The fixture seeded publication and working-copy state before opening the
+Atelier. The HTTP regression separately verifies the real save,
+publication and process-restart sequence.
