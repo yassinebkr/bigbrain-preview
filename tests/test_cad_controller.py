@@ -716,3 +716,22 @@ async def test_replayed_reference_uses_hash_verified_current_workflow(tmp_path, 
     assert len(store.active()) == 2
     assert driver.groups()[-1].workflow.parameters[0].expression == expected
     assert provider.calls == []
+
+
+@pytest.mark.asyncio
+async def test_initial_reserve_switches_to_non_mutating_closure(tmp_path, cad_native_engine):
+    store = CadExecutionStore(tmp_path, 'a' * 64)
+    provider = Decisions([actions()[0], {'operation': 'blocked', 'reason': 'Solid still missing'}])
+    driver = CadConstructionDriver(provider, definition(), [], [], store,
+                                   max_decisions=2, inspection_reserve=1)
+    async with SolidCraftSession(tmp_path) as session:
+        with pytest.raises(CadError, match='Solid still missing'):
+            await driver.run(session)
+
+    assert len(store.active()) == 1
+    assert len(provider.calls) == 2
+    assert provider.calls[0]['remaining_decisions'] == 1
+    closure = provider.calls[1]
+    assert closure['decision_phase'] == 'finalization'
+    assert closure['allowed_operations'] == ['complete', 'blocked']
+    assert closure['base_checkpoint'] == store.active()[-1].id

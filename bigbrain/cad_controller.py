@@ -151,12 +151,15 @@ class CadConstructionDriver:
     """
 
     def __init__(self, provider, definition, reference, images, store: CadExecutionStore,
-                 *, model=None, progress=None, max_decisions=64, authorization=None):
+                 *, model=None, progress=None, max_decisions=64, inspection_reserve=0, authorization=None):
         if type(max_decisions) is not int or not 1 <= max_decisions <= 256:
             raise ValueError('CAD decision allowance must be between 1 and 256')
         self.provider, self.definition, self.reference = provider, definition, reference
         self.images, self.store, self.model, self.progress = images, store, model, progress
+        if type(inspection_reserve) is not int or not 0 <= inspection_reserve < max_decisions:
+            raise ValueError('CAD inspection reserve must leave construction decisions')
         self.max_decisions = max_decisions
+        self.inspection_reserve = inspection_reserve
         self.active_allowance = None
         self.authorization = ExecutionAuthorization.model_validate(authorization) if authorization is not None else None
         if self.authorization and (self.authorization.contract_sha256 != store.contract
@@ -448,7 +451,7 @@ class CadConstructionDriver:
         grant = self.active_allowance
         ceiling = max(self.max_decisions, grant.decision_ceiling or 0) if grant else self.max_decisions
         remaining = min(ceiling - self.state['decisions'],
-            grant.baseline_decisions + grant.additional_calls - (grant.inspection_reserve or 0) - self.state['decisions']) if grant else ceiling - self.state['decisions']
+            grant.baseline_decisions + grant.additional_calls - (grant.inspection_reserve or 0) - self.state['decisions']) if grant else ceiling - self.inspection_reserve - self.state['decisions']
         # Reuse the hash-verified evidence collected when the head was accepted.
         # Additional observations apply only to that exact native checkpoint.
         evidence = self.store.observations(current) if current else None
@@ -496,7 +499,7 @@ class CadConstructionDriver:
                 'commands_used': sum(len(group.commands) for group in groups),
                 'cumulative_cut_intents': 16,
                 'cut_intents_used': sum(len(group.cut_intents) for group in groups),
-                'inspection_call_reserve': (grant.inspection_reserve or 0) if grant else 0}}
+                'inspection_call_reserve': (grant.inspection_reserve or 0) if grant else self.inspection_reserve}}
 
     def retained_execution(self, decision_number):
         """Load a paid execution response bound to the current native prefix."""
@@ -541,14 +544,15 @@ class CadConstructionDriver:
                 self.state['recovery'] = {'kind': 'budget', 'checkpoint': self.packet()['base_checkpoint']}
                 self.save()
                 raise CadError('CAD continuation call allowance exhausted; accepted checkpoints retained')
-            finalizing = bool(replay is None and grant and (grant.inspection_reserve or 0) > 0 and
-                self.state['decisions'] >= grant.baseline_decisions + grant.additional_calls - grant.inspection_reserve)
+            reserve = (grant.inspection_reserve or 0) if grant else self.inspection_reserve
+            phase_limit = min(ceiling, grant.baseline_decisions + grant.additional_calls) if grant else ceiling
+            finalizing = replay is None and reserve > 0 and self.state['decisions'] >= phase_limit - reserve
             await self.supply_topology(session)
             packet = self.packet()
             if finalizing:
                 packet['decision_phase'] = 'finalization'
                 packet['allowed_operations'] = ['complete','blocked']
-                packet['remaining_decisions'] = ceiling - self.state['decisions']
+                packet['remaining_decisions'] = phase_limit - self.state['decisions']
             content = json.dumps(packet, ensure_ascii=False, allow_nan=False, separators=(',',':'))
             if len(content.encode()) > 256_000:
                 raise CadError('CAD progressive context exceeds its evidence envelope')

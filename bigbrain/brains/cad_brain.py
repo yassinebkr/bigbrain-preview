@@ -78,9 +78,11 @@ async def cad_command_reference():
 class CadBrain(BaseBrain):
     """Construct and measure owned CAD against the confirmed contract revision."""
 
-    def __init__(self, name, bus, workspace=None, *, llm_provider=None, model=None):
+    def __init__(self, name, bus, workspace=None, *, llm_provider=None, model=None,
+                 max_decisions=64, inspection_reserve=0):
         super().__init__(name, bus, workspace)
         self.llm_provider, self.model = llm_provider, model
+        self.max_decisions, self.inspection_reserve = max_decisions, inspection_reserve
 
     async def handle_message(self, message):
         return None
@@ -198,6 +200,7 @@ class CadBrain(BaseBrain):
                             await progress('modeling', stage, previous, detail.get('diagnostic'))
                         driver = CadConstructionDriver(self.llm_provider, definition, reference, images,
                             CadExecutionStore(root, checkpoint.digest), model=self.model, progress=step_progress,
+                            max_decisions=self.max_decisions, inspection_reserve=self.inspection_reserve,
                             authorization={'status': 'confirmed', 'contract_sha256': checkpoint.digest,
                                 'definition_sha256': digest(definition.model_dump(mode='json')),
                                 'design_id': spec.design_id, 'revision': spec.revision,
