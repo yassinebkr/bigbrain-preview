@@ -21,6 +21,10 @@ async def main():
                 return command('solid.box', length=size[0], width=size[1], height=size[2],
                                corner=corner, body_name=name)
 
+            await command('parameters.import', text=json.dumps([
+                {'name': 'lip_width', 'expression': '55.5 mm', 'unit': 'mm'},
+                {'name': 'head_width', 'expression': '4 mm', 'unit': 'mm'},
+            ]))
             base = await component('Enclosure')
             await box('Base', [60, 40, 2], [0, 0, 0])
             for name, size, corner in [
@@ -30,9 +34,7 @@ async def main():
                 await box(name, size, corner)
             lid = await component('Lid')
             await box('Cover', [60, 40, 2], [0, 0, 14])
-            await command('parameters.import', text=json.dumps([
-                {'name': 'head_width', 'expression': '4 mm', 'unit': 'mm'},
-            ]))
+            await box('LocatingLip', ['lip_width', 35.5, 1], [2.25, 2.25, 13])
             fastener = await component('Fastener')
             await box('Head', ['head_width', 4, 2], [5, 5, 16])
             await command('component.activate', component='root')
@@ -60,13 +62,27 @@ async def main():
                     raise RuntimeError('Reopened assembly has changed or unresolved joints')
                 if clearance['overlaps'] or clearance['unchecked'] or clearance['truncated']:
                     raise RuntimeError('Assembly interference inspection did not qualify every pair')
+                # Measure the locating lip against the four enclosure walls.
+                fit = await command('inspect.clearance', bodies=['LocatingLip'],
+                                    against=['Front', 'Back', 'Left', 'Right'], clearance=0.5)
+                gaps = [pair['distance_mm'] for pair in fit['near']]
+                if (len(gaps) != 4 or any(abs(gap - .25) > 1e-6 for gap in gaps)
+                        or fit['overlaps'] or fit['unchecked'] or fit['truncated']):
+                    raise RuntimeError(f'Expected a 0.25 mm locating gap at all four walls: {fit}')
                 heads = [item for item in (await session.tool('measure'))['bodies']
                          if item['name'].startswith('Head')]
                 if len(heads) != 4 or any(abs(item['volume_mm3'] - width * 8) > 1e-6 for item in heads):
                     raise RuntimeError(f'Expected four fastener heads of volume {width * 8} mm³')
                 revisions.append({'width_mm': width, 'head_volumes_mm3': [item['volume_mm3'] for item in heads],
-                                  'clearance': clearance})
-            print(json.dumps({'joints': original_joints, 'revisions': revisions}), flush=True)
+                                  'clearance': clearance, 'locating_gaps_mm': gaps})
+            await command('parameters.change', name='lip_width', expression='56 mm')
+            collision = await command('inspect.clearance', bodies=['LocatingLip'],
+                                      against=['Right'], clearance=0.5)
+            overlaps = collision['overlaps']
+            if (len(overlaps) != 1 or abs(overlaps[0]['volume_mm3'] - 8.875) > 1e-6
+                    or collision['unchecked'] or collision['truncated']):
+                raise RuntimeError(f'Expected the enlarged lip to overlap the right wall: {collision}')
+            print(json.dumps({'joints': original_joints, 'revisions': revisions, 'collision': collision}), flush=True)
 
 if __name__ == '__main__':
     asyncio.run(main())
