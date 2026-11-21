@@ -38,6 +38,7 @@ const view = z.object({ schema_version: z.literal('1.0'), document_id: z.string(
   }).nullable().optional(),
   execution: z.object({
     phase: z.enum(['deciding', 'discovering', 'observing', 'executing', 'checkpoint', 'repairing', 'revising']),
+    accepted_operations: z.array(z.object({ id: z.string(), label: z.string() })).optional(),
     current_step: z.string().nullable(), accepted_steps: z.number().int().nonnegative(),
     checkpoint: z.string().regex(/^[a-f0-9]{32}$/).nullable(), decisions: z.number().int().nonnegative(),
   }).nullable().optional(),

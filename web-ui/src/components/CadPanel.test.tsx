@@ -99,12 +99,15 @@ describe('CAD piece surface', () => {
   it('shows the observed construction step and retained count during work', () => {
     const cad = cadUpdate({ ...checkpoint(1, 'modeling'), execution: {
       phase: 'observing', current_step: 'Esquisse du perçage', accepted_steps: 2,
+      accepted_operations: [{ id: 'a', label: 'Extrusion du socle' }, { id: 'b', label: 'Perçage traversant' }],
       checkpoint: 'e'.repeat(32), decisions: 4,
     } })!;
     const html = renderToStaticMarkup(<CadPanel run={{ ...run, cad }} />);
     expect(html).toContain('Inspection de la géométrie');
     expect(html).toContain('Esquisse du perçage');
     expect(html).toContain('2 étapes');
+    expect(html).toContain('Extrusion du socle');
+    expect(html).toContain('Perçage traversant');
     expect(html).toContain('vérifications de la pièce complète');
     expect(html).not.toContain('e'.repeat(32));
     expect(cadUpdate({ ...checkpoint(2, 'modeling'), execution: {

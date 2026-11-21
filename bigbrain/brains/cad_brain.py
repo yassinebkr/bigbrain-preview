@@ -191,7 +191,10 @@ class CadBrain(BaseBrain):
                                 'current_step': (None if stage == 'cad_revising' else
                                     detail.get('purpose', (execution_state or {}).get('current_step'))),
                                 'accepted_steps': len(chain), 'checkpoint': chain[-1].id if chain else None,
-                                'decisions': driver.state['decisions']}
+                                'decisions': driver.state['decisions'],
+                                # Publish only groups from the active, hash-verified chain.
+                                'accepted_operations': [{'id': record.id, 'label': group.purpose}
+                                                        for record, group in zip(chain, driver.groups(), strict=True)]}
                             await progress('modeling', stage, previous, detail.get('diagnostic'))
                         driver = CadConstructionDriver(self.llm_provider, definition, reference, images,
                             CadExecutionStore(root, checkpoint.digest), model=self.model, progress=step_progress,

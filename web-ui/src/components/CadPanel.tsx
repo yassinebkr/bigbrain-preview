@@ -158,6 +158,13 @@ export function CadPanel({ run, expanded = false }: { run: RunState; expanded?: 
         <span className="tabular-nums shrink-0">{cad.execution.accepted_steps} étape{cad.execution.accepted_steps > 1 ? 's' : ''}</span>
       </div>
       {cad.execution.current_step && <p className="mt-2 text-[12px] font-medium break-words">{cad.execution.current_step}</p>}
+      {!!cad.execution.accepted_operations?.length && <details className="mt-2 text-[11px]">
+        <summary className="cursor-pointer work-muted">Étapes conservées</summary>
+        <ol className="mt-2 list-decimal space-y-1 pl-5">
+          {cad.execution.accepted_operations.map(({ id, label }) =>
+            <li key={id} className="break-words">{label}</li>)}
+        </ol>
+      </details>}
       <p className="mt-2 text-[10px] work-muted">{status === 'ready'
         ? 'La pièce et son historique ont passé les contrôles de cette révision.'
         : 'Les étapes conservées restent soumises aux vérifications de la pièce complète.'}</p>
