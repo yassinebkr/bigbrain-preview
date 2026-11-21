@@ -1,13 +1,15 @@
 """Qualify native rigid assembly persistence on a disposable enclosure fixture."""
 
+import argparse
 import asyncio
 import json
+import shutil
 import tempfile
 from pathlib import Path
 from bigbrain.cad_store import CadStore
 from bigbrain.solidcraft import CadError, SolidCraftSession
 
-async def main():
+async def main(fixture_directory=None):
     with tempfile.TemporaryDirectory(prefix='cad-assembly-') as folder:
         store = CadStore(Path(folder))
         session_id = 'assembly-probe'
@@ -134,8 +136,14 @@ async def main():
             reopened = CadStore(Path(folder)).view(document_id, session_id)
             if reopened['assembly'] != capture.assembly.model_dump(mode='json'):
                 raise RuntimeError('Reopened revision did not preserve the assembly inventory')
+            if fixture_directory is not None:
+                fixture = fixture_directory / document_id
+                shutil.copytree(root, fixture)
+                print(f'Atelier fixture: {fixture}', flush=True)
             print(json.dumps({'components': inventory, 'joints': original_joints, 'revisions': revisions, 'collision': collision,
                               'missing_reference': missing_reference, 'conflicts': conflicting['conflicts']}), flush=True)
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--fixture-directory', type=Path, help='Retain a copy for the Atelier browser fixture.')
+    asyncio.run(main(parser.parse_args().fixture_directory))
