@@ -158,3 +158,32 @@ def test_drawing_intake_nested_variants_use_supported_strict_schema():
 def test_exclusive_variants_require_proven_disjoint_tags(branches):
     with pytest.raises(ValueError, match='distinct required string constants'):
         decision_tool_schema({'oneOf': branches, 'discriminator': {'propertyName': 'kind'}})
+
+
+def test_construction_delta_reuses_static_context_and_images():
+    import json
+
+    from bigbrain.cad_decision_transport import construction_messages
+    from bigbrain.llm.codex_sessions import incremental_messages
+
+    system = [{'role': 'system', 'content': 'Construct the confirmed CAD definition.'}]
+    images = [{'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,example'}}]
+    first = {'definition': {'name': 'Enclosure'}, 'command_reference': [],
+             'execution_authorization': {'revision': 1}, 'base_checkpoint': None}
+    messages, context = construction_messages(first, system, images)
+    initial, state = incremental_messages(messages, {})
+    assert images[0] in initial[-2]['content']
+    assert context['definition'] == first['definition']
+
+    second = {**first, 'base_checkpoint': 'revision-1', 'execution_authorization': {'revision': 2}}
+    messages, _ = construction_messages(second, system, images)
+    delta, _ = incremental_messages(messages, state)
+    assert len(delta) == 1
+    assert json.loads(delta[0]['content'][0]['text']) == {
+        'execution_authorization': {'revision': 2}, 'base_checkpoint': 'revision-1',
+    }
+
+    changed, _ = construction_messages({**second, 'definition': {'name': 'Lid'}}, system, images)
+    delta, _ = incremental_messages(changed, state)
+    assert len(delta) == 2
+    assert images[0] in delta[0]['content']

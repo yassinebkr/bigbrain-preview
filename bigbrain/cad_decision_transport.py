@@ -87,3 +87,26 @@ def _provider_schema(schema, root=None):
         result['minItems'] = len(items)
         result['maxItems'] = len(items)
     return result
+
+
+# Fields with a stable meaning across construction decisions. Request-local
+# authorities and measurements stay in the checkpoint packet.
+CONSTRUCTION_CONTEXT_FIELDS = (
+    'definition', 'native_compatibility', 'command_reference',
+    'available_commands', 'observation_coverage', 'geometry_record_encoding',
+)
+
+
+def construction_messages(packet, messages, images):
+    """Use a reusable user-message prefix and a fresh checkpoint suffix."""
+    context = {key: packet[key] for key in CONSTRUCTION_CONTEXT_FIELDS if key in packet}
+    foreground = {key: value for key, value in packet.items() if key not in context}
+    prefix = json.dumps({'construction_context': context}, ensure_ascii=False, separators=(',', ':'))
+    suffix = json.dumps(foreground, ensure_ascii=False, allow_nan=False, separators=(',', ':'))
+    return [
+        {**messages[0], 'content': messages[0]['content'] + (
+            ' The construction_context message contains stable definition and tool reference fields. '
+            'Use the latest checkpoint packet for current authority, observations and progress.')},
+        {'role': 'user', 'content': [{'type': 'text', 'text': prefix}, *images]},
+        {'role': 'user', 'content': [{'type': 'text', 'text': suffix}]},
+    ], context

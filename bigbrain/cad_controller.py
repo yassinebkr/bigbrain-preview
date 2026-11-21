@@ -263,6 +263,10 @@ class CadConstructionDriver:
                     records=usage) as call:
                 record['call_id'] = call.call_id
                 self.store._write(trace, record)
+                if getattr(self.provider, 'retains_conversation_context', False) is True:
+                    from .cad_decision_transport import construction_messages
+                    request['messages'], request['context_checkpoint'] = construction_messages(
+                        packet, request['messages'], self.images)
                 raw = await self.provider.chat_complete(**request)
         except BaseException as error:
             self.store._write(trace, {**record, 'status': 'interrupted',
