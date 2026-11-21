@@ -16,6 +16,11 @@ export interface WorkSurface {
   run: RunState;
 }
 
+/** CAD activity may arrive before the first document snapshot. */
+export function isCadRun(run: RunState): boolean {
+  return Boolean(run.cad) || run.steps.some((step) => step.brain === 'cad_brain');
+}
+
 export const surfaceId = (run: RunState, kind: SurfaceKind) =>
   `${encodeURIComponent(run.sessionId)}/${encodeURIComponent(run.id)}/${kind}`;
 

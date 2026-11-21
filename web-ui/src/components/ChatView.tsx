@@ -11,6 +11,7 @@ import { ContractCard } from './ContractCard';
 import { NudgeBar } from './NudgeBar';
 import { RunTimelineCard } from './RunTimelineCard';
 import { ArrowDown } from 'lucide-react';
+import { isCadRun } from '@/lib/morphable';
 import { ContextWorkspace } from './ContextWorkspace';
 
 export function ChatView() {
@@ -27,14 +28,14 @@ function Conversation({ contextOwnsActivity }: { contextOwnsActivity: boolean })
   const completedRuns = useAppStore((s) => s.completedRuns);
   const activeSessionKey = useAppStore((s) => s.activeSessionKey);
   const hasActiveCad = useAppStore((s) => Object.values(s.runsById).some(
-    (run) => run.sessionId === s.activeSessionKey && run.status === 'running' && Boolean(run.cad),
+    (run) => run.sessionId === s.activeSessionKey && run.status === 'running' && isCadRun(run),
   ));
   const timeline = [
     ...messages.map((message) => ({
       kind: 'message' as const, ts: message.timestamp, message,
     })),
     ...completedRuns
-      .filter((run) => !!activeSessionKey && run.sessionId === activeSessionKey && run.finishedAt && !run.cad)
+      .filter((run) => !!activeSessionKey && run.sessionId === activeSessionKey && run.finishedAt && !isCadRun(run))
       .map((run) => ({
         kind: 'run' as const, ts: run.finishedAt!, run,
       })),

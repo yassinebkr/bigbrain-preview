@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { ContextWorkspace, SurfaceContent } from './ContextWorkspace';
 import { useAppStore } from '@/store/appStore';
 import type { RunState } from '@/store/appStore';
-import { surfaceRegistry, workspaceTabs } from '@/lib/morphable';
+import { isCadRun, surfaceRegistry, workspaceTabs } from '@/lib/morphable';
 
 const run: RunState = { id: 'real', sessionId: 's', description: 'Run from bus', status: 'failed', startedAt: 1, files: [], steps: [{ id: 'step', brain: 'web_app_brain_0', description: 'Build', status: 'failed', liveOutput: '<script>unsafe()</script>' }], error: 'Actual build error' };
 
@@ -47,6 +47,15 @@ describe('bounded contextual catalog', () => {
 
 
 describe('conversation space without Atelier content', () => {
+  it('recognizes CAD work before a document snapshot arrives', () => {
+    const active: RunState = {
+      ...run, status: 'running', steps: [{ id: 'cad', brain: 'cad_brain',
+        description: 'Construct', status: 'running' }],
+    };
+    expect(isCadRun(active)).toBe(true);
+    expect(isCadRun(run)).toBe(false);
+  });
+
   it('keeps the chat at full width when a new conversation has no run', () => {
     const previous = useAppStore.getState();
     useAppStore.setState({ activeSessionKey: 'empty-conversation', runsById: {}, completedRuns: [], cadBriefs: {} });

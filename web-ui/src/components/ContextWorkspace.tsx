@@ -4,7 +4,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { ArrowLeft, ChevronDown, ExternalLink, Loader2, Maximize2, Minimize2, PanelRight, Layers, X } from 'lucide-react';
 import { useAppStore } from '@/store/appStore';
 import { useWorkspaceStore } from '@/store/workspaceStore';
-import { isBoardRun, nextProjectAttempt, reconcileWorkspace, runTitle, surfaceRegistry, webEntryPath, workspaceTabs, type WorkSurface } from '@/lib/morphable';
+import { isBoardRun, isCadRun, nextProjectAttempt, reconcileWorkspace, runTitle, surfaceRegistry, webEntryPath, workspaceTabs, type WorkSurface } from '@/lib/morphable';
 import { usePreview } from '@/lib/usePreview';
 import { WorkOverview } from './WorkWidgets';
 import { ResearchPanel } from './ResearchPanel';
@@ -98,7 +98,7 @@ export function ContextWorkspace({ children }: { children: (ownsActivity: boolea
   const open = !!sessionId && (runs.length > 0 || !!preference?.selectedId || clarifying) && state.mode !== 'focus';
   const visible = open && (explicit || wide);
   const activeCad = clarifying || runs.some(({ run }) =>
-    Boolean(run.cad) && run.status === 'running');
+    isCadRun(run) && run.status === 'running');
   // Anchor the first real object once. Events can enrich it, not select a
   // concurrent run or open a preview server on the user's behalf.
   useEffect(() => {
