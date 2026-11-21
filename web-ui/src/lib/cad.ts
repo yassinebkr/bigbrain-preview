@@ -11,6 +11,12 @@ const document = z.object({ project_id: z.string(), document_id: z.string(), rev
   units: z.literal('mm'), native: artifact, exports: z.array(artifact) });
 const vector = z.tuple([z.number().finite(), z.number().finite(), z.number().finite()]);
 const snapshot = z.object({ document,
+  assembly: z.object({
+    source_sha256: hash, occurrences: z.array(z.object({
+      id: z.number().int().positive(), component_id: z.number().int().positive(),
+      name: z.string(), definition: z.string(), grounded: z.boolean(), translation_mm: vector,
+    })).min(1).max(256),
+  }).nullable().optional(),
   geometry: z.object({ source_sha256: hash, body_count: z.number().int().nonnegative(), closed_solid: z.boolean(),
     bounds_min_mm: vector, bounds_max_mm: vector, volume_mm3: z.number().finite().nonnegative() }),
   preview: z.object({ project_id: z.string(), document_id: z.string(), revision: z.number().int().positive(),
@@ -77,7 +83,8 @@ export function cadUpdate(raw: unknown, previous?: CadView): CadView | undefined
     || ['ready', 'failed', 'cancelled'].includes(previous.status))) return previous;
   const captured = next.snapshot;
   if (captured && (captured.document.document_id !== next.document_id
-    || captured.geometry.source_sha256 !== captured.document.native.sha256)) return previous;
+    || captured.geometry.source_sha256 !== captured.document.native.sha256
+    || (captured.assembly && captured.assembly.source_sha256 !== captured.document.native.sha256))) return previous;
   return next;
 }
 

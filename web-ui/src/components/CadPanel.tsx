@@ -103,6 +103,7 @@ export function CadPanel({ run, expanded = false }: { run: RunState; expanded?: 
     }).catch((error) => { if (!controller.signal.aborted) setImageError(String(error)); });
     return () => { controller.abort(); if (url) URL.revokeObjectURL(url); };
   }, [cad?.document_id, run.sessionId, revision, imageHash]);
+  const [selectedOccurrence, setSelectedOccurrence] = useState('');
   if (!cad) return null;
   const captured = cad.snapshot;
   const busy = run.status === 'running' && ['modeling', 'checking'].includes(cad.status);
@@ -128,6 +129,8 @@ export function CadPanel({ run, expanded = false }: { run: RunState; expanded?: 
       <p className="text-[12px] px-5 text-center">{imageError || captured?.preview_error || (captured ? 'Aperçu en préparation' : 'La pièce apparaîtra après la première capture.')}</p></div>;
   const hasMesh = captured?.document.exports.some(item => item.format === 'stl' && item.source_sha256 === captured.document.native.sha256);
   const piece = hasMesh || cad.working ? <Suspense fallback={picture}><CadMeshViewer cad={cad} sessionId={run.sessionId} fallback={picture} construction={previewMode === 'construction'} /></Suspense> : picture;
+  const assembly = captured?.assembly;
+  const selectedComponent = assembly?.occurrences.find(item => String(item.id) === selectedOccurrence);
   const sketchDimensions = previewMode === 'construction'
     ? cadSketchDimensions(cad.working?.design.sketches ?? []) : [];
   if (editing && expanded && (captured || cad.working)) return <section aria-label="SolidCraft Web" className="w-full min-w-0">
@@ -192,6 +195,20 @@ export function CadPanel({ run, expanded = false }: { run: RunState; expanded?: 
         }} aria-label={fullscreen ? 'Quitter le plein écran' : 'Agrandir la pièce'}
         className="absolute z-[61] right-3 top-3 grid size-8 place-items-center rounded-full bg-black/60 text-white" title={fullscreen ? 'Quitter le plein écran' : 'Agrandir la pièce'}><Expand size={15} /></button>}
     </div>
+    {assembly && <section className="mt-4 text-[12px]" aria-label="Assemblage">
+      <label className="flex flex-wrap items-center gap-2">
+        <span className="font-medium">Composant</span>
+        <select className="work-secondary" value={selectedComponent ? selectedOccurrence : ''}
+          onChange={event => setSelectedOccurrence(event.currentTarget.value)}>
+          <option value="">Assemblage complet</option>
+          {assembly.occurrences.map(item => <option key={item.id} value={String(item.id)}>{item.name}</option>)}
+        </select>
+      </label>
+      {selectedComponent && <p className="mt-2 work-muted">
+        {selectedComponent.definition} · Position {selectedComponent.translation_mm.map(number).join(' × ')} mm
+        {selectedComponent.grounded && ' · Fixé'}
+      </p>}
+    </section>}
     {!!sketchDimensions.length && <details className="mt-3 text-[12px]">
       <summary className="cursor-pointer work-muted">Cotes d’esquisse</summary>
       <div className="mt-2 space-y-2">

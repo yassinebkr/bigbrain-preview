@@ -4,11 +4,15 @@ import asyncio
 import json
 import tempfile
 from pathlib import Path
+from bigbrain.cad_store import CadStore
 from bigbrain.solidcraft import CadError, SolidCraftSession
 
 async def main():
     with tempfile.TemporaryDirectory(prefix='cad-assembly-') as folder:
-        root = Path(folder)
+        store = CadStore(Path(folder))
+        session_id = 'assembly-probe'
+        document_id = store.create(session_id)
+        root = store.directory(document_id)
         async with SolidCraftSession(root, timeout=30) as session:
             async def command(operation, **params):
                 return await session.tool('execute', {'command': operation, 'params': params})
@@ -114,6 +118,14 @@ async def main():
             await command('joint.edit', joint='Conflicting lid placement', suppressed=True)
             if (await command('joint.list'))['conflicts']:
                 raise RuntimeError('Suppressing the incompatible joint did not resolve the conflict')
+            await session.tool('open', {'path': str(edited)})
+            capture = await session.capture(document_id, document_id, 1)
+            if capture.assembly is None or len(capture.assembly.occurrences) != 6:
+                raise RuntimeError('BigBrain capture did not retain all assembly occurrences')
+            store.publish(session_id, capture, title='Enclosure assembly')
+            reopened = CadStore(Path(folder)).view(document_id, session_id)
+            if reopened['assembly'] != capture.assembly.model_dump(mode='json'):
+                raise RuntimeError('Reopened revision did not preserve the assembly inventory')
             print(json.dumps({'components': inventory, 'joints': original_joints, 'revisions': revisions, 'collision': collision,
                               'missing_reference': missing_reference, 'conflicts': conflicting['conflicts']}), flush=True)
 

@@ -13,7 +13,7 @@ import shutil
 import signal
 import subprocess
 
-from .cad_contracts import CadArtifact, CadPreview, CadRevision, GeometryObservation
+from .cad_contracts import CadArtifact, CadAssemblyInventory, CadOccurrence, CadPreview, CadRevision, GeometryObservation
 from .cad_workflow import allowed_cad_command
 
 
@@ -59,6 +59,7 @@ class CadCapture:
     preview: CadPreview | None
     preview_error: str | None
     measurements: dict | None = None
+    assembly: CadAssemblyInventory | None = None
 
 
 class SolidCraftSession:
@@ -382,7 +383,16 @@ class SolidCraftSession:
                                  image=image, width=960, height=600)
         except Exception as error:
             preview_error = str(error)[:1000]
-        return CadCapture(document, geometry, preview, preview_error, inspection)
+        assembly = None
+        if len(bodies) > 1:
+            inventory = await self.tool('execute', {'command': 'component.list', 'params': {}})
+            occurrences = tuple(CadOccurrence(id=item['id'], component_id=component['id'],
+                name=item['name'], definition=component['name'], grounded=item['grounded'],
+                translation_mm=item['transform'][3][:3])
+                for component in inventory['components'] for item in component['occurrences'])
+            if occurrences:
+                assembly = CadAssemblyInventory(source_sha256=native.sha256, occurrences=occurrences)
+        return CadCapture(document, geometry, preview, preview_error, inspection, assembly)
 
     async def reopen(self, artifact: CadArtifact):
         """Reopen a captured native/export artifact after checking its exact bytes."""

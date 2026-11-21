@@ -45,6 +45,26 @@ class CadArtifact(Contract):
         return value
 
 
+class CadOccurrence(Contract):
+    id: int = Field(strict=True, gt=0)
+    component_id: int = Field(strict=True, gt=0)
+    name: Identity
+    definition: Identity
+    grounded: bool
+    translation_mm: Vector
+
+
+class CadAssemblyInventory(Contract):
+    source_sha256: Hash
+    occurrences: tuple[CadOccurrence, ...] = Field(min_length=1, max_length=256)
+
+    @model_validator(mode='after')
+    def unique_occurrences(self):
+        if len({item.id for item in self.occurrences}) != len(self.occurrences):
+            raise ValueError('CAD assembly has duplicate occurrence identities')
+        return self
+
+
 class CadRevision(Contract):
     project_id: Identity
     document_id: Identity

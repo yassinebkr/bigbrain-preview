@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 import uuid
 
-from .cad_contracts import CadDelivery, CadPreview, CadRevision, GeometryObservation
+from .cad_contracts import CadAssemblyInventory, CadDelivery, CadPreview, CadRevision, GeometryObservation
 from .solidcraft import CadCapture, CadError
 
 DOCUMENT_ID = re.compile(r'^[a-f0-9]{32}$')
@@ -78,7 +78,10 @@ class CadStore:
             delivery = CadDelivery.model_validate(delivery)
             if delivery.document != document or delivery.geometry != capture.geometry:
                 raise CadError('CAD delivery differs from its captured observations')
-        record = {'title': str(title)[:160], 'document': document.model_dump(mode='json'),
+        if capture.assembly and capture.assembly.source_sha256 != document.native.sha256:
+            raise CadError('CAD assembly inventory belongs to another revision')
+        record = {'assembly': capture.assembly.model_dump(mode='json') if capture.assembly else None,
+                  'title': str(title)[:160], 'document': document.model_dump(mode='json'),
                   'geometry': capture.geometry.model_dump(mode='json'),
                   'preview': capture.preview.model_dump(mode='json') if capture.preview else None,
                   'preview_error': capture.preview_error,
@@ -113,6 +116,7 @@ class CadStore:
             data = json.loads((root / f'revision-{revision}' / 'capture.json').read_text())
             document = CadRevision.model_validate(data['document'])
             geometry = GeometryObservation.model_validate(data['geometry'])
+            assembly = CadAssemblyInventory.model_validate(data['assembly']) if data.get('assembly') else None
             preview = CadPreview.model_validate(data['preview']) if data.get('preview') else None
             delivery = CadDelivery.model_validate(data['delivery']) if data.get('delivery') else None
         except (OSError, ValueError, KeyError) as error:
@@ -122,7 +126,10 @@ class CadStore:
             raise CadError('CAD capture revision mismatch')
         if delivery and (delivery.document != document or delivery.geometry != geometry):
             raise CadError('CAD delivery evidence differs from its stored capture')
-        return {'title': data.get('title', 'Pièce CAO'),
+        if assembly and assembly.source_sha256 != document.native.sha256:
+            raise CadError('CAD assembly inventory differs from its stored capture')
+        return {'assembly': assembly.model_dump(mode='json') if assembly else None,
+                'title': data.get('title', 'Pièce CAO'),
                 'delivery_status': 'ready' if delivery else 'incomplete',
                 'document': document.model_dump(mode='json'), 'geometry': geometry.model_dump(mode='json'),
                 'preview': preview.model_dump(mode='json') if preview else None,
