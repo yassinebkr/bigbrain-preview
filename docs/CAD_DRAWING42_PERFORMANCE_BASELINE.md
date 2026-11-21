@@ -138,3 +138,24 @@ returned conclusive results. Use
 `--reference-sections DOCUMENT/revision-5/sections.json` together with
 `--reference-step`. The tool still reports the four intermediate cut file
 digest differences independently of the successful geometric comparisons.
+
+## Sol 6.2 low live probe
+
+The probe ran directly through CadBrain with the previously confirmed drawing
+definition, exact image and pinned native engine. It started from a blank
+document. The 20-call probe reserved two calls for closing and inspection and
+stopped when the construction share ran out. The remaining calls were unused.
+The probe wrapper rejected the next construction request locally, after the
+runtime opened its trace, so the extra failed trace consumed no provider call.
+
+- 18 provider calls reported 1,724,778 input tokens, including 970,112 cached,
+  and 14,295 output tokens.
+- Cumulative provider-call time was 459.06 seconds. Worker wall time was
+  488.04 seconds. Chat intake and browser presentation were outside this run.
+- The controller retained 13 accepted checkpoints, through the first flange's
+  counterbore profiles. No verified delivery was produced.
+
+This measures an incomplete run. Cost and duration per verified delivery
+remain unknown. For future probes, the runtime should receive the construction
+share up front so that the reserved phase receives the correct checkpoint
+without first attempting a construction call that the wrapper will reject.
