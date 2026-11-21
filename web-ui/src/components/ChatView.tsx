@@ -26,12 +26,15 @@ function Conversation({ contextOwnsActivity }: { contextOwnsActivity: boolean })
   const streamingText = useAppStore((s) => s.streamingText);
   const completedRuns = useAppStore((s) => s.completedRuns);
   const activeSessionKey = useAppStore((s) => s.activeSessionKey);
+  const hasActiveCad = useAppStore((s) => Object.values(s.runsById).some(
+    (run) => run.sessionId === s.activeSessionKey && run.status === 'running' && Boolean(run.cad),
+  ));
   const timeline = [
     ...messages.map((message) => ({
       kind: 'message' as const, ts: message.timestamp, message,
     })),
     ...completedRuns
-      .filter((run) => !!activeSessionKey && run.sessionId === activeSessionKey && run.finishedAt)
+      .filter((run) => !!activeSessionKey && run.sessionId === activeSessionKey && run.finishedAt && !run.cad)
       .map((run) => ({
         kind: 'run' as const, ts: run.finishedAt!, run,
       })),
@@ -110,7 +113,7 @@ function Conversation({ contextOwnsActivity }: { contextOwnsActivity: boolean })
       </motion.div>
 
       {/* Live agent activity — what is happening, which brain works */}
-      {!contextOwnsActivity && <RunPanel />}
+      {!contextOwnsActivity && !hasActiveCad && <RunPanel />}
 
       {/* GenUI Canvas - between messages and input */}
       <GenUICanvas />

@@ -97,6 +97,8 @@ export function ContextWorkspace({ children }: { children: (ownsActivity: boolea
   const explicit = state.mode === 'workspace' || expanded;
   const open = !!sessionId && (runs.length > 0 || !!preference?.selectedId || clarifying) && state.mode !== 'focus';
   const visible = open && (explicit || wide);
+  const activeCad = clarifying || runs.some(({ run }) =>
+    Boolean(run.cad) && run.status === 'running');
   // Anchor the first real object once. Events can enrich it, not select a
   // concurrent run or open a preview server on the user's behalf.
   useEffect(() => {
@@ -126,7 +128,7 @@ export function ContextWorkspace({ children }: { children: (ownsActivity: boolea
       className={`absolute right-4 top-2 z-10 rounded-lg px-3 py-2 text-[11px] ${open ? (explicit ? 'hidden' : 'min-[1440px]:hidden') : ''}`}
       style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)' }}
       onClick={() => change({ mode: 'workspace' })} aria-label="Ouvrir l’espace de travail">
-      <PanelRight size={14} className="inline mr-2" />{clarifying ? 'Conception de la pièce' : `Travaux · ${runs.length}`}
+      <PanelRight size={14} className="inline mr-2" />{activeCad && <span className="work-pulse inline-block mr-2 motion-reduce:animate-none" aria-hidden="true" />}{clarifying ? 'Conception de la pièce' : `Travaux · ${runs.length}`}
     </button>}
     <div className="context-layout flex-1 min-h-0 min-w-0" data-mode={visible ? expanded ? 'expanded' : 'open' : 'closed'} style={{ '--context-width': `${state.width}px` } as CSSProperties}>
       <div className="context-chat min-w-0 h-full">{children(visible)}</div>
