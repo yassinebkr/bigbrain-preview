@@ -2,6 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { cadSketchLines } from './cadSketchLines';
 
 describe('CAD sketch overlay', () => {
+  it('outlines the native plane of an empty sketch', () => {
+    const vertices = cadSketchLines([{
+      plane: { origin: [10, 20, 30], x_dir: [0, 1, 0], y_dir: [0, 0, 1] },
+      curves: [],
+    }], true);
+    expect(vertices).toHaveLength(24);
+    expect(vertices.filter((_, index) => index % 3 === 0)).toEqual(Array(8).fill(10));
+    expect(vertices.slice(0, 3)).toEqual(vertices.slice(-3));
+  });
+
   it('draws the stored counter-clockwise arc in an oriented sketch plane', () => {
     const vertices = cadSketchLines([{
       plane: { origin: [10, 20, 30], x_dir: [0, 1, 0], y_dir: [0, 0, 1] },

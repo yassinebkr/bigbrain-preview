@@ -78,7 +78,7 @@ export default function CadMeshViewer({ cad, sessionId, fallback, construction =
   const sketches = cad.working?.design.sketches;
   const [hasSketch, setHasSketch] = useState(false);
   useEffect(() => {
-    const vertices = construction && sketches ? cadSketchLines(sketches) : [];
+    const vertices = construction && sketches ? cadSketchLines(sketches, true) : [];
     viewport.current?.updateSketches(vertices);
     setHasSketch(vertices.length > 0);
   }, [construction, sketches, cad.document_id, sessionId]);

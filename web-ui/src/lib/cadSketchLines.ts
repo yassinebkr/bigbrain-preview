@@ -14,13 +14,18 @@ const curve = z.discriminatedUnion('type', [
   z.object({ type: z.literal('circle'), center_at: point, radius: z.number().finite().positive() }),
 ]);
 
-export function cadSketchLines(sketches: unknown[]): number[] {
+export function cadSketchLines(sketches: unknown[], includePlanes = false): number[] {
   const vertices: number[] = [];
   for (const value of sketches) {
     const parsed = sketch.safeParse(value);
     if (!parsed.success) continue;
     const { origin, x_dir, y_dir } = parsed.data.plane;
+    let minX = 0, minY = 0, maxX = 0, maxY = 0;
     const add = (x: number, y: number) => {
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
       for (let axis = 0; axis < 3; axis++) {
         vertices.push(origin[axis] + x * x_dir[axis] + y * y_dir[axis]);
       }
@@ -47,6 +52,16 @@ export function cadSketchLines(sketches: unknown[]): number[] {
           }
         }
       }
+    }
+    if (includePlanes) {
+      // The outline represents the sketch frame. Its extent is for display.
+      const margin = Math.max(maxX - minX, maxY - minY, 1) * .1;
+      const left = minX - margin, right = maxX + margin;
+      const bottom = minY - margin, top = maxY + margin;
+      add(left, bottom); add(right, bottom);
+      add(right, bottom); add(right, top);
+      add(right, top); add(left, top);
+      add(left, top); add(left, bottom);
     }
   }
   return vertices;
