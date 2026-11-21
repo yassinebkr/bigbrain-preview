@@ -138,3 +138,13 @@ def test_legacy_copy_keeps_unknown_base_when_publication_changes(tmp_path):
         'base_revision': None, 'base_conflict': True,
     }
     assert bridge.checkpoint() == b'legacy base'
+
+    # Opening the original publication binds the old format without rewriting it.
+    assert bridge.initialize(b'legacy base', published_revision=4) == {
+        'base_revision': 4, 'base_conflict': False,
+    }
+    reopened = BrowserCadBridge(tmp_path)
+    assert reopened.initialize(b'new publication', published_revision=5) == {
+        'base_revision': 4, 'base_conflict': True,
+    }
+    assert reopened.checkpoint(0) == b'legacy base'
