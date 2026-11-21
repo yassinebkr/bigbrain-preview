@@ -66,7 +66,7 @@ export class CadMeshViewport {
   }
 
   /** Validate the whole replacement before releasing the displayed geometry. */
-  update(buffer: ArrayBuffer) {
+  update(buffer: ArrayBuffer, sketchVertices?: number[]) {
     if (this.disposed) throw new Error('Vue 3D fermée');
     if (this.contextLost) throw new Error('Contexte graphique indisponible');
     inspectStl(buffer);
@@ -96,6 +96,7 @@ export class CadMeshViewport {
       this.controls!.minDistance = radius * .15;
       this.controls!.maxDistance = radius * 20;
       this.light.position.set(radius, -radius, radius * 3);
+      if (sketchVertices) this.replaceSketches(sketchVertices);
       if (first) this.fit();
       this.render();
     } catch (error) {
@@ -115,6 +116,11 @@ export class CadMeshViewport {
 
   updateSketches(vertices: number[]) {
     if (this.disposed) return;
+    this.replaceSketches(vertices);
+    this.render();
+  }
+
+  private replaceSketches(vertices: number[]) {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
     this.sketches.geometry.dispose();
@@ -126,7 +132,6 @@ export class CadMeshViewport {
       this.sketches.position.copy(this.anchor || this.sketchAnchor).negate();
       if (first) this.fit();
     }
-    this.render();
   }
 
   /** Reflect checkpoints that remove the last solid while retaining camera ownership. */

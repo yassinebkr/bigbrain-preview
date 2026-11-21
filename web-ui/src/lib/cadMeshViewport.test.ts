@@ -1,6 +1,6 @@
 /** Exercise mesh replacement and GPU resource ownership without a graphics driver. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Mesh, PerspectiveCamera, Scene, Vector3 } from 'three';
+import type { LineSegments, Mesh, PerspectiveCamera, Scene, Vector3 } from 'three';
 
 interface RendererRecord {
   domElement: EventTarget & { remove: ReturnType<typeof vi.fn> };
@@ -99,6 +99,27 @@ describe('retained CAD mesh viewport', () => {
     expect(renderer.dispose).not.toHaveBeenCalled();
     viewport.fit();
     expect(state.controls[0].target.toArray()).toEqual([5, 5, 0]);
+    viewport.dispose();
+  });
+
+  it('draws the new mesh and its sketch together on the first frame', () => {
+    const viewport = new CadMeshViewport(host(), vi.fn());
+    const originalCurve = [0, 0, 0, 1, 0, 0];
+    viewport.update(triangle(), originalCurve);
+    const renderer = state.renderers[0];
+    const originalMesh = piece(renderer).geometry;
+    const sketch = renderer.scene!.children.find(item => item.type === 'LineSegments') as LineSegments;
+    const nextCurve = [0, 0, 0, 2, 0, 0];
+    const frames: { replaced: boolean; curve: number[] }[] = [];
+    renderer.render.mockImplementation(() => frames.push({
+      replaced: piece(renderer).geometry !== originalMesh,
+      curve: Array.from(sketch.geometry.getAttribute('position').array),
+    }));
+
+    viewport.update(triangle(20), nextCurve);
+    expect(frames.length).toBeGreaterThan(0);
+    expect(frames.every(frame => frame.replaced)).toBe(true);
+    for (const frame of frames) expect(frame.curve).toEqual(nextCurve);
     viewport.dispose();
   });
 

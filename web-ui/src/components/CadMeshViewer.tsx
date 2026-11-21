@@ -1,5 +1,5 @@
 /** Retain the interactive renderer while accepted checkpoints replace mesh geometry. */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CadMeshViewport } from '@/lib/cadMeshViewport';
 import { cadArtifact, cadWorkingMesh, cadMeshSource, type CadView } from '@/lib/cad';
 import { cadSketchLines } from '@/lib/cadSketchLines';
@@ -9,6 +9,8 @@ import { liveRuntime } from '@/lib/cadLiveRuntime';
 export default function CadMeshViewer({ cad, sessionId, fallback, construction = false, selectedBounds }: { cad: CadView; sessionId: string; fallback: React.ReactNode; construction?: boolean; selectedBounds?: [[number, number, number], [number, number, number]] | null }) {
   const host = useRef<HTMLDivElement>(null);
   const viewport = useRef<CadMeshViewport>(undefined);
+  const constructionMode = useRef(construction);
+  useLayoutEffect(() => { constructionMode.current = construction; }, [construction]);
   const [error, setError] = useState('');
   const [displayedMesh, setDisplayedMesh] = useState<string>();
   const ready = displayedMesh !== undefined;
@@ -75,7 +77,10 @@ export default function CadMeshViewer({ cad, sessionId, fallback, construction =
     } else return;
     void mesh.then(buffer => {
       if (!abort.signal.aborted && viewport.current) {
-        viewport.current.update(buffer);
+        // Commit both scene layers before Three.js draws the next checkpoint.
+        const curves = cad.working?.design.sketches;
+        const vertices = constructionMode.current && curves ? cadSketchLines(curves, true) : [];
+        viewport.current.update(buffer, vertices);
         setError('');
         setDisplayedMesh(meshIdentity);
       }
