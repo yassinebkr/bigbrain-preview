@@ -94,7 +94,19 @@ def boundary_diagnostics(group):
     """Stop proposals that defer a required solver or topology observation."""
     commands = [item.command for item in group.commands]
     if 'sketch.finish' in commands[:-1]:
-        return ['End the group at sketch.finish; inspect solver state before the dependent operation.']
+        # The native executor checks solver state at every finish. Allow a
+        # suffix of standalone sketch blocks with no downstream solid operation.
+        following = commands[commands.index('sketch.finish') + 1:]
+        while following:
+            if following[0] != 'sketch.create' or 'sketch.finish' not in following:
+                break
+            end = following.index('sketch.finish')
+            if any(command != 'sketch.draw.dimensioned' for command in following[1:end]):
+                break
+            following = following[end + 1:]
+        if following:
+            return ['End the group at sketch.finish before a dependent operation. '
+                    'Only standalone dimensioned sketch blocks may follow in the same group.']
     finishes = {'solid.fillet', 'solid.chamfer'}
     if any(command in finishes for command in commands) and len(commands) != 1:
         return ['Select one finishing operation from the observed operand in its own execution group. '
@@ -610,8 +622,10 @@ class CadConstructionDriver:
                 'Encode each command.params as a JSON object string. The runtime decodes it before '
                 'validating the command and its cut intent. '
                 'Use the exact current base_checkpoint on every decision and execution group. '
-                'Group commands with known inputs. End a group at sketch.finish and inspect the solver '
-                'before using its profile. Request actual body_topology before selecting newly created '
+                'Group commands with known inputs. Stop at sketch.finish before any dependent solid operation. Inspect the solver '
+                'before using its profile. To prepare several standalone sketches on known planes, group '
+                'complete sketch.create / sketch.draw.dimensioned / sketch.finish blocks in one decision. '
+                'The runtime observes the solver at each finish. Request actual body_topology before selecting newly created '
                 'faces or edges. Run each fillet/chamfer separately and name it directly with params.name; '
                 'a separate timeline.rename is unnecessary. Reference native schemas and guides '
                 'when needed. Use precise_geometry for STEP-backed measurements before further modeling '

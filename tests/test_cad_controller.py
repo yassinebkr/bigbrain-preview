@@ -735,3 +735,27 @@ async def test_initial_reserve_switches_to_non_mutating_closure(tmp_path, cad_na
     assert closure['decision_phase'] == 'finalization'
     assert closure['allowed_operations'] == ['complete', 'blocked']
     assert closure['base_checkpoint'] == store.active()[-1].id
+
+
+@pytest.mark.asyncio
+async def test_standalone_dimensioned_sketches_share_one_checked_decision(tmp_path, cad_native_engine):
+    first = actions()[0]
+    second_sketch = actions()[2]['group']['commands']
+    first['group']['commands'] += second_sketch
+    group = ExecutionGroup.model_validate(first['group'])
+    assert boundary_diagnostics(group) == []
+    assert boundary_diagnostics(group.model_copy(update={
+        'commands': (*group.commands, ExecutionGroup.model_validate(actions()[1]['group']).commands[0]),
+    }))
+
+    provider = Decisions([first])
+    store = CadExecutionStore(tmp_path, 'a' * 64)
+    driver = CadConstructionDriver(provider, definition(), [], [], store, max_decisions=1)
+    async with SolidCraftSession(tmp_path) as session:
+        with pytest.raises(CadError, match='decision allowance exhausted'):
+            await driver.run(session)
+    checkpoint, = store.active()
+    sketches = store.observations(checkpoint)['design']['sketches']
+    assert {item['name'] for item in sketches} == {'Base_profile', 'Hole_profile'}
+    assert all(item['dof'] == 0 for item in sketches)
+    assert len(provider.calls) == 1
