@@ -42,7 +42,7 @@ export default function CadBrowserEditor({ documentId, sessionId, revision }: {
       {agent ? <>
         <button className="work-secondary !p-2" aria-label="Mettre le travail CAO en pause" disabled={acting || !!state?.pause} onClick={() => void action('pause')}><Pause size={14} /></button>
         <button className="work-secondary !p-2" aria-label="Arrêter le travail CAO" disabled={acting} onClick={() => void action('stop')}><Square size={14} /></button>
-      </> : hosted ? <button className="work-secondary !p-2" disabled={acting || !runtime?.initialized || !!failure} onClick={() => void action('resume')}>Autoriser la construction</button> : <button className="work-secondary !p-2" aria-label="Enregistrer la copie de travail" title="Enregistrer la copie de travail" disabled={acting || !runtime?.initialized || !!failure} onClick={() => void action('save')}>
+      </> : hosted ? <button className="work-secondary !p-2" disabled={acting || !runtime?.initialized || !!failure} onClick={() => void action('resume')}>Autoriser la construction</button> : <button className="work-secondary !p-2" aria-label="Enregistrer la copie de travail" title="Enregistrer la copie de travail" disabled={acting || !runtime?.initialized} onClick={() => void action('save')}>
         {acting ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}</button>}
       {hosted && <DropdownMenu><DropdownMenuTrigger asChild>
         <button className="work-secondary !p-2" aria-label="Vues SolidCraft" disabled={!runtime?.initialized}><Video size={14} /></button>

@@ -59,3 +59,41 @@ describe('CAD checkpoint handoff', () => {
     expect(engine.presentAccepted).not.toHaveBeenCalled();
   });
 });
+
+describe('manual CAD saves', () => {
+  function manualSave() {
+    const { bytes, engine, executor, call } = fixture();
+    const state = { generation: 'test', owner: 'user', revision: 1, hash: 'original' };
+    Object.assign(executor, { state, dirty: true });
+    return { bytes, engine, executor, call, state };
+  }
+
+  it('recovers a committed save when its response is lost', async () => {
+    const { bytes, executor, call, state } = manualSave();
+    const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+    const hash = Array.from(digest, value => value.toString(16).padStart(2, '0')).join('');
+    const committed = { ...state, revision: 2, hash };
+    call.mockImplementation(async action => {
+      if (action === 'save') throw new Error('Response lost');
+      return committed;
+    });
+
+    await executor.saveManual();
+    expect(executor.state).toEqual(committed);
+    expect(executor.dirty).toBe(false);
+    expect(call.mock.calls.map(([action]) => action)).toEqual(['save', 'state']);
+  });
+
+  it('keeps the unsaved canvas available when the server did not commit', async () => {
+    const { engine, executor, call, state } = manualSave();
+    call.mockImplementation(async action => {
+      if (action === 'save') throw new Error('Save unavailable');
+      return state;
+    });
+
+    await expect(executor.saveManual()).rejects.toThrow('Save unavailable');
+    expect(executor.state).toEqual(state);
+    expect(executor.dirty).toBe(true);
+    expect(engine.setLocked).toHaveBeenLastCalledWith(false);
+  });
+});

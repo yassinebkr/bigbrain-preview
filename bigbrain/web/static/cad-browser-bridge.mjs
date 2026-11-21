@@ -161,13 +161,27 @@ export class CadBrowserExecutor {
   async saveManual() {
     if (this.engine.hosted) throw new Error('Hosted CAD uses the worker as its editing session');
     if (this.busy || this.state.owner !== 'user') throw new Error('Pause CAD construction before editing');
+    const { generation, revision, hash } = this.state;
     this.engine.setLocked(true);
     try {
-      const native = base64(await this.engine.save());
-      this.update(await this.transport.call('save', { generation: this.state.generation,
-        revision: this.state.revision, hash: this.state.hash, native }));
+      const bytes = await this.engine.save();
+      const savedHash = await sha256(bytes);
+      try {
+        this.update(await this.transport.call('save', { generation, revision, hash, native: base64(bytes) }));
+      } catch (error) {
+        // A lost response can leave a committed copy. Accept only the exact
+        // bytes from this save and the same editor generation.
+        const current = await this.transport.call('state');
+        if (current.generation !== generation || current.revision !== revision + 1
+            || current.hash !== savedHash || current.owner !== 'user') throw error;
+        this.update(current);
+      }
       this.dirty = false;
-    } catch (error) { this.ready = false; this.engine.setLocked(true); throw error; }
+    } finally {
+      // Leave the user's canvas available after a failed save so they can retry
+      // or export the current document with the native editor.
+      this.update(this.state);
+    }
   }
 }
 
